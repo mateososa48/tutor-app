@@ -1,4 +1,5 @@
 import type { WhiteboardHandle } from "@/components/TldrawCore";
+import type { CalloutStyle } from "@/lib/whiteboard-tools";
 import {
   fail,
   isToolError,
@@ -146,8 +147,7 @@ export function dispatchWhiteboardTool(
       if (isToolError(text)) return text;
       const style = requiredString(args, "style");
       if (isToolError(style)) return style;
-      const ALLOWED_STYLES = ["hint", "correct", "wrong", "warning", "important", "remember"] as const;
-      type CalloutStyle = typeof ALLOWED_STYLES[number];
+      const ALLOWED_STYLES: readonly CalloutStyle[] = ["hint", "correct", "wrong", "warning", "important", "remember"];
       if (!ALLOWED_STYLES.includes(style as CalloutStyle)) {
         return fail(`Argument "style" must be one of: ${ALLOWED_STYLES.join(", ")}.`);
       }

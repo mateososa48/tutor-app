@@ -16,6 +16,8 @@ export type WhiteboardToolName =
   | "add_worked_example_box"
   | "clear_whiteboard";
 
+export type CalloutStyle = "hint" | "correct" | "wrong" | "warning" | "important" | "remember";
+
 export const WHITEBOARD_TOOL_DECLARATIONS = [
   // ── Direct templated tools (synchronous, no LLM round-trip) ───────────────
   {

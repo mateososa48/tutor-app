@@ -25,6 +25,7 @@ import {
 import { getIndices, type IndexKey } from "@tldraw/utils";
 import katex from "katex";
 import { createMathEvaluator } from "@/lib/math-expression";
+import type { CalloutStyle } from "@/lib/whiteboard-tools";
 import type { BoardAgentAction, BoardArtifactMeta } from "@/lib/board-agent-types";
 import {
   applySemanticBoardAction,
@@ -72,11 +73,7 @@ export interface WhiteboardHandle {
   addStudentAttempt(text: string, column?: "left" | "right"): void;
   addProblemSetup(goal: string, givens?: string, unknowns?: string, plan?: string, column?: "left" | "right"): void;
   addEquationSequence(steps: string, annotations?: string, title?: string, column?: "left" | "right"): void;
-  /**
-   * Drop a sticky-note callout at the next available position in the chosen
-   * column. Notes are intrinsically ~200×220 (size "m"); width/height are not
-   * exposed. Default color "yellow", font "draw" to match the whiteboard look.
-   */
+  /** @internal Low-level sticky note primitive. Use addCallout for semantic color selection. */
   addStickyNote(opts: {
     text: string;
     color?: TLDefaultColorStyle;
@@ -86,7 +83,7 @@ export interface WhiteboardHandle {
     growY?: number;
     column?: "left" | "right";
   }): void;
-  addCallout(text: string, style: "hint" | "correct" | "wrong" | "warning" | "important" | "remember", column?: "left" | "right"): void;
+  addCallout(text: string, style: CalloutStyle, column?: "left" | "right"): void;
   addTwoColumnComparison(title: string, leftTitle: string, leftBody: string, rightTitle: string, rightBody: string, column?: "left" | "right"): void;
   addAreaModel(title: string, rowLabels: string, columnLabels: string, cells: string, column?: "left" | "right"): void;
   addVectorDiagram(title: string, centerLabel: string, vectors: string, column?: "left" | "right"): void;
@@ -1514,7 +1511,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       );
     },
 
-    addCallout(text: string, style: "hint" | "correct" | "wrong" | "warning" | "important" | "remember", column?: "left" | "right") {
+    addCallout(text: string, style: CalloutStyle, column?: "left" | "right") {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "left";
@@ -1523,7 +1520,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const x = colX(col);
       const y = colY(col).current;
 
-      const colorMap: Record<typeof style, TldrawColor> = {
+      const colorMap: Record<CalloutStyle, TldrawColor> = {
         hint: "yellow",
         correct: "green",
         wrong: "red",
