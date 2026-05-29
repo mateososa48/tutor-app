@@ -86,6 +86,7 @@ export interface WhiteboardHandle {
     growY?: number;
     column?: "left" | "right";
   }): void;
+  addCallout(text: string, style: "hint" | "correct" | "wrong" | "warning" | "important" | "remember", column?: "left" | "right"): void;
   addTwoColumnComparison(title: string, leftTitle: string, leftBody: string, rightTitle: string, rightBody: string, column?: "left" | "right"): void;
   addAreaModel(title: string, rowLabels: string, columnLabels: string, cells: string, column?: "left" | "right"): void;
   addVectorDiagram(title: string, centerLabel: string, vectors: string, column?: "left" | "right"): void;
@@ -1509,6 +1510,38 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
           size: opts.size,
           column: col,
         },
+        { bounds: { x, y, w: 220, h: NOTE_H, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    addCallout(text: string, style: "hint" | "correct" | "wrong" | "warning" | "important" | "remember", column?: "left" | "right") {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = column ?? "left";
+      const NOTE_H = 220;
+      ensureColumnRoom(editor, col, NOTE_H + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+
+      const colorMap: Record<typeof style, TldrawColor> = {
+        hint: "yellow",
+        correct: "green",
+        wrong: "red",
+        warning: "orange",
+        important: "violet",
+        remember: "light-blue",
+      };
+
+      createNote(editor, x, y, {
+        text,
+        color: colorMap[style],
+        font: "draw",
+        size: "m",
+      });
+      colY(col).current += NOTE_H + ROW_GAP;
+      focusOn(editor, x, y, 220, NOTE_H);
+      recordDirectSemanticAction(
+        { type: "freeform_note", text, color: colorMap[style], font: "draw", size: "m", column: col },
         { bounds: { x, y, w: 220, h: NOTE_H, column: col, pageIndex: pageIndex.current } },
       );
     },

@@ -139,6 +139,26 @@ export function dispatchWhiteboardTool(
       return ok("Text note added.");
     }
 
+    case "add_callout": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const text = requiredString(args, "text");
+      if (isToolError(text)) return text;
+      const style = requiredString(args, "style");
+      if (isToolError(style)) return style;
+      const ALLOWED_STYLES = ["hint", "correct", "wrong", "warning", "important", "remember"] as const;
+      type CalloutStyle = typeof ALLOWED_STYLES[number];
+      if (!ALLOWED_STYLES.includes(style as CalloutStyle)) {
+        return fail(`Argument "style" must be one of: ${ALLOWED_STYLES.join(", ")}.`);
+      }
+      const column = optionalString(args, "column");
+      if (isToolError(column)) return column;
+      board.withDirectMeta({ owner: "tutor" }, () =>
+        board.addCallout(text, style as CalloutStyle, pickColumn(column)),
+      );
+      return ok(`Callout (${style}) added.`);
+    }
+
     case "add_student_attempt": {
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;

@@ -5,6 +5,7 @@ export type WhiteboardToolName =
   | "add_equation_sequence"
   | "draw_equation_step"
   | "add_text_note"
+  | "add_callout"
   | "add_student_attempt"
   | "highlight_step"
   | "cross_out_step"
@@ -165,6 +166,32 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         },
       },
       required: ["text"],
+    },
+  },
+  {
+    name: "add_callout",
+    description:
+      "Drop a colored sticky-note callout using a semantic style — the system picks the right color automatically. Use for: hints (yellow), correct answers (green), errors/misconceptions (red), warnings about common mistakes (orange), key concepts or definitions (violet), formulas to remember (light-blue). Text is rendered in handwriting font. The note grows with content.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "The callout text. Keep it short and glanceable — 400 chars max. A sticky note, not a paragraph.",
+        },
+        style: {
+          type: "string",
+          enum: ["hint", "correct", "wrong", "warning", "important", "remember"],
+          description:
+            "'hint' = yellow nudge. 'correct' = green success. 'wrong' = red error. 'warning' = orange caution. 'important' = violet key concept. 'remember' = light-blue formula/rule.",
+        },
+        column: {
+          type: "string",
+          enum: ["left", "right"],
+          description: "Default 'left'. Use 'right' to place next to equations.",
+        },
+      },
+      required: ["text", "style"],
     },
   },
   {
