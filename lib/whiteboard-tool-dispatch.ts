@@ -311,6 +311,80 @@ export function dispatchWhiteboardTool(
       return ok("Worked-example box drawn.");
     }
 
+    case "add_function_graph": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const expression = requiredString(args, "expression");
+      if (isToolError(expression)) return expression;
+      const xMin = requiredNumber(args, "x_min");
+      if (isToolError(xMin)) return xMin;
+      const xMax = requiredNumber(args, "x_max");
+      if (isToolError(xMax)) return xMax;
+      const label = optionalString(args, "label");
+      if (isToolError(label)) return label;
+      const column = optionalString(args, "column");
+      if (isToolError(column)) return column;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label ?? expression }, () =>
+        board.addFunctionGraph(expression, xMin, xMax, label, pickColumn(column) ?? "right"),
+      );
+      return ok("Function graph drawn.");
+    }
+
+    case "add_two_column_comparison": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const title = requiredString(args, "title");
+      if (isToolError(title)) return title;
+      const leftTitle = requiredString(args, "left_title");
+      if (isToolError(leftTitle)) return leftTitle;
+      const leftBody = requiredString(args, "left_body");
+      if (isToolError(leftBody)) return leftBody;
+      const rightTitle = requiredString(args, "right_title");
+      if (isToolError(rightTitle)) return rightTitle;
+      const rightBody = requiredString(args, "right_body");
+      if (isToolError(rightBody)) return rightBody;
+      const column = optionalString(args, "column");
+      if (isToolError(column)) return column;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
+        board.addTwoColumnComparison(title, leftTitle, leftBody, rightTitle, rightBody, pickColumn(column)),
+      );
+      return ok("Two-column comparison drawn.");
+    }
+
+    case "add_vector_diagram": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const title = requiredString(args, "title");
+      if (isToolError(title)) return title;
+      const centerLabel = requiredString(args, "center_label");
+      if (isToolError(centerLabel)) return centerLabel;
+      const vectors = requiredString(args, "vectors");
+      if (isToolError(vectors)) return vectors;
+      const column = optionalString(args, "column");
+      if (isToolError(column)) return column;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
+        board.addVectorDiagram(title, centerLabel, vectors, pickColumn(column) ?? "right"),
+      );
+      return ok("Vector diagram drawn.");
+    }
+
+    case "add_process_map": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const title = requiredString(args, "title");
+      if (isToolError(title)) return title;
+      const nodes = requiredString(args, "nodes");
+      if (isToolError(nodes)) return nodes;
+      const connectors = optionalString(args, "connectors");
+      if (isToolError(connectors)) return connectors;
+      const column = optionalString(args, "column");
+      if (isToolError(column)) return column;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
+        board.addProcessMap(title, nodes, connectors, pickColumn(column)),
+      );
+      return ok("Process map drawn.");
+    }
+
     case "clear_whiteboard": {
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;

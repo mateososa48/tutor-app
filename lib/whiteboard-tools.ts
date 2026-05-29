@@ -14,6 +14,10 @@ export type WhiteboardToolName =
   | "add_coordinate_axes"
   | "plot_points"
   | "add_worked_example_box"
+  | "add_function_graph"
+  | "add_two_column_comparison"
+  | "add_vector_diagram"
+  | "add_process_map"
   | "clear_whiteboard";
 
 export type CalloutStyle = "hint" | "correct" | "wrong" | "warning" | "important" | "remember";
@@ -392,6 +396,134 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         },
       },
       required: ["title", "body"],
+    },
+  },
+  {
+    name: "add_function_graph",
+    description:
+      "Plot a continuous mathematical function y = f(x) on a coordinate grid. Use for any y = f(x) curve: parabolas, lines, trig, exponentials, absolute value, etc. Renders immediately. Prefer this over plot_points whenever you have a formula rather than discrete data.",
+    parameters: {
+      type: "object",
+      properties: {
+        expression: {
+          type: "string",
+          description:
+            "The function expression in terms of x, e.g. 'x^2 - 4*x - 5', 'sin(x)', '2*x + 3', 'abs(x - 2)'. Standard JS math operators: +, -, *, /, ^, sqrt(), sin(), cos(), tan(), abs(), log(). 200 chars max.",
+        },
+        x_min: {
+          type: "number",
+          description: "Minimum x value to plot.",
+        },
+        x_max: {
+          type: "number",
+          description: "Maximum x value to plot.",
+        },
+        label: {
+          type: "string",
+          description: "Optional caption below the graph, e.g. 'y = x² - 4x - 5'. 160 chars max.",
+        },
+        column: {
+          type: "string",
+          enum: ["left", "right"],
+          description: "Default 'right'. Graphs usually pair best with equations on the left.",
+        },
+      },
+      required: ["expression", "x_min", "x_max"],
+    },
+  },
+  {
+    name: "add_two_column_comparison",
+    description:
+      "Draw a side-by-side two-column comparison block — left column in red, right column in green. Use for: method A vs method B, before vs after, correct vs incorrect approach, two theorems, two historical figures. Renders immediately.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Heading above both columns, 160 chars max.",
+        },
+        left_title: {
+          type: "string",
+          description: "Header of the left (red) column, e.g. 'Method A', 'Before', 'Incorrect'. 80 chars max.",
+        },
+        left_body: {
+          type: "string",
+          description: "Content of the left column. Use newlines for multiple points. 800 chars max.",
+        },
+        right_title: {
+          type: "string",
+          description: "Header of the right (green) column, e.g. 'Method B', 'After', 'Correct'. 80 chars max.",
+        },
+        right_body: {
+          type: "string",
+          description: "Content of the right column. Use newlines for multiple points. 800 chars max.",
+        },
+        column: {
+          type: "string",
+          enum: ["left", "right"],
+          description: "Default 'left'. Usually spans the full width of the left zone.",
+        },
+      },
+      required: ["title", "left_title", "left_body", "right_title", "right_body"],
+    },
+  },
+  {
+    name: "add_vector_diagram",
+    description:
+      "Draw a vector diagram — a central label with labeled arrows radiating outward in named directions. Use for: force diagrams (weight down, normal up, friction left/right), velocity decompositions, field lines, resultant vectors. Renders immediately.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Caption above the diagram, e.g. 'Forces on block'. 160 chars max.",
+        },
+        center_label: {
+          type: "string",
+          description: "Label for the central object, e.g. 'block', 'particle'. 80 chars max.",
+        },
+        vectors: {
+          type: "string",
+          description:
+            "Semicolon-separated vectors. Each: 'direction:label'. Direction must be one of: up, down, left, right, up-left, up-right, down-left, down-right. Example: 'up:Normal force N; down:Weight mg; right:Applied force F; left:Friction f'. 800 chars max.",
+        },
+        column: {
+          type: "string",
+          enum: ["left", "right"],
+          description: "Default 'right'. Vector diagrams usually pair with equations on the left.",
+        },
+      },
+      required: ["title", "center_label", "vectors"],
+    },
+  },
+  {
+    name: "add_process_map",
+    description:
+      "Draw a linear sequence of labeled boxes connected by arrows — a flow chart or process map. Use for: reaction mechanisms, decision trees, historical cause-effect chains, algorithm steps, writing process. Renders immediately.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          description: "Caption above the process map. 160 chars max.",
+        },
+        nodes: {
+          type: "string",
+          description:
+            "Newline-separated node labels in order, e.g. 'Identify forces\\nDraw free-body diagram\\nApply Newton\\'s 2nd law\\nSolve for unknowns'. Each node becomes a labeled box. 8 nodes max. 800 chars total.",
+        },
+        connectors: {
+          type: "string",
+          description:
+            "Optional newline-separated labels for each arrow between nodes. Count must be (nodes - 1). Leave blank for unlabeled arrows. 400 chars max.",
+        },
+        column: {
+          type: "string",
+          enum: ["left", "right"],
+          description: "Default 'left'.",
+        },
+      },
+      required: ["title", "nodes"],
     },
   },
   {
