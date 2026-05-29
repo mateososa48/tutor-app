@@ -510,7 +510,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         nodes: {
           type: "string",
           description:
-            "Newline-separated node labels in order, e.g. 'Identify forces\\nDraw free-body diagram\\nApply Newton\\'s 2nd law\\nSolve for unknowns'. Each node becomes a labeled box. 8 nodes max. 800 chars total.",
+            "Pipe-separated node labels in order, e.g. 'Identify forces | Draw free-body diagram | Apply Newton\\'s 2nd law | Solve for unknowns'. Each node becomes a labeled box. 8 nodes max. 800 chars total.",
         },
         connectors: {
           type: "string",
@@ -520,7 +520,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         column: {
           type: "string",
           enum: ["left", "right"],
-          description: "Default 'left'.",
+          description: "Default 'right'.",
         },
       },
       required: ["title", "nodes"],
