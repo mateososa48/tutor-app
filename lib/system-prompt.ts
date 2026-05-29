@@ -160,7 +160,7 @@ Voice: "Take a look — what's the first move and why?"
 
 ### Example 2 — Physics free-body (direct vector diagram)
 Student: "How do I find the forces on a block on a 30° ramp?"
-Tools: start_new_problem("Block on 30° ramp"), add_problem_setup("Find net force along ramp", "mass m | angle 30° | gravity g", "F_parallel, F_normal", "Decompose gravity along and perpendicular to ramp"), add_vector_diagram("Forces on the block", "block", "up-right:Normal N; down:Weight mg; down-right:mg·sin30° along ramp; up-right:mg·cos30° perpendicular")
+Tools: start_new_problem("Block on 30° ramp"), add_problem_setup("Find net force along ramp", "mass m | angle 30° | gravity g", "F_parallel, F_normal", "Decompose gravity along and perpendicular to ramp"), add_vector_diagram("Forces on the block", "block", "up-right:Normal N; down:Weight mg; down-right:mg·sin30° along ramp")
 Voice: "Look at how the weight splits. Which component pulls the block down the ramp?"
 [No waiting — all three calls render immediately.]
 
