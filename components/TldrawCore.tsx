@@ -620,7 +620,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       props: {
         richText: toRichText(text),
         size: options?.size ?? "m",
-        font: options?.font ?? "sans",
+        font: options?.font ?? "draw",
         color: options?.color ?? "black",
         textAlign: "start",
         w: options?.width ?? 560,
@@ -1083,7 +1083,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const y = colY(col).current;
       createText(editor, text, x, y, {
         size: isHeading ? "l" : "m",
-        font: isHeading ? "serif" : "sans",
+        font: isHeading ? "serif" : "draw",
       });
       colY(col).current += approxH + ROW_GAP;
       focusOn(editor, x, y, 520, approxH);
@@ -1470,7 +1470,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const x = colX(col);
       const y = colY(col).current;
       createBox(editor, x, y, w, h, "", "green", "semi");
-      createText(editor, "Student attempt", x + 16, y + 12, { color: "green", size: "s", width: w - 32 });
+      createText(editor, "Student attempt", x + 16, y + 12, { color: "green", size: "s", font: "sans", width: w - 32 });
       createText(editor, text, x + 16, y + 38, { size: "m", width: w - 32 });
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);
@@ -1561,7 +1561,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const y = colY(col).current;
 
       createBox(editor, x, y, w, h, "", "blue", "semi");
-      createText(editor, "Problem setup", x + 16, y + 12, { color: "blue", size: "s", width: w - 32 });
+      createText(editor, "Problem setup", x + 16, y + 12, { color: "blue", size: "s", font: "sans", width: w - 32 });
       createText(editor, lines.join("\n"), x + 16, y + 40, { size: "m", width: w - 32 });
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);
