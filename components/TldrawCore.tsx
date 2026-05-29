@@ -323,13 +323,6 @@ function formatTableText(columns: string, rows: string): string {
   return [renderRow(normalizedHeaders), divider, ...parsedRows.map(renderRow)].join("\n");
 }
 
-function splitBoardLines(input?: string): string[] {
-  return (input ?? "")
-    .split(/\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 function splitPipeList(input: string): string[] {
   return input.split("|").map((part) => part.trim()).filter(Boolean);
 }
