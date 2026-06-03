@@ -2,7 +2,6 @@ import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { TUTOR_SYSTEM_PROMPT } from "./system-prompt";
 import type { UploadedFile } from "./file-processor";
 import { getTutorVoiceName } from "./voice-settings";
-import type { BoardUpdateReadyEvent } from "./board-agent-types";
 import {
   createTutorState,
   rememberNote,
@@ -245,45 +244,6 @@ export class GeminiLiveSession {
         "Do not summarize, solve, or teach from the files until the student asks for a specific task.",
     });
     return this.sendUserTurn(parts);
-  }
-
-  sendBoardUpdateReady(update: BoardUpdateReadyEvent): boolean {
-    const artifactLines = update.artifactLabels
-      .map((artifact) => `- ${artifact.tutorReferenceLabel || artifact.label}: ${artifact.summary}`)
-      .join("\n");
-    return this.sendUserTurn([
-      {
-        text:
-          "Session event: board_update_ready.\n" +
-          `Job id: ${update.jobId}\n` +
-          `Board summary: ${update.boardSummary}\n` +
-          `Tutor cue: ${update.tutorCue}\n` +
-          (artifactLines ? `Artifacts:\n${artifactLines}\n` : "") +
-          "You may now refer to this visible board update. Keep speaking briefly and ask one focused question.",
-      },
-    ]);
-  }
-
-  sendBoardUpdateFailed(jobId: string, error: string): boolean {
-    return this.sendUserTurn([
-      {
-        text:
-          "Session event: board_update_failed.\n" +
-          `Job id: ${jobId}\n` +
-          `Error: ${error}\n` +
-          "Do not claim the board changed. Continue verbally or retry once with a simpler board request if the visual still matters.",
-      },
-    ]);
-  }
-
-  sendBoardDrawingInProgress(): boolean {
-    return this.sendUserTurn([
-      {
-        text:
-          "Session event: board_drawing_in_progress.\n" +
-          "The board agent is still preparing the visual. Pause speech until a board_update_ready event arrives. Do not start a new explanation.",
-      },
-    ]);
   }
 
   private sendUserTurn(parts: GeminiContentPart[]): boolean {
