@@ -535,4 +535,20 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
       properties: {},
     },
   },
+  {
+    name: "remember_about_student",
+    description:
+      "Record a durable fact about THIS student so you don't lose it over a long session — a misconception, what just clicked, their comfort level, or their grade-appropriate pace. Keep each note short. This does not draw anything; it only updates your memory.",
+    parameters: {
+      type: "object",
+      properties: {
+        note: {
+          type: "string",
+          description:
+            "One short fact, e.g. 'confuses kinetic with momentum' or 'got factoring after the area-model analogy'.",
+        },
+      },
+      required: ["note"],
+    },
+  },
 ];
