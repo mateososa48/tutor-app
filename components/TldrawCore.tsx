@@ -11,7 +11,7 @@ import {
   useCallback,
   useEffect,
 } from "react";
-import { Tldraw, AssetRecordType } from "tldraw";
+import { Tldraw, AssetRecordType, type TLComponents } from "tldraw";
 import { Editor, createShapeId, toRichText } from "@tldraw/editor";
 import {
   compressLegacySegments,
@@ -31,6 +31,7 @@ import {
   applySemanticBoardAction,
   createEmptySemanticBoard,
   normalizeSemanticBoard,
+  summarizeSemanticBoard,
   type SemanticBoard,
   type SemanticBoardActionContext,
 } from "@/lib/semantic-board";
@@ -45,7 +46,8 @@ const RIGHT_X = 640;
 const START_Y = 70;
 const HEADING_Y = 18;
 const ROW_GAP = 16;
-const EQ_H = 68;
+const EQ_H = 52;
+const EQ_ROW_GAP = 8;
 const POINT_PATTERN = /^\(?\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*\)?(?:\s*:\s*(.+))?$/;
 
 // ── Public handle type ──────────────────────────────────────────────────────
@@ -122,6 +124,7 @@ export interface WhiteboardHandle {
    * materializes the bytes in memory.
    */
   captureScreenshot(): Promise<string | null>;
+  getBoardSummary(): string;
 }
 
 // ── Internal equation overlay item ─────────────────────────────────────────
@@ -337,6 +340,15 @@ function formatSetupLine(label: string, value?: string): string | null {
   return `${label}: ${value.trim()}`;
 }
 
+type FocusRect = { x: number; y: number; w: number; h: number };
+function unionRect(a: FocusRect, b: FocusRect): FocusRect {
+  const minX = Math.min(a.x, b.x);
+  const minY = Math.min(a.y, b.y);
+  const maxX = Math.max(a.x + a.w, b.x + b.w);
+  const maxY = Math.max(a.y + a.h, b.y + b.h);
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
 function estimateWrappedLineCount(lines: string[], charsPerLine: number): number {
   return lines.reduce(
     (total, line) => total + Math.max(1, Math.ceil(line.length / charsPerLine)),
@@ -373,21 +385,22 @@ function EqBlock({ item }: { item: EqItem }) {
       <div style={{ position: "relative", display: "inline-block" }}>
         <span
           ref={ref}
-          style={{ fontSize: "1.45rem", color: "#383838", display: "block", padding: "6px 4px" }}
+          style={{ fontSize: "1.45rem", color: "#383838", display: "block", padding: "2px 4px" }}
         />
 
         {item.annotation && (
           <span
             style={{
               position: "absolute",
-              left: "calc(100% + 10px)",
+              left: "calc(100% + 18px)",
               top: "50%",
               transform: "translateY(-50%)",
-              fontSize: 14,
-              fontStyle: "italic",
-              fontWeight: 500,
-              color: "oklch(0.55 0.16 25)",
+              fontSize: 13,
+              fontStyle: "normal",
+              fontWeight: 400,
+              color: "oklch(0.55 0.005 220)",
               whiteSpace: "nowrap",
+              letterSpacing: "0.01em",
             }}
           >
             {item.annotation}
@@ -467,6 +480,23 @@ function EqBlock({ item }: { item: EqItem }) {
 }
 
 // ── Main component ──────────────────────────────────────────────────────────
+function DotGridBackground() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        backgroundImage:
+          "radial-gradient(circle, oklch(75% 0.008 220) 1px, transparent 1px)",
+        backgroundSize: "16px 16px",
+        backgroundColor: "#ffffff",
+      }}
+    />
+  );
+}
+
+const TLDRAW_COMPONENTS: TLComponents = { Background: DotGridBackground };
+
 const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
   const editorRef = useRef<Editor | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -488,6 +518,9 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     raf: null,
     timeout: null,
   });
+  // Accumulates the union of focus rects during a burst of draws so the camera
+  // makes ONE move that frames everything just drawn, instead of thrashing.
+  const pendingFocusRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
 
   const colX = (col: "left" | "right") => col === "right" ? RIGHT_X : LEFT_X;
   const colY = (col: "left" | "right") => col === "right" ? rightY : leftY;
@@ -551,15 +584,17 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const isRightColumn = x >= RIGHT_X - 20;
       const hasRightColumnWork = rightY.current > pageTop.current + START_Y + ROW_GAP;
       const useTwoColumnFrame = isRightColumn || hasRightColumnWork;
+      const FOCUS_CTX = 120;
       const focusX = useTwoColumnFrame ? LEFT_X - 16 : x;
-      const focusY = useTwoColumnFrame
-        ? Math.max(pageTop.current, Math.min(y, pageTop.current + START_Y) - 54)
-        : Math.max(pageTop.current, y - 54);
+      const focusY = Math.max(pageTop.current, y - FOCUS_CTX);
+      // Frame the element's neighborhood. Track the actual content width instead
+      // of always spanning both full columns (the old RIGHT_X + 560 minimum is
+      // what forced the camera to zoom way out).
       const focusW = useTwoColumnFrame
-        ? Math.max(x + w - focusX, RIGHT_X + 560 - focusX)
+        ? Math.max(x + w - focusX, 700)
         : w;
       const focusH = useTwoColumnFrame
-        ? Math.max(h + 164, y + h - focusY + 96)
+        ? Math.max(h + FOCUS_CTX + 96, h + 164)
         : h + 108;
       const pad = 72 / zoom;
       const isVisible =
@@ -570,10 +605,27 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
 
       if (isVisible) return;
 
-      editor.zoomToBounds(
-        { x: focusX, y: focusY, w: focusW, h: focusH },
-        { targetZoom: 1, inset: 64, animation: { duration: 220 } },
-      );
+      // Coalesce a burst of draws: accumulate the union of focus rects and make a
+      // single camera move on the next frame, then clamp so text stays readable.
+      const rect: FocusRect = { x: focusX, y: focusY, w: focusW, h: focusH };
+      pendingFocusRef.current = pendingFocusRef.current
+        ? unionRect(pendingFocusRef.current, rect)
+        : rect;
+      if (focusDebounceRef.current.raf !== null) {
+        cancelAnimationFrame(focusDebounceRef.current.raf);
+      }
+      focusDebounceRef.current.raf = requestAnimationFrame(() => {
+        focusDebounceRef.current.raf = null;
+        const f = pendingFocusRef.current;
+        pendingFocusRef.current = null;
+        if (!f) return;
+        editor.zoomToBounds(f, { targetZoom: 1, inset: 64, animation: { duration: 220 } });
+        const MIN_ZOOM = 0.72;
+        if (editor.getZoomLevel() < MIN_ZOOM) {
+          const cam = editor.getCamera();
+          editor.setCamera({ ...cam, z: MIN_ZOOM }, { animation: { duration: 160 } });
+        }
+      });
     } catch {
       // Camera movement is a nicety; drawing should never fail because of it.
     }
@@ -581,6 +633,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
 
   // Cancel any pending post-batch focus and reset both raf/timeout handles.
   const cancelPendingFocus = useCallback(() => {
+    pendingFocusRef.current = null;
     if (focusDebounceRef.current.raf !== null) {
       cancelAnimationFrame(focusDebounceRef.current.raf);
       focusDebounceRef.current.raf = null;
@@ -733,7 +786,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
         size: "m",
         color,
         fill,
-        dash: options?.dash ?? "draw",
+        dash: options?.dash ?? "solid",
         font: options?.font ?? "draw",
         align: "middle",
         verticalAlign: "middle",
@@ -995,11 +1048,6 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       eqRef.current = [];
       setEqItems([]);
       semanticBoardRef.current = createEmptySemanticBoard(title);
-      createFreeformGeo(editor, "rectangle", 36, 12, 1168, 52, "light-blue", "semi", {
-        font: "sans",
-        dash: "draw",
-      });
-      createLine(editor, 44, 66, 1194, 66, "blue");
       editor.createShape({
         id: createShapeId(),
         type: "text",
@@ -1011,16 +1059,18 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
           font: "sans",
           color: "blue",
           textAlign: "start",
-          w: 1200,
+          w: 1120,
           autoSize: false,
           scale: 1,
         },
         meta: currentMeta(),
       });
-      focusOn(editor, 36, 12, 1168, 110);
+      const titleW = Math.min(720, Math.max(280, title.length * 22 + 40));
+      createLine(editor, LEFT_X, 62, LEFT_X + titleW, 62, "blue");
+      focusOn(editor, LEFT_X, HEADING_Y, titleW, 80);
       recordDirectSemanticAction(
         { type: "start_new_problem", title },
-        { bounds: { x: 36, y: 12, w: 1168, h: 110, column: "full", pageIndex: pageIndex.current } },
+        { bounds: { x: LEFT_X, y: HEADING_Y, w: titleW, h: 80, column: "full", pageIndex: pageIndex.current } },
       );
     },
 
@@ -1033,23 +1083,20 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       ensureColumnRoom(editor, "left", 60);
 
       const y = Math.max(leftY.current, rightY.current);
-      createFreeformGeo(editor, "rectangle", LEFT_X - 12, y - 6, 1144, 52, "light-violet", "semi", {
-        font: "draw",
-        dash: "draw",
-      });
       createText(editor, title, LEFT_X, y, {
         size: "l",
         font: "draw",
         color: "violet",
         width: 1120,
       });
-      createLine(editor, LEFT_X, y + 42, RIGHT_X + 520, y + 42, "violet");
+      const sectionW = Math.min(640, Math.max(240, title.length * 18 + 30));
+      createLine(editor, LEFT_X, y + 42, LEFT_X + sectionW, y + 42, "violet");
       leftY.current = y + 58;
       rightY.current = y + 58;
-      focusOn(editor, LEFT_X, y, 720, 70);
+      focusOn(editor, LEFT_X, y, sectionW, 60);
       recordDirectSemanticAction(
         { type: "start_section", title },
-        { bounds: { x: LEFT_X, y, w: 720, h: 70, column: "full", pageIndex: pageIndex.current } },
+        { bounds: { x: LEFT_X, y, w: sectionW, h: 60, column: "full", pageIndex: pageIndex.current } },
       );
     },
 
@@ -1057,14 +1104,14 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "left";
-      ensureColumnRoom(editor, col, EQ_H + ROW_GAP);
+      ensureColumnRoom(editor, col, EQ_H + EQ_ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const id = uid();
       const item: EqItem = { id, latex, annotation, x, y, meta: compactArtifactMeta(jobMetaRef.current) };
       eqRef.current = [...eqRef.current, item];
       setEqItems((prev) => [...prev, item]);
-      colY(col).current += EQ_H + ROW_GAP;
+      colY(col).current += EQ_H + EQ_ROW_GAP;
       focusOn(editor, x, y, 420, EQ_H);
       recordDirectSemanticAction(
         { type: "equation_sequence", steps: latex, annotations: annotation, column: col },
@@ -1445,13 +1492,16 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       if (!editor) return;
       const col = column ?? "left";
       const w = 560;
-      const h = Math.max(118, Math.ceil(body.length / 54) * 22 + 54);
+      const TITLE_H = 38;
+      const PADDING = 16;
+      const bodyLineCount = estimateWrappedLineCount(body.split("\n"), 46);
+      const h = Math.max(100, TITLE_H + bodyLineCount * 24 + PADDING * 2);
       ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       createBox(editor, x, y, w, h, "", "blue", "semi");
-      createText(editor, title, x + 16, y + 12, { color: "blue", size: "m", width: w - 32 });
-      createText(editor, body, x + 16, y + 44, { size: "m", width: w - 32 });
+      createText(editor, title, x + PADDING, y + PADDING, { color: "blue", size: "m", width: w - PADDING * 2 });
+      createText(editor, body, x + PADDING, y + TITLE_H + PADDING, { size: "m", width: w - PADDING * 2 });
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);
       recordDirectSemanticAction(
@@ -1465,13 +1515,16 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       if (!editor) return;
       const col = column ?? "left";
       const w = 560;
-      const h = Math.max(92, Math.ceil(text.length / 54) * 22 + 48);
+      const LABEL_H = 30;
+      const PADDING = 16;
+      const textLineCount = estimateWrappedLineCount(text.split("\n"), 46);
+      const h = Math.max(80, LABEL_H + textLineCount * 24 + PADDING * 2);
       ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       createBox(editor, x, y, w, h, "", "green", "semi");
-      createText(editor, "Student attempt", x + 16, y + 12, { color: "green", size: "s", font: "sans", width: w - 32 });
-      createText(editor, text, x + 16, y + 38, { size: "m", width: w - 32 });
+      createText(editor, "Student attempt", x + PADDING, y + PADDING, { color: "green", size: "s", font: "sans", width: w - PADDING * 2 });
+      createText(editor, text, x + PADDING, y + LABEL_H + PADDING, { size: "m", width: w - PADDING * 2 });
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);
       recordDirectSemanticAction(
@@ -1578,7 +1631,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const stepList = splitPipeList(steps ?? "");
       const annotationList = annotations ? splitPipeList(annotations) : [];
       const titleHeight = title ? 38 : 0;
-      const totalHeight = titleHeight + stepList.length * (EQ_H + ROW_GAP);
+      const totalHeight = titleHeight + stepList.length * (EQ_H + EQ_ROW_GAP);
       ensureColumnRoom(editor, col, totalHeight);
       const x = colX(col);
       let y = colY(col).current;
@@ -1594,7 +1647,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
           latex,
           annotation: annotationList[index],
           x,
-          y: y + index * (EQ_H + ROW_GAP),
+          y: y + index * (EQ_H + EQ_ROW_GAP),
           meta: compactArtifactMeta(jobMetaRef.current),
         };
         return item;
@@ -1603,7 +1656,12 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       if (items.length > 0) {
         eqRef.current = [...eqRef.current, ...items];
         setEqItems((prev) => [...prev, ...items]);
-        y = items[items.length - 1].y + EQ_H + ROW_GAP;
+        if (stepList.length >= 2) {
+          const firstY = items[0].y + 12;
+          const lastY = items[items.length - 1].y + EQ_H - 12;
+          createLine(editor, x - 14, firstY, x - 14, lastY, "light-violet");
+        }
+        y = items[items.length - 1].y + EQ_H + EQ_ROW_GAP;
       }
 
       colY(col).current = y;
@@ -2312,6 +2370,10 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       }
     },
 
+    getBoardSummary() {
+      return summarizeSemanticBoard(semanticBoardRef.current);
+    },
+
     loadSnapshot(snap: WhiteboardSnapshot) {
       const editor = editorRef.current;
       if (!editor || !snap) return;
@@ -2344,6 +2406,8 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       <Tldraw
         onMount={handleMount}
         hideUi
+        components={TLDRAW_COMPONENTS}
+        licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY}
       />
       <div
         ref={overlayRef}
