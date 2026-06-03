@@ -345,13 +345,18 @@ export class GeminiLiveSession {
   }
 
   private sendToolResponse(id: string, name: string, result: ToolCallResult) {
-    this.send({
+    const delivered = this.send({
       toolResponse: {
         functionResponses: [
           { id, name, response: { output: result } },
         ],
       },
     });
+    // If this fails, the socket was not open and the model never gets its tool
+    // response — it will hang waiting. Surface it so a freeze is diagnosable.
+    if (!delivered) {
+      this.debug("tool", "tool_response_undelivered", { id, name });
+    }
   }
 
   private nextId(): string {
@@ -441,6 +446,7 @@ export class GeminiLiveSession {
       // Model was interrupted by student speech — flush audio queue
       if (serverContent.interrupted) {
         console.log("[Gemini] Interrupted");
+        this.debug("turn", "interrupted");
         this.clearTurnTimer();
         this.tutorTurnText = "";
         this.callbacks.onInterrupted();
@@ -471,6 +477,7 @@ export class GeminiLiveSession {
       }
 
       if (serverContent.turnComplete === true) {
+        this.debug("turn", "turn_complete", { tutorChars: this.tutorTurnText.trim().length });
         this.finishTutorTurn();
       }
     }
