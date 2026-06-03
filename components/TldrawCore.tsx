@@ -619,11 +619,15 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
         const f = pendingFocusRef.current;
         pendingFocusRef.current = null;
         if (!f) return;
-        editor.zoomToBounds(f, { targetZoom: 1, inset: 64, animation: { duration: 220 } });
-        const MIN_ZOOM = 0.72;
-        if (editor.getZoomLevel() < MIN_ZOOM) {
-          const cam = editor.getCamera();
-          editor.setCamera({ ...cam, z: MIN_ZOOM }, { animation: { duration: 160 } });
+        try {
+          editor.zoomToBounds(f, { targetZoom: 1, inset: 64, animation: { duration: 220 } });
+          const MIN_ZOOM = 0.72;
+          if (editor.getZoomLevel() < MIN_ZOOM) {
+            const cam = editor.getCamera();
+            editor.setCamera({ ...cam, z: MIN_ZOOM }, { animation: { duration: 160 } });
+          }
+        } catch {
+          // Editor may be mid-teardown; a missed camera move is harmless.
         }
       });
     } catch {

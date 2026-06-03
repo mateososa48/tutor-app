@@ -33,6 +33,12 @@ function pickSize(value: string | undefined): "heading" | "body" | undefined {
   return undefined;
 }
 
+// Gemini sometimes double-escapes newlines in JSON, producing literal \n strings.
+// Normalize them to real newline characters before passing to tldraw.
+function normalizeText(s: string): string {
+  return s.replace(/\\n/g, "\n");
+}
+
 function pickHighlightStyle(value: string | undefined): "circle" | "underline" | "box" | undefined {
   if (value === "circle" || value === "underline" || value === "box") return value;
   return undefined;
@@ -88,7 +94,13 @@ export function dispatchWhiteboardTool(
       const column = optionalString(args, "column");
       if (isToolError(column)) return column;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: goal }, () =>
-        board.addProblemSetup(goal, givens, unknowns, plan, pickColumn(column)),
+        board.addProblemSetup(
+          goal,
+          givens ? normalizeText(givens) : givens,
+          unknowns ? normalizeText(unknowns) : unknowns,
+          plan ? normalizeText(plan) : plan,
+          pickColumn(column),
+        ),
       );
       return ok("Problem setup drawn.");
     }
@@ -135,7 +147,7 @@ export function dispatchWhiteboardTool(
       const column = optionalString(args, "column");
       if (isToolError(column)) return column;
       board.withDirectMeta({ owner: "tutor" }, () =>
-        board.addTextNote(text, pickSize(size), pickColumn(column)),
+        board.addTextNote(normalizeText(text), pickSize(size), pickColumn(column)),
       );
       return ok("Text note added.");
     }
@@ -154,7 +166,7 @@ export function dispatchWhiteboardTool(
       const column = optionalString(args, "column");
       if (isToolError(column)) return column;
       board.withDirectMeta({ owner: "tutor" }, () =>
-        board.addCallout(text, style as CalloutStyle, pickColumn(column)),
+        board.addCallout(normalizeText(text), style as CalloutStyle, pickColumn(column)),
       );
       return ok(`Callout (${style}) added.`);
     }
@@ -170,7 +182,7 @@ export function dispatchWhiteboardTool(
       // is the one calling the tool — preserve that semantic so neither agent
       // nor tutor accidentally overwrites student work.
       board.withDirectMeta({ owner: "student" }, () =>
-        board.addStudentAttempt(text, pickColumn(column)),
+        board.addStudentAttempt(normalizeText(text), pickColumn(column)),
       );
       return ok("Student attempt captured on board.");
     }
@@ -194,7 +206,7 @@ export function dispatchWhiteboardTool(
       const ok2 = board.withDirectMeta({ owner: "tutor" }, () =>
         board.highlightStep({ step_label: stepLabel, step_index: stepIndex }, resolvedStyle),
       );
-      if (!ok2) return fail("No matching equation step to highlight.");
+      if (!ok2) return fail("That step is not on the board, so nothing was highlighted. Write the point fresh with add_text_note or add_equation_sequence instead.");
       return ok("Step highlighted.");
     }
 
@@ -212,7 +224,7 @@ export function dispatchWhiteboardTool(
       const ok2 = board.withDirectMeta({ owner: "tutor" }, () =>
         board.crossOutStep({ step_label: stepLabel, step_index: stepIndex }),
       );
-      if (!ok2) return fail("No matching equation step to cross out.");
+      if (!ok2) return fail("That step is not on the board, so nothing was crossed out. Write the correction fresh with add_text_note or add_equation_sequence instead.");
       return ok("Step crossed out.");
     }
 
@@ -306,7 +318,7 @@ export function dispatchWhiteboardTool(
       const column = optionalString(args, "column");
       if (isToolError(column)) return column;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
-        board.addWorkedExampleBox(title, body, pickColumn(column)),
+        board.addWorkedExampleBox(title, normalizeText(body), pickColumn(column)),
       );
       return ok("Worked-example box drawn.");
     }
@@ -346,7 +358,7 @@ export function dispatchWhiteboardTool(
       const column = optionalString(args, "column");
       if (isToolError(column)) return column;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
-        board.addTwoColumnComparison(title, leftTitle, leftBody, rightTitle, rightBody, pickColumn(column)),
+        board.addTwoColumnComparison(title, leftTitle, normalizeText(leftBody), rightTitle, normalizeText(rightBody), pickColumn(column)),
       );
       return ok("Two-column comparison drawn.");
     }
