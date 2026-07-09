@@ -26,30 +26,32 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-// Captures mic audio and calls onChunk with base64 PCM at 16kHz
+// Captures mic audio and calls onChunk with base64 PCM at the requested sample rate
 export class AudioCapture {
   private audioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;
   // ScriptProcessorNode is deprecated but works for prototypes across all browsers
   private processor: ScriptProcessorNode | null = null;
   private onChunk: (base64: string) => void;
+  private sampleRate: number;
 
-  constructor(onChunk: (base64: string) => void) {
+  constructor(onChunk: (base64: string) => void, sampleRate = 16000) {
     this.onChunk = onChunk;
+    this.sampleRate = sampleRate;
   }
 
-  async start() {
-    this.stream = await navigator.mediaDevices.getUserMedia({
+  async start(existingStream?: MediaStream) {
+    this.stream = existingStream ?? await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
-        sampleRate: 16000,
+        sampleRate: this.sampleRate,
       },
       video: false,
     });
-    // Request 16kHz — browsers may round to the nearest supported rate
-    this.audioContext = new AudioContext({ sampleRate: 16000 });
+    // Browsers may round to the nearest supported rate.
+    this.audioContext = new AudioContext({ sampleRate: this.sampleRate });
     const source = this.audioContext.createMediaStreamSource(this.stream);
     this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
 
@@ -109,6 +111,10 @@ export class AudioPlayer {
     const startAt = Math.max(now, this.nextStartTime);
     source.start(startAt);
     this.nextStartTime = startAt + audioBuffer.duration;
+  }
+
+  getPendingDurationMs() {
+    return Math.max(0, this.nextStartTime - this.audioContext.currentTime) * 1000;
   }
 
   // Stop all scheduled/playing audio immediately (called on model interruption)

@@ -2,11 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { forwardRef } from "react";
-import type { WhiteboardHandle } from "./TldrawCore";
+import type { WhiteboardHandle, WhiteboardSnapshot } from "./TldrawCore";
 
-export type { WhiteboardHandle };
+export type { WhiteboardHandle, WhiteboardSnapshot };
 
-// tldraw touches window at import time — must be client-only
+// tldraw touches window at import time — must be client-only.
 const TldrawCore = dynamic(() => import("./TldrawCore"), {
   ssr: false,
   loading: () => (
