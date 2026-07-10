@@ -95,7 +95,9 @@ function SignInContent() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#FFFFFF",
+        background: "var(--paper)",
+        backgroundImage:
+          "radial-gradient(50vmax 50vmax at 20% -10%, var(--honey-glow), transparent 60%)",
         padding: 20,
       }}
     >
@@ -104,33 +106,28 @@ function SignInContent() {
         style={{
           width: "100%",
           maxWidth: 420,
-          background: "#fff",
+          background: "var(--surface)",
+          border: "1px solid var(--hairline)",
           borderRadius: 18,
-          boxShadow: "0 2px 6px rgba(0,0,0,0.06), 0 8px 32px rgba(0,0,0,0.08)",
+          boxShadow: "var(--shadow-float)",
           padding: "40px 36px 36px",
           animation: "card-in 0.3s cubic-bezier(0.22,1,0.36,1) both",
         }}
       >
         {/* Logo mark */}
-        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 32 }}>
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 9,
-              background: "#0a0a0a",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexShrink: 0,
-            }}
-          >
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M7 1.5L13 12.5H1L7 1.5Z" stroke="#fff" strokeWidth="1.2" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <span style={{ fontSize: 15, fontWeight: 600, color: "#0a0a0a", letterSpacing: "-0.01em" }}>
-            Tutor
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 32 }}>
+          <svg width="24" height="24" viewBox="0 0 22 22" aria-hidden>
+            <rect x="1" y="1" width="20" height="20" rx="6" fill="var(--ink)" />
+            <path
+              d="M6 13.5c2.2-4.6 4.2-6.9 5.4-6.4 1.3.5-1.8 6.4-.6 6.9 1 .4 2.6-1.6 4.6-3.4"
+              fill="none"
+              stroke="var(--honey)"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+            />
+          </svg>
+          <span style={{ fontSize: 16, fontWeight: 650, color: "var(--ink)", letterSpacing: "-0.02em" }}>
+            chalk
           </span>
         </div>
 
@@ -263,24 +260,14 @@ function SignInContent() {
           <button
             type="submit"
             disabled={loading}
+            className="btn-ink"
             style={{
               width: "100%",
               height: 44,
-              background: loading ? "#5a5a5a" : "#0a0a0a",
-              color: "#fff",
-              borderRadius: 10,
               fontSize: 14,
-              fontWeight: 600,
-              border: "none",
+              opacity: loading ? 0.6 : 1,
               cursor: loading ? "not-allowed" : "pointer",
-              transition: "background 0.15s",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
             }}
-            onMouseOver={(e) => !loading && (e.currentTarget.style.background = "#2a2a2a")}
-            onMouseOut={(e) => (e.currentTarget.style.background = loading ? "#5a5a5a" : "#0a0a0a")}
           >
             {loading && <Spinner />}
             {loading ? "Please wait…" : mode === "signin" ? "Sign in" : "Create account"}
