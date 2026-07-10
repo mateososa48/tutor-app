@@ -3,11 +3,17 @@
 import { AudioPlayer } from "./audio";
 import type { TutorVoiceName } from "./voice-settings";
 
-const API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 const MODEL = "gemini-3.1-flash-live-preview";
-const WS_URL = API_KEY
-  ? `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${API_KEY}`
-  : "";
+const WS_BASE =
+  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent";
+
+async function fetchEphemeralToken(): Promise<string> {
+  const res = await fetch("/api/live-token", { method: "POST" });
+  if (!res.ok) throw new Error(`live-token ${res.status}`);
+  const { token } = (await res.json()) as { token?: string };
+  if (!token) throw new Error("live-token empty");
+  return token;
+}
 
 type PreviewCallbacks = {
   onAudioStart?: () => void;
@@ -38,15 +44,10 @@ export function playTutorVoiceSample(
   sampleText: string,
   callbacks: PreviewCallbacks = {},
 ): VoicePreviewController {
-  if (!API_KEY || !WS_URL) {
-    callbacks.onError?.("Gemini API key is missing.");
-    return { stop: () => {} };
-  }
-
   const player = new AudioPlayer();
   player.resume();
 
-  const ws = new WebSocket(WS_URL);
+  let ws: WebSocket | null = null;
   let stopped = false;
   let audioStarted = false;
   let doneTimer: ReturnType<typeof setTimeout> | null = null;
@@ -55,7 +56,7 @@ export function playTutorVoiceSample(
     stopped = true;
     if (doneTimer) clearTimeout(doneTimer);
     try {
-      ws.close(1000, "voice preview stopped");
+      ws?.close(1000, "voice preview stopped");
     } catch {}
     player.close();
   };
@@ -67,7 +68,7 @@ export function playTutorVoiceSample(
       if (stopped) return;
       stopped = true;
       try {
-        ws.close(1000, "voice preview complete");
+        ws?.close(1000, "voice preview complete");
       } catch {}
       player.close();
       callbacks.onDone?.();
@@ -75,11 +76,25 @@ export function playTutorVoiceSample(
   };
 
   const send = (payload: unknown) => {
-    if (ws.readyState === WebSocket.OPEN) {
+    if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(payload));
     }
   };
 
+  fetchEphemeralToken()
+    .then((token) => {
+      if (stopped) return;
+      ws = new WebSocket(`${WS_BASE}?access_token=${encodeURIComponent(token)}`);
+      wireSocket(ws);
+    })
+    .catch(() => {
+      if (stopped) return;
+      stopped = true;
+      player.close();
+      callbacks.onError?.("The voice preview could not start.");
+    });
+
+  function wireSocket(ws: WebSocket) {
   ws.onopen = () => {
     send({
       setup: {
@@ -172,6 +187,7 @@ export function playTutorVoiceSample(
     player.close();
     callbacks.onError?.("The voice preview ended before audio arrived.");
   };
+  }
 
   return { stop };
 }

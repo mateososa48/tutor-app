@@ -12,9 +12,18 @@ import {
   type TutorState,
 } from "./tutor-state";
 
-const API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY!;
 const MODEL = "gemini-3.1-flash-live-preview";
-const WS_URL = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${API_KEY}`;
+// Ephemeral tokens are a v1alpha feature; the WS endpoint must match.
+const WS_BASE =
+  "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent";
+
+async function fetchEphemeralToken(): Promise<string> {
+  const res = await fetch("/api/live-token", { method: "POST" });
+  if (!res.ok) throw new Error(`live-token ${res.status}`);
+  const { token } = (await res.json()) as { token?: string };
+  if (!token) throw new Error("live-token empty");
+  return token;
+}
 
 export type TranscriptEntry = {
   role: "tutor" | "student";
@@ -89,8 +98,23 @@ export class GeminiLiveSession {
     this.openSocket();
   }
 
-  private openSocket(resumeHandle = this.sessionHandle) {
-    const ws = new WebSocket(WS_URL);
+  private async openSocket(resumeHandle = this.sessionHandle) {
+    let token: string;
+    try {
+      token = await fetchEphemeralToken();
+    } catch (err) {
+      console.error("[Gemini] Failed to mint live token:", err);
+      this.debug("error", "live_token_failed");
+      if (this.manualDisconnect) return;
+      if (this.scheduleReconnect("token mint failed")) return;
+      this.callbacks.onError(
+        "Couldn't reach your tutor. Check your internet connection and try again.",
+      );
+      return;
+    }
+    if (this.manualDisconnect) return;
+
+    const ws = new WebSocket(`${WS_BASE}?access_token=${encodeURIComponent(token)}`);
     this.ws = ws;
 
     console.log(
@@ -426,7 +450,7 @@ export class GeminiLiveSession {
       this.debug("error", "api_error", {
         error: msg.error,
       });
-      this.callbacks.onError(`Gemini error: ${JSON.stringify(msg.error)}`);
+      this.callbacks.onError("Your tutor hit a technical problem. Try reconnecting.");
       return;
     }
 
