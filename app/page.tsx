@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import LeftNav from "@/components/LeftNav";
-import { loadSessions, SavedSession, formatRelativeDate, formatDuration } from "@/lib/sessions";
+import { loadSessions, deleteSession, SavedSession, SessionStatus, formatRelativeDate, formatDuration } from "@/lib/sessions";
+import { useClientReady } from "@/lib/client-ready";
+import { useSession } from "next-auth/react";
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -21,14 +23,20 @@ function getFormattedDate(): string {
 }
 
 export default function HomePage() {
+  const mounted = useClientReady();
+  const { data: authSession } = useSession();
   const [sessions, setSessions] = useState<SavedSession[]>([]);
-  const [mounted, setMounted] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
-    setSessions(loadSessions());
-    setMounted(true);
-  }, []);
+    if (!mounted) return;
+    loadSessions(20).then(setSessions);
+  }, [mounted]);
+
+  async function handleDelete(id: string) {
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+    await deleteSession(id);
+  }
 
   return (
     <div
@@ -50,32 +58,17 @@ export default function HomePage() {
           className="h-14 px-7 flex items-center justify-between flex-shrink-0"
           style={{ borderBottom: "1px solid #d0d0d0" }}
         >
-          <span
-            className="text-[14px] font-semibold"
-            style={{ color: "#0a0a0a" }}
-          >
-            Tutor
+          <span className="text-[14px] font-semibold" style={{ color: "#0a0a0a" }}>
+            Home
           </span>
-          <div className="flex items-center gap-3">
-            <span className="text-[13px]" style={{ color: "#909090" }}>
-              {mounted ? getFormattedDate() : ""}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <TopBarBtn aria-label="Command palette">
-                <Kbd>⌘</Kbd>
-                <Kbd>K</Kbd>
-              </TopBarBtn>
-              <TopBarIconBtn aria-label="Help"><QuestionIcon /></TopBarIconBtn>
-              <TopBarIconBtn aria-label="More"><DotsIcon /></TopBarIconBtn>
-            </div>
-          </div>
+          <span className="text-[13px]" style={{ color: "#909090" }}>
+            {mounted ? getFormattedDate() : ""}
+          </span>
         </header>
 
         {/* Scrollable content */}
-        <div
-          className="flex-1 overflow-y-auto page-in"
-          style={{ padding: "44px 52px 60px" }}
-        >
+        <div className="flex-1 overflow-y-auto page-in" style={{ padding: "44px 52px 60px" }}>
+
           {/* ── Hero ── */}
           <section style={{ marginBottom: 52 }}>
             <h1
@@ -87,7 +80,9 @@ export default function HomePage() {
                 letterSpacing: "-0.02em",
               }}
             >
-              {mounted ? getGreeting() : ""}
+              {mounted
+                ? `${getGreeting()}${authSession?.user?.name ? `, ${authSession.user.name.split(" ")[0]}` : ""}`
+                : ""}
             </h1>
             <p style={{ fontSize: 15, color: "#5a5a5a", marginBottom: 28 }}>
               What would you like to work on today?
@@ -121,19 +116,26 @@ export default function HomePage() {
           </section>
 
           {/* ── Recent sessions ── */}
-          <section style={{ marginBottom: 44 }}>
-            <h2
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: "#909090",
-                textTransform: "uppercase",
-                letterSpacing: "0.09em",
-                marginBottom: 16,
-              }}
-            >
-              Recent sessions
-            </h2>
+          <section>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <h2
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "#909090",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.09em",
+                  margin: 0,
+                }}
+              >
+                Recent sessions
+              </h2>
+              {mounted && sessions.length > 0 && (
+                <span style={{ fontSize: 12, color: "#b0b0b0" }}>
+                  {sessions.length} session{sessions.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
 
             {!mounted ? null : sessions.length === 0 ? (
               <EmptyState onStart={() => router.push("/session")} />
@@ -150,102 +152,136 @@ export default function HomePage() {
                     key={s.id}
                     session={s}
                     onClick={() => router.push(`/session/${s.id}`)}
+                    onDelete={() => handleDelete(s.id)}
                   />
                 ))}
               </div>
             )}
           </section>
 
-          {/* ── Placeholder section for future features ── */}
-          <section>
-            <h2
-              style={{
-                fontSize: 11,
-                fontWeight: 600,
-                color: "#c0c0c0",
-                textTransform: "uppercase",
-                letterSpacing: "0.09em",
-                marginBottom: 16,
-              }}
-            >
-              Coming soon
-            </h2>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, 1fr)",
-                gap: 14,
-              }}
-            >
-              {["Practice problems", "Progress tracker", "Subject library"].map((label) => (
-                <div
-                  key={label}
-                  style={{
-                    border: "1px dashed #d0d0d0",
-                    borderRadius: 10,
-                    padding: "18px 20px",
-                    minHeight: 80,
-                    display: "flex",
-                    alignItems: "center",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 500,
-                      color: "#c0c0c0",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.07em",
-                    }}
-                  >
-                    {label}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
         </div>
       </main>
     </div>
   );
 }
 
+// ── Session card ──────────────────────────────────────────────────────────────
+
+const STATUS_DOT: Record<SessionStatus, string> = {
+  active: "#16a34a",
+  paused: "#d97706",
+  ended: "#c0c0c0",
+};
+
+const STATUS_LABEL: Record<SessionStatus, string> = {
+  active: "Active",
+  paused: "Paused",
+  ended: "Ended",
+};
+
 function SessionCard({
   session,
   onClick,
+  onDelete,
 }: {
   session: SavedSession;
   onClick: () => void;
+  onDelete: () => void;
 }) {
+  const [hovered, setHovered] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  function handleDeleteClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (confirmDelete) {
+      onDelete();
+    } else {
+      setConfirmDelete(true);
+      setTimeout(() => setConfirmDelete(false), 2500);
+    }
+  }
+
   return (
     <article
       onClick={onClick}
       title={session.title}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => { setHovered(false); setConfirmDelete(false); }}
       style={{
         border: "1px solid #d0d0d0",
         borderRadius: 10,
-        padding: "18px 20px",
+        padding: "16px 18px",
         cursor: "pointer",
         background: "#fff",
         transition: "background 0.12s, box-shadow 0.12s",
-      }}
-      onMouseOver={(e) => {
-        const el = e.currentTarget as HTMLElement;
-        el.style.background = "#f9f9f9";
-        el.style.boxShadow = "0 2px 8px rgba(0,0,0,0.06)";
-      }}
-      onMouseOut={(e) => {
-        const el = e.currentTarget as HTMLElement;
-        el.style.background = "#fff";
-        el.style.boxShadow = "none";
+        position: "relative",
+        boxShadow: hovered ? "0 2px 8px rgba(0,0,0,0.06)" : "none",
+        ...(hovered ? { background: "#f9f9f9" } : {}),
       }}
     >
+      {/* Status badge */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            height: 18,
+            padding: "0 7px",
+            background: "#f5f5f5",
+            border: "1px solid #e8e8e8",
+            borderRadius: 5,
+            fontSize: 10,
+            fontWeight: 600,
+            color: "#5a5a5a",
+            letterSpacing: "0.03em",
+          }}
+        >
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: STATUS_DOT[session.status], flexShrink: 0 }} />
+          {STATUS_LABEL[session.status]}
+        </span>
+
+        {/* Delete button — shows on hover */}
+        <button
+          onClick={handleDeleteClick}
+          title={confirmDelete ? "Click again to confirm" : "Delete session"}
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: 6,
+            border: confirmDelete ? "1px solid #fecaca" : "1px solid transparent",
+            background: confirmDelete ? "#fff1f2" : "transparent",
+            color: confirmDelete ? "#b91c1c" : "#b0b0b0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            opacity: hovered ? 1 : 0,
+            transition: "opacity 0.12s, background 0.12s, color 0.12s, border-color 0.12s",
+            pointerEvents: hovered ? "auto" : "none",
+            flexShrink: 0,
+          }}
+          onMouseOver={(e) => { if (!confirmDelete) { e.currentTarget.style.color = "#b91c1c"; e.currentTarget.style.background = "#fff1f2"; e.currentTarget.style.borderColor = "#fecaca"; } }}
+          onMouseOut={(e) => { if (!confirmDelete) { e.currentTarget.style.color = "#b0b0b0"; e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "transparent"; } }}
+        >
+          {confirmDelete ? (
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2 3h8M5 3V2h2v1M4.5 3v6.5h3V3" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
+      </div>
+
       <p
         style={{
           fontSize: 14,
           fontWeight: 600,
           color: "#0a0a0a",
-          marginBottom: 5,
+          marginBottom: 4,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
@@ -253,7 +289,7 @@ function SessionCard({
       >
         {session.title}
       </p>
-      <p style={{ fontSize: 13, color: "#5a5a5a", marginBottom: 3 }}>
+      <p style={{ fontSize: 12, color: "#5a5a5a", marginBottom: 2 }}>
         {formatRelativeDate(session.startedAt)}
       </p>
       <p style={{ fontSize: 12, color: "#909090" }}>
@@ -263,17 +299,10 @@ function SessionCard({
   );
 }
 
+// ── Empty state ───────────────────────────────────────────────────────────────
 function EmptyState({ onStart }: { onStart: () => void }) {
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        padding: "48px 0",
-        gap: 14,
-      }}
-    >
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "48px 0", gap: 14 }}>
       <p style={{ fontSize: 14, color: "#909090", margin: 0 }}>No sessions yet</p>
       <button
         onClick={onStart}
@@ -296,97 +325,5 @@ function EmptyState({ onStart }: { onStart: () => void }) {
         Start your first session
       </button>
     </div>
-  );
-}
-
-function TopBarBtn({
-  children,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: React.ReactNode }) {
-  return (
-    <button
-      className="h-8 px-2.5 flex items-center gap-1.5 rounded-md text-[12px] transition-colors duration-150"
-      style={{ color: "#5a5a5a" }}
-      onMouseOver={(e) => {
-        e.currentTarget.style.background = "#f0f0f0";
-        e.currentTarget.style.color = "#0a0a0a";
-      }}
-      onMouseOut={(e) => {
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = "#5a5a5a";
-      }}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-function TopBarIconBtn({
-  children,
-  ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { children: React.ReactNode }) {
-  return (
-    <button
-      className="h-8 w-8 flex items-center justify-center rounded-md transition-colors duration-150"
-      style={{ color: "#5a5a5a" }}
-      onMouseOver={(e) => {
-        e.currentTarget.style.background = "#f0f0f0";
-        e.currentTarget.style.color = "#0a0a0a";
-      }}
-      onMouseOut={(e) => {
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = "#5a5a5a";
-      }}
-      {...props}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <span
-      className="inline-flex items-center justify-center rounded"
-      style={{
-        minWidth: "1.25rem",
-        padding: "0 0.3rem",
-        height: "1.25rem",
-        fontSize: "0.6875rem",
-        fontWeight: 500,
-        color: "#909090",
-        background: "#f5f5f5",
-        border: "1px solid #d0d0d0",
-        borderBottomWidth: 1.5,
-        fontFamily: "inherit",
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function QuestionIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.25" />
-      <path
-        d="M6 6.4c.2-1.1 1-1.6 2-1.6 1.2 0 2 .9 2 1.9 0 .9-.6 1.4-1.3 1.7-.5.2-.7.5-.7 1V9.5M8 11.5v.05"
-        stroke="currentColor"
-        strokeWidth="1.25"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function DotsIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <circle cx="3" cy="8" r="1.1" fill="currentColor" />
-      <circle cx="8" cy="8" r="1.1" fill="currentColor" />
-      <circle cx="13" cy="8" r="1.1" fill="currentColor" />
-    </svg>
   );
 }

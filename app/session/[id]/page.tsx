@@ -283,9 +283,19 @@ function SessionDetailPage({ id }: { id: string }) {
   // ── Tool call handler ────────────────────────────────────────────────
   const handleToolCall = useCallback(
     (name: string, args: Record<string, unknown>): ToolCallResult => {
-      return dispatchWhiteboardTool(name, args, {
+      const result = dispatchWhiteboardTool(name, args, {
         whiteboard: whiteboardRef.current,
       });
+      if (result.success) {
+        const summary = whiteboardRef.current?.getBoardSummary?.();
+        if (summary) {
+          return {
+            success: true,
+            message: `${result.message ?? "Done"}.\n[Board: ${summary}]`,
+          };
+        }
+      }
+      return result;
     },
     [],
   );
@@ -761,7 +771,16 @@ function SessionDetailPage({ id }: { id: string }) {
       } else if (data.session.status === "ended") {
         setMode("review");
       } else {
-        setMode("lobby");
+        // Auto-resume: skip lobby, restore board and start voice immediately
+        isResumeRef.current = true;
+        void patchSession(id, { status: "active" });
+        void appendEvent(id, {
+          kind: "session.resumed",
+          actor: "system",
+          offsetMs: Math.max(0, Date.now() - data.session.startedAt),
+          payload: {},
+        });
+        setMode("live");
       }
     });
     return () => {
