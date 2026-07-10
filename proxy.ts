@@ -32,8 +32,10 @@ export async function proxy(request: NextRequest) {
     secureCookie: isSecure,
   });
 
-  // Not signed in → redirect to /signin
+  // Not signed in → the root shows the public landing page; everything else
+  // redirects to /signin
   if (!token) {
+    if (pathname === "/") return NextResponse.next();
     const url = request.nextUrl.clone();
     url.pathname = "/signin";
     return NextResponse.redirect(url);
