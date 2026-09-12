@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
       gradeLevel: "High school (9-12)",
       learningPrefs: {},
       extraContext: "QA testing account for tutor behavior checks.",
-      voiceName: "Kore",
+      voiceName: "marin",
       onboardedAt: now,
       updatedAt: now,
     })

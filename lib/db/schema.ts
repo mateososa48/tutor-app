@@ -64,7 +64,8 @@ export const userProfiles = pgTable("user_profiles", {
   gradeLevel: text("grade_level"),
   learningPrefs: jsonb("learning_prefs").default({}), // { hintVsAnswer, pace, examplesVsTheory, tone } all -1|0|1
   extraContext: text("extra_context"),
-  voiceName: text("voice_name").default("Kore"),
+  voiceName: text("voice_name").default("marin"),
+  tutorNotes: jsonb("tutor_notes").default([]), // string[] — durable facts recorded by the tutor
   onboardedAt: timestamp("onboarded_at"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

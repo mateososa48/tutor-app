@@ -224,7 +224,7 @@ export default function SettingsPage() {
                       <div style={{ minWidth: 0 }}>
                         <div style={{ width: 26, height: 4, borderRadius: 999, background: voice.color, marginBottom: 14 }} />
                         <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 5 }}>
-                          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 650, color: "#0a0a0a" }}>{voice.name}</h2>
+                          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 650, color: "#0a0a0a" }}>{voice.label}</h2>
                           <span style={{ fontSize: 12, color: "#909090", fontWeight: 600 }}>{voice.tone}</span>
                         </div>
                         <p style={{ margin: 0, fontSize: 12, lineHeight: 1.45, color: "#5a5a5a" }}>{voice.sampleText}</p>

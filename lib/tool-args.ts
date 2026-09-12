@@ -1,4 +1,4 @@
-import type { ToolCallResult } from "./gemini-live";
+import type { ToolCallResult } from "./live-types";
 
 export type { ToolCallResult };
 

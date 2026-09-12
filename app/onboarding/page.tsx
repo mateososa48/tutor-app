@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import { TUTOR_VOICES } from "@/lib/voice-settings";
 
 const GRADES = [
   "Middle school (6–8)",
@@ -11,14 +12,7 @@ const GRADES = [
   "Self-learner",
 ];
 
-const VOICES = [
-  { name: "Kore", label: "Kore", desc: "Warm & encouraging" },
-  { name: "Puck", label: "Puck", desc: "Energetic & friendly" },
-  { name: "Zephyr", label: "Zephyr", desc: "Calm & measured" },
-  { name: "Aoede", label: "Aoede", desc: "Clear & precise" },
-  { name: "Charon", label: "Charon", desc: "Deep & thoughtful" },
-  { name: "Sulafat", label: "Sulafat", desc: "Bright & articulate" },
-];
+const VOICES = TUTOR_VOICES.map((v) => ({ name: v.name, label: v.label, desc: v.tone }));
 
 const CONTEXT_PLACEHOLDERS = [
   "I'm preparing for the AP Calculus exam next month…",
@@ -55,7 +49,7 @@ export default function OnboardingPage() {
     gradeLevel: "",
     prefs: { hintVsAnswer: 0, pace: 0, examplesVsTheory: 0, tone: 0 },
     extraContext: "",
-    voiceName: "Kore",
+    voiceName: "marin",
   });
 
   function canAdvance(): boolean {

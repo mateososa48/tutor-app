@@ -83,7 +83,7 @@ export default function TutorDebugPanel({
   const toolErrors = events.filter(
     (event) => event.kind === "tool" && event.detail?.success === false,
   ).length;
-  const nudges = events.filter((event) => event.kind === "nudge").length;
+  const backendTurns = events.filter((event) => event.kind === "backend").length;
   const latestEvents = events.slice(-80).reverse();
 
   return (
@@ -157,7 +157,7 @@ export default function TutorDebugPanel({
           <Metric label="Files" value={fileCount} />
           <Metric label="Tools" value={toolSuccesses} />
           <Metric label="Errors" value={toolErrors} />
-          <Metric label="Nudges" value={nudges} />
+          <Metric label="Backend" value={backendTurns} />
         </div>
 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -242,7 +242,7 @@ function Metric({ label, value }: { label: string; value: number }) {
 function kindColor(kind: string): string {
   if (kind === "error") return "#b91c1c";
   if (kind === "tool") return "#2563eb";
-  if (kind === "nudge") return "#7c3aed";
+  if (kind === "backend") return "#7c3aed";
   if (kind === "transcript") return "#15803d";
   if (kind === "connection") return "#a16207";
   return "#5a5a5a";

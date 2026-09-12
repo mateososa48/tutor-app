@@ -4,7 +4,6 @@ import {
   fail,
   isToolError,
   ok,
-  optionalBoolean,
   optionalNumber,
   optionalString,
   requiredNumber,
@@ -72,10 +71,8 @@ export function dispatchWhiteboardTool(
       if (isToolError(board)) return board;
       const title = requiredString(args, "title");
       if (isToolError(title)) return title;
-      const freshPage = optionalBoolean(args, "fresh_page");
-      if (isToolError(freshPage)) return freshPage;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
-        board.startBoardSection(title, freshPage ?? false),
+        board.startBoardSection(title, false),
       );
       return ok(`Added section "${title}".`);
     }

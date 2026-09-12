@@ -40,7 +40,7 @@ export async function PUT(req: NextRequest) {
       gradeLevel: gradeLevel ?? null,
       learningPrefs: learningPrefs ?? {},
       extraContext: extraContext ?? null,
-      voiceName: voiceName ?? "Kore",
+      voiceName: voiceName ?? "marin",
       onboardedAt: now,
       updatedAt: now,
     })
@@ -51,7 +51,7 @@ export async function PUT(req: NextRequest) {
         gradeLevel: gradeLevel ?? null,
         learningPrefs: learningPrefs ?? {},
         extraContext: extraContext ?? null,
-        voiceName: voiceName ?? "Kore",
+        voiceName: voiceName ?? "marin",
         // preserve original onboardedAt — don't overwrite on profile edits
         updatedAt: now,
       },

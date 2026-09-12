@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, KeyboardEvent } from "react";
-import { TranscriptEntry } from "@/lib/gemini-live";
+import type { TranscriptEntry, TutorActivity } from "@/lib/live-types";
 import {
   UploadedFile,
   ACCEPTED_EXTENSIONS,
@@ -17,6 +17,8 @@ interface SidebarProps {
   transcript: TranscriptEntry[];
   isMuted: boolean;
   isTutorSpeaking: boolean;
+  /** What the teaching backend is doing between utterances. */
+  tutorActivity?: TutorActivity;
   files: UploadedFile[];
   errorMessage: string;
   fileNotice: string;
@@ -33,6 +35,7 @@ export default function Sidebar({
   transcript,
   isMuted,
   isTutorSpeaking,
+  tutorActivity = "idle",
   files,
   errorMessage,
   fileNotice,
@@ -395,7 +398,15 @@ export default function Sidebar({
                 className="text-[11px] font-semibold flex items-center gap-2"
                 style={{ color: "#5a5a5a" }}
               >
-                {isTutorSpeaking ? "Tutor speaking" : showTakeYourTime ? "Take your time…" : "Listening"}
+                {isTutorSpeaking
+                  ? "Tutor speaking"
+                  : tutorActivity === "writing"
+                  ? "Writing on the board…"
+                  : tutorActivity === "thinking"
+                  ? "Thinking…"
+                  : showTakeYourTime
+                  ? "Take your time…"
+                  : "Listening"}
               </span>
               {isTutorSpeaking && (
                 <div className="flex items-end gap-[3px] h-3.5" aria-label="audio level">

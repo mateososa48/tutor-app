@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from "./gemini-live";
+import type { TranscriptEntry } from "./live-types";
 
 export type { TranscriptEntry };
 

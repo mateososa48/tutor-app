@@ -9,9 +9,9 @@ import Sidebar from "@/components/Sidebar";
 import TutorDebugPanel from "@/components/TutorDebugPanel";
 import { SubtitleBar } from "@/components/SubtitleBar";
 import type { TutorDebugEvent } from "@/components/TutorDebugPanel";
-import { GeminiLiveSession } from "@/lib/gemini-live";
-import type { SessionCallbacks, TranscriptEntry, ToolCallResult } from "@/lib/gemini-live";
-import { AudioCapture, AudioPlayer } from "@/lib/audio";
+import { LiveTutorSession } from "@/lib/live-tutor";
+import type { LiveTutorCallbacks } from "@/lib/live-tutor";
+import type { TranscriptEntry, ToolCallResult, TutorActivity } from "@/lib/live-types";
 import {
   SavedSession,
   getSessionById,
@@ -24,8 +24,6 @@ import {
   formatDuration,
 } from "@/lib/sessions";
 import type { UploadedFile } from "@/lib/file-processor";
-import { buildStudentContext } from "@/lib/student-context";
-import type { StudentProfile } from "@/lib/student-context";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
@@ -34,6 +32,7 @@ type LiveState = "idle" | "connecting" | "active" | "ending" | "error";
 const TRANSCRIPT_MERGE_WINDOW_MS = 1200;
 const TRANSCRIPT_MAX_MERGED_CHARS = 700;
 const DEBUG_TRACE_LIMIT = 1000;
+const RESUME_HISTORY_TURNS = 24;
 
 function shouldMergeTranscript(last: TranscriptEntry | undefined, entry: TranscriptEntry): last is TranscriptEntry {
   if (!last || last.role !== entry.role) return false;
@@ -118,6 +117,7 @@ function SessionDetailPage({ id }: { id: string }) {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isTutorSpeaking, setIsTutorSpeaking] = useState(false);
+  const [tutorActivity, setTutorActivity] = useState<TutorActivity>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [sessionTitle, setSessionTitle] = useState("Session");
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -133,15 +133,11 @@ function SessionDetailPage({ id }: { id: string }) {
     };
   });
 
-  // live tutor + audio refs
-  const sessionRef = useRef<GeminiLiveSession | null>(null);
-  const captureRef = useRef<AudioCapture | null>(null);
-  const playerRef = useRef<AudioPlayer | null>(null);
+  // live tutor refs
+  const sessionRef = useRef<LiveTutorSession | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const subtitleAccumRef = useRef("");
-  const mutedRef = useRef(false);
   const whiteboardRef = useRef<WhiteboardHandle>(null);
   const intentionalDisconnectRef = useRef(false);
   const disconnectToErrorRef = useRef(false);
@@ -150,10 +146,7 @@ function SessionDetailPage({ id }: { id: string }) {
   const resumeInFlightRef = useRef(false);
   const pauseInFlightRef = useRef(false);
 
-  // student profile (fetched once, used when constructing the live tutor session)
-  const studentContextRef = useRef<string>("");
-
-  // sync refs (avoid stale closures in WS callbacks)
+  // sync refs (avoid stale closures in event callbacks)
   const sessionTitleRef = useRef("Session");
   const transcriptRef = useRef<TranscriptEntry[]>([]);
   const elapsedSecondsRef = useRef(0);
@@ -211,12 +204,16 @@ function SessionDetailPage({ id }: { id: string }) {
   }, [id]);
 
   // Keep refs synced
-  useEffect(() => { mutedRef.current = isMuted; }, [isMuted]);
   useEffect(() => { sessionTitleRef.current = sessionTitle; }, [sessionTitle]);
   useEffect(() => { transcriptRef.current = transcript; }, [transcript]);
   useEffect(() => { elapsedSecondsRef.current = elapsedSeconds; }, [elapsedSeconds]);
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { liveStateRef.current = liveState; }, [liveState]);
+
+  // Mute: disable the mic track locally and tell the Live session.
+  useEffect(() => {
+    sessionRef.current?.setMuted(isMuted);
+  }, [isMuted]);
 
   useEffect(() => {
     if (!debugMode || debugBootLoggedRef.current) return;
@@ -281,6 +278,8 @@ function SessionDetailPage({ id }: { id: string }) {
   }, [id]);
 
   // ── Tool call handler ────────────────────────────────────────────────
+  // Every successful board action returns the semantic board summary, so the
+  // teaching backend always knows what the student is actually looking at.
   const handleToolCall = useCallback(
     (name: string, args: Record<string, unknown>): ToolCallResult => {
       const result = dispatchWhiteboardTool(name, args, {
@@ -306,11 +305,13 @@ function SessionDetailPage({ id }: { id: string }) {
     noticeTimerRef.current = setTimeout(() => setFileNotice(""), 4200);
   }, []);
 
-  const cleanupAudio = useCallback(() => {
-    captureRef.current?.stop();
-    captureRef.current = null;
-    playerRef.current?.close();
-    playerRef.current = null;
+  const clearSubtitle = useCallback(() => {
+    if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
+    subtitleTimerRef.current = null;
+    setSubtitleText("");
+  }, []);
+
+  const cleanupTimers = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
     if (heartbeatRef.current) clearInterval(heartbeatRef.current);
@@ -318,6 +319,7 @@ function SessionDetailPage({ id }: { id: string }) {
     if (intervalSnapRef.current) clearInterval(intervalSnapRef.current);
     intervalSnapRef.current = null;
     setIsTutorSpeaking(false);
+    setTutorActivity("idle");
   }, []);
 
   const pauseLiveSession = useCallback(() => {
@@ -342,6 +344,10 @@ function SessionDetailPage({ id }: { id: string }) {
     const endedAt = Date.now();
     const dur = elapsedSecondsRef.current;
     persistSnapshot();
+    const live = sessionRef.current;
+    sessionRef.current = null;
+    // Graceful close first so the last transcript fragments flush into state.
+    await live?.end();
     await appendEvent(id, {
       kind: "session.ended",
       actor: "system",
@@ -354,16 +360,15 @@ function SessionDetailPage({ id }: { id: string }) {
       durationSec: dur,
       transcript: transcriptRef.current,
     });
-    sessionRef.current?.disconnect();
-    sessionRef.current = null;
-    cleanupAudio();
+    cleanupTimers();
+    clearSubtitle();
     liveStateRef.current = "idle";
     setLiveState("idle");
     setMode("review");
     // Refresh session record
     const fresh = await getSessionById(id);
     if (fresh) setSession(fresh.session);
-  }, [cleanupAudio, id, persistSnapshot]);
+  }, [cleanupTimers, clearSubtitle, id, persistSnapshot]);
 
   // ── Start (or resume) live session ───────────────────────────────────
   const startSession = useCallback(async () => {
@@ -396,15 +401,26 @@ function SessionDetailPage({ id }: { id: string }) {
     intentionalDisconnectRef.current = false;
     disconnectToErrorRef.current = false;
 
+    const failStart = (message: string, micStream: MediaStream | null) => {
+      micStream?.getTracks().forEach((t) => t.stop());
+      setErrorMessage(message);
+      intentionalDisconnectRef.current = true;
+      disconnectToErrorRef.current = true;
+      liveStateRef.current = "error";
+      startInFlightRef.current = false;
+      setLiveState("error");
+      cleanupTimers();
+    };
+
     // Request mic permission upfront so the browser prompt appears immediately,
     // before the live tutor connects. This makes "Try again" re-prompt right away.
-    let micStream: MediaStream | undefined;
+    let micStream: MediaStream | null = null;
     if (qaTextOnlyRef.current) {
       recordDebug("audio", "microphone_skipped", { reason: "qa_text_only" });
     } else {
       try {
         micStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 16000 },
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
           video: false,
         });
         recordDebug("audio", "microphone_ready");
@@ -417,35 +433,17 @@ function SessionDetailPage({ id }: { id: string }) {
         } catch { /* permissions API not available */ }
 
         recordDebug("error", "microphone_unavailable", { blocked });
-        setErrorMessage(
+        failStart(
           blocked
             ? "Microphone is blocked. Click the lock icon in your browser's address bar to allow mic access, then try again."
             : "Microphone access denied. Please allow mic access and try again.",
+          null,
         );
-        intentionalDisconnectRef.current = true;
-        disconnectToErrorRef.current = true;
-        liveStateRef.current = "error";
-        startInFlightRef.current = false;
-        setLiveState("error");
         return;
       }
     }
 
-    if (qaTextOnlyRef.current) {
-      playerRef.current = null;
-    } else {
-      const player = new AudioPlayer();
-      player.resume();
-      playerRef.current = player;
-    }
-
-    const callbacks: SessionCallbacks = {
-      onAudio: (base64) => {
-        if (qaTextOnlyRef.current) return;
-        setIsTutorSpeaking(true);
-        playerRef.current?.enqueue(base64);
-        setTimeout(() => setIsTutorSpeaking(false), 800);
-      },
+    const callbacks: LiveTutorCallbacks = {
       onTranscript: (entry) => {
         recordDebug("transcript", entry.role, {
           id: entry.id,
@@ -464,50 +462,24 @@ function SessionDetailPage({ id }: { id: string }) {
           transcriptRef.current = next;
           return next;
         });
-        if (entry.role === "tutor") {
-          subtitleAccumRef.current = subtitleAccumRef.current
-            ? subtitleAccumRef.current + " " + entry.text
-            : entry.text;
-          setSubtitleText(subtitleAccumRef.current);
-          if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
-          subtitleTimerRef.current = setTimeout(() => {
-            subtitleAccumRef.current = "";
-            setSubtitleText("");
-          }, 3500);
-        }
+      },
+      onCaption: (text) => {
+        setSubtitleText(text);
+        if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
+        subtitleTimerRef.current = setTimeout(() => {
+          subtitleTimerRef.current = null;
+          setSubtitleText("");
+        }, 3500);
       },
       onToolCall: handleToolCall,
-      onConnected: async () => {
+      onConnected: ({ resumed, expiresAt }) => {
         startInFlightRef.current = false;
         liveStateRef.current = "active";
         setLiveState("active");
-        recordDebug("connection", "live_session_active");
-        const greetingOk = isResumeRef.current
-          ? sessionRef.current?.sendResumeContext(
-              sessionTitleRef.current,
-              transcriptRef.current.slice(-6).map((e) => ({ role: e.role, text: e.text })),
-              filesRef.current,
-            )
-          : sessionRef.current?.sendInitialGreeting(filesRef.current);
-        recordDebug("session", "session_context_sent", {
-          kind: isResumeRef.current ? "resume" : "initial_start",
-          success: Boolean(greetingOk),
-          fileCount: filesRef.current.length,
-        });
-        if (!greetingOk) {
-          setErrorMessage("Connected, but the tutor was not ready to receive the greeting.");
-          pauseLiveSession();
-          intentionalDisconnectRef.current = true;
-          disconnectToErrorRef.current = true;
-          sessionRef.current?.disconnect();
-          sessionRef.current = null;
-          liveStateRef.current = "error";
-          startInFlightRef.current = false;
-          setLiveState("error");
-          cleanupAudio();
-          return;
-        }
+        setErrorMessage("");
+        recordDebug("connection", "live_session_active", { resumed, expiresAt });
         if (!isResumeRef.current) clearNewSessionUrlFlag();
+        if (timerRef.current) return; // reconnect: timers already running
         // Ticker for elapsed time
         timerRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
         // Heartbeat
@@ -518,51 +490,22 @@ function SessionDetailPage({ id }: { id: string }) {
         intervalSnapRef.current = setInterval(() => {
           persistSnapshot();
         }, 30_000);
-
-        if (qaTextOnlyRef.current) {
-          recordDebug("audio", "audio_capture_skipped", { reason: "qa_text_only" });
-          return;
-        }
-
-        try {
-          const capture = new AudioCapture((base64) => {
-            if (!mutedRef.current) {
-              sessionRef.current?.sendAudio(base64);
-            }
-          });
-          await capture.start(micStream);
-          captureRef.current = capture;
-          recordDebug("audio", "audio_capture_started");
-        } catch {
-          recordDebug("error", "audio_capture_failed");
-          setErrorMessage("Microphone error. Please try again.");
-          intentionalDisconnectRef.current = true;
-          disconnectToErrorRef.current = true;
-          pauseLiveSession();
-          sessionRef.current?.disconnect();
-          sessionRef.current = null;
-          cleanupAudio();
-          liveStateRef.current = "error";
-          startInFlightRef.current = false;
-          setLiveState("error");
-        }
       },
-      onInterrupted: () => {
-        recordDebug("session", "tutor_interrupted");
-        playerRef.current?.flush();
+      onReconnecting: (attempt) => {
+        recordDebug("connection", "live_session_reconnecting", { attempt });
+        clearSubtitle();
         setIsTutorSpeaking(false);
-        if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
-        subtitleAccumRef.current = "";
-        setSubtitleText("");
+        setTutorActivity("idle");
+        liveStateRef.current = "connecting";
+        setLiveState("connecting");
       },
-      onDisconnected: () => {
+      onDisconnected: (reason) => {
         recordDebug("connection", "live_session_disconnected", {
           intentional: intentionalDisconnectRef.current,
+          reason,
         });
-        if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
-        subtitleAccumRef.current = "";
-        setSubtitleText("");
-        cleanupAudio();
+        clearSubtitle();
+        cleanupTimers();
         sessionRef.current = null;
         startInFlightRef.current = false;
         if (intentionalDisconnectRef.current) {
@@ -583,22 +526,48 @@ function SessionDetailPage({ id }: { id: string }) {
         setErrorMessage(msg);
         liveStateRef.current = "error";
         setLiveState("error");
-        cleanupAudio();
+        clearSubtitle();
+        cleanupTimers();
         startInFlightRef.current = false;
-        sessionRef.current?.disconnect();
+        const live = sessionRef.current;
         sessionRef.current = null;
+        void live?.end();
+      },
+      onSpeakingChange: (speaking) => {
+        setIsTutorSpeaking(speaking);
+      },
+      onActivity: (activity) => {
+        setTutorActivity(activity);
       },
       onDebugEvent: (event) => {
         recordDebug(event.kind, event.message, event.payload);
       },
     };
 
-    const liveSession = new GeminiLiveSession(callbacks, studentContextRef.current);
+    const live = new LiveTutorSession(callbacks);
+    sessionRef.current = live;
+    recordDebug("connection", "live_provider_selected", { provider: "gpt-live-1" });
 
-    sessionRef.current = liveSession;
-    recordDebug("connection", "live_provider_selected", { provider: "gemini-live" });
-    liveSession.connect();
-  }, [cleanupAudio, clearNewSessionUrlFlag, handleToolCall, id, pauseLiveSession, persistSnapshot, recordDebug]);
+    try {
+      await live.start({
+        mode: isResumeRef.current ? "resume" : "new",
+        micStream,
+        files: filesRef.current,
+        history: transcriptRef.current
+          .slice(-RESUME_HISTORY_TURNS)
+          .map((e) => ({ role: e.role, text: e.text })),
+        sessionTitle: sessionTitleRef.current,
+        getBoardSummary: () => whiteboardRef.current?.getBoardSummary?.() ?? "",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Couldn't start the session. Please try again.";
+      recordDebug("error", "live_start_failed", { message });
+      sessionRef.current = null;
+      void live.end();
+      pauseLiveSession();
+      failStart(message, null);
+    }
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, id, pauseLiveSession, persistSnapshot, recordDebug]);
 
   const handleAddFiles = useCallback(
     (newFiles: UploadedFile[]) => {
@@ -697,12 +666,14 @@ function SessionDetailPage({ id }: { id: string }) {
         sendPauseBeacon(id);
       }
       intentionalDisconnectRef.current = true;
-      sessionRef.current?.disconnect();
+      const live = sessionRef.current;
       sessionRef.current = null;
-      cleanupAudio();
+      void live?.end();
+      cleanupTimers();
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+      if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
     };
-  }, [cleanupAudio, id]);
+  }, [cleanupTimers, id]);
 
   // ── Initial load ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -715,14 +686,6 @@ function SessionDetailPage({ id }: { id: string }) {
       initialIsNewRef.current = searchParams.get("new") === "1";
     }
     const isNew = initialIsNewRef.current;
-
-    // Fetch profile for student context injection (fire-and-forget alongside session)
-    fetch("/api/onboarding")
-      .then((r) => r.ok ? r.json() : null)
-      .then((profile: StudentProfile | null) => {
-        if (!cancelled) studentContextRef.current = buildStudentContext(profile);
-      })
-      .catch(() => {});
 
     getSessionById(id).then((data) => {
       if (cancelled) return;
@@ -979,6 +942,7 @@ function SessionDetailPage({ id }: { id: string }) {
         transcript={transcript}
         isMuted={isMuted}
         isTutorSpeaking={isTutorSpeaking}
+        tutorActivity={tutorActivity}
         files={files}
         errorMessage={errorMessage}
         fileNotice={fileNotice}

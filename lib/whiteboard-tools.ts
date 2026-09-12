@@ -43,18 +43,13 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "start_board_section",
     description:
-      "Write a section divider/subheading on the existing board WITHOUT clearing. Use this when continuing the same problem but moving to a new phase (e.g. 'Now solve for x', 'Check the answer', 'Try a similar problem'). If the board is getting full, set fresh_page=true to start a new page below.",
+      "Write a section divider/subheading on the existing board WITHOUT clearing. Use this when continuing the same problem but moving to a new phase (e.g. 'Now solve for x', 'Check the answer', 'Try a similar problem'). The canvas is infinite — content keeps flowing downward, so there is never a need to 'make room'.",
     parameters: {
       type: "object",
       properties: {
         title: {
           type: "string",
           description: "Short subheading text, 160 chars or fewer.",
-        },
-        fresh_page: {
-          type: "boolean",
-          description:
-            "If true, advance to a fresh page below the current content before writing the heading. Use when the current page is full or when starting a logically separate phase.",
         },
       },
       required: ["title"],
@@ -97,7 +92,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "add_equation_sequence",
     description:
-      "Render a sequence of equation steps as a vertically stacked block — the workhorse for any multi-step derivation, algebra, or worked calculation. ALWAYS prefer this over multiple draw_equation_step calls when you have 2+ related steps. Renders synchronously, so the student sees the full derivation immediately. Pair with annotations to explain each step.",
+      "Render several equation steps as one vertically stacked block. Use it for a compact recap of steps the student has ALREADY worked through with you, or for a worked parallel example they can compare against. Do NOT use it to show the student steps they have not reached yet — for the single next line in a live derivation use draw_equation_step. Renders instantly. Pair with annotations to label each step.",
     parameters: {
       type: "object",
       properties: {
@@ -127,7 +122,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "draw_equation_step",
     description:
-      "Write a SINGLE equation line on the board. Use ONLY when you genuinely want one step at a time (e.g. interactive 'what's the next step?'). For any pre-planned derivation with 2+ steps, use add_equation_sequence instead.",
+      "Write ONE equation line on the board. This is the default move while solving a problem live with the student: write the single next line as they reach it, then stop and let them take the next step. Only fall back to add_equation_sequence for recapping steps already covered or for a worked parallel example.",
     parameters: {
       type: "object",
       properties: {
@@ -515,7 +510,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         connectors: {
           type: "string",
           description:
-            "Optional newline-separated labels for each arrow between nodes. Count must be (nodes - 1). Leave blank for unlabeled arrows. 400 chars max.",
+            "Optional pipe-separated labels for each arrow between nodes, in order, e.g. 'heat | pressure | time'. Count should be (nodes - 1). Leave blank for unlabeled arrows. 400 chars max.",
         },
         column: {
           type: "string",
@@ -538,7 +533,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "remember_about_student",
     description:
-      "Record a durable fact about THIS student so you don't lose it over a long session — a misconception, what just clicked, their comfort level, or their grade-appropriate pace. Keep each note short. This does not draw anything; it only updates your memory.",
+      "Record a durable fact about THIS student that will matter in future sessions — a misconception, what finally made something click, a topic they have mastered, or a preference. Notes persist across sessions and are shown to you at the start of every session. Keep each note to one short sentence, and only record things worth remembering next week. This does not draw anything.",
     parameters: {
       type: "object",
       properties: {
@@ -552,3 +547,24 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
     },
   },
 ];
+
+// ── OpenAI Responses function-tool format ──────────────────────────────────
+// The declarations above are the single source of truth. GPT-Live's Responses
+// backend takes the same JSON-schema `parameters`, wrapped as a function tool.
+export type OpenAIFunctionTool = {
+  type: "function";
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  strict: false;
+};
+
+export const WHITEBOARD_FUNCTION_TOOLS: OpenAIFunctionTool[] = WHITEBOARD_TOOL_DECLARATIONS.map(
+  (decl) => ({
+    type: "function",
+    name: decl.name,
+    description: decl.description,
+    parameters: decl.parameters as Record<string, unknown>,
+    strict: false,
+  }),
+);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, KeyboardEvent } from "react";
-import { TranscriptEntry } from "@/lib/gemini-live";
+import type { TranscriptEntry } from "@/lib/live-types";
 import {
   UploadedFile,
   ACCEPTED_EXTENSIONS,
