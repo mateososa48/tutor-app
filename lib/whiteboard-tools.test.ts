@@ -18,6 +18,24 @@ test("every whiteboard tool converts to a valid Responses function tool", () => 
   assert.ok(names.has("draw_equation_step"));
 });
 
+test("the picture tools exist and require the arguments the renderer needs", () => {
+  const byName = new Map(WHITEBOARD_FUNCTION_TOOLS.map((t) => [t.name, t]));
+  const required = (name: string) => ((byName.get(name)!.parameters as { required?: string[] }).required ?? []).slice().sort();
+  assert.deepEqual(required("draw_fraction"), ["fraction"]);
+  assert.deepEqual(required("add_number_line"), ["max", "min"]);
+  assert.deepEqual(required("draw_figure"), ["figure"]);
+  assert.deepEqual(required("draw_angle"), ["degrees"]);
+  assert.deepEqual(required("draw_array"), ["columns", "rows"]);
+  assert.deepEqual(required("add_area_model"), ["cells", "column_labels", "row_labels", "title"]);
+  assert.deepEqual(required("draw_balance"), ["left", "right"]);
+  assert.deepEqual(required("draw_bar_chart"), ["categories", "values"]);
+  assert.deepEqual(required("draw_sketch"), ["strokes"]);
+  const line = (byName.get("add_number_line")!.parameters as { properties: Record<string, unknown> }).properties;
+  assert.ok("step" in line && "intervals" in line && "jumps" in line, "number line grew step, intervals and jumps");
+  assert.match(byName.get("add_text_note")!.description, /never use text to describe a picture/i);
+  assert.match(byName.get("draw_fraction")!.description, /never describe a fraction picture in words/i);
+});
+
 test("dead board parameters are gone from the schema", () => {
   const section = WHITEBOARD_FUNCTION_TOOLS.find((t) => t.name === "start_board_section")!;
   const props = (section.parameters as { properties: Record<string, unknown> }).properties;

@@ -9,8 +9,15 @@ export type WhiteboardToolName =
   | "add_student_attempt"
   | "highlight_step"
   | "cross_out_step"
-  | "add_table"
+  | "draw_fraction"
   | "add_number_line"
+  | "draw_figure"
+  | "draw_angle"
+  | "draw_array"
+  | "add_area_model"
+  | "draw_balance"
+  | "draw_bar_chart"
+  | "add_table"
   | "add_coordinate_axes"
   | "plot_points"
   | "add_worked_example_box"
@@ -18,23 +25,29 @@ export type WhiteboardToolName =
   | "add_two_column_comparison"
   | "add_vector_diagram"
   | "add_process_map"
+  | "draw_sketch"
   | "clear_whiteboard";
 
 export type CalloutStyle = "hint" | "correct" | "wrong" | "warning" | "important" | "remember";
 
+const COLUMN = {
+  type: "string",
+  enum: ["left", "right"],
+  description: "Which column of the board. Default 'left'. Use 'right' to sit a picture beside the equations.",
+} as const;
+
 export const WHITEBOARD_TOOL_DECLARATIONS = [
-  // ── Direct templated tools (synchronous, no LLM round-trip) ───────────────
+  // ── Structure ─────────────────────────────────────────────────────────────
   {
     name: "start_new_problem",
     description:
-      "Clears the whiteboard AND writes a bold heading at the top. Use this every time you start a new problem, example, or topic — it both erases the board and titles the new section in one call. Strongly preferred over calling clear_whiteboard manually. Renders synchronously; safe to follow immediately with more board calls.",
+      "Clear the board and write a heading. Use it every time the problem or topic changes. Prefer this over clear_whiteboard.",
     parameters: {
       type: "object",
       properties: {
         title: {
           type: "string",
-          description:
-            "Short title for the new problem or topic, 160 chars or fewer (e.g. 'Factoring x² + 5x + 6', 'Newton's second law', 'Example 2: chain rule').",
+          description: "Short heading, 160 chars or fewer, e.g. 'Solving 2x + 3 = 11', 'One half', 'Forces on a sled'.",
         },
       },
       required: ["title"],
@@ -43,14 +56,11 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "start_board_section",
     description:
-      "Write a section divider/subheading on the existing board WITHOUT clearing. Use this when continuing the same problem but moving to a new phase (e.g. 'Now solve for x', 'Check the answer', 'Try a similar problem'). The canvas is infinite — content keeps flowing downward, so there is never a need to 'make room'.",
+      "Write a subheading further down the same board, without clearing. Use when the same problem moves to a new phase ('Check the answer', 'Your turn'). The canvas is infinite; never clear to make room.",
     parameters: {
       type: "object",
       properties: {
-        title: {
-          type: "string",
-          description: "Short subheading text, 160 chars or fewer.",
-        },
+        title: { type: "string", description: "Short subheading, 160 chars or fewer." },
       },
       required: ["title"],
     },
@@ -58,159 +68,71 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "add_problem_setup",
     description:
-      "Lay out a structured 'Goal / Givens / Unknowns / Plan' block at the top of a new problem. Use this near the start of any non-trivial problem to make the setup explicit before computation. Especially valuable for word problems, physics, and multi-step algebra.",
+      "A boxed 'Goal / Givens / Unknown / Plan' block. Use at the start of word problems, physics, and multi-step algebra so the setup is explicit before any computation.",
     parameters: {
       type: "object",
       properties: {
-        goal: {
-          type: "string",
-          description: "One-line statement of what we're solving for, 320 chars or fewer.",
-        },
+        goal: { type: "string", description: "What we are solving for, one line, 320 chars max." },
         givens: {
           type: "string",
-          description:
-            "Optional pipe-separated list of given facts, e.g. 'v0 = 5 m/s | a = 9.8 m/s² | t = 2 s'. 800 chars max.",
+          description: "Optional pipe-separated facts, e.g. 'v0 = 5 m/s | a = 9.8 m/s² | t = 2 s'. 800 chars max.",
         },
-        unknowns: {
-          type: "string",
-          description: "Optional comma-separated unknowns, e.g. 'final position, time of flight'. 320 chars max.",
-        },
-        plan: {
-          type: "string",
-          description:
-            "Optional one-line strategy, e.g. 'Use kinematic equation v = v0 + a t, then plug in.' 600 chars max.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Which column to place this in. Default 'left'.",
-        },
+        unknowns: { type: "string", description: "Optional comma-separated unknowns. 320 chars max." },
+        plan: { type: "string", description: "Optional one-line strategy. 600 chars max." },
+        column: COLUMN,
       },
       required: ["goal"],
     },
   },
-  {
-    name: "add_equation_sequence",
-    description:
-      "Render several equation steps as one vertically stacked block. Use it for a compact recap of steps the student has ALREADY worked through with you, or for a worked parallel example they can compare against. Do NOT use it to show the student steps they have not reached yet — for the single next line in a live derivation use draw_equation_step. Renders instantly. Pair with annotations to label each step.",
-    parameters: {
-      type: "object",
-      properties: {
-        steps: {
-          type: "string",
-          description:
-            "Pipe-separated LaTeX steps WITHOUT $$ delimiters, e.g. 'x^2 + 5x + 6 = 0 | (x+2)(x+3) = 0 | x = -2 \\text{ or } x = -3'. Each step becomes one row. 1600 chars max.",
-        },
-        annotations: {
-          type: "string",
-          description:
-            "Optional pipe-separated short italic notes paired one-to-one with steps, e.g. 'factor | zero-product property | solve each factor'. Use empty slots for unannotated steps: 'factor || solve'. 800 chars max.",
-        },
-        title: {
-          type: "string",
-          description: "Optional short title above the sequence, e.g. 'Solving the quadratic'. 160 chars max.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'. Use 'right' for parallel work or alternate forms.",
-        },
-      },
-      required: ["steps"],
-    },
-  },
+
+  // ── Equations ─────────────────────────────────────────────────────────────
   {
     name: "draw_equation_step",
     description:
-      "Write ONE equation line on the board. This is the default move while solving a problem live with the student: write the single next line as they reach it, then stop and let them take the next step. Only fall back to add_equation_sequence for recapping steps already covered or for a worked parallel example.",
+      "Write ONE equation line in typeset math. The default move while solving live: write the single next line as the student reaches it, then stop and let them take the next step.",
     parameters: {
       type: "object",
       properties: {
-        latex: {
-          type: "string",
-          description: "The LaTeX expression without $$ delimiters, e.g. 'x^2 + 5x + 6 = 0'. 600 chars max.",
-        },
+        latex: { type: "string", description: "LaTeX without $$ delimiters, e.g. '2x = 8', '\\frac{3}{4} + \\frac{1}{4}'. 600 chars max." },
         annotation: {
           type: "string",
-          description:
-            "Optional 2-6 word italic pencil note shown beside the equation, e.g. 'factor', 'subtract 2 from both sides', 'discriminant > 0'. 160 chars max.",
+          description: "Optional 2-6 word note beside the line, e.g. 'subtract 3 from both sides'. 160 chars max.",
         },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'. Use 'right' for parallel work, comparisons, or pairing with a graph.",
-        },
+        column: COLUMN,
       },
       required: ["latex"],
     },
   },
   {
-    name: "add_text_note",
+    name: "add_equation_sequence",
     description:
-      "Write plain text on the board. Use frequently to label sections, capture a concept in words, or write a one-line takeaway after a derivation. Pick 'heading' for a section title or 'body' for everything else.",
+      "Several equation lines as one stacked block. Only for recapping steps the student has ALREADY worked through, or a worked parallel example. Never for steps they have not reached: use draw_equation_step for the live next line.",
     parameters: {
       type: "object",
       properties: {
-        text: {
+        steps: {
           type: "string",
-          description: "Text to write, 1200 chars max.",
+          description: "Pipe-separated LaTeX lines without $$, e.g. 'x^2 + 5x + 6 = 0 | (x+2)(x+3) = 0 | x = -2 \\text{ or } x = -3'. 1600 chars max.",
         },
-        size: {
+        annotations: {
           type: "string",
-          enum: ["heading", "body"],
-          description: "'heading' = larger bold title. 'body' = regular note. Default 'body'.",
+          description: "Optional pipe-separated notes, one per step; leave a slot empty to skip: 'factor || solve'. 800 chars max.",
         },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'.",
-        },
+        title: { type: "string", description: "Optional short title above the block. 160 chars max." },
+        column: COLUMN,
       },
-      required: ["text"],
-    },
-  },
-  {
-    name: "add_callout",
-    description:
-      "Drop a colored sticky-note callout using a semantic style — the system picks the right color automatically. Use for: hints (yellow), correct answers (green), errors/misconceptions (red), warnings about common mistakes (orange), key concepts or definitions (violet), formulas to remember (light-blue). Text is rendered in handwriting font. The note grows with content.",
-    parameters: {
-      type: "object",
-      properties: {
-        text: {
-          type: "string",
-          description: "The callout text. Keep it short and glanceable — 400 chars max. A sticky note, not a paragraph.",
-        },
-        style: {
-          type: "string",
-          enum: ["hint", "correct", "wrong", "warning", "important", "remember"],
-          description:
-            "'hint' = yellow nudge. 'correct' = green success. 'wrong' = red error. 'warning' = orange caution. 'important' = violet key concept. 'remember' = light-blue formula/rule.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'. Use 'right' to place next to equations.",
-        },
-      },
-      required: ["text", "style"],
+      required: ["steps"],
     },
   },
   {
     name: "add_student_attempt",
     description:
-      "Capture what the student SAID or TRIED on the board, visually marked as the student's work (not the tutor's). Use this every time the student gives a substantive answer or attempt — right or wrong — so it becomes part of the visible reasoning. Pair with highlight_step (when right) or cross_out_step + draw_equation_step (when wrong) for feedback.",
+      "Write what the student SAID or TRIED, in their own handwriting style and marked as theirs. Use every time they give a substantive answer, right or wrong. Follow with highlight_step (right) or cross_out_step plus the corrected line (wrong).",
     parameters: {
       type: "object",
       properties: {
-        text: {
-          type: "string",
-          description: "The student's attempt verbatim or paraphrased, 1200 chars max.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'.",
-        },
+        text: { type: "string", description: "The attempt, verbatim or lightly paraphrased. 1200 chars max." },
+        column: COLUMN,
       },
       required: ["text"],
     },
@@ -218,24 +140,16 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "highlight_step",
     description:
-      "Mark an existing equation/step on the board with a circle, underline, or dashed box to draw attention to it. Use sparingly — only when emphasis genuinely helps (e.g. 'this is the key insight', 'notice this term cancels'). Prefer the step_label form: identify the step by a fragment of its LaTeX or its tutorReferenceLabel.",
+      "Ring, underline, or box an equation line that is already on the board. Sparingly: 'this is the key line', 'notice this cancels'.",
     parameters: {
       type: "object",
       properties: {
         step_label: {
           type: "string",
-          description:
-            "PREFERRED. A unique substring of the target step's LaTeX (e.g. 'x=4', '(x+2)(x+3)') OR an exact match of its tutorReferenceLabel. Resolved newest-first, case-insensitive. 200 chars max. Use step_index ONLY when label-matching is impractical.",
+          description: "PREFERRED. A unique fragment of the line's LaTeX, e.g. 'x=4'. Newest match wins. 200 chars max.",
         },
-        step_index: {
-          type: "number",
-          description: "Fallback only. Zero-based positional index into the equation list (0 = first equation drawn). Prefer step_label — positional indices drift when new equations are added.",
-        },
-        style: {
-          type: "string",
-          enum: ["circle", "underline", "box"],
-          description: "'circle' = hand-drawn ring. 'underline' = line beneath. 'box' = dashed rectangle around it.",
-        },
+        step_index: { type: "number", description: "Fallback only: zero-based index of the equation line." },
+        style: { type: "string", enum: ["circle", "underline", "box"], description: "'circle' = hand-drawn ring, 'underline', 'box' = dashed box." },
       },
       required: ["style"],
     },
@@ -243,89 +157,189 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "cross_out_step",
     description:
-      "Draw a strikethrough through an existing step. Use when correcting a visible mistake, marking a wrong attempt, or showing 'this path doesn't work — let's try another'. Usually paired with add_student_attempt (capture the mistake) and draw_equation_step or add_equation_sequence (the correct continuation). Prefer step_label (a unique substring of the equation's LaTeX, e.g. 'x=4') over step_index; step_index is fallback only.",
+      "Strike through an equation line that is already on the board: a wrong attempt, or a path that does not work. Usually paired with add_student_attempt before and the corrected line after.",
     parameters: {
       type: "object",
       properties: {
-        step_label: {
-          type: "string",
-          description:
-            "PREFERRED. A unique substring of the target step's LaTeX OR an exact tutorReferenceLabel. Resolved newest-first, case-insensitive. 200 chars max.",
-        },
-        step_index: {
-          type: "number",
-          description: "Fallback only. Zero-based positional index. Prefer step_label.",
-        },
+        step_label: { type: "string", description: "PREFERRED. A unique fragment of the line's LaTeX. 200 chars max." },
+        step_index: { type: "number", description: "Fallback only: zero-based index." },
       },
       required: [],
     },
   },
+
+  // ── Pictures (use these whenever an idea has a picture) ───────────────────
   {
-    name: "add_table",
+    name: "draw_fraction",
     description:
-      "Render a 2D table for comparing values, showing data, or laying out a multi-case analysis. Great for truth tables, function value tables, unit conversions, before/after comparisons, kinetic vs potential energy, etc.",
+      "Draw a fraction as a picture: a circle cut into equal slices with some shaded, or a bar cut into equal pieces. THE tool for anything about fractions, halves, quarters, sharing, or parts of a whole. Improper fractions get extra wholes. Give a second fraction to draw two models side by side (equivalent fractions, comparing, adding). Never describe a fraction picture in words; draw it.",
     parameters: {
       type: "object",
       properties: {
-        columns: {
-          type: "string",
-          description: "Pipe-separated column headers, e.g. 'x | y | y = x²'. 320 chars max.",
-        },
-        rows: {
-          type: "string",
-          description:
-            "Rows separated by newlines (or ';'), cells within a row separated by '|'. Example: '-2 | -1 | 4\\n-1 | 0 | 1\\n0 | 1 | 0'. 1600 chars max.",
-        },
-        title: {
-          type: "string",
-          description: "Optional table caption, 160 chars max.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'.",
-        },
+        fraction: { type: "string", description: "The fraction, e.g. '3/4', '1/2', '5/4', '2'. Denominator 24 or less." },
+        model: { type: "string", enum: ["circle", "bar"], description: "'circle' (pie, default) or 'bar' (strip). Bars compare better side by side." },
+        second_fraction: { type: "string", description: "Optional second fraction drawn next to the first with the same model, e.g. '6/8' beside '3/4'." },
+        label: { type: "string", description: "Optional caption under the picture, e.g. 'one half of the pizza'. 160 chars max." },
+        column: COLUMN,
       },
-      required: ["columns", "rows"],
+      required: ["fraction"],
     },
   },
   {
     name: "add_number_line",
     description:
-      "Draw a number line with optional labeled points or intervals. Perfect for inequalities, intervals, integer sets, fractions, signed numbers, and absolute-value problems.",
+      "Draw a number line with labelled ticks. Marks put dots on values, intervals shade ranges (inequalities), jumps draw hop arrows (adding, subtracting, skip counting). Fractional steps label ticks as fractions. Use for integers, negatives, fractions, decimals, inequalities, absolute value, rounding, and counting on.",
     parameters: {
       type: "object",
       properties: {
-        min: {
-          type: "number",
-          description: "Left endpoint of the visible line.",
-        },
-        max: {
-          type: "number",
-          description: "Right endpoint of the visible line.",
-        },
+        min: { type: "number", description: "Left end of the line." },
+        max: { type: "number", description: "Right end of the line." },
+        step: { type: "number", description: "Optional tick spacing, e.g. 1, 0.5, 0.25 (labelled 1/4, 1/2, 3/4). Chosen automatically when omitted." },
         points: {
           type: "string",
-          description:
-            "Optional comma-separated marks. Each mark: 'value' or 'value:label' (e.g. '0, 2:x≥2, -3'). For intervals, repeat: '2:lower, 5:upper'. 800 chars max.",
+          description: "Optional comma-separated dots: 'value' or 'value:label', fractions allowed. E.g. '3, 3/4:three quarters, -2:start'. 800 chars max.",
         },
-        label: {
+        intervals: {
           type: "string",
-          description: "Optional caption beneath the line, 160 chars max.",
+          description: "Optional semicolon-separated shaded ranges. '2..5' closed, '(2..5)' open ends, '[0..1)' mixed, '2..inf' or '-inf..3' for rays. Add ':label'. E.g. '2..inf:x > 2'. 400 chars max.",
         },
-        column: {
+        jumps: {
           type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'.",
+          description: "Optional semicolon-separated hop arrows drawn above the line: 'from>to:label'. E.g. '0>3:+3; 3>5:+2'. 400 chars max.",
         },
+        label: { type: "string", description: "Optional caption under the line. 160 chars max." },
+        column: COLUMN,
       },
       required: ["min", "max"],
     },
   },
   {
+    name: "draw_figure",
+    description:
+      "Draw a clean geometry figure with labels: triangle, right triangle, square, rectangle, or circle. Labels go on sides, vertices, angles, radius, or diameter. Use for area, perimeter, Pythagoras, angles in a triangle, similar shapes, circles, and any 'picture the shape' moment.",
+    parameters: {
+      type: "object",
+      properties: {
+        figure: { type: "string", enum: ["triangle", "right_triangle", "square", "rectangle", "circle"], description: "Which figure. right_triangle puts the right angle at the bottom left." },
+        side_labels: {
+          type: "string",
+          description: "Optional pipe-separated side labels starting from the bottom side and going counter-clockwise: triangle 'base | right side | left side', rectangle 'width | height'. Use '?' for an unknown. E.g. '3 | 4 | ?'. 200 chars max.",
+        },
+        vertex_labels: { type: "string", description: "Optional pipe-separated vertex names starting bottom-left, counter-clockwise, e.g. 'A | B | C'. 80 chars max." },
+        angle_labels: { type: "string", description: "Optional pipe-separated angle labels at the same vertices, e.g. '90° | 37° | ?'. 120 chars max." },
+        mark_right_angle: { type: "boolean", description: "Draw the small square at the right angle (right_triangle, square, rectangle). Default true for right_triangle." },
+        radius_label: { type: "string", description: "Circle only: draws the radius and labels it, e.g. 'r = 5 cm'. 80 chars max." },
+        diameter_label: { type: "string", description: "Circle only: draws the diameter and labels it, e.g. 'd = 10'. 80 chars max." },
+        label: { type: "string", description: "Optional caption under the figure. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["figure"],
+    },
+  },
+  {
+    name: "draw_angle",
+    description:
+      "Draw an angle: two rays from a vertex with the arc and its measure. Use for acute/obtuse/right, complementary and supplementary angles, and estimating angle size.",
+    parameters: {
+      type: "object",
+      properties: {
+        degrees: { type: "number", description: "Angle in degrees, 1 to 359." },
+        label: { type: "string", description: "Optional label on the arc, e.g. '37°', 'x', 'θ'. Defaults to the degree measure. 40 chars max." },
+        caption: { type: "string", description: "Optional caption under the drawing. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["degrees"],
+    },
+  },
+  {
+    name: "draw_array",
+    description:
+      "Draw a rows × columns array of dots, optionally split into groups with a dashed line. Use for multiplication as repeated groups, the distributive property (3 × 7 = 3 × 5 + 3 × 2), factors, and area as counting squares.",
+    parameters: {
+      type: "object",
+      properties: {
+        rows: { type: "number", description: "Number of rows, 1 to 12." },
+        columns: { type: "number", description: "Number of columns, 1 to 12." },
+        split_after_column: { type: "number", description: "Optional: draw a dashed divider after this column to show two groups." },
+        split_after_row: { type: "number", description: "Optional: dashed divider after this row." },
+        label: { type: "string", description: "Optional caption, e.g. '3 × 7'. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["rows", "columns"],
+    },
+  },
+  {
+    name: "add_area_model",
+    description:
+      "Draw an area model (box method) grid with row and column headers and a value in each cell. Use for multi-digit multiplication, expanding (x + 2)(x + 3), and factoring quadratics.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Caption above the grid, e.g. '(x + 2)(x + 3)'. 160 chars max." },
+        row_labels: { type: "string", description: "Pipe-separated row headers, e.g. 'x | 3'. 200 chars max." },
+        column_labels: { type: "string", description: "Pipe-separated column headers, e.g. 'x | 2'. 200 chars max." },
+        cells: {
+          type: "string",
+          description: "Cell values, rows separated by ';' or newlines, cells by '|'. Leave a cell empty for the student to fill: 'x^2 | 2x; 3x | '. 800 chars max.",
+        },
+        column: COLUMN,
+      },
+      required: ["title", "row_labels", "column_labels", "cells"],
+    },
+  },
+  {
+    name: "draw_balance",
+    description:
+      "Draw an equation as a balance scale with tiles on each pan. The picture for 'do the same thing to both sides'. Use when introducing solving equations or when a student subtracts from only one side.",
+    parameters: {
+      type: "object",
+      properties: {
+        left: { type: "string", description: "Pipe-separated tiles on the left pan, e.g. 'x | x | 3'. Up to 8 tiles. 200 chars max." },
+        right: { type: "string", description: "Pipe-separated tiles on the right pan, e.g. '11'. Up to 8 tiles. 200 chars max." },
+        tilt: { type: "string", enum: ["level", "left", "right"], description: "'level' (default) when both sides are equal; 'left' or 'right' to show the heavier side dipping." },
+        label: { type: "string", description: "Optional caption, e.g. '2x + 3 = 11'. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["left", "right"],
+    },
+  },
+  {
+    name: "draw_bar_chart",
+    description:
+      "Draw a simple bar chart from categories and values. Use for data questions, comparing quantities, mean and median intuition, and reading graphs.",
+    parameters: {
+      type: "object",
+      properties: {
+        categories: { type: "string", description: "Pipe-separated category names, up to 8, e.g. 'Mon | Tue | Wed'. 200 chars max." },
+        values: { type: "string", description: "Pipe-separated numbers, one per category, e.g. '3 | 5 | 2'. 200 chars max." },
+        unit: { type: "string", description: "Optional unit for the value axis, e.g. 'hours'. 40 chars max." },
+        label: { type: "string", description: "Optional caption above the chart. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["categories", "values"],
+    },
+  },
+
+  // ── Tables and graphs ────────────────────────────────────────────────────
+  {
+    name: "add_table",
+    description:
+      "A table for comparing values or laying out cases: function value tables, unit conversions, before/after, kinetic vs potential energy.",
+    parameters: {
+      type: "object",
+      properties: {
+        columns: { type: "string", description: "Pipe-separated headers, e.g. 'x | y | y = x²'. 320 chars max." },
+        rows: { type: "string", description: "Rows separated by newlines or ';', cells by '|'. E.g. '-2 | -1 | 4; -1 | 0 | 1'. 1600 chars max." },
+        title: { type: "string", description: "Optional caption. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["columns", "rows"],
+    },
+  },
+  {
     name: "add_coordinate_axes",
     description:
-      "Draw an empty xy coordinate grid (no curve). Use when you're about to call plot_points, when discussing a coordinate concept without a specific function, or when you want the student to imagine plotting on it. If you have a y = f(x) function, prefer add_function_graph which renders the curve instantly.",
+      "An empty xy grid. Use before plot_points or when talking about coordinates without a specific function. For y = f(x) prefer add_function_graph.",
     parameters: {
       type: "object",
       properties: {
@@ -333,215 +347,170 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         x_max: { type: "number", description: "Maximum x." },
         y_min: { type: "number", description: "Minimum y." },
         y_max: { type: "number", description: "Maximum y." },
-        label: { type: "string", description: "Optional caption, 160 chars max." },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'.",
-        },
+        label: { type: "string", description: "Optional caption. 160 chars max." },
+        column: COLUMN,
       },
       required: ["x_min", "x_max", "y_min", "y_max"],
     },
   },
   {
     name: "plot_points",
-    description:
-      "Plot discrete points on a coordinate grid, optionally connected. Use for scatter data, key points on a curve (vertex, intercepts, holes), or geometry constructions.",
+    description: "Plot labelled points on an xy grid: scatter data, a vertex, intercepts, or the corners of a shape.",
     parameters: {
       type: "object",
       properties: {
-        points: {
-          type: "string",
-          description:
-            "Comma-separated points: '(x,y)' or '(x,y):label'. Example: '(0,0), (1,1):A, (2,4):B'. 800 chars max.",
-        },
+        points: { type: "string", description: "Comma-separated '(x,y)' or '(x,y):label', e.g. '(0,0), (1,1):A, (2,4):B'. 800 chars max." },
         x_min: { type: "number", description: "Minimum x of the grid." },
         x_max: { type: "number", description: "Maximum x of the grid." },
         y_min: { type: "number", description: "Minimum y of the grid." },
         y_max: { type: "number", description: "Maximum y of the grid." },
-        label: { type: "string", description: "Optional plot caption, 160 chars max." },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'.",
-        },
+        label: { type: "string", description: "Optional caption. 160 chars max." },
+        column: COLUMN,
       },
       required: ["points", "x_min", "x_max", "y_min", "y_max"],
     },
   },
   {
-    name: "add_worked_example_box",
-    description:
-      "Drop a boxed 'worked example' or 'key idea' callout on the board with a title and a body. Use to crystallize a takeaway after a derivation, to show a model problem before asking the student to try a similar one, or to summarize a definition.",
-    parameters: {
-      type: "object",
-      properties: {
-        title: {
-          type: "string",
-          description: "Short title, 160 chars max.",
-        },
-        body: {
-          type: "string",
-          description: "The example or key idea text, 1600 chars max.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'.",
-        },
-      },
-      required: ["title", "body"],
-    },
-  },
-  {
     name: "add_function_graph",
-    description:
-      "Plot a continuous mathematical function y = f(x) on a coordinate grid. Use for any y = f(x) curve: parabolas, lines, trig, exponentials, absolute value, etc. Renders immediately. Prefer this over plot_points whenever you have a formula rather than discrete data.",
+    description: "Plot a continuous y = f(x) curve on a grid: lines, parabolas, trig, exponentials, absolute value.",
     parameters: {
       type: "object",
       properties: {
         expression: {
           type: "string",
-          description:
-            "The function expression in terms of x, e.g. 'x^2 - 4*x - 5', 'sin(x)', '2*x + 3', 'abs(x - 2)'. Standard JS math operators: +, -, *, /, ^, sqrt(), sin(), cos(), tan(), abs(), log(). 200 chars max.",
+          description: "Expression in x, e.g. 'x^2 - 4*x - 5', 'sin(x)', '2*x + 3', 'abs(x - 2)'. Operators + - * / ^, sqrt(), sin(), cos(), tan(), abs(), log(). 200 chars max.",
         },
-        x_min: {
-          type: "number",
-          description: "Minimum x value to plot.",
-        },
-        x_max: {
-          type: "number",
-          description: "Maximum x value to plot.",
-        },
-        label: {
-          type: "string",
-          description: "Optional caption below the graph, e.g. 'y = x² - 4x - 5'. 160 chars max.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'right'. Graphs usually pair best with equations on the left.",
-        },
+        x_min: { type: "number", description: "Minimum x." },
+        x_max: { type: "number", description: "Maximum x." },
+        label: { type: "string", description: "Optional caption, e.g. 'y = x² - 4x - 5'. 160 chars max." },
+        column: COLUMN,
       },
       required: ["expression", "x_min", "x_max"],
     },
   },
+
+  // ── Notes ─────────────────────────────────────────────────────────────────
   {
-    name: "add_two_column_comparison",
+    name: "add_text_note",
     description:
-      "Draw a side-by-side two-column comparison block — left column in red, right column in green. Use for: method A vs method B, before vs after, correct vs incorrect approach, two theorems, two historical figures. Renders immediately.",
+      "Handwritten words on the board: a definition, a rule in words, a one-line takeaway, a label. Keep it to a line or two. Never use text to describe a picture or to fake a diagram with brackets and dashes; use a picture tool instead.",
     parameters: {
       type: "object",
       properties: {
-        title: {
-          type: "string",
-          description: "Heading above both columns, 160 chars max.",
-        },
-        left_title: {
-          type: "string",
-          description: "Header of the left (red) column, e.g. 'Method A', 'Before', 'Incorrect'. 80 chars max.",
-        },
-        left_body: {
-          type: "string",
-          description: "Content of the left column. Use newlines for multiple points. 800 chars max.",
-        },
-        right_title: {
-          type: "string",
-          description: "Header of the right (green) column, e.g. 'Method B', 'After', 'Correct'. 80 chars max.",
-        },
-        right_body: {
-          type: "string",
-          description: "Content of the right column. Use newlines for multiple points. 800 chars max.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'left'. Usually spans the full width of the left zone.",
-        },
+        text: { type: "string", description: "The words, 1200 chars max." },
+        size: { type: "string", enum: ["heading", "body"], description: "'heading' for a bold title, 'body' (default) for a note." },
+        column: COLUMN,
+      },
+      required: ["text"],
+    },
+  },
+  {
+    name: "add_callout",
+    description:
+      "A coloured sticky note: hint (yellow), correct (green), wrong (red), warning (orange), important (violet), remember (light blue). Short and glanceable.",
+    parameters: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Sticky-note text, 400 chars max." },
+        style: { type: "string", enum: ["hint", "correct", "wrong", "warning", "important", "remember"], description: "Semantic style; the colour follows." },
+        column: COLUMN,
+      },
+      required: ["text", "style"],
+    },
+  },
+  {
+    name: "add_worked_example_box",
+    description: "A boxed 'key idea' or worked example with a title and a short body. Use to crystallise a takeaway, or to show a model problem before the student tries a similar one.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title, 160 chars max." },
+        body: { type: "string", description: "The example or key idea, 1600 chars max." },
+        column: COLUMN,
+      },
+      required: ["title", "body"],
+    },
+  },
+  {
+    name: "add_two_column_comparison",
+    description: "Two boxes side by side, left in red and right in green: wrong vs right, before vs after, method A vs method B.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Heading above both columns, 160 chars max." },
+        left_title: { type: "string", description: "Left header, e.g. 'Incorrect'. 80 chars max." },
+        left_body: { type: "string", description: "Left content, newlines allowed. 800 chars max." },
+        right_title: { type: "string", description: "Right header, e.g. 'Correct'. 80 chars max." },
+        right_body: { type: "string", description: "Right content. 800 chars max." },
+        column: COLUMN,
       },
       required: ["title", "left_title", "left_body", "right_title", "right_body"],
     },
   },
   {
     name: "add_vector_diagram",
-    description:
-      "Draw a vector diagram — a central label with labeled arrows radiating outward in named directions. Use for: force diagrams (weight down, normal up, friction left/right), velocity decompositions, field lines, resultant vectors. Renders immediately.",
+    description: "A free-body style diagram: a labelled centre object with labelled arrows in named directions. Forces, velocities, fields.",
     parameters: {
       type: "object",
       properties: {
-        title: {
-          type: "string",
-          description: "Caption above the diagram, e.g. 'Forces on block'. 160 chars max.",
-        },
-        center_label: {
-          type: "string",
-          description: "Label for the central object, e.g. 'block', 'particle'. 80 chars max.",
-        },
+        title: { type: "string", description: "Caption, e.g. 'Forces on the block'. 160 chars max." },
+        center_label: { type: "string", description: "Centre object label, e.g. 'block'. 80 chars max." },
         vectors: {
           type: "string",
-          description:
-            "Semicolon-separated vectors. Each: 'direction:label'. Direction must be one of: up, down, left, right, up-left, up-right, down-left, down-right. Example: 'up:Normal force N; down:Weight mg; right:Applied force F; left:Friction f'. 800 chars max.",
+          description: "Semicolon-separated 'direction:label'. Directions: up, down, left, right, up-left, up-right, down-left, down-right. E.g. 'up:Normal N; down:Weight mg; right:Push F; left:Friction f'. 800 chars max.",
         },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'right'. Vector diagrams usually pair with equations on the left.",
-        },
+        column: COLUMN,
       },
       required: ["title", "center_label", "vectors"],
     },
   },
   {
     name: "add_process_map",
-    description:
-      "Draw a linear sequence of labeled boxes connected by arrows — a flow chart or process map. Use for: reaction mechanisms, decision trees, historical cause-effect chains, algorithm steps, writing process. Renders immediately.",
+    description: "Labelled boxes joined by arrows: steps of a method, a cause-and-effect chain, a reaction, an algorithm.",
     parameters: {
       type: "object",
       properties: {
-        title: {
-          type: "string",
-          description: "Caption above the process map. 160 chars max.",
-        },
-        nodes: {
-          type: "string",
-          description:
-            "Pipe-separated node labels in order, e.g. 'Identify forces | Draw free-body diagram | Apply Newton\\'s 2nd law | Solve for unknowns'. Each node becomes a labeled box. 8 nodes max. 800 chars total.",
-        },
-        connectors: {
-          type: "string",
-          description:
-            "Optional pipe-separated labels for each arrow between nodes, in order, e.g. 'heat | pressure | time'. Count should be (nodes - 1). Leave blank for unlabeled arrows. 400 chars max.",
-        },
-        column: {
-          type: "string",
-          enum: ["left", "right"],
-          description: "Default 'right'.",
-        },
+        title: { type: "string", description: "Caption. 160 chars max." },
+        nodes: { type: "string", description: "Pipe-separated box labels in order, 8 max. 800 chars max." },
+        connectors: { type: "string", description: "Optional pipe-separated arrow labels, one fewer than nodes. 400 chars max." },
+        column: COLUMN,
       },
       required: ["title", "nodes"],
     },
   },
   {
-    name: "clear_whiteboard",
+    name: "draw_sketch",
     description:
-      "Erase EVERYTHING on the board. Almost always prefer start_new_problem instead, which clears AND titles in one call. Use clear_whiteboard only when you want a blank board with no heading.",
+      "Freehand sketch for anything the other picture tools do not cover: a ramp with a box, a cell, a water cycle, a simple map. Strokes are polylines in a 0-100 box (x right, y down). Keep it to a few strokes and label the parts. Prefer draw_fraction, draw_figure, add_number_line and the other picture tools when they fit.",
     parameters: {
       type: "object",
-      properties: {},
+      properties: {
+        strokes: {
+          type: "string",
+          description: "Semicolon-separated strokes, each 'x,y x,y x,y ...' in 0-100. Prefix a stroke with 'closed' to fill it: 'closed 10,90 90,90 90,40; 40,40 40,10'. Up to 24 strokes. 2000 chars max.",
+        },
+        labels: { type: "string", description: "Optional semicolon-separated 'x,y:text' labels, e.g. '50,95:ground; 20,30:ramp'. 400 chars max." },
+        width: { type: "number", description: "Optional width in board units, 160-560. Default 320." },
+        height: { type: "number", description: "Optional height, 120-420. Default 220." },
+        label: { type: "string", description: "Optional caption under the sketch. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["strokes"],
     },
+  },
+  {
+    name: "clear_whiteboard",
+    description: "Erase everything with no heading. Almost always prefer start_new_problem, which clears and titles in one call.",
+    parameters: { type: "object", properties: {} },
   },
   {
     name: "remember_about_student",
     description:
-      "Record a durable fact about THIS student that will matter in future sessions — a misconception, what finally made something click, a topic they have mastered, or a preference. Notes persist across sessions and are shown to you at the start of every session. Keep each note to one short sentence, and only record things worth remembering next week. This does not draw anything.",
+      "Record a durable fact about THIS student for future sessions: a misconception, what finally clicked, a topic they have mastered, a preference. One short sentence, only when it will matter next week. Draws nothing.",
     parameters: {
       type: "object",
       properties: {
-        note: {
-          type: "string",
-          description:
-            "One short fact, e.g. 'confuses kinetic with momentum' or 'got factoring after the area-model analogy'.",
-        },
+        note: { type: "string", description: "One short fact, e.g. 'confuses kinetic with momentum' or 'got fractions after the pizza picture'." },
       },
       required: ["note"],
     },

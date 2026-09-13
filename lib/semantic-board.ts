@@ -29,6 +29,7 @@ export type SemanticBoardArtifactKind =
   | "scene_arrow"
   | "stroke"
   | "line"
+  | "diagram"
   | "annotation";
 
 export type SemanticBoardBounds = {
@@ -117,6 +118,13 @@ const KIND_BY_ACTION: Partial<Record<BoardActionType, SemanticBoardArtifactKind>
   student_attempt: "student_attempt",
   highlight_step: "annotation",
   cross_out_step: "annotation",
+  fraction: "diagram",
+  figure: "diagram",
+  angle: "diagram",
+  array: "diagram",
+  balance: "diagram",
+  bar_chart: "diagram",
+  sketch: "diagram",
   freeform_text: "scene_text",
   freeform_shape: "scene_shape",
   freeform_arrow: "scene_arrow",

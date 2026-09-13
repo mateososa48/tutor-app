@@ -17,10 +17,20 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 - `lib/live-tutor.ts` — browser client: mic track + `oai-events` data channel, transcript assembly, backend tool loop, speaking meter (RMS on the remote track), reconnect-with-history on drop.
 - `lib/live-events.ts` — pure reducers (`TranscriptAssembler`, `BackendTurnTracker`), unit-tested.
 - `lib/tutor-prompts.ts` — the two prompts. Voice model: short persona + concrete "delegate when / do not delegate when" policy. Backend: output contract (spoken prose, one idea, no LaTeX), teaching loop, downshift, hint ladder, board policy, profile + memory, examples.
-- `lib/whiteboard-tools.ts` — the 21 tool declarations (single source of truth) and `WHITEBOARD_FUNCTION_TOOLS` (Responses format). `lib/whiteboard-tool-dispatch.ts` executes them on the board handle. Every successful tool result carries a `[Board: …]` summary so the backend knows what the student sees.
+- `lib/whiteboard-tools.ts` — the 29 tool declarations (single source of truth) and `WHITEBOARD_FUNCTION_TOOLS` (Responses format). `lib/whiteboard-tool-dispatch.ts` validates arguments, calls the board handle, and returns a result that describes the picture ("Drew 1 circle cut into 2 equal parts, 1 shaded"); the session page appends a `[Board: …]` summary so the backend knows what the student sees.
+- `lib/board-diagrams.ts` — pure, unit-tested math and parsers behind the picture tools (fractions, tick steps and fraction labels, intervals/jumps syntax, figure vertices and label placement, sketch strokes). `components/TldrawCore.tsx` turns the parsed inputs into tldraw shapes.
+
 - `app/api/profile/notes/route.ts` — durable tutor memory (`user_profiles.tutor_notes`), written by the `remember_about_student` tool and loaded into the backend prompt at session start.
 - `app/api/voice-preview/route.ts` — TTS samples for the settings voice picker (`lib/voice-settings.ts` lists voices available on both GPT-Live and TTS).
 - `app/session/[id]/page.tsx` — session orchestration and persistence (transcript events, board snapshots, heartbeat, pause/resume).
+
+## The board (Sept 2026 rebuild)
+- Picture tools, all rendered from real tldraw shapes: `draw_fraction` (pie or bar, improper fractions get extra wholes, typeset "= 3/4" beside the model), `add_number_line` (step, fraction tick labels, dots, shaded intervals with open/closed ends and rays, hop arrows), `draw_figure` (triangle, right triangle, square, rectangle, circle with side/vertex/angle/radius/diameter labels), `draw_angle`, `draw_array` (with dashed group splits), `add_area_model`, `draw_balance` (equation as a scale), `draw_bar_chart`, `draw_sketch` (polylines in a 0–100 box, the escape hatch). `add_function_graph`, `add_coordinate_axes`, `plot_points` draw vector axes with arrowheads and ticks; nothing is a PNG any more.
+- Style rules in `TldrawCore.tsx`: `INK` (black) for structure, `PENCIL` (grey) for the student's attempts and captions, and a marker palette (`MARKERS`: blue, violet, green, orange, red, light blue) for the tutor's drawings. `takePens(n)` hands each new diagram, and each series inside one, the next pen, so two fractions, five bars or three forces never share a colour; the counter resets on `start_new_problem`. Highlights are green, cross-outs red. Headings are sans; notes and student work are tldraw's handwriting face; diagram labels are sans. Box heights come from `measureText` (tldraw's own text measurer), never from character counts. Diagrams use solid strokes; only `draw_sketch` keeps the hand-drawn wobble.
+- Typeset labels on diagrams are `EqItem`s with `role: "label"`; they render inline (no display margins) and are skipped by `highlight_step` / `cross_out_step` and by the snapshot summary.
+- Camera: `focusOn` treats "visible but zoomed out below 0.8" as not visible, so new content always comes back to a readable zoom (this is why the first drawing looked tiny when the student had zoomed out).
+- Backend prompt (`lib/tutor-prompts.ts`) has a board-first rule: one diagnostic question at most, then draw the picture in the same reply as the idea; never describe a picture in words or fake one with brackets; one to three board actions per reply. Examples B, B2, B3 show fractions, a sketch and the balance.
+- **Free visual QA:** `npm run dev` then open `/dev/board?demo=fractions|algebra|geometry|data|all&step=300&count=N`. It mounts the whiteboard and replays scripted tool calls with no OpenAI session (`app/dev/board/demos.ts`). The route is dev-only (404 in production, public in `proxy.ts` only in development). Screenshot it before touching a renderer.
 
 ## GPT-Live protocol facts we verified (do not relearn these)
 1. The Live model's clock is driven by **inbound audio**. With no mic track nothing happens: appended context is never injected and the model never speaks. Text-only QA sessions send faint synthetic room tone (`createSyntheticMicStream`).
@@ -41,7 +51,7 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 - The sign-in page and app home still use the older honey accent; retokening them to the landing palette is an open task.
 
 ## Commands
-- `npm run dev` — dev server. `npm test` — `tsx --test lib/*.test.ts`. `npx tsc --noEmit`. `npm run lint` (two pre-existing `set-state-in-effect` errors in `Sidebar.tsx` and `LandingPage.tsx`).
+- `npm run dev` — dev server. `npm test` — `tsx --test lib/*.test.ts`. `npx tsc --noEmit`. `npm run lint` (six pre-existing errors in vendored landing components and `Sidebar.tsx`, none in `lib/` or `TldrawCore.tsx`).
 - QA without a microphone: open `/api/dev/qa-login` (dev only) → lands on `/session?debug=1`, a text-only session with the QA panel. Add `&mic=1` for a real mic plus the panel. In dev, `window.__liveTutor` exposes `debugStats()` and `debugSend(event)`.
 
 ## Environment (`.env.local`)
