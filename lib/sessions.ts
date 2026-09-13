@@ -1,51 +1,151 @@
-import type { TranscriptEntry } from "./gemini-live";
+import type { TranscriptEntry } from "./live-types";
 
 export type { TranscriptEntry };
 
+export type SessionStatus = "active" | "paused" | "ended";
+
 export type SavedSession = {
   id: string;
+  userId: string;
   title: string;
+  status: SessionStatus;
   startedAt: number;
   endedAt: number;
   durationSec: number;
+  lastActiveAt: number;
+  pausedAt: number | null;
   transcript: TranscriptEntry[];
+  createdAt: string;
 };
 
-const KEY = "tutor_sessions";
+export type SessionEvent = {
+  id: number;
+  sessionId: string;
+  seq: number;
+  offsetMs: number;
+  kind:
+    | "transcript.entry"
+    | "whiteboard.snapshot"
+    | "board.update.ready"
+    | "board.update.failed"
+    | "session.paused"
+    | "session.resumed"
+    | "session.ended";
+  actor: "student" | "tutor" | "system";
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
 
-export function newSessionId(): string {
-  return `session_${Date.now()}`;
+export async function createSession(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) return null;
+    const { id } = await res.json();
+    return id ?? null;
+  } catch {
+    return null;
+  }
 }
 
-export function loadSessions(): SavedSession[] {
+export async function loadSessions(limit = 20): Promise<SavedSession[]> {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as SavedSession[];
-    return parsed.sort((a, b) => b.startedAt - a.startedAt);
+    const res = await fetch(`/api/sessions?limit=${limit}`);
+    if (!res.ok) return [];
+    return (await res.json()) as SavedSession[];
   } catch {
     return [];
   }
 }
 
-export function saveSession(session: SavedSession): void {
+export async function getRecentSessions(limit = 8): Promise<SavedSession[]> {
+  return loadSessions(limit);
+}
+
+export async function getSessionById(
+  id: string,
+): Promise<{ session: SavedSession; events: SessionEvent[] } | null> {
   try {
-    const existing = loadSessions();
-    const filtered = existing.filter((s) => s.id !== session.id);
-    filtered.unshift(session);
-    localStorage.setItem(KEY, JSON.stringify(filtered));
+    const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    return await res.json();
   } catch {
-    // Silently handle quota errors
+    return null;
   }
 }
 
-export function getSessionById(id: string): SavedSession | null {
-  const sessions = loadSessions();
-  return sessions.find((s) => s.id === id) ?? null;
+export async function deleteSession(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
-export function getRecentSessions(limit = 8): SavedSession[] {
-  return loadSessions().slice(0, limit);
+export async function patchSession(
+  id: string,
+  patch: Partial<Pick<SavedSession, "status" | "title" | "endedAt" | "durationSec" | "transcript">>,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function appendEvent(
+  sessionId: string,
+  ev: {
+    kind: SessionEvent["kind"];
+    actor: SessionEvent["actor"];
+    offsetMs: number;
+    payload: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ev),
+    });
+  } catch {}
+}
+
+export async function sendHeartbeat(sessionId: string, durationSec: number): Promise<void> {
+  try {
+    await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/heartbeat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ durationSec }),
+    });
+  } catch {}
+}
+
+export async function pauseSession(sessionId: string): Promise<void> {
+  try {
+    await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/pause`, {
+      method: "POST",
+    });
+  } catch {}
+}
+
+export function sendPauseBeacon(sessionId: string): void {
+  try {
+    const url = `/api/sessions/${encodeURIComponent(sessionId)}/pause`;
+    const blob = new Blob([""], { type: "text/plain" });
+    navigator.sendBeacon(url, blob);
+  } catch {}
 }
 
 export function formatRelativeDate(ts: number): string {

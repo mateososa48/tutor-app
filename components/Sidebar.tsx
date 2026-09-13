@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { TranscriptEntry } from "@/lib/gemini-live";
+import { useEffect, useRef, useState, useCallback, KeyboardEvent } from "react";
+import type { TranscriptEntry, TutorActivity } from "@/lib/live-types";
 import {
   UploadedFile,
   ACCEPTED_EXTENSIONS,
@@ -10,19 +10,24 @@ import {
   fileTypeLabel,
 } from "@/lib/file-processor";
 
-type SessionState = "pre" | "connecting" | "active" | "ended";
+type SessionState = "pre" | "connecting" | "active" | "ending" | "ended" | "error";
 
 interface SidebarProps {
   sessionState: SessionState;
   transcript: TranscriptEntry[];
   isMuted: boolean;
   isTutorSpeaking: boolean;
+  /** What the teaching backend is doing between utterances. */
+  tutorActivity?: TutorActivity;
   files: UploadedFile[];
+  errorMessage: string;
+  fileNotice: string;
   onStart: () => void;
   onMute: () => void;
   onEnd: () => void;
   onAddFiles: (files: UploadedFile[]) => void;
   onRemoveFile: (id: string) => void;
+  onSendText?: (text: string) => void;
 }
 
 export default function Sidebar({
@@ -30,19 +35,55 @@ export default function Sidebar({
   transcript,
   isMuted,
   isTutorSpeaking,
+  tutorActivity = "idle",
   files,
+  errorMessage,
+  fileNotice,
   onStart,
   onMute,
   onEnd,
   onAddFiles,
   onRemoveFile,
+  onSendText,
 }: SidebarProps) {
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
+  const [chatText, setChatText] = useState("");
   const dragCountRef = useRef(0);
+
+  // "Take your time…" wait-time affordance: for a few seconds after the tutor
+  // stops speaking, reassure the student that the silence is intentional.
+  const [showTakeYourTime, setShowTakeYourTime] = useState(false);
+  const prevSpeakingRef = useRef(false);
+  useEffect(() => {
+    const wasSpeaking = prevSpeakingRef.current;
+    prevSpeakingRef.current = isTutorSpeaking;
+    if (wasSpeaking && !isTutorSpeaking) {
+      setShowTakeYourTime(true);
+      const t = setTimeout(() => setShowTakeYourTime(false), 6000);
+      return () => clearTimeout(t);
+    }
+    if (isTutorSpeaking) setShowTakeYourTime(false);
+  }, [isTutorSpeaking]);
+
+  function submitChat() {
+    const text = chatText.trim();
+    if (!text || !onSendText) return;
+    onSendText(text);
+    setChatText("");
+    chatInputRef.current?.focus();
+  }
+
+  function onChatKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      submitChat();
+    }
+  }
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -168,7 +209,11 @@ export default function Sidebar({
         <div className="flex-1 min-h-0 overflow-y-auto px-6 pt-4 pb-4">
           {transcript.length === 0 ? (
             <p className="text-[13px] mt-2" style={{ color: "#c0c0c0" }}>
-              {sessionState === "pre" ? "Start a session to begin." : "Listening…"}
+              {sessionState === "pre"
+                ? "Start a session to begin."
+                : sessionState === "error"
+                ? errorMessage || "The session hit a connection error."
+                : "Listening…"}
             </p>
           ) : (
             <div className="flex flex-col gap-4 text-[14px] leading-[1.55]">
@@ -309,7 +354,12 @@ export default function Sidebar({
           )}
           {files.length > 0 && sessionState === "active" && (
             <p className="mt-2 text-[11px]" style={{ color: "#16a34a" }}>
-              Tutor can see these files.
+              {fileNotice || "Tutor can see these files."}
+            </p>
+          )}
+          {fileNotice && sessionState !== "active" && (
+            <p className="mt-2 text-[11px]" style={{ color: "#5a5a5a" }}>
+              {fileNotice}
             </p>
           )}
         </div>
@@ -332,12 +382,12 @@ export default function Sidebar({
           </button>
         )}
 
-        {sessionState === "connecting" && (
+        {(sessionState === "connecting" || sessionState === "ending") && (
           <div
             className="w-full h-11 rounded-lg flex items-center justify-center text-[13px] font-medium"
             style={{ background: "#f0f0f0", color: "#909090" }}
           >
-            Connecting…
+            {sessionState === "connecting" ? "Connecting…" : "Ending…"}
           </div>
         )}
 
@@ -348,7 +398,15 @@ export default function Sidebar({
                 className="text-[11px] font-semibold flex items-center gap-2"
                 style={{ color: "#5a5a5a" }}
               >
-                {isTutorSpeaking ? "Tutor speaking" : "Listening"}
+                {isTutorSpeaking
+                  ? "Tutor speaking"
+                  : tutorActivity === "writing"
+                  ? "Writing on the board…"
+                  : tutorActivity === "thinking"
+                  ? "Thinking…"
+                  : showTakeYourTime
+                  ? "Take your time…"
+                  : "Listening"}
               </span>
               {isTutorSpeaking && (
                 <div className="flex items-end gap-[3px] h-3.5" aria-label="audio level">
@@ -366,6 +424,65 @@ export default function Sidebar({
                 </div>
               )}
             </div>
+
+            {/* Text input */}
+            {onSendText && (
+              <div
+                className="flex items-center gap-2 mb-3"
+                style={{
+                  background: "#fff",
+                  border: "1px solid #d0d0d0",
+                  borderRadius: 10,
+                  padding: "2px 4px 2px 10px",
+                  transition: "border-color 0.12s",
+                }}
+                onFocusCapture={(e) =>
+                  (e.currentTarget.style.borderColor = "#0a0a0a")
+                }
+                onBlurCapture={(e) =>
+                  (e.currentTarget.style.borderColor = "#d0d0d0")
+                }
+              >
+                <input
+                  ref={chatInputRef}
+                  type="text"
+                  value={chatText}
+                  onChange={(e) => setChatText(e.target.value)}
+                  onKeyDown={onChatKeyDown}
+                  placeholder="Type a message…"
+                  style={{
+                    flex: 1,
+                    height: 32,
+                    fontSize: 13,
+                    color: "#0a0a0a",
+                    background: "transparent",
+                    border: "none",
+                    outline: "none",
+                    fontFamily: "inherit",
+                  }}
+                />
+                <button
+                  onClick={submitChat}
+                  disabled={!chatText.trim()}
+                  title="Send (Enter)"
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 7,
+                    background: chatText.trim() ? "#0a0a0a" : "#f0f0f0",
+                    border: "none",
+                    cursor: chatText.trim() ? "pointer" : "default",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    transition: "background 0.12s",
+                  }}
+                >
+                  <SendIcon active={!!chatText.trim()} />
+                </button>
+              </div>
+            )}
 
             <div className="flex gap-2">
               <button
@@ -395,11 +512,31 @@ export default function Sidebar({
         )}
 
         {sessionState === "ended" && (
-          <div
-            className="text-[13px] text-center font-medium"
-            style={{ color: "#909090" }}
+          <button
+            onClick={onStart}
+            className="w-full h-11 rounded-lg text-[14px] font-semibold transition-colors duration-150"
+            style={{ background: "#0a0a0a", color: "#fff" }}
+            onMouseOver={(e) => (e.currentTarget.style.background = "#2a2a2a")}
+            onMouseOut={(e) => (e.currentTarget.style.background = "#0a0a0a")}
           >
-            Session ended.
+            Start another session
+          </button>
+        )}
+
+        {sessionState === "error" && (
+          <div className="flex flex-col gap-3">
+            <p className="text-[12px] leading-[1.45]" style={{ color: "#b91c1c", margin: 0 }}>
+              {errorMessage || "The tutor connection hit an error."}
+            </p>
+            <button
+              onClick={onStart}
+              className="w-full h-11 rounded-lg text-[14px] font-semibold transition-colors duration-150"
+              style={{ background: "#0a0a0a", color: "#fff" }}
+              onMouseOver={(e) => (e.currentTarget.style.background = "#2a2a2a")}
+              onMouseOut={(e) => (e.currentTarget.style.background = "#0a0a0a")}
+            >
+              Try again
+            </button>
           </div>
         )}
       </div>
@@ -547,6 +684,20 @@ function MicIcon({ muted }: { muted: boolean }) {
         stroke="currentColor"
         strokeWidth="1.25"
         strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function SendIcon({ active }: { active: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+      <path
+        d="M1.5 7h11M8 2.5L12.5 7 8 11.5"
+        stroke={active ? "#fff" : "#c0c0c0"}
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );

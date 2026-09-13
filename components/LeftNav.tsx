@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { getRecentSessions, SavedSession } from "@/lib/sessions";
+import { useClientReady } from "@/lib/client-ready";
 
 // Collapsed width: 52px. Section containers have 6px h-padding each side.
 // So button content width collapsed = 52 - 12 = 40px.
@@ -14,13 +15,15 @@ const ICON_GAP = 9;
 
 export default function LeftNav() {
   const [expanded, setExpanded] = useState(false);
-  const [sessions, setSessions] = useState<SavedSession[]>([]);
   const router = useRouter();
   const pathname = usePathname();
+  const mounted = useClientReady();
+  const [sessions, setSessions] = useState<SavedSession[]>([]);
 
   useEffect(() => {
-    setSessions(getRecentSessions(8));
-  }, [pathname]);
+    if (!mounted) return;
+    getRecentSessions(8).then(setSessions);
+  }, [mounted, pathname]);
 
   return (
     <nav
@@ -181,9 +184,10 @@ export default function LeftNav() {
         />
         <NavBtn
           expanded={expanded}
+          active={pathname === "/settings"}
           icon={<SettingsIcon />}
           label="Settings"
-          disabled
+          onClick={() => router.push("/settings")}
         />
       </div>
     </nav>

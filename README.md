@@ -1,36 +1,34 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Chalk — live voice tutor with a whiteboard
 
-## Getting Started
+A student talks out loud with an AI tutor that listens, speaks, and writes every step on a shared whiteboard, and that never just hands over the answer.
 
-First, run the development server:
+**Stack:** Next.js 16 · React 19 · Tailwind v4 · tldraw v5 + KaTeX · OpenAI GPT-Live-1 (voice, WebRTC) with a Responses reasoning backend (teaching brain) · next-auth v5 · Neon Postgres via Drizzle.
+
+## Run it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.local.example .env.local   # or create it; see below
+npm run dev                          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`.env.local` needs `OPENAI_API_KEY`, `DATABASE_URL` (Neon), `AUTH_SECRET`, and `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`. Optional: `OPENAI_TUTOR_BACKEND_MODEL`, `OPENAI_TUTOR_REASONING_EFFORT`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Check it
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm test            # unit tests (tool schema, prompts, transcript + tool-loop reducers)
+npx tsc --noEmit    # typecheck
+npm run lint
+```
 
-## Learn More
+For a session without a microphone, open `/api/dev/qa-login` in dev: it signs in a QA user and starts a text-only session with the debug panel.
 
-To learn more about Next.js, take a look at the following resources:
+## How a session works
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. The browser creates a WebRTC offer and POSTs it to `/api/live-session`.
+2. The server composes two prompts from the student's profile and memory notes: a short one for the voice model and the full teaching policy for the backend, registers the whiteboard tools, and creates the GPT-Live session.
+3. The voice model talks with the student and delegates every teaching decision to the backend. The backend answers with a tool call (draw on the board) and the words to say; the browser executes tool calls on the tldraw canvas and returns results.
+4. Transcript entries and board snapshots are persisted per session so a session can be resumed later.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+See `AGENTS.md` for the architecture map, verified protocol details, and gotchas.
