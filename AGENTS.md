@@ -42,6 +42,6 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 gpt-live-1 bills $0.05 per minute of session, plus backend tokens. Expect roughly $1.60–2.10 per 30-minute session with terra.
 
 ## Gotchas
-- Branch order: `gpt-live` > `v2` > `main`. Never base work on `main`.
+- `main` is production and auto-deploys on push (Vercel Git integration; PR merges count). It contains the GPT-Live migration as of 2026-09-12. Branch from `main` for new work; `v2` and `gpt-live` are historical.
 - Background agents must not run `git checkout` / `switch` / `stash`; one did during a read-only audit and moved the working tree to `main`.
 - `.playwright-mcp/` is gitignored; Playwright MCP writes screenshots and snapshots there.
