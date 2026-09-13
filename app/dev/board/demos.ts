@@ -1,0 +1,66 @@
+// Scripted tool calls for /dev/board. Each demo is the sequence a tutor would
+// plausibly make, so the screenshots show real compositions, not one shape.
+
+export type DemoCall = { name: string; args: Record<string, unknown> };
+
+const fractions: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "One half" } },
+  { name: "draw_fraction", args: { fraction: "1/2", model: "circle", label: "one half of the pizza" } },
+  { name: "add_student_attempt", args: { text: "a half means one piece out of two" } },
+  { name: "draw_fraction", args: { fraction: "3/4", second_fraction: "6/8", model: "bar", label: "the same amount, cut differently" } },
+  { name: "add_number_line", args: { min: 0, max: 2, step: 0.25, points: "3/4:three quarters, 1 1/2", label: "quarters on a number line" } },
+  { name: "draw_fraction", args: { fraction: "5/4", model: "circle", column: "right", label: "five quarters is more than one whole" } },
+  { name: "add_callout", args: { text: "Same size pieces, or it is not a fair share.", style: "remember", column: "right" } },
+];
+
+const algebra: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Solving 2x + 3 = 11" } },
+  { name: "add_problem_setup", args: { goal: "Find x", givens: "2x + 3 = 11", plan: "Undo the + 3, then undo the × 2" } },
+  { name: "draw_balance", args: { left: "x | x | 3", right: "11", label: "2x + 3 = 11", column: "right" } },
+  { name: "draw_equation_step", args: { latex: "2x + 3 = 11" } },
+  { name: "add_student_attempt", args: { text: "subtract 3 from both sides?" } },
+  { name: "draw_equation_step", args: { latex: "2x = 8", annotation: "subtract 3 from both sides" } },
+  { name: "add_student_attempt", args: { text: "so x = 16?" } },
+  { name: "draw_equation_step", args: { latex: "x = 16" } },
+  { name: "cross_out_step", args: { step_label: "x = 16" } },
+  { name: "draw_equation_step", args: { latex: "x = 4", annotation: "divide both sides by 2" } },
+  { name: "highlight_step", args: { step_label: "x = 4", style: "circle" } },
+  { name: "add_number_line", args: { min: -2, max: 6, points: "4:x = 4", jumps: "0>4:+4", column: "right" } },
+  { name: "add_worked_example_box", args: { title: "Key idea", body: "Whatever you do to one side of the equals sign, do to the other side too. The balance stays level.", column: "right" } },
+  { name: "start_board_section", args: { title: "Your turn" } },
+  { name: "draw_equation_step", args: { latex: "3x - 5 = 7" } },
+];
+
+const geometry: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Pythagoras: finding the long side" } },
+  { name: "draw_figure", args: { figure: "right_triangle", side_labels: "3 | 4 | ?", vertex_labels: "A | B | C", label: "a right triangle with legs 3 and 4" } },
+  { name: "draw_equation_step", args: { latex: "a^2 + b^2 = c^2", column: "right" } },
+  { name: "draw_equation_step", args: { latex: "3^2 + 4^2 = c^2", annotation: "plug in the legs", column: "right" } },
+  { name: "draw_angle", args: { degrees: 37, caption: "the angle at B" } },
+  { name: "draw_figure", args: { figure: "circle", radius_label: "r = 5", diameter_label: "d = 10", column: "right", label: "diameter is twice the radius" } },
+  { name: "draw_figure", args: { figure: "rectangle", side_labels: "8 cm | 3 cm", label: "area = 8 × 3" } },
+  { name: "draw_array", args: { rows: 3, columns: 7, split_after_column: 5, label: "3 × 7 = 3 × 5 + 3 × 2", column: "right" } },
+  { name: "add_area_model", args: { title: "(x + 2)(x + 3)", row_labels: "x | 3", column_labels: "x | 2", cells: "x^2 | 2x; 3x | ", column: "right" } },
+];
+
+const data: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Reading a bar chart" } },
+  { name: "draw_bar_chart", args: { categories: "Mon | Tue | Wed | Thu | Fri", values: "3 | 5 | 2 | 6 | 4", unit: "hours", label: "Hours of practice this week" } },
+  { name: "add_table", args: { columns: "Day | Hours", rows: "Mon | 3; Tue | 5; Wed | 2", title: "The same data as a table", column: "right" } },
+  { name: "add_number_line", args: { min: -5, max: 5, intervals: "(2..inf:x > 2; -inf..-3", points: "0", label: "x > 2 and x ≤ -3" } },
+  { name: "add_function_graph", args: { expression: "x^2 - 4", x_min: -4, x_max: 4, label: "y = x² − 4", column: "right" } },
+  { name: "plot_points", args: { points: "(1,1):A, (3,4):B, (-2,2):C", x_min: -4, x_max: 4, y_min: -4, y_max: 5, label: "three points", column: "right" } },
+  { name: "draw_sketch", args: { strokes: "10,90 90,90; closed 10,90 90,90 90,35; 84,26 84,26", labels: "86,12:ball; 50,97:ground; 40,50:ramp", label: "a ball at the top of a ramp" } },
+  { name: "add_vector_diagram", args: { title: "Forces on the ball", center_label: "ball", vectors: "down:Weight mg; up-right:Normal N; down-left:Friction f", column: "right" } },
+];
+
+const all: DemoCall[] = [
+  ...fractions,
+  ...algebra.slice(1),
+  ...geometry.slice(1),
+  ...data.slice(1),
+  { name: "add_two_column_comparison", args: { title: "Which one is right?", left_title: "Incorrect", left_body: "2x = 8\nx = 16", right_title: "Correct", right_body: "2x = 8\nx = 4" } },
+  { name: "add_process_map", args: { title: "How to solve it", nodes: "Read | Draw | Try | Check", connectors: "then | then | then", column: "right" } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, all };

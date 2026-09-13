@@ -4,7 +4,7 @@ import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/signin", "/api/auth"];
 const DEV_PUBLIC_PATHS = process.env.NODE_ENV === "development"
-  ? ["/api/dev/qa-login"]
+  ? ["/api/dev/qa-login", "/dev/board"]
   : [];
 const STATIC_PATHS = ["/_next", "/favicon.ico", "/public"];
 

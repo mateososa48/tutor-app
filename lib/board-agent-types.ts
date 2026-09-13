@@ -33,6 +33,13 @@ export type BoardActionType =
   | "student_attempt"
   | "highlight_step"
   | "cross_out_step"
+  | "fraction"
+  | "figure"
+  | "angle"
+  | "array"
+  | "balance"
+  | "bar_chart"
+  | "sketch"
   | "freeform_text"
   | "freeform_shape"
   | "freeform_arrow"
@@ -214,6 +221,13 @@ const ACTION_TYPES = new Set<BoardActionType>([
   "student_attempt",
   "highlight_step",
   "cross_out_step",
+  "fraction",
+  "figure",
+  "angle",
+  "array",
+  "balance",
+  "bar_chart",
+  "sketch",
   "freeform_text",
   "freeform_shape",
   "freeform_arrow",
@@ -638,6 +652,16 @@ export function validateAction(value: unknown): ActionValidation {
       }
       break;
     }
+    // Diagram tools are only reachable through the direct tool dispatcher,
+    // which validates their arguments itself; here they just need a type.
+    case "fraction":
+    case "figure":
+    case "angle":
+    case "array":
+    case "balance":
+    case "bar_chart":
+    case "sketch":
+      break;
     case "freeform_text": {
       if (!hasString(raw, "text") && !hasString(raw, "label")) {
         warnings.push("freeform_text missing required field: text or label");
@@ -829,7 +853,10 @@ export function summarizeWhiteboardSnapshot(snapshot: unknown): {
 } {
   const snap = asRecord(snapshot);
   const eqItemsRaw = Array.isArray(snap.eqItems) ? snap.eqItems : [];
-  const eqItems = eqItemsRaw.slice(-16).map((item, index) => {
+  const eqItems = eqItemsRaw
+    .filter((item) => asString(asRecord(item).role) !== "label")
+    .slice(-16)
+    .map((item, index) => {
     const raw = asRecord(item);
     const latex = asString(raw.latex, "(blank equation)");
     const annotation = asString(raw.annotation);

@@ -35,6 +35,18 @@ test("backend instructions carry the profile, memory notes, and the output contr
   assert.ok(text.length < 14000, `backend prompt too long: ${text.length}`);
 });
 
+test("backend instructions put the board first and name the picture tools", () => {
+  const text = buildBackendInstructions(null, []);
+  assert.match(text, /Board-first rule/);
+  assert.match(text, /draw_fraction/);
+  assert.match(text, /draw_balance/);
+  assert.match(text, /never fake a diagram with text, brackets, dashes, or ASCII/);
+  assert.match(text, /at most one diagnostic question/i);
+  assert.match(text, /one to three board actions/);
+  assert.ok(text.indexOf("Example B") < text.indexOf('draw_fraction(fraction="1/2"'), "the fractions example shows the picture being drawn");
+  assert.doesNotMatch(text, /Before explaining or drawing anything/);
+});
+
 test("backend instructions handle a missing profile and empty memory", () => {
   const text = buildBackendInstructions(null, []);
   assert.match(text, /No profile yet/);
