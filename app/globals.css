@@ -295,8 +295,7 @@ body {
 
 /* tldraw's "made with" badge: kept visible and unobscured, moved to the
    bottom-left so the voice dock never covers it. */
-.tl-watermark-licensed,
-.tl-watermark-unlicensed {
+.tl-watermark_SEE-LICENSE {
   right: auto !important;
   left: max(12px, env(safe-area-inset-left)) !important;
   bottom: max(12px, env(safe-area-inset-bottom)) !important;
