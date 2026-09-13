@@ -14,13 +14,13 @@
 
 :root {
   /* Ink & paper (light) */
-  --paper: #f5f5f7;
+  --paper: #fbfbfc;
   --surface: #ffffff;
-  --surface-2: #fafafa;
-  --ink: #1d1d1f;
-  --ink-2: #6e6e73;
-  --ink-3: #aeaeb2;
-  --hairline: rgba(0, 0, 0, 0.08);
+  --surface-2: #f7f7f9;
+  --ink: #121215;
+  --ink-2: #5b5b66;
+  --ink-3: #9a9aa4;
+  --hairline: rgba(18, 18, 21, 0.08);
 
   /* Honey — the voice. Warm, encouraging, never corporate blue. */
   --honey: oklch(0.76 0.135 75);
@@ -58,39 +58,39 @@
 
   --background: oklch(1 0 0);
 
-  --foreground: oklch(0.145 0 0);
+  --foreground: #121215;
 
   --card: oklch(1 0 0);
 
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: #121215;
 
   --popover: oklch(1 0 0);
 
-  --popover-foreground: oklch(0.145 0 0);
+  --popover-foreground: #121215;
 
-  --primary: oklch(0.205 0 0);
+  --primary: #121215;
 
-  --primary-foreground: oklch(0.985 0 0);
+  --primary-foreground: #ffffff;
 
-  --secondary: oklch(0.97 0 0);
+  --secondary: #f2f2f5;
 
-  --secondary-foreground: oklch(0.205 0 0);
+  --secondary-foreground: #121215;
 
-  --muted: oklch(0.97 0 0);
+  --muted: #f2f2f5;
 
-  --muted-foreground: oklch(0.556 0 0);
+  --muted-foreground: #5b5b66;
 
-  --accent: oklch(0.97 0 0);
+  --accent: #f2f2f5;
 
-  --accent-foreground: oklch(0.205 0 0);
+  --accent-foreground: #121215;
 
-  --destructive: oklch(0.577 0.245 27.325);
+  --destructive: #d92d20;
 
-  --border: oklch(0.922 0 0);
+  --border: rgba(18, 18, 21, 0.1);
 
-  --input: oklch(0.922 0 0);
+  --input: rgba(18, 18, 21, 0.14);
 
-  --ring: oklch(0.708 0 0);
+  --ring: #3d9cff;
 
   --chart-1: oklch(0.87 0 0);
 
@@ -104,21 +104,21 @@
 
   --radius: 0.625rem;
 
-  --sidebar: oklch(0.985 0 0);
+  --sidebar: #f7f7f9;
 
-  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-foreground: #121215;
 
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary: #121215;
 
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary-foreground: #ffffff;
 
-  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent: #ebebef;
 
-  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-accent-foreground: #121215;
 
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-border: rgba(18, 18, 21, 0.08);
 
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: #3d9cff;
 }
 
 .dark-scope {
@@ -136,14 +136,12 @@
 
 html,
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-    system-ui, sans-serif;
-  font-feature-settings: "kern" 1, "ss01" 1;
+  font-family: var(--lp-font-body), system-ui, sans-serif;
   font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  letter-spacing: -0.005em;
-  background: var(--paper);
+  letter-spacing: -0.006em;
+  background: #ffffff;
   color: var(--ink);
 }
 
@@ -285,14 +283,23 @@ body {
   outline: none;
 }
 :focus-visible {
-  outline: 2px solid var(--honey-deep);
+  outline: 2px solid var(--lp-sky);
   outline-offset: 2px;
   border-radius: 6px;
 }
 
 ::selection {
-  background: var(--honey-soft);
+  background: var(--lp-sky-soft);
   color: var(--ink);
+}
+
+/* tldraw's "made with" badge: kept visible and unobscured, moved to the
+   bottom-left so the voice dock never covers it. */
+.tl-watermark-licensed,
+.tl-watermark-unlicensed {
+  right: auto !important;
+  left: max(12px, env(safe-area-inset-left)) !important;
+  bottom: max(12px, env(safe-area-inset-bottom)) !important;
 }
 
 /* ── Keyframes (referenced across the app — keep names stable) ── */
@@ -447,7 +454,7 @@ body {
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary-foreground: #ffffff;
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
@@ -468,6 +475,8 @@ body {
    interactive elements, 20px for surfaces and windows, 12px inside them.
    ──────────────────────────────────────────────────────────────────────────── */
 
+/* Brand tokens. Defined once for the landing (.lp) and the app (:root). */
+:root,
 .lp {
   --lp-bg: #fbfbfc;
   --lp-surface: #ffffff;
@@ -492,7 +501,9 @@ body {
     0 1px 2px rgba(18, 18, 21, 0.04),
     0 6px 20px rgba(18, 18, 21, 0.05);
   --lp-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
 
+.lp {
   color-scheme: light;
   overflow-x: clip;
   background: var(--lp-bg);

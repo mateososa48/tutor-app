@@ -43,6 +43,8 @@ export type LiveTutorCallbacks = {
   onDisconnected: (reason: string) => void;
   onError: (message: string) => void;
   onSpeakingChange: (speaking: boolean) => void;
+  /** The analyser on the tutor's audio, so the UI can draw a live waveform. Null when detached. */
+  onAudioAnalyser?: (analyser: AnalyserNode | null) => void;
   onActivity: (activity: TutorActivity) => void;
   onDebugEvent?: (event: LiveDebugEvent) => void;
 };
@@ -138,7 +140,10 @@ class SpeakingMeter {
   private speaking = false;
   private lastLoudAt = 0;
 
-  constructor(private readonly onChange: (speaking: boolean) => void) {}
+  constructor(
+    private readonly onChange: (speaking: boolean) => void,
+    private readonly onAnalyser?: (analyser: AnalyserNode | null) => void,
+  ) {}
 
   attach(stream: MediaStream) {
     this.detach();
@@ -146,10 +151,12 @@ class SpeakingMeter {
       this.ctx = new AudioContext();
       const source = this.ctx.createMediaStreamSource(stream);
       this.analyser = this.ctx.createAnalyser();
-      this.analyser.fftSize = 512;
+      this.analyser.fftSize = 1024;
+      this.analyser.smoothingTimeConstant = 0.6;
       source.connect(this.analyser);
       this.data = new Float32Array(this.analyser.fftSize) as Float32Array<ArrayBuffer>;
       this.timer = setInterval(() => this.tick(), 60);
+      this.onAnalyser?.(this.analyser);
     } catch {
       this.detach();
     }
@@ -179,6 +186,7 @@ class SpeakingMeter {
     this.timer = null;
     try { void this.ctx?.close(); } catch { /* already closed */ }
     this.ctx = null;
+    if (this.analyser) this.onAnalyser?.(null);
     this.analyser = null;
     this.data = null;
     if (this.speaking) {
@@ -212,7 +220,10 @@ export class LiveTutorSession {
   private generation = 0;
 
   constructor(private readonly callbacks: LiveTutorCallbacks) {
-    this.meter = new SpeakingMeter((speaking) => this.callbacks.onSpeakingChange(speaking));
+    this.meter = new SpeakingMeter(
+      (speaking) => this.callbacks.onSpeakingChange(speaking),
+      (analyser) => this.callbacks.onAudioAnalyser?.(analyser),
+    );
     this.assembler = new TranscriptAssembler({
       onFlush: (role, text, at) => {
         this.recent.push({ role, text });

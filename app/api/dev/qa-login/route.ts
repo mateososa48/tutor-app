@@ -81,7 +81,10 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  const redirectUrl = new URL("/session?debug=1", req.url);
+  // `?to=/some/path` lands elsewhere (design previews); default is the QA session.
+  const to = req.nextUrl.searchParams.get("to");
+  const target = to && to.startsWith("/") && !to.startsWith("//") ? to : "/session?debug=1";
+  const redirectUrl = new URL(target, req.url);
   const res = NextResponse.redirect(redirectUrl);
   res.cookies.set("authjs.session-token", token, {
     httpOnly: true,

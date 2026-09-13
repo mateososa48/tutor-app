@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { signOut } from "next-auth/react";
-import LeftNav from "@/components/LeftNav";
+import { AppShell } from "@/components/app/AppShell";
+import { TopBar } from "@/components/app/TopBar";
 import { useClientReady } from "@/lib/client-ready";
 import {
   DEFAULT_TUTOR_VOICE,
@@ -156,30 +157,16 @@ export default function SettingsPage() {
   }, [previewingVoice]);
 
   return (
-    <div className="h-screen w-screen flex overflow-hidden" style={{ background: "#e2e2e2", padding: 10, gap: 10 }}>
-      <LeftNav />
-
-      <main
-        className="flex-1 min-w-0 flex flex-col overflow-hidden"
-        style={{
-          background: "#fff",
-          borderRadius: 14,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.07), 0 4px 18px rgba(0,0,0,0.06)",
-        }}
-      >
-        {/* Header */}
-        <header
-          className="h-14 px-7 flex items-center justify-between flex-shrink-0"
-          style={{ borderBottom: "1px solid #d0d0d0" }}
-        >
-          <span className="text-[14px] font-semibold" style={{ color: "#0a0a0a" }}>Settings</span>
-          <span
-            className="text-[12px] font-semibold"
-            style={{ color: savedLabel ? "#0a0a0a" : "transparent", transition: "color 0.18s" }}
-          >
-            {savedLabel || "·"}
+    <AppShell defaultOpen>
+      <TopBar
+        actions={
+          <span className="text-[12.5px] font-medium text-(--lp-ink-2) transition-opacity duration-200" style={{ opacity: savedLabel ? 1 : 0 }}>
+            {savedLabel || "Saved"}
           </span>
-        </header>
+        }
+      >
+        <span className="font-medium text-(--lp-ink)">Settings</span>
+      </TopBar>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto page-in" style={{ padding: "clamp(24px, 5vw, 52px)" }}>
@@ -392,8 +379,7 @@ export default function SettingsPage() {
 
           </div>
         </div>
-      </main>
-    </div>
+    </AppShell>
   );
 }
 

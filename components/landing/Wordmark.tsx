@@ -1,7 +1,7 @@
-export function Wordmark({ size = 17 }: { size?: number }) {
+export function Wordmark({ size = 17, iconOnly = false, className = "" }: { size?: number; iconOnly?: boolean; className?: string }) {
   return (
     <span
-      className="lp-display inline-flex select-none items-center gap-2"
+      className={`lp-display inline-flex select-none items-center gap-2 ${className}`}
       style={{ fontSize: size, letterSpacing: "-0.02em", color: "var(--lp-ink)" }}
     >
       <svg width={size + 5} height={size + 5} viewBox="0 0 22 22" aria-hidden>
@@ -14,7 +14,7 @@ export function Wordmark({ size = 17 }: { size?: number }) {
           strokeLinecap="round"
         />
       </svg>
-      chalk
+      {!iconOnly && "chalk"}
     </span>
   );
 }
