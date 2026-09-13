@@ -31,6 +31,15 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 6. The voice model cannot see images. Photos and PDFs go to the backend as `input_image` / `input_file` items.
 7. The SDK (`openai@7.15`) has typed Live events in `node_modules/openai/resources/live/live.d.ts` and a WebSocket client (`openai/resources/live/ws`) that is handy for Node probes.
 
+## Landing page (branch `landing-v3`, Sept 2026)
+- Lives in `components/landing/`. `LandingPage.tsx` composes: `Header` (full-width bar that morphs into a floating glass pill on scroll, driven by one Motion spring), `Hero` (dithered-wave WebGL backdrop in `DitherWave.tsx`, no three.js), `SessionMock` (the real session screen replayed: nav rail, board, transcript), `TopicsMarquee`, `HowItWorks` (React Bits CardSwap on sm+, static column on mobile), `Bento` (four double-bordered tiles with scripted product fragments), `Founder` (React Bits ScrollReveal), `Parents` (recap card), `Faq` (shadcn Accordion), `Footer`.
+- Own tokens under `.lp` in `app/globals.css` (off-white / off-black / light gray + sky accent). Buttons are `.lp-btn`: white face, 2px ink border, solid offset shadow that the face slides into on hover. Radius rule: 10px interactive, 20px surfaces, `.lp-frame` = double border.
+- Fonts via `next/font` in `components/landing/fonts.ts`: Schibsted Grotesk (display), Hanken Grotesk (body), Shantell Sans (board handwriting, the same face tldraw uses).
+- Board drawings live in `Board.tsx` (strokes with pathLength animation: underline, ring, arrow, number line, sticky). Product fragments in `Fragments.tsx`; timed loops via `useScript.ts` (reduced motion = final frame).
+- Registries in `components.json`: shadcn (base-nova style, Base UI), `@magicui`, `@animate-ui`, `@react-bits`, plus `@reactbits-starter` / `@reactbits-pro` which need `REACTBITS_LICENSE_KEY` in `.env.local` before `npx shadcn add @reactbits-pro/faq-2` or `@reactbits-starter/dither-wave-tw` will install. 21st.dev now requires an account for its registry.
+- Vendored registry copies (`components/*.tsx`, `components/ui`, `components/animate-ui`) are ours to edit; a few carry small typing patches.
+- The sign-in page and app home still use the older honey accent; retokening them to the landing palette is an open task.
+
 ## Commands
 - `npm run dev` — dev server. `npm test` — `tsx --test lib/*.test.ts`. `npx tsc --noEmit`. `npm run lint` (two pre-existing `set-state-in-effect` errors in `Sidebar.tsx` and `LandingPage.tsx`).
 - QA without a microphone: open `/api/dev/qa-login` (dev only) → lands on `/session?debug=1`, a text-only session with the QA panel. Add `&mic=1` for a real mic plus the panel. In dev, `window.__liveTutor` exposes `debugStats()` and `debugSend(event)`.
