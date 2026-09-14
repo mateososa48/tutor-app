@@ -72,3 +72,4 @@ gpt-live-1 bills $0.05 per minute of session, plus backend tokens. Expect roughl
 - Branch order: `gpt-live` > `v2` > `main`. Never base work on `main`.
 - Background agents must not run `git checkout` / `switch` / `stash`; one did during a read-only audit and moved the working tree to `main`.
 - `.playwright-mcp/` is gitignored; Playwright MCP writes screenshots and snapshots there.
+- Turbopack sometimes keeps serving a stale `globals.css` after an edit (the class you just added is missing from the served stylesheet). Fix: stop the dev server, `rm -rf .next`, start it again.

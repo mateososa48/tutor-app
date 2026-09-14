@@ -912,68 +912,72 @@ function SessionDetailPage({ id }: { id: string }) {
     );
   }
 
-  // Live
+  // Live: the board is the page. Title and End float over the surface; the
+  // dock sits bottom right; the tray runs along the bottom edge.
   return (
     <AppShell defaultOpen={false}>
-      <TopBar actions={<EndSessionButton disabled={liveState !== "active"} onConfirm={endSession} />}>
-        {liveState === "active" && (
-          <>
-            <LiveDot />
-            <span className="truncate font-medium text-(--lp-ink)">{sessionTitle}</span>
-            <span className="text-(--lp-ink-3) tabular-nums">{formatTime(elapsedSeconds)}</span>
-            {debugMode && (
-              <span className="text-[11px] font-bold tracking-[0.06em] text-(--lp-sky-deep) uppercase">
-                {qaTextOnly ? "QA text" : "QA mic"}
-              </span>
-            )}
-          </>
-        )}
-        {liveState === "connecting" && <span className="text-(--lp-ink-3)">Connecting…</span>}
-        {liveState === "ending" && <span className="text-(--lp-ink-3)">Ending session…</span>}
-        {liveState === "error" && <span className="text-(--danger)">{errorMessage || "Session error"}</span>}
-      </TopBar>
+      <main className="board-frame relative min-h-0 flex-1 overflow-hidden p-3.5 pb-[34px]" {...dropHandlers}>
+        <div className="board-surface relative h-full overflow-hidden">
+          <Whiteboard ref={whiteboardRef} />
 
-      <main className="relative min-h-0 flex-1 overflow-hidden" {...dropHandlers}>
-        <Whiteboard ref={whiteboardRef} />
-        <CaptionBar text={subtitleText} />
-        <DropOverlay show={dragging} />
-        {liveState === "error" && (
-          <ErrorNotice
-            message={errorMessage}
-            onRetry={() => {
-              isResumeRef.current = false;
-              void startSession();
-            }}
-          />
-        )}
-        <VoiceDock
-          activity={dockActivity}
-          isMuted={isMuted}
-          onMute={() => setIsMuted((v) => !v)}
-          analyser={analyser}
-          onSendText={handleSendText}
-          transcript={transcript}
-          transcriptOpen={transcriptOpen}
-          onToggleTranscript={() => setTranscriptOpen((v) => !v)}
-          files={files}
-          onAddFiles={handleAddFiles}
-          onRemoveFile={handleRemoveFile}
-          fileNotice={fileNotice}
-        />
-        {debugMode && (
-          <TutorDebugPanel
-            events={debugTrace}
+          <SessionChip
             liveState={liveState}
-            elapsedSeconds={elapsedSeconds}
-            isTextOnly={qaTextOnly}
-            canSend={liveState === "active"}
-            transcriptCount={transcript.length}
-            fileCount={files.length}
-            onClear={clearDebugTrace}
-            onExport={exportDebugTrace}
-            onSendScenario={handleSendText}
+            title={sessionTitle}
+            elapsed={formatTime(elapsedSeconds)}
+            errorMessage={errorMessage}
+            qaLabel={debugMode ? (qaTextOnly ? "QA text" : "QA mic") : null}
           />
-        )}
+          <div className="absolute top-4 right-4 z-30">
+            <EndSessionButton disabled={liveState !== "active"} onConfirm={endSession} />
+          </div>
+
+          <CaptionBar text={subtitleText} />
+          <DropOverlay show={dragging} />
+          {liveState === "error" && (
+            <ErrorNotice
+              message={errorMessage}
+              onRetry={() => {
+                isResumeRef.current = false;
+                void startSession();
+              }}
+            />
+          )}
+          <VoiceDock
+            activity={dockActivity}
+            isMuted={isMuted}
+            onMute={() => setIsMuted((v) => !v)}
+            analyser={analyser}
+            onSendText={handleSendText}
+            transcript={transcript}
+            transcriptOpen={transcriptOpen}
+            onToggleTranscript={() => setTranscriptOpen((v) => !v)}
+            files={files}
+            onAddFiles={handleAddFiles}
+            onRemoveFile={handleRemoveFile}
+            fileNotice={fileNotice}
+          />
+          {debugMode && (
+            <TutorDebugPanel
+              events={debugTrace}
+              liveState={liveState}
+              elapsedSeconds={elapsedSeconds}
+              isTextOnly={qaTextOnly}
+              canSend={liveState === "active"}
+              transcriptCount={transcript.length}
+              fileCount={files.length}
+              onClear={clearDebugTrace}
+              onExport={exportDebugTrace}
+              onSendScenario={handleSendText}
+            />
+          )}
+        </div>
+
+        <div className="board-tray absolute inset-x-3.5 bottom-0 h-[38px]" aria-hidden>
+          <span className="board-marker left-7" style={{ background: "linear-gradient(180deg, #5fb0ff, #3d9cff)" }} />
+          <span className="board-marker left-[92px]" style={{ background: "linear-gradient(180deg, #25b47f, #099268)" }} />
+          <span className="board-marker left-[156px]" style={{ background: "linear-gradient(180deg, #f08a3c, #e16919)" }} />
+          <span className="board-eraser left-[230px]" />
+        </div>
       </main>
     </AppShell>
   );
@@ -989,6 +993,36 @@ const MOCK_TRANSCRIPT: TranscriptEntry[] = [
   { id: "m5", role: "student", text: "two pieces" },
   { id: "m6", role: "tutor", text: "Exactly. Two quarters is the same amount as one half. Let me put both next to each other." },
 ];
+
+function SessionChip({
+  liveState,
+  title,
+  elapsed,
+  errorMessage,
+  qaLabel,
+}: {
+  liveState: LiveState;
+  title: string;
+  elapsed: string;
+  errorMessage: string;
+  qaLabel: string | null;
+}) {
+  return (
+    <div className="absolute top-4 left-4 z-30 flex h-9 max-w-[min(60%,520px)] items-center gap-2.5 rounded-full border border-(--lp-line-strong) bg-white/92 px-3.5 text-[13px] shadow-(--lp-shadow-card) backdrop-blur-md">
+      {liveState === "active" && (
+        <>
+          <LiveDot />
+          <span className="truncate font-medium text-(--lp-ink)">{title}</span>
+          <span className="shrink-0 text-(--lp-ink-3) tabular-nums">{elapsed}</span>
+          {qaLabel && <span className="shrink-0 text-[10.5px] font-bold tracking-[0.06em] text-(--lp-sky-deep) uppercase">{qaLabel}</span>}
+        </>
+      )}
+      {(liveState === "connecting" || liveState === "idle") && <span className="text-(--lp-ink-3)">Connecting…</span>}
+      {liveState === "ending" && <span className="text-(--lp-ink-3)">Ending session…</span>}
+      {liveState === "error" && <span className="truncate text-(--danger)">{errorMessage || "Session error"}</span>}
+    </div>
+  );
+}
 
 function Centered({ text }: { text: string }) {
   return <div className="flex flex-1 items-center justify-center text-[14px] text-(--lp-ink-3)">{text}</div>;

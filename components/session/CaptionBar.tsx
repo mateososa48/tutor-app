@@ -24,7 +24,7 @@ export function CaptionBar({ text }: { text: string }) {
   }, [text]);
 
   return (
-    <div className="pointer-events-none absolute inset-x-5 bottom-6 z-20 flex justify-center md:right-[424px]">
+    <div className="pointer-events-none absolute inset-x-5 bottom-7 z-20 flex justify-center md:right-[424px]">
       <AnimatePresence>
         {shown && (
           <motion.div

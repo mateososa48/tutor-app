@@ -4,9 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRight, NotebookPen, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, Plus, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
-import { TopBar } from "@/components/app/TopBar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -57,13 +56,10 @@ export default function HomePage() {
 
   return (
     <AppShell defaultOpen>
-      <TopBar actions={<span className="text-[13px] text-(--lp-ink-3)">{mounted ? today() : ""}</span>}>
-        <span className="font-medium text-(--lp-ink)">Home</span>
-      </TopBar>
-
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[880px] px-6 pt-14 pb-24 sm:px-8">
+        <div className="mx-auto max-w-[880px] px-6 pt-12 pb-24 sm:px-8">
           <section className="mb-14">
+            <p className="m-0 mb-5 text-[13px] text-(--lp-ink-3)">{mounted ? today() : " "}</p>
             <h1 className="lp-display m-0 text-[clamp(1.75rem,3vw,2.25rem)] leading-[1.1] text-(--lp-ink)">
               {mounted ? `${greeting()}${firstName ? `, ${firstName}` : ""}.` : " "}
             </h1>
@@ -125,11 +121,8 @@ function SessionRow({ session, onOpen, onDelete }: { session: SavedSession; onOp
             onOpen();
           }
         }}
-        className="flex cursor-pointer items-center gap-4 rounded-[12px] px-3 py-3 outline-none transition-colors hover:bg-(--lp-gray) focus-visible:ring-2 focus-visible:ring-(--lp-sky)"
+        className="flex cursor-pointer items-center gap-4 rounded-[12px] px-3 py-3.5 outline-none transition-colors hover:bg-(--lp-gray) focus-visible:ring-2 focus-visible:ring-(--lp-sky)"
       >
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-[10px] bg-(--lp-sky-soft) text-(--lp-sky-deep)">
-          <NotebookPen className="size-4" strokeWidth={1.9} />
-        </span>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-[14.5px] font-medium text-(--lp-ink)">{session.title}</span>
           <span className="text-[12.5px] text-(--lp-ink-3)">

@@ -1,17 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
-// The one header every app page shares: sidebar toggle, then whatever the
-// page wants on the left, actions on the right. 52px, hairline below.
+// A quiet page header for pages that need one (settings, a paused or ended
+// session). The sidebar carries its own toggle, so nothing sits here but the
+// page's content and its actions.
 export function TopBar({ children, actions, className }: { children?: ReactNode; actions?: ReactNode; className?: string }) {
   return (
-    <header className={cn("flex h-[52px] shrink-0 items-center gap-3 border-b border-(--lp-line) bg-white px-3", className)}>
-      <SidebarTrigger className="size-8 text-(--lp-ink-2) hover:text-(--lp-ink)" />
-      <Separator orientation="vertical" className="h-5! self-center" />
+    <header className={cn("flex h-[52px] shrink-0 items-center gap-3 border-b border-(--lp-line) bg-white px-5", className)}>
       <div className="flex min-w-0 flex-1 items-center gap-3 text-[13.5px]">{children}</div>
       {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
     </header>
