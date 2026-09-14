@@ -88,6 +88,10 @@ const math: DemoCall[] = [
   { name: "draw_array", args: { rows: 3, columns: 4, shaded: 3, label: "3 of 12 is one quarter", column: "right" } },
   { name: "draw_figure", args: { figure: "hexagon", side_labels: "5 | 5 | 5 | 5 | 5 | 5", label: "perimeter = 6 × 5" } },
   { name: "draw_figure", args: { figure: "trapezoid", side_labels: "12 | | 6 | ", height_label: "h = 4", column: "right" } },
+  { name: "draw_angle", args: { degrees: 110, adjacent_degrees: 70, adjacent_label: "?", caption: "angles on a straight line add to 180°" } },
+  { name: "add_number_line", args: { min: 0, max: 100, step: 25, second_min: 0, second_max: 80, second_label: "of 80", label: "25% of 80 = 20", column: "right" } },
+  { name: "add_number_line", args: { min: 0, max: 1, step: 0.1, points: "0.7, 0.65:0.65", label: "0.7 is bigger than 0.65" } },
+  { name: "plot_points", args: { points: "(1,1):A, (4,1):B, (4,3):C, (1,3):D", x_min: -1, x_max: 6, y_min: -1, y_max: 5, connect: true, label: "a 3 by 2 rectangle", column: "right" } },
 ];
 
 const all: DemoCall[] = [

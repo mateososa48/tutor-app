@@ -46,3 +46,11 @@ test("target lists split on pipes and commas; rings close on themselves", () => 
   assert.equal(pts.length, 45);
   assert.ok(pts.every((p) => p.x > -30 && p.x < 130 && p.y > -30 && p.y < 70));
 });
+
+test("long labels keep their caption", async () => {
+  const { itemLabelFrom } = await import("./board-items");
+  const long = `Drew a tape diagram: 1 box = 100 pieces ${"| ".repeat(40)}, captioned "a whole is 100%".`;
+  const label = itemLabelFrom(long, "draw_tape_diagram");
+  assert.ok(label.startsWith("a whole is 100%: "), label);
+  assert.ok(label.length <= 92, String(label.length));
+});

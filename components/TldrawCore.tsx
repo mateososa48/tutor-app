@@ -65,6 +65,7 @@ import {
   type TransversalDrawing,
   type GraphExtras,
   type FigureKind,
+  autoTickStyle,
   tickValues,
   vertexLabelPoint,
   wholesNeeded,
@@ -185,7 +186,7 @@ export interface WhiteboardHandle {
   addTable(columns: string, rows: string, title?: string, column?: "left" | "right"): void;
   addNumberLine(opts: NumberLineDrawing): void;
   addCoordinateAxes(xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right"): void;
-  plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right"): void;
+  plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right", connect?: boolean): void;
   addWorkedExampleBox(title: string, body: string, column?: "left" | "right"): void;
   addStudentAttempt(text: string, column?: "left" | "right"): void;
   addProblemSetup(goal: string, givens?: string, unknowns?: string, plan?: string, column?: "left" | "right"): void;
@@ -2079,7 +2080,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const hasJumps = opts.jumps.length > 0;
       const hasTopLabels = opts.marks.some((m) => m.label) || opts.intervals.some((iv) => iv.label);
       const top = hasJumps ? 74 : hasTopLabels ? 44 : 18;
-      const h = top + 46 + (opts.label ? 30 : 0);
+      const second = opts.secondMin !== undefined && opts.secondMax !== undefined && opts.secondMax !== opts.secondMin;
+      const SECOND_DY = 70;
+      const h = top + 46 + (second ? SECOND_DY : 0) + (opts.label ? 30 : 0);
+      const tickStyle = opts.labelStyle ?? autoTickStyle(step);
       ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
@@ -2148,7 +2152,21 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       for (const v of tickValues(min, max, step)) {
         const tx = px(v);
         createLine(editor, tx, lineY - 8, tx, lineY + 8, INK);
-        createText(editor, formatTick(v, step), tx - 32, lineY + 14, { color: PENCIL, size: "s", font: "sans", width: 64, align: "middle" });
+        createText(editor, formatTick(v, step, tickStyle), tx - 32, lineY + 14, { color: PENCIL, size: "s", font: "sans", width: 64, align: "middle" });
+      }
+      if (second) {
+        // A double number line: same positions, a second scale of values.
+        const y2 = lineY + SECOND_DY;
+        const sMin = opts.secondMin as number;
+        const sMax = opts.secondMax as number;
+        arrow(x, x + w, { color: INK, size: "m", startHead: true, endHead: true, dy: SECOND_DY });
+        for (const v of tickValues(min, max, step)) {
+          const tx = px(v);
+          const mapped = sMin + ((v - min) / (max - min)) * (sMax - sMin);
+          createLine(editor, tx, y2 - 8, tx, y2 + 8, INK);
+          createText(editor, formatNumber(mapped), tx - 32, y2 + 14, { color: PENCIL, size: "s", font: "sans", width: 64, align: "middle" });
+        }
+        if (opts.secondLabel) createText(editor, opts.secondLabel, x + w + 4, y2 - 12, { color: PENCIL, size: "s", font: "sans", width: 120 });
       }
 
       // Interval endpoints (open = hollow), then marked values.
@@ -2171,7 +2189,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       });
 
       if (opts.label) {
-        createText(editor, opts.label, x, lineY + 44, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+        createText(editor, opts.label, x, lineY + 44 + (second ? SECOND_DY : 0), { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
       }
 
       colY(col).current += h + ROW_GAP;
@@ -2207,7 +2225,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
-    plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right") {
+    plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right", connect?: boolean) {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "right";
@@ -2219,14 +2237,20 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       drawAxes(editor, x, y, w, h, xMin, xMax, yMin, yMax, label);
       const pen = takePens(1)[0];
 
+      const placed: Pt[] = [];
       for (const point of parseCoordinatePoints(points)) {
         if (point.x < xMin || point.x > xMax || point.y < yMin || point.y > yMax) continue;
         const px = x + ((point.x - xMin) / (xMax - xMin)) * w;
         const py = y + h - ((point.y - yMin) / (yMax - yMin)) * h;
+        placed.push({ x: px, y: py });
         createFreeformGeo(editor, "ellipse", px - 6, py - 6, 12, 12, pen, "fill", { dash: "solid" });
         if (point.label) {
           createText(editor, point.label, px + 8, py - 26, { color: pen, size: "s", font: "sans", width: 120 });
         }
+      }
+      if (connect && placed.length >= 2) {
+        // Join the points in order and close the shape.
+        createLineShape(editor, undefined, undefined, placed.length >= 3 ? [...placed, placed[0]] : placed, { color: pen, size: "m", dash: "solid", spline: "line" });
       }
 
       colY(col).current += h + (label ? 76 : 48);
@@ -3101,11 +3125,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const rad = (-deg * Math.PI) / 180;
       const ex = Math.cos(rad) * L;
       const ey = Math.sin(rad) * L;
+      const adj = opts.adjacentDegrees && opts.adjacentDegrees > 0 && deg + opts.adjacentDegrees < 360 ? opts.adjacentDegrees : 0;
+      const rad2 = (-(deg + adj) * Math.PI) / 180;
+      const ex2 = adj ? Math.cos(rad2) * L : 0;
+      const ey2 = adj ? Math.sin(rad2) * L : 0;
       const PAD = 40;
-      const minX = Math.min(0, ex);
-      const maxX = Math.max(L, ex);
-      const minY = Math.min(0, ey);
-      const maxY = Math.max(0, ey);
+      const minX = Math.min(0, ex, ex2);
+      const maxX = Math.max(L, ex, ex2);
+      const minY = Math.min(0, ey, ey2);
+      const maxY = Math.max(0, ey, ey2);
       const w = maxX - minX + PAD * 2;
       const h = maxY - minY + PAD * 2 + (opts.caption ? 22 : 0);
       ensureColumnRoom(editor, col, h + ROW_GAP);
@@ -3113,7 +3141,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const y = colY(col).current;
       const vx = x + PAD - minX;
       const vy = y + PAD - minY;
-      const pen = takePens(1)[0];
+      const [pen, pen2] = takePens(adj ? 2 : 1);
       const ray = (tx: number, ty: number) => {
         editor.createShape({
           id: createShapeId(),
@@ -3148,6 +3176,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         createLineShape(editor, undefined, undefined, [{ x: vx + s, y: vy }, { x: vx + s, y: vy - s }, { x: vx, y: vy - s }], { color: pen, size: "s", dash: "solid" });
       } else {
         createDrawStroke(editor, undefined, undefined, arcPolyline(vx, vy, 46, 0, -deg, 4), { color: pen, size: "s", dash: "solid", fill: "none", isClosed: false });
+      }
+      if (adj) {
+        ray(vx + ex2, vy + ey2);
+        createDrawStroke(editor, undefined, undefined, arcPolyline(vx, vy, 60, -deg, -(deg + adj), 4), { color: pen2, size: "s", dash: "solid", fill: "none", isClosed: false });
+        const mid2 = (-(deg + adj / 2) * Math.PI) / 180;
+        createText(editor, opts.adjacentLabel ?? `${adj}°`, vx + Math.cos(mid2) * 86 - 40, vy + Math.sin(mid2) * 86 - 12, { color: pen2, size: "s", font: "sans", width: 80, align: "middle" });
       }
       createFreeformGeo(editor, "ellipse", vx - 4, vy - 4, 8, 8, INK, "fill", { dash: "solid" });
       const mid = (-deg / 2) * (Math.PI / 180);

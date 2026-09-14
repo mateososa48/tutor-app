@@ -134,9 +134,24 @@ export function tickValues(min: number, max: number, step: number): number[] {
 
 // Label a tick. Fractional steps get fraction labels ("3/4"), integer steps
 // get integers, anything else a trimmed decimal.
-export function formatTick(value: number, step: number): string {
+export type TickStyle = "fraction" | "decimal";
+
+// Halves, thirds, quarters read as fractions; tenths and hundredths as
+// decimals, unless the tool says otherwise.
+export function autoTickStyle(step: number): TickStyle {
+  if (step >= 1) return "decimal";
+  for (const d of [2, 3, 4, 6, 8, 12, 16]) {
+    const n = step * d;
+    if (Math.abs(n - Math.round(n)) < 1e-6) return "fraction";
+  }
+  return "decimal";
+}
+
+export function formatTick(value: number, step: number, style?: TickStyle): string {
   const eps = 1e-9;
   if (Math.abs(value - Math.round(value)) < eps) return `${Math.round(value)}`;
+  const mode = style ?? autoTickStyle(step);
+  if (mode === "decimal") return `${Number(value.toFixed(3))}`;
   if (step < 1) {
     for (const d of UNIT_DENOMINATORS) {
       const n = value * d;
@@ -403,6 +418,11 @@ export type NumberLineDrawing = {
   jumps: LineJump[];
   label?: string;
   column?: BoardColumn;
+  labelStyle?: TickStyle;
+  /** A second scale under the first with the same tick positions (a double number line). */
+  secondMin?: number;
+  secondMax?: number;
+  secondLabel?: string;
 };
 
 export type FigureDrawing = {
@@ -424,6 +444,9 @@ export type AngleDrawing = {
   label?: string;
   caption?: string;
   column?: BoardColumn;
+  /** A second angle sharing the upper ray, going on counter-clockwise (angles on a line, around a point). */
+  adjacentDegrees?: number;
+  adjacentLabel?: string;
 };
 
 export type ArrayDrawing = {
@@ -502,18 +525,22 @@ export function parseTapeRows(input: string): TapeRow[] {
         name = body.slice(0, colon).trim();
         body = body.slice(colon + 1);
       }
+      // Boxes first; "= total" only counts when it sits in the last box, so a
+      // pipe-heavy row cannot swallow the row into the total.
+      const parts = body.split("|").map((s) => s.trim());
       let total: string | undefined;
-      const eq = body.lastIndexOf("=");
+      const last = parts[parts.length - 1] ?? "";
+      const eq = last.indexOf("=");
       if (eq >= 0) {
-        total = body.slice(eq + 1).trim() || undefined;
-        body = body.slice(0, eq);
+        total = last.slice(eq + 1).trim() || undefined;
+        parts[parts.length - 1] = last.slice(0, eq).trim();
       }
-      const segments = body
-        .split("|")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0)
+      while (parts.length > 1 && parts[parts.length - 1] === "" && parts.length > 12) parts.pop();
+      const segments = parts
         .slice(0, 12)
         .map((s) => (s.startsWith("*") ? { text: s.slice(1).trim(), shaded: true } : { text: s, shaded: false }));
+      // A row that is only one empty box is no row at all.
+      if (segments.length === 1 && segments[0].text === "") return { name, segments: [], total };
       return { name, segments, total };
     })
     .filter((row) => row.segments.length > 0);

@@ -63,7 +63,15 @@ export function itemLabelFrom(message: string | null | undefined, fallback: stri
     .replace(/\s*\(item b\d+\)$/, "")
     .trim();
   const label = text || fallback;
-  return label.length > 90 ? `${label.slice(0, 87).trimEnd()}…` : label;
+  if (label.length <= 90) return label;
+  // Keep the caption when trimming: it is the name the tutor will use.
+  const cap = /captioned "([^"]{1,60})"/.exec(label);
+  if (cap) {
+    const rest = label.replace(/,?\s*captioned "[^"]*"/, "").trim();
+    const room = 90 - cap[1].length - 3;
+    return `${cap[1]}: ${rest.length > room ? `${rest.slice(0, Math.max(0, room - 1)).trimEnd()}…` : rest}`;
+  }
+  return `${label.slice(0, 87).trimEnd()}…`;
 }
 
 export function isHeadingItem(item: BoardItem): boolean {

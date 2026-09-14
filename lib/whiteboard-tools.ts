@@ -204,7 +204,11 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
       properties: {
         min: { type: "number", description: "Left end of the line." },
         max: { type: "number", description: "Right end of the line." },
-        step: { type: "number", description: "Optional tick spacing, e.g. 1, 0.5, 0.25 (labelled 1/4, 1/2, 3/4). Chosen automatically when omitted." },
+        step: { type: "number", description: "Optional tick spacing, e.g. 1, 0.5, 0.25 (labelled 1/4, 1/2, 3/4), 0.1 (labelled 0.1, 0.2). Chosen automatically when omitted." },
+        label_style: { type: "string", enum: ["fraction", "decimal"], description: "How to label ticks between whole numbers. Default: halves, thirds, quarters as fractions; tenths and hundredths as decimals." },
+        second_min: { type: "number", description: "Optional: with second_max, draws a second scale under the first at the same tick positions (a double number line). E.g. min 0, max 100 (percent) over second_min 0, second_max 80 (the amount). THE picture for percent of an amount and for ratios as rates." },
+        second_max: { type: "number", description: "Right end of the second scale." },
+        second_label: { type: "string", description: "Optional short label after the second line, e.g. 'marbles'. 40 chars max." },
         points: {
           type: "string",
           description: "Optional comma-separated dots: 'value' or 'value:label', fractions allowed. E.g. '3, 3/4:three quarters, -2:start'. 800 chars max.",
@@ -259,6 +263,8 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
       type: "object",
       properties: {
         degrees: { type: "number", description: "Angle in degrees, 1 to 359." },
+        adjacent_degrees: { type: "number", description: "Optional second angle drawn next to the first, sharing a ray. 110 with adjacent 70 shows angles on a straight line (they add to 180); 90 with adjacent 90 shows a straight angle split in two; use for supplementary, complementary, and angles around a point." },
+        adjacent_label: { type: "string", description: "Optional label for the second angle, e.g. '?' or 'x'. 40 chars max." },
         label: { type: "string", description: "Optional label on the arc, e.g. '37°', 'x', 'θ'. Defaults to the degree measure. 40 chars max." },
         caption: { type: "string", description: "Optional caption under the drawing. 160 chars max." },
         column: COLUMN,
@@ -371,7 +377,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   },
   {
     name: "plot_points",
-    description: "Plot labelled points on an xy grid: scatter data, a vertex, intercepts, or the corners of a shape.",
+    description: "Plot labelled points on an xy grid: scatter data, a vertex, intercepts, or the corners of a shape. With connect=true the points are joined in order into a polygon (shapes on a grid, transformations: call it twice for the original and the image).",
     parameters: {
       type: "object",
       properties: {
@@ -381,6 +387,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         y_min: { type: "number", description: "Minimum y of the grid." },
         y_max: { type: "number", description: "Maximum y of the grid." },
         label: { type: "string", description: "Optional caption. 160 chars max." },
+        connect: { type: "boolean", description: "Join the points in order and close the shape. Default false." },
         column: COLUMN,
       },
       required: ["points", "x_min", "x_max", "y_min", "y_max"],

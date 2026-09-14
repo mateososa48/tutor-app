@@ -305,8 +305,17 @@ function dispatchInner(
       const marks = parseLineMarks(pointsRaw.value).filter((m) => m.value >= min && m.value <= max);
       const intervals = parseLineIntervals(intervalsRaw.value);
       const jumps = parseLineJumps(jumpsRaw.value).filter((j) => j.from >= min && j.from <= max && j.to >= min && j.to <= max);
+      const styleRaw = opt(args, "label_style"); if (styleRaw.error) return styleRaw.error;
+      const labelStyle = styleRaw.value === "fraction" || styleRaw.value === "decimal" ? styleRaw.value : undefined;
+      const secondMin = optionalNumber(args, "second_min"); if (isToolError(secondMin)) return secondMin;
+      const secondMax = optionalNumber(args, "second_max"); if (isToolError(secondMax)) return secondMax;
+      const secondLabel = opt(args, "second_label"); if (secondLabel.error) return secondLabel.error;
+      const hasSecond = secondMin !== undefined && secondMax !== undefined && secondMax !== secondMin;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `number line ${min} to ${max}` }, () =>
-        board.addNumberLine({ min, max, step, marks, intervals, jumps, label: label.value, column: pickColumn(column.value) }),
+        board.addNumberLine({
+          min, max, step, marks, intervals, jumps, label: label.value, column: pickColumn(column.value), labelStyle,
+          secondMin: hasSecond ? secondMin : undefined, secondMax: hasSecond ? secondMax : undefined, secondLabel: hasSecond ? secondLabel.value : undefined,
+        }),
       );
       const effectiveStep = step ?? niceStep(min, max);
       const bits = [
@@ -314,6 +323,7 @@ function dispatchInner(
         marks.length ? `dots at ${marks.map((m) => (m.label ? `${formatTick(m.value, effectiveStep)} (${m.label})` : formatTick(m.value, effectiveStep))).join(", ")}` : "",
         intervals.length ? `${intervals.length} shaded range${intervals.length === 1 ? "" : "s"}` : "",
         jumps.length ? `${jumps.length} hop arrow${jumps.length === 1 ? "" : "s"}` : "",
+        hasSecond ? `second scale ${secondMin} to ${secondMax}${secondLabel.value ? ` (${secondLabel.value})` : ""} lined up underneath` : "",
       ].filter(Boolean);
       return ok(`${bits.join("; ")}.`);
     }
@@ -379,10 +389,13 @@ function dispatchInner(
       const label = opt(args, "label"); if (label.error) return label.error;
       const caption = opt(args, "caption"); if (caption.error) return caption.error;
       const column = opt(args, "column"); if (column.error) return column.error;
+      const adjRaw = optionalNumber(args, "adjacent_degrees"); if (isToolError(adjRaw)) return adjRaw;
+      const adjacentDegrees = adjRaw && adjRaw > 0 && degrees + Math.round(adjRaw) < 360 ? Math.round(adjRaw) : undefined;
+      const adjacentLabel = opt(args, "adjacent_label"); if (adjacentLabel.error) return adjacentLabel.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: caption.value ?? `${degrees}° angle` }, () =>
-        board.drawAngle({ degrees, label: label.value, caption: caption.value, column: pickColumn(column.value) }),
+        board.drawAngle({ degrees, label: label.value, caption: caption.value, column: pickColumn(column.value), adjacentDegrees, adjacentLabel: adjacentLabel.value }),
       );
-      return ok(`Drew a ${degrees}° angle${label.value ? ` labelled ${label.value}` : ""}.`);
+      return ok(`Drew a ${degrees}° angle${label.value ? ` labelled ${label.value}` : ""}${adjacentDegrees ? ` next to a ${adjacentDegrees}° angle${adjacentLabel.value ? ` labelled ${adjacentLabel.value}` : ""}${degrees + adjacentDegrees === 180 ? " (together a straight line)" : ""}` : ""}.`);
     }
 
     case "draw_array": {
@@ -545,12 +558,13 @@ function dispatchInner(
       const yMin = requiredNumber(args, "y_min"); if (isToolError(yMin)) return yMin;
       const yMax = requiredNumber(args, "y_max"); if (isToolError(yMax)) return yMax;
       if (!(xMax > xMin) || !(yMax > yMin)) return fail("Axis maxima must be greater than minima.");
+      const connect = optionalBoolean(args, "connect"); if (isToolError(connect)) return connect;
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value }, () =>
-        board.plotPoints(points, xMin, xMax, yMin, yMax, label.value, pickColumn(column.value)),
+        board.plotPoints(points, xMin, xMax, yMin, yMax, label.value, pickColumn(column.value), connect === true),
       );
-      return ok(`Plotted ${points}.`);
+      return ok(`Plotted ${points}${connect ? ", joined into a shape" : ""}.`);
     }
 
     case "add_function_graph": {

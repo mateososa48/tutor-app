@@ -181,3 +181,16 @@ test("math helpers: operations, marks, points, runs, altitude", async () => {
   assert.ok(Math.abs(hex[0].y - hex[1].y) < 1e-9, "base edge is horizontal");
   assert.ok(hex[0].x < hex[1].x, "vertex 0 is bottom-left");
 });
+
+test("tape rows keep empty boxes and only read totals from the last box", async () => {
+  const { parseTapeRows } = await import("./board-diagrams");
+  const rows = parseTapeRows("Red: | ; Blue: | | ");
+  assert.equal(rows[0].segments.length, 2);
+  assert.equal(rows[1].segments.length, 3);
+  const wild = parseTapeRows(`100% = 100 pieces ${"| ".repeat(40)}`);
+  assert.equal(wild[0].segments.length, 12);
+  assert.equal(wild[0].total, undefined);
+  const totals = parseTapeRows("3 | 3 | 3 | 3 = 12");
+  assert.equal(totals[0].segments.length, 4);
+  assert.equal(totals[0].total, "12");
+});
