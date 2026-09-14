@@ -82,9 +82,18 @@ void main() {
                       fbm4(p + u_amp * 4.0 * warpA + vec2(8.3, 2.8) - t * 0.126));
     float n = fbm4(p + u_amp * 4.0 * warpB);
     // Calibrated against a JS model of this field (frequency 1.7, warp 0.45):
-    // a light spread of blues with a generous share of the palest blue and the
-    // background, steady from frame to frame.
-    f = smoothstep(0.24, 0.74, n);
+    // Four breakpoints, one between each pair of neighbouring tones, fitted on
+    // this field as rendered over ten minutes (frequency 1.7, warp 0.45): the
+    // long-run mix is about 10.5% darkest, 15% mid, 22% light, 28.5% palest
+    // and 24% background. Any single moment drifts around that as it moves.
+    const float K0 = 0.4127;
+    const float K1 = 0.4878;
+    const float K2 = 0.5294;
+    const float K3 = 0.6271;
+    float g = n < K1 ? 0.125 + (n - K0) * 0.25 / (K1 - K0)
+            : n < K2 ? 0.375 + (n - K1) * 0.25 / (K2 - K1)
+            : 0.625 + (n - K2) * 0.25 / (K3 - K2);
+    f = clamp(g, 0.0, 1.0);
   } else {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
     float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);

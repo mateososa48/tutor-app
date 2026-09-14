@@ -332,8 +332,8 @@ function SignIn() {
           />
         )}
         <p className="absolute bottom-6 left-6 m-0 flex items-center gap-2 text-(--lp-ink)">
-          <ChalkMark size={36} color="var(--lp-ink)" />
-          <span className="lp-brand text-[36px] leading-none">chalk</span>
+          <ChalkMark size={28} color="var(--lp-ink)" />
+          <span className="lp-brand text-[28px] leading-none">chalk</span>
         </p>
       </aside>
     </div>
