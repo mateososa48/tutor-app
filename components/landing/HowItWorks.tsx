@@ -1,10 +1,13 @@
 "use client";
 
-import { useReducedMotion } from "motion/react";
+
 import CardSwap, { Card } from "@/components/CardSwap";
 import { DotPattern } from "@/components/ui/dot-pattern";
-import { CheckRing, Waveform } from "./Illustrations";
-import { BoardFragment } from "./Fragments";
+import { DockBadge } from "@/components/session/VoiceDock";
+import { VoiceWave } from "@/components/session/VoiceWave";
+import { BoardShot, Transcript, line } from "./Fragments";
+import { SHOTS } from "./shots.generated";
+import { useReduce } from "./useScript";
 
 const STEPS = [
   {
@@ -23,45 +26,38 @@ const STEPS = [
 
 function TalkCard() {
   return (
-    <div className="flex h-full flex-col justify-between p-6">
-      <p className="text-[13px] font-medium text-(--lp-ink-3)">You</p>
-      <p className="text-[18px] leading-[1.35] italic text-(--lp-ink-2)">
-        &ldquo;Wait, why does the three move to the other side?&rdquo;
-      </p>
-      <Waveform />
+    <div className="flex h-full flex-col justify-between p-5">
+      <DockBadge activity="listening" className="self-start" />
+      <Transcript entries={[line("student", "Wait, why does the three move to the other side?")]} className="shadow-none" />
     </div>
   );
 }
 
 function WriteCard() {
   return (
-    <div className="h-full p-3">
-      <BoardFragment
-        title="Solve 3(x − 2) = 12"
-        rows={[
-          { latex: "3(x - 2) = 12", note: "given" },
-          { latex: "3x - 6 = 12", note: "distribute" },
-          { latex: "3x = 18", note: "add 6 to both sides" },
-        ]}
-        shownCount={3}
-        underlineRow={2}
-        className="h-full"
+    <div className="relative flex h-full flex-col p-5">
+      <DockBadge activity="writing" className="absolute top-5 right-5 z-10" />
+      <BoardShot
+        shot={SHOTS.steps}
+        width={300}
+        alt="The board: Solve 3(x − 2) = 12, then 3x − 6 = 12 marked distribute the 3, then 3x = 18 marked add 6 to both sides, underlined."
+        className="mt-auto"
       />
     </div>
   );
 }
 
+// The dock's voice wave, as the tutor asks the check question.
 function CheckCard() {
   return (
-    <div className="flex h-full flex-col justify-between p-6">
-      <p className="text-[13px] font-medium text-(--lp-ink-3)">Tutor</p>
-      <div className="flex items-center gap-6">
-        <CheckRing />
-        <p className="max-w-[18ch] text-[14.5px] leading-[1.4] font-medium">
-          Good. Does plugging six back in give twelve?
-        </p>
+    <div className="relative flex h-full flex-col">
+      <div className="flex flex-col gap-4 p-5">
+        <DockBadge activity="speaking" className="self-start" />
+        <Transcript entries={[line("tutor", "Good. Does plugging six back in give twelve?")]} className="shadow-none" />
       </div>
-      <p className="text-[12px] text-(--lp-ink-3)">Captured on the board as your work</p>
+      <div className="mt-auto h-[96px]" aria-hidden>
+        <VoiceWave analyser={null} speaking />
+      </div>
     </div>
   );
 }
@@ -69,7 +65,7 @@ function CheckCard() {
 const CARD_CLASS = "lp-card overflow-hidden !border-(--lp-line) !bg-(--lp-surface)";
 
 export function HowItWorks() {
-  const reduce = useReducedMotion();
+  const reduce = useReduce();
   const cards = [<TalkCard key="talk" />, <WriteCard key="write" />, <CheckCard key="check" />];
 
   return (
@@ -100,7 +96,7 @@ export function HowItWorks() {
           <DotPattern width={22} height={22} cr={1} className="text-(--lp-gray-2) [mask-image:radial-gradient(60%_60%_at_60%_50%,#000,transparent)]" />
           <div className={`flex flex-col gap-4 sm:absolute sm:inset-x-12 sm:bottom-6 ${reduce ? "" : "sm:hidden"}`}>
             {cards.map((c, i) => (
-              <div key={i} className={CARD_CLASS} style={{ minHeight: 170 }}>
+              <div key={i} className={CARD_CLASS} style={{ minHeight: 200 }}>
                 {c}
               </div>
             ))}

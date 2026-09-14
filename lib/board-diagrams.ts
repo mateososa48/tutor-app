@@ -134,9 +134,24 @@ export function tickValues(min: number, max: number, step: number): number[] {
 
 // Label a tick. Fractional steps get fraction labels ("3/4"), integer steps
 // get integers, anything else a trimmed decimal.
-export function formatTick(value: number, step: number): string {
+export type TickStyle = "fraction" | "decimal";
+
+// Halves, thirds, quarters read as fractions; tenths and hundredths as
+// decimals, unless the tool says otherwise.
+export function autoTickStyle(step: number): TickStyle {
+  if (step >= 1) return "decimal";
+  for (const d of [2, 3, 4, 6, 8, 12, 16]) {
+    const n = step * d;
+    if (Math.abs(n - Math.round(n)) < 1e-6) return "fraction";
+  }
+  return "decimal";
+}
+
+export function formatTick(value: number, step: number, style?: TickStyle): string {
   const eps = 1e-9;
   if (Math.abs(value - Math.round(value)) < eps) return `${Math.round(value)}`;
+  const mode = style ?? autoTickStyle(step);
+  if (mode === "decimal") return `${Number(value.toFixed(3))}`;
   if (step < 1) {
     for (const d of UNIT_DENOMINATORS) {
       const n = value * d;
@@ -238,23 +253,49 @@ export function parseLineJumps(input?: string): LineJump[] {
 
 // ── Geometry figures ───────────────────────────────────────────────────────
 
-export type FigureKind = "triangle" | "right_triangle" | "square" | "rectangle" | "circle";
+export type FigureKind =
+  | "triangle"
+  | "right_triangle"
+  | "square"
+  | "rectangle"
+  | "circle"
+  | "parallelogram"
+  | "trapezoid"
+  | "rhombus"
+  | "pentagon"
+  | "hexagon"
+  | "rectangular_prism"
+  | "cube"
+  | "cylinder";
+
+export const FIGURE_KINDS: FigureKind[] = ["triangle", "right_triangle", "square", "rectangle", "circle", "parallelogram", "trapezoid", "rhombus", "pentagon", "hexagon", "rectangular_prism", "cube", "cylinder"];
 
 export function isFigureKind(value: string): value is FigureKind {
-  return value === "triangle" || value === "right_triangle" || value === "square" || value === "rectangle" || value === "circle";
+  return (FIGURE_KINDS as string[]).includes(value);
 }
 
 // Vertices in a w×h box, listed so edge i runs from pts[i] to pts[i+1] and
 // the base is edge 0 (bottom, left to right). Right triangles put the right
 // angle at the bottom-left vertex.
-export function figureVertices(figure: Exclude<FigureKind, "circle">, w: number, h: number): Pt[] {
+export function figureVertices(figure: FigureKind, w: number, h: number): Pt[] {
   switch (figure) {
     case "triangle":
       return [{ x: 0, y: h }, { x: w, y: h }, { x: w * 0.38, y: 0 }];
     case "right_triangle":
       return [{ x: 0, y: h }, { x: w, y: h }, { x: 0, y: 0 }];
+    case "parallelogram":
+      return [{ x: w * 0.28, y: h }, { x: w, y: h }, { x: w * 0.72, y: 0 }, { x: 0, y: 0 }];
+    case "trapezoid":
+      return [{ x: 0, y: h }, { x: w, y: h }, { x: w * 0.76, y: 0 }, { x: w * 0.24, y: 0 }];
+    case "rhombus":
+      return [{ x: w * 0.3, y: h }, { x: w, y: h }, { x: w * 0.7, y: 0 }, { x: 0, y: 0 }];
+    case "pentagon":
+      return regularPolygon(5, w, h);
+    case "hexagon":
+      return regularPolygon(6, w, h);
     case "square":
     case "rectangle":
+    default:
       return [{ x: 0, y: h }, { x: w, y: h }, { x: w, y: 0 }, { x: 0, y: 0 }];
   }
 }
@@ -377,6 +418,11 @@ export type NumberLineDrawing = {
   jumps: LineJump[];
   label?: string;
   column?: BoardColumn;
+  labelStyle?: TickStyle;
+  /** A second scale under the first with the same tick positions (a double number line). */
+  secondMin?: number;
+  secondMax?: number;
+  secondLabel?: string;
 };
 
 export type FigureDrawing = {
@@ -387,6 +433,8 @@ export type FigureDrawing = {
   markRightAngle: boolean;
   radiusLabel?: string;
   diameterLabel?: string;
+  /** Dashed altitude from the top down to the base, labelled (triangle, parallelogram, trapezoid). */
+  heightLabel?: string;
   label?: string;
   column?: BoardColumn;
 };
@@ -396,6 +444,9 @@ export type AngleDrawing = {
   label?: string;
   caption?: string;
   column?: BoardColumn;
+  /** A second angle sharing the upper ray, going on counter-clockwise (angles on a line, around a point). */
+  adjacentDegrees?: number;
+  adjacentLabel?: string;
 };
 
 export type ArrayDrawing = {
@@ -403,6 +454,8 @@ export type ArrayDrawing = {
   columns: number;
   splitAfterColumn?: number;
   splitAfterRow?: number;
+  /** Fill only the first N dots (fraction of a set); the rest stay hollow. */
+  shaded?: number;
   label?: string;
   column?: BoardColumn;
 };
@@ -448,3 +501,189 @@ export function densifyPolyline(points: Pt[], spacing = 10): Pt[] {
   }
   return out;
 }
+
+// ── Math tools added Sept 14 2026: tape diagrams, grids, stacked arithmetic,
+// long division, transversals, slope triangles, more figures ──────────────
+
+export type TapeSegment = { text: string; shaded: boolean };
+export type TapeRow = { name?: string; segments: TapeSegment[]; total?: string };
+export type TapeDrawing = { rows: TapeRow[]; totalLabel?: string; label?: string; column?: BoardColumn };
+
+// "Red: *2 | *2 | 2 = 6; Blue: 3 | 3" → rows with names, shaded segments
+// (marked with *), and an optional "= total" at the end of a row.
+export function parseTapeRows(input: string): TapeRow[] {
+  return input
+    .split(";")
+    .map((raw) => raw.trim())
+    .filter(Boolean)
+    .slice(0, 4)
+    .map((raw) => {
+      let body = raw;
+      let name: string | undefined;
+      const colon = body.indexOf(":");
+      if (colon > 0 && colon < 24 && !/^\s*\*?\s*[\d/.]+\s*\|/.test(body)) {
+        name = body.slice(0, colon).trim();
+        body = body.slice(colon + 1);
+      }
+      // Boxes first; "= total" only counts when it sits in the last box, so a
+      // pipe-heavy row cannot swallow the row into the total.
+      const parts = body.split("|").map((s) => s.trim());
+      let total: string | undefined;
+      const last = parts[parts.length - 1] ?? "";
+      const eq = last.indexOf("=");
+      if (eq >= 0) {
+        total = last.slice(eq + 1).trim() || undefined;
+        parts[parts.length - 1] = last.slice(0, eq).trim();
+      }
+      while (parts.length > 1 && parts[parts.length - 1] === "" && parts.length > 12) parts.pop();
+      const segments = parts
+        .slice(0, 12)
+        .map((s) => (s.startsWith("*") ? { text: s.slice(1).trim(), shaded: true } : { text: s, shaded: false }));
+      // A row that is only one empty box is no row at all.
+      if (segments.length === 1 && segments[0].text === "") return { name, segments: [], total };
+      return { name, segments, total };
+    })
+    .filter((row) => row.segments.length > 0);
+}
+
+export type GridDrawing = {
+  rows: number;
+  columns: number;
+  shaded: number;
+  /** Shade the first N rows one way and the first M columns the other: the overlap is a fraction of a fraction. */
+  shadeRows?: number;
+  shadeColumns?: number;
+  label?: string;
+  column?: BoardColumn;
+};
+
+export type VerticalDrawing = {
+  operands: string[];
+  operation: "+" | "-" | "×";
+  result?: string;
+  carries?: string;
+  partials: string[];
+  label?: string;
+  column?: BoardColumn;
+};
+
+export function parseOperation(value: string | undefined): "+" | "-" | "×" | null {
+  const v = (value ?? "").trim().toLowerCase();
+  if (v === "+" || v === "add" || v === "plus" || v === "addition") return "+";
+  if (v === "-" || v === "−" || v === "subtract" || v === "minus" || v === "subtraction") return "-";
+  if (v === "×" || v === "x" || v === "*" || v === "times" || v === "multiply" || v === "multiplication") return "×";
+  return null;
+}
+
+export type LongDivisionDrawing = {
+  dividend: string;
+  divisor: string;
+  quotient?: string;
+  steps: string[];
+  label?: string;
+  column?: BoardColumn;
+};
+
+export type TransversalDrawing = {
+  angleLabels: string[];
+  marks: number[];
+  label?: string;
+  column?: BoardColumn;
+};
+
+// "1|5, 3" → [1, 5, 3], only 1..8, unique.
+export function parseAngleMarks(input: string | undefined): number[] {
+  if (!input) return [];
+  const out: number[] = [];
+  for (const part of input.split(/[|,;\s]+/)) {
+    const n = Number(part);
+    if (Number.isInteger(n) && n >= 1 && n <= 8 && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+export type XYPoint = { x: number; y: number; label?: string };
+
+// "(1,2):A, (3,6), 4 5:B" → labelled points.
+export function parseXYPoints(input: string | undefined): XYPoint[] {
+  if (!input) return [];
+  const out: XYPoint[] = [];
+  const re = /\(?\s*(-?[\d.]+(?:\/\d+)?)\s*[, ]\s*(-?[\d.]+(?:\/\d+)?)\s*\)?\s*(?::\s*([^,;()]+))?/g;
+  for (const m of input.matchAll(re)) {
+    const x = parseNumber(m[1]);
+    const y = parseNumber(m[2]);
+    if (x === null || y === null) continue;
+    out.push({ x, y, label: m[3]?.trim() || undefined });
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+// "1..3" or "1 to 3" → the run of a slope triangle.
+export function parseSlopeRun(input: string | undefined): { x1: number; x2: number } | null {
+  if (!input) return null;
+  const m = /^\s*(-?[\d.]+(?:\/\d+)?)\s*(?:\.\.|to|→|-)\s*(-?[\d.]+(?:\/\d+)?)\s*$/i.exec(input);
+  if (!m) return null;
+  const x1 = parseNumber(m[1]);
+  const x2 = parseNumber(m[2]);
+  if (x1 === null || x2 === null || x1 === x2) return null;
+  return { x1, x2 };
+}
+
+export type GraphExtras = {
+  markPoints: XYPoint[];
+  slopeRun: { x1: number; x2: number } | null;
+  /** A second curve on the same axes; where the two cross is marked. */
+  secondExpression?: string;
+};
+
+// Numbers as a tutor would write them on a board: 2, 2.5, -0.75.
+export function formatNumber(v: number): string {
+  if (Number.isInteger(v)) return String(v);
+  const r = Math.round(v * 100) / 100;
+  return String(r);
+}
+
+export const SOLID_FIGURES = new Set(["rectangular_prism", "cube", "cylinder"]);
+export function isSolidFigure(figure: string): boolean {
+  return SOLID_FIGURES.has(figure);
+}
+
+// Regular polygon with its base edge horizontal at the bottom, vertex 0 at
+// the bottom-left, counter-clockwise (screen y down).
+export function regularPolygon(n: number, w: number, h: number): Pt[] {
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = Math.min(w, h) / 2;
+  const pts: Pt[] = [];
+  for (let k = 0; k < n; k++) {
+    const phi = -Math.PI / 2 - Math.PI / n + (2 * Math.PI * k) / n;
+    pts.push({ x: cx + r * Math.cos(phi), y: cy - r * Math.sin(phi) });
+  }
+  return pts;
+}
+
+// Where an altitude drops: the top vertex whose x lies over the base, and
+// its foot on the base line. Null when no vertex qualifies.
+export function altitude(pts: Pt[]): { apex: Pt; foot: Pt } | null {
+  if (pts.length < 3) return null;
+  const baseY = Math.max(pts[0].y, pts[1].y);
+  const left = Math.min(pts[0].x, pts[1].x);
+  const right = Math.max(pts[0].x, pts[1].x);
+  const candidates = pts.slice(2).filter((p) => p.x >= left - 1 && p.x <= right + 1);
+  if (candidates.length === 0) return null;
+  const apex = candidates.reduce((a, b) => (b.y < a.y ? b : a));
+  return { apex, foot: { x: apex.x, y: baseY } };
+}
+
+export type IconsDrawing = {
+  icon: string;
+  count: number;
+  groupSize?: number;
+  /** How many of the last icons get a red X (taken away). */
+  crossed?: number;
+  secondIcon?: string;
+  secondCount?: number;
+  label?: string;
+  column?: BoardColumn;
+};

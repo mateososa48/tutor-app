@@ -6,7 +6,8 @@ const PUBLIC_PATHS = ["/signin", "/api/auth"];
 const DEV_PUBLIC_PATHS = process.env.NODE_ENV === "development"
   ? ["/api/dev/qa-login", "/dev/board"]
   : [];
-const STATIC_PATHS = ["/_next", "/favicon.ico", "/public"];
+// Files in public/ are served from the root: the landing page's board photos live under /landing.
+const STATIC_PATHS = ["/_next", "/favicon.ico", "/public", "/landing"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

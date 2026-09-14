@@ -1,26 +1,17 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
-import { motion, useInView, useReducedMotion } from "motion/react";
+import { useRef, useState, type ReactNode } from "react";
+import { motion, useInView } from "motion/react";
+import { Check } from "lucide-react";
 import SpotlightCard from "@/components/SpotlightCard";
 import { BentoGrid } from "@/components/ui/bento-grid";
 import { BlurFade } from "@/components/ui/blur-fade";
-import {
-  AttemptChip,
-  BoardFragment,
-  CalloutChip,
-  FileCard,
-  Katex,
-  NextSessionChip,
-  NotesCard,
-  StatusChip,
-  TutorBubble,
-  VoiceChip,
-  rise,
-  T,
-  type Activity,
-} from "./Fragments";
-import { useScript } from "./useScript";
+import { DockBadge, type DockActivity } from "@/components/session/VoiceDock";
+import { FilesPanel } from "@/components/session/FilesPopover";
+import type { UploadedFile } from "@/lib/file-processor";
+import { BoardShot, Transcript, line, rise, T } from "./Fragments";
+import { SHOTS } from "./shots.generated";
+import { useReduce, useScript } from "./useScript";
 
 /* ── Tile: double border (frame + inner card), wash, spotlight ─────────── */
 
@@ -66,7 +57,7 @@ function Tile({
 function useStage() {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref, { margin: "-60px" });
-  const reduce = useReducedMotion();
+  const reduce = useReduce();
   return { ref, inView, reduce };
 }
 
@@ -74,36 +65,31 @@ function useStage() {
 
 const A_SCRIPT = [
   { at: 0, key: "thinking" },
-  { at: 900, key: "title" },
-  { at: 1500, key: "row1" },
-  { at: 2600, key: "row2" },
-  { at: 3700, key: "row3" },
-  { at: 4900, key: "speak" },
-  { at: 7200, key: "listen" },
+  { at: 700, key: "board" },
+  { at: 3400, key: "speak" },
+  { at: 7000, key: "listen" },
 ] as const;
 
 function StageBoard() {
   const { ref, inView, reduce } = useStage();
   const { fired } = useScript(A_SCRIPT, 10500, inView, reduce);
-  const rows = (["row1", "row2", "row3"] as const).filter((k) => fired(k)).length;
-  const state: Activity = fired("listen") ? "listening" : fired("speak") ? "speaking" : fired("row1") ? "writing" : "thinking";
+  const state: DockActivity = fired("listen") ? "listening" : fired("speak") ? "speaking" : fired("board") ? "writing" : "thinking";
 
   return (
-    <div ref={ref} className="relative flex flex-col gap-3 sm:block sm:h-[224px]">
-      <StatusChip state={state} className="self-start sm:absolute sm:top-0 sm:right-0" />
-      <motion.div initial={false} animate={rise(fired("title"))} transition={T} className="w-full sm:absolute sm:top-0 sm:left-0 sm:w-[min(100%,460px)]">
-        <BoardFragment
-          title="Solve 3(x − 2) = 12"
-          rows={[
-            { latex: "3(x - 2) = 12", note: "given" },
-            { latex: "3x - 6 = 12", note: "distribute" },
-            { latex: "3x = 18", note: "add 6 to both sides" },
-          ]}
-          shownCount={rows}
-          underlineRow={2}
-        />
-      </motion.div>
-      <VoiceChip who="Tutor, on the distributive step" time="0:04" shown={fired("speak")} active={!fired("listen")} className="sm:absolute sm:right-0 sm:bottom-0 sm:w-[min(100%,272px)]" />
+    <div ref={ref} className="relative flex flex-col gap-3 sm:block sm:h-[264px]">
+      <BoardShot
+        shot={SHOTS.steps}
+        width={340}
+        shown={fired("board")}
+        alt="The board: Solve 3(x − 2) = 12, then 3x − 6 = 12 marked distribute the 3, then 3x = 18 marked add 6 to both sides, underlined."
+        className="sm:absolute sm:top-0 sm:left-0"
+      />
+      <DockBadge activity={state} className="self-start sm:absolute sm:top-0 sm:right-0" />
+      <Transcript
+        entries={[line("tutor", "Three x is eighteen. So what is one x?")]}
+        shown={fired("speak")}
+        className="sm:absolute sm:right-0 sm:bottom-0 sm:w-[min(100%,272px)]"
+      />
     </div>
   );
 }
@@ -111,24 +97,22 @@ function StageBoard() {
 /* ── B: hints before answers ───────────────────────────────────────────── */
 
 const B_SCRIPT = [
-  { at: 0, key: "attempt" },
-  { at: 1000, key: "cross" },
-  { at: 1700, key: "bubble" },
-  { at: 4300, key: "callout" },
+  { at: 0, key: "board" },
+  { at: 2600, key: "bubble" },
 ] as const;
 
 function StageHints() {
   const { ref, inView, reduce } = useStage();
-  const { fired, cycle } = useScript(B_SCRIPT, 8400, inView, reduce);
+  const { fired } = useScript(B_SCRIPT, 8000, inView, reduce);
   return (
-    <div ref={ref} className="flex flex-col justify-end gap-3 sm:h-[224px]">
-      <div className="lp-katex flex items-center gap-2.5 text-(--lp-ink-3)">
-        <Katex latex="2x = 8" className="text-[16px] text-(--lp-ink)" />
-        <span className="text-[11.5px]">already on the board</span>
-      </div>
-      <AttemptChip text="you: x = 16" shown={fired("attempt")} crossed={fired("cross")} />
-      <TutorBubble cycle={cycle} shown={fired("bubble")} text="Close. Two times x is eight. So are we multiplying by two, or dividing?" />
-      <CalloutChip text="Your turn: what is x?" shown={fired("callout")} />
+    <div ref={ref} className="flex flex-col justify-end gap-3 sm:h-[264px]">
+      <BoardShot
+        shot={SHOTS.hint}
+        width={250}
+        shown={fired("board")}
+        alt="The board: 2x = 8, the student's try x = 16 in their own hand, and x = 16 crossed out in red."
+      />
+      <Transcript entries={[line("tutor", "Close. Two times x is eight. Multiply by two, or divide?")]} shown={fired("bubble")} />
     </div>
   );
 }
@@ -137,21 +121,27 @@ function StageHints() {
 
 const C_SCRIPT = [
   { at: 0, key: "file" },
-  { at: 1300, key: "found" },
-  { at: 2400, key: "board" },
-  { at: 3100, key: "row" },
+  { at: 1400, key: "board" },
 ] as const;
+
+const WORKSHEET: UploadedFile = { id: "w1", label: "File 1", name: "algebra-hw.jpg", mimeType: "image/jpeg", base64: "" };
 
 function StageWorksheet() {
   const { ref, inView, reduce } = useStage();
-  const { fired } = useScript(C_SCRIPT, 8200, inView, reduce);
-  const status = fired("board") ? "done" : fired("found") ? "found" : "reading";
+  const { fired } = useScript(C_SCRIPT, 8000, inView, reduce);
+  const [files, setFiles] = useState<UploadedFile[]>([WORKSHEET]);
   return (
-    <div ref={ref} className="relative flex flex-col gap-3 sm:block sm:h-[224px]">
-      <FileCard name="algebra-hw.jpg" meta="Photo, 2.1 MB" status={status} shown={fired("file")} className="sm:absolute sm:top-0 sm:left-0 sm:w-[min(100%,264px)]" />
-      <motion.div initial={false} animate={rise(fired("board"))} transition={T} className="sm:absolute sm:right-0 sm:bottom-0 sm:w-[min(100%,250px)]">
-        <BoardFragment title="Problem 4" rows={[{ latex: "5x + 2 = 17", note: "from the sheet" }]} shownCount={fired("row") ? 1 : 0} />
+    <div ref={ref} className="flex flex-col gap-3">
+      <motion.div initial={false} animate={rise(fired("file"))} transition={T} className="rounded-[16px] border border-(--lp-line-strong) bg-white p-2 shadow-(--lp-shadow-card)">
+        <FilesPanel files={files} onAddFiles={(added) => setFiles((f) => [...f, ...added])} onRemoveFile={(id) => setFiles((f) => f.filter((x) => x.id !== id))} />
       </motion.div>
+      <BoardShot
+        shot={SHOTS.worksheet}
+        width={240}
+        shown={fired("board")}
+        alt="The board: Problem 4, then 5x + 2 = 17 marked from the worksheet."
+        className="self-end"
+      />
     </div>
   );
 }
@@ -165,22 +155,40 @@ const D_SCRIPT = [
   { at: 3000, key: "next" },
 ] as const;
 
+const NOTES = [
+  "Got factoring after the area-model picture",
+  "Mixes up which side to undo first",
+  "Likes to try a step before hearing a hint",
+];
+
 function StageMemory() {
   const { ref, inView, reduce } = useStage();
   const { fired } = useScript(D_SCRIPT, 9000, inView, reduce);
   const count = (["n1", "n2", "n3"] as const).filter((k) => fired(k)).length;
   return (
-    <div ref={ref} className="relative flex flex-col gap-3 sm:block sm:h-[224px]">
-      <NotesCard
-        notes={[
-          "Got factoring after the area-model analogy",
-          "Mixes up kinetic and potential energy",
-          "Likes to try a step before hearing a hint",
-        ]}
-        shownCount={count}
-        className="sm:absolute sm:top-0 sm:left-0 sm:w-[min(100%,372px)]"
-      />
-      <NextSessionChip shown={fired("next")} className="sm:absolute sm:right-0 sm:bottom-0 sm:w-[min(100%,264px)]" />
+    <div ref={ref} className="relative flex flex-col gap-3 sm:block sm:h-[264px]">
+      <div className="rounded-[18px] border border-(--lp-line-strong) bg-white px-5 py-4 shadow-(--lp-shadow-card) sm:absolute sm:top-0 sm:left-0 sm:w-[min(100%,372px)]">
+        <p className="mb-2.5 text-[11px] font-semibold tracking-[0.04em] text-(--lp-ink-3)">Tutor notes</p>
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
+          {NOTES.map((n, i) => (
+            <motion.li key={n} initial={false} animate={rise(i < count)} transition={T} className="flex items-start gap-2.5 text-[14px] leading-[1.45] text-(--lp-ink)">
+              <span className="mt-[3px] inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-(--lp-sky-soft) text-(--lp-sky-deep)">
+                <Check size={10} strokeWidth={3} aria-hidden />
+              </span>
+              {n}
+            </motion.li>
+          ))}
+        </ul>
+      </div>
+      <motion.div
+        initial={false}
+        animate={rise(fired("next"))}
+        transition={T}
+        className="rounded-[18px] border border-(--lp-line-strong) bg-white px-5 py-4 shadow-(--lp-shadow-card) sm:absolute sm:right-0 sm:bottom-0 sm:w-[min(100%,264px)]"
+      >
+        <p className="text-[11px] font-semibold tracking-[0.04em] text-(--lp-ink-3)">Next session</p>
+        <p className="mt-1 text-[14px] leading-[1.45] text-(--lp-ink)">Picks up at factoring, with the area model.</p>
+      </motion.div>
     </div>
   );
 }

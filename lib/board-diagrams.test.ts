@@ -148,3 +148,49 @@ test("densifyPolyline keeps endpoints and fills long segments", async () => {
   assert.deepEqual(pts[10], { x: 100, y: 0 });
   assert.equal(densifyPolyline([{ x: 0, y: 0 }]).length, 1);
 });
+
+test("tape rows parse names, shaded segments, and totals", async () => {
+  const { parseTapeRows } = await import("./board-diagrams");
+  const rows = parseTapeRows("Red: *2 | *2 | 2 = 6; Blue: 3 | 3; 4 | 4 | 4");
+  assert.equal(rows.length, 3);
+  assert.equal(rows[0].name, "Red");
+  assert.deepEqual(rows[0].segments.map((s) => s.shaded), [true, true, false]);
+  assert.equal(rows[0].total, "6");
+  assert.equal(rows[1].name, "Blue");
+  assert.equal(rows[2].name, undefined);
+  assert.equal(rows[2].segments.length, 3);
+});
+
+test("math helpers: operations, marks, points, runs, altitude", async () => {
+  const { parseOperation, parseAngleMarks, parseXYPoints, parseSlopeRun, altitude, figureVertices, regularPolygon } = await import("./board-diagrams");
+  assert.equal(parseOperation("times"), "×");
+  assert.equal(parseOperation("−"), "-");
+  assert.equal(parseOperation("plus"), "+");
+  assert.equal(parseOperation("divide"), null);
+  assert.deepEqual(parseAngleMarks("1|5, 9, 5"), [1, 5]);
+  assert.deepEqual(parseXYPoints("(1,2):A, (3,6), -2 4:C"), [{ x: 1, y: 2, label: "A" }, { x: 3, y: 6, label: undefined }, { x: -2, y: 4, label: "C" }]);
+  assert.deepEqual(parseSlopeRun("1..3"), { x1: 1, x2: 3 });
+  assert.deepEqual(parseSlopeRun("-1 to 2"), { x1: -1, x2: 2 });
+  assert.equal(parseSlopeRun("2..2"), null);
+  const tri = figureVertices("triangle", 100, 60);
+  assert.deepEqual(altitude(tri), { apex: { x: 38, y: 0 }, foot: { x: 38, y: 60 } });
+  const para = figureVertices("parallelogram", 100, 50);
+  assert.deepEqual(altitude(para), { apex: { x: 72, y: 0 }, foot: { x: 72, y: 50 } });
+  const hex = regularPolygon(6, 100, 100);
+  assert.equal(hex.length, 6);
+  assert.ok(Math.abs(hex[0].y - hex[1].y) < 1e-9, "base edge is horizontal");
+  assert.ok(hex[0].x < hex[1].x, "vertex 0 is bottom-left");
+});
+
+test("tape rows keep empty boxes and only read totals from the last box", async () => {
+  const { parseTapeRows } = await import("./board-diagrams");
+  const rows = parseTapeRows("Red: | ; Blue: | | ");
+  assert.equal(rows[0].segments.length, 2);
+  assert.equal(rows[1].segments.length, 3);
+  const wild = parseTapeRows(`100% = 100 pieces ${"| ".repeat(40)}`);
+  assert.equal(wild[0].segments.length, 12);
+  assert.equal(wild[0].total, undefined);
+  const totals = parseTapeRows("3 | 3 | 3 | 3 = 12");
+  assert.equal(totals[0].segments.length, 4);
+  assert.equal(totals[0].total, "12");
+});

@@ -8,7 +8,8 @@ import type { WhiteboardHandle, WhiteboardSnapshot } from "@/components/Whiteboa
 import TutorDebugPanel from "@/components/TutorDebugPanel";
 import type { TutorDebugEvent } from "@/components/TutorDebugPanel";
 import { AppShell } from "@/components/app/AppShell";
-import { LiveDot, TopBar } from "@/components/app/TopBar";
+import { TopBar } from "@/components/app/TopBar";
+import { SessionChip, type LiveState } from "@/components/session/SessionChip";
 import { VoiceDock, type DockActivity } from "@/components/session/VoiceDock";
 import { CaptionBar } from "@/components/session/CaptionBar";
 import { DropOverlay } from "@/components/session/FilesPopover";
@@ -37,7 +38,6 @@ import type { UploadedFile } from "@/lib/file-processor";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
-type LiveState = "idle" | "connecting" | "active" | "ending" | "error";
 
 const TRANSCRIPT_MERGE_WINDOW_MS = 1200;
 const TRANSCRIPT_MAX_MERGED_CHARS = 700;
@@ -201,7 +201,7 @@ function SessionDetailPage({ id }: { id: string }) {
       speaking = !speaking;
       setIsTutorSpeaking(speaking);
       setTutorActivity(speaking ? "idle" : "writing");
-      setSubtitleText(speaking ? "Look at the board: the pizza is cut into two equal pieces and one is shaded. Which piece is one half?" : "");
+      if (speaking) setSubtitleText("Look at the board: the pizza is cut into two equal pieces and one is shaded. Which piece is one half?");
     }, 4200);
     const clock = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
     return () => {
@@ -322,12 +322,35 @@ function SessionDetailPage({ id }: { id: string }) {
   // ── Tool call handler ────────────────────────────────────────────────
   // Every successful board action returns the semantic board summary, so the
   // teaching backend always knows what the student is actually looking at.
+  // The tutor sees the board: after it draws, a picture of the finished board
+  // goes to the model (clients with vision only). look_at_board asks for one
+  // right away; other tool calls are debounced so a burst sends one frame.
+  const boardFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendBoardFrame = useCallback(async () => {
+    const live = sessionRef.current;
+    if (!live?.sendBoardFrame) return;
+    const img = await whiteboardRef.current?.exportImage?.(896);
+    if (!img || sessionRef.current !== live) return;
+    live.sendBoardFrame(img.url);
+  }, []);
+  const scheduleBoardFrame = useCallback((delayMs: number, force = false) => {
+    const live = sessionRef.current;
+    if (!live?.sendBoardFrame) return;
+    if (!force && live.boardFrames !== "auto") return;
+    if (boardFrameTimerRef.current) clearTimeout(boardFrameTimerRef.current);
+    boardFrameTimerRef.current = setTimeout(() => {
+      boardFrameTimerRef.current = null;
+      void sendBoardFrame();
+    }, delayMs);
+  }, [sendBoardFrame]);
+
   const handleToolCall = useCallback(
     (name: string, args: Record<string, unknown>): ToolCallResult => {
       const result = dispatchWhiteboardTool(name, args, {
         whiteboard: whiteboardRef.current,
       });
       if (result.success) {
+        scheduleBoardFrame(name === "look_at_board" ? 0 : 900, name === "look_at_board");
         const summary = whiteboardRef.current?.getBoardSummary?.();
         if (summary) {
           return {
@@ -338,8 +361,13 @@ function SessionDetailPage({ id }: { id: string }) {
       }
       return result;
     },
-    [],
+    [scheduleBoardFrame],
   );
+
+  // While queued writing is still appearing, the badge says so.
+  const handleBoardWriting = useCallback((busy: boolean) => {
+    setTutorActivity((prev) => (busy ? "writing" : prev === "writing" ? "idle" : prev));
+  }, []);
 
   const setTemporaryFileNotice = useCallback((message: string) => {
     setFileNotice(message);
@@ -352,6 +380,27 @@ function SessionDetailPage({ id }: { id: string }) {
     subtitleTimerRef.current = null;
     setSubtitleText("");
   }, []);
+
+  // Captions stay up for the whole utterance and linger after it so the last
+  // sentence can be read to the end; a fixed timer used to cut them off while
+  // the tutor was still talking.
+  useEffect(() => {
+    if (subtitleTimerRef.current) {
+      clearTimeout(subtitleTimerRef.current);
+      subtitleTimerRef.current = null;
+    }
+    if (isTutorSpeaking || !subtitleText) return;
+    subtitleTimerRef.current = setTimeout(() => {
+      subtitleTimerRef.current = null;
+      setSubtitleText("");
+    }, 4000);
+    return () => {
+      if (subtitleTimerRef.current) {
+        clearTimeout(subtitleTimerRef.current);
+        subtitleTimerRef.current = null;
+      }
+    };
+  }, [isTutorSpeaking, subtitleText]);
 
   const cleanupTimers = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -506,12 +555,9 @@ function SessionDetailPage({ id }: { id: string }) {
         });
       },
       onCaption: (text) => {
+        // Lifetime is handled by the speaking effect: the caption stays while
+        // the tutor talks and lingers a few seconds after.
         setSubtitleText(text);
-        if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
-        subtitleTimerRef.current = setTimeout(() => {
-          subtitleTimerRef.current = null;
-          setSubtitleText("");
-        }, 3500);
       },
       onToolCall: handleToolCall,
       onConnected: ({ resumed, expiresAt }) => {
@@ -717,6 +763,7 @@ function SessionDetailPage({ id }: { id: string }) {
       cleanupTimers();
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
       if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
+      if (boardFrameTimerRef.current) clearTimeout(boardFrameTimerRef.current);
     };
   }, [cleanupTimers, id]);
 
@@ -921,7 +968,7 @@ function SessionDetailPage({ id }: { id: string }) {
   return (
     <AppShell defaultOpen={false}>
       <main className="relative min-h-0 flex-1 overflow-hidden bg-white" {...dropHandlers}>
-        <Whiteboard ref={whiteboardRef} />
+        <Whiteboard ref={whiteboardRef} onWriting={handleBoardWriting} />
 
         <SessionChip
           liveState={liveState}
@@ -987,34 +1034,6 @@ const MOCK_TRANSCRIPT: TranscriptEntry[] = [
   { id: "m5", role: "student", text: "two pieces" },
   { id: "m6", role: "tutor", text: "Exactly. Two quarters is the same amount as one half. Let me put both next to each other." },
 ];
-
-function SessionChip({
-  liveState,
-  title,
-  elapsed,
-  qaLabel,
-}: {
-  liveState: LiveState;
-  title: string;
-  elapsed: string;
-  qaLabel: string | null;
-}) {
-  return (
-    <div className="absolute top-4 left-4 z-30 flex h-9 max-w-[min(60%,520px)] items-center gap-2.5 rounded-full border border-(--lp-line-strong) bg-white/92 px-3.5 text-[13px] shadow-(--lp-shadow-card) backdrop-blur-md">
-      {liveState === "active" && (
-        <>
-          <LiveDot />
-          <span className="truncate font-medium text-(--lp-ink)">{title}</span>
-          <span className="shrink-0 text-(--lp-ink-3) tabular-nums">{elapsed}</span>
-          {qaLabel && <span className="shrink-0 text-[10.5px] font-bold tracking-[0.06em] text-(--lp-sky-deep) uppercase">{qaLabel}</span>}
-        </>
-      )}
-      {(liveState === "connecting" || liveState === "idle") && <span className="text-(--lp-ink-3)">Connecting…</span>}
-      {liveState === "ending" && <span className="text-(--lp-ink-3)">Ending session…</span>}
-      {liveState === "error" && <span className="text-(--lp-ink-3)">Not connected</span>}
-    </div>
-  );
-}
 
 function Centered({ text }: { text: string }) {
   return <div className="flex flex-1 items-center justify-center text-[14px] text-(--lp-ink-3)">{text}</div>;

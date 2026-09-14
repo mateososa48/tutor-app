@@ -16,7 +16,19 @@ import {
   splitPipe,
   type BoardColumn,
   type Fraction,
+  parseTapeRows,
+  parseOperation,
+  parseAngleMarks,
+  parseXYPoints,
+  parseSlopeRun,
+  isSolidFigure,
+  FIGURE_KINDS,
 } from "@/lib/board-diagrams";
+import { parseTargetList } from "@/lib/board-items";
+import { latexToPlain } from "@/lib/latex-plain";
+import { BOARD_ICON_NAMES } from "@/lib/board-icon-names.generated";
+import { resolveIconName } from "@/lib/board-icons";
+import { normalizeLatex, splitLatexLines } from "@/lib/latex-normalize";
 import {
   fail,
   isToolError,
@@ -69,7 +81,25 @@ function opt(args: Args, key: string): { error?: ToolCallResult; value?: string 
   return { value };
 }
 
+// Every tool call is one board item: whatever it creates gets an id (b7) the
+// model can point at, ring, or erase later. The id rides along in the result.
 export function dispatchWhiteboardTool(
+  name: string,
+  args: Args,
+  ctx: DispatchCtx,
+): ToolCallResult {
+  const board = ctx.whiteboard;
+  const token = board ? board.beginItem(name) : null;
+  const result = dispatchInner(name, args, ctx);
+  if (!board || !token) return result;
+  const itemId = board.endItem(token, result.success ? result.message ?? null : null);
+  if (result.success && itemId) {
+    return { success: true, message: `${(result.message ?? "Done").replace(/[.]\s*$/, "")} (item ${itemId})` };
+  }
+  return result;
+}
+
+function dispatchInner(
   name: string,
   args: Args,
   ctx: DispatchCtx,
@@ -120,14 +150,16 @@ export function dispatchWhiteboardTool(
           pickColumn(column.value),
         ),
       );
-      return ok("Problem setup box drawn.");
+      return ok(`Problem setup box: goal "${goal.replace(/\s+/g, " ").slice(0, 80)}".`);
     }
 
     case "add_equation_sequence": {
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;
-      const steps = requiredString(args, "steps");
-      if (isToolError(steps)) return steps;
+      const stepsRaw = requiredString(args, "steps");
+      if (isToolError(stepsRaw)) return stepsRaw;
+      const steps = splitPipe(stepsRaw).map(normalizeLatex).filter(Boolean).join(" | ");
+      if (!steps) return fail('"steps" is empty.');
       const annotations = opt(args, "annotations"); if (annotations.error) return annotations.error;
       const title = opt(args, "title"); if (title.error) return title.error;
       const column = opt(args, "column"); if (column.error) return column.error;
@@ -142,12 +174,15 @@ export function dispatchWhiteboardTool(
       if (isToolError(board)) return board;
       const latex = requiredString(args, "latex");
       if (isToolError(latex)) return latex;
+      // "a = 1 \\\\ b = 2" is two lines; unicode operators become LaTeX.
+      const lines = splitLatexLines(latex).map(normalizeLatex).filter(Boolean);
+      if (lines.length === 0) return fail('"latex" is empty.');
       const annotation = opt(args, "annotation"); if (annotation.error) return annotation.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: latex }, () =>
-        board.drawEquationStep(latex, annotation.value, pickColumn(column.value)),
+        lines.forEach((line, i) => board.drawEquationStep(line, i === lines.length - 1 ? annotation.value : undefined, pickColumn(column.value))),
       );
-      return ok(`Wrote the line ${latex}${annotation.value ? ` (${annotation.value})` : ""}.`);
+      return ok(`Wrote the line ${lines.map(latexToPlain).join(" / ")}${annotation.value ? ` (${annotation.value})` : ""}.`);
     }
 
     case "add_text_note": {
@@ -160,7 +195,7 @@ export function dispatchWhiteboardTool(
       board.withDirectMeta({ owner: "tutor" }, () =>
         board.addTextNote(normalizeText(text), pickSize(size.value), pickColumn(column.value)),
       );
-      return ok("Note written.");
+      return ok(`Wrote the note "${normalizeText(text).replace(/\s+/g, " ").slice(0, 90)}".`);
     }
 
     case "add_callout": {
@@ -178,7 +213,7 @@ export function dispatchWhiteboardTool(
       board.withDirectMeta({ owner: "tutor" }, () =>
         board.addCallout(normalizeText(text), style as CalloutStyle, pickColumn(column.value)),
       );
-      return ok(`Sticky note (${style}) added.`);
+      return ok(`Callout (${style}): "${normalizeText(text).replace(/\s+/g, " ").slice(0, 90)}".`);
     }
 
     case "add_student_attempt": {
@@ -192,7 +227,7 @@ export function dispatchWhiteboardTool(
       board.withDirectMeta({ owner: "student" }, () =>
         board.addStudentAttempt(normalizeText(text), pickColumn(column.value)),
       );
-      return ok("Student's attempt written in their hand.");
+      return ok(`Student's attempt "${normalizeText(text).replace(/\s+/g, " ").slice(0, 80)}" written in their hand.`);
     }
 
     case "highlight_step": {
@@ -205,12 +240,9 @@ export function dispatchWhiteboardTool(
       const stepIndex = optionalNumber(args, "step_index");
       if (isToolError(stepIndex)) return stepIndex;
       const stepLabel = opt(args, "step_label"); if (stepLabel.error) return stepLabel.error;
-      if (stepIndex === undefined && stepLabel.value === undefined) {
-        return fail('Provide "step_label" (preferred) or "step_index" to identify the target step.');
-      }
-      const done = board.withDirectMeta({ owner: "tutor" }, () =>
-        board.highlightStep({ step_label: stepLabel.value, step_index: stepIndex }, resolvedStyle),
-      );
+      // No target: the newest line is what the tutor means.
+      const target = stepIndex === undefined && stepLabel.value === undefined ? { step_index: -1 } : { step_label: stepLabel.value, step_index: stepIndex };
+      const done = board.withDirectMeta({ owner: "tutor" }, () => board.highlightStep(target, resolvedStyle));
       if (!done) return fail("That line is not on the board, so nothing was highlighted. Write the point fresh instead.");
       return ok(`Line ${resolvedStyle === "circle" ? "ringed" : resolvedStyle === "box" ? "boxed" : "underlined"}.`);
     }
@@ -221,12 +253,8 @@ export function dispatchWhiteboardTool(
       const stepIndex = optionalNumber(args, "step_index");
       if (isToolError(stepIndex)) return stepIndex;
       const stepLabel = opt(args, "step_label"); if (stepLabel.error) return stepLabel.error;
-      if (stepIndex === undefined && stepLabel.value === undefined) {
-        return fail('Provide "step_label" (preferred) or "step_index" to identify the target step.');
-      }
-      const done = board.withDirectMeta({ owner: "tutor" }, () =>
-        board.crossOutStep({ step_label: stepLabel.value, step_index: stepIndex }),
-      );
+      const target = stepIndex === undefined && stepLabel.value === undefined ? { step_index: -1 } : { step_label: stepLabel.value, step_index: stepIndex };
+      const done = board.withDirectMeta({ owner: "tutor" }, () => board.crossOutStep(target));
       if (!done) return fail("That line is not on the board, so nothing was crossed out. Write the correction fresh instead.");
       return ok("Line crossed out.");
     }
@@ -249,13 +277,23 @@ export function dispatchWhiteboardTool(
       }
       const modelRaw = opt(args, "model"); if (modelRaw.error) return modelRaw.error;
       const model = modelRaw.value === "bar" ? "bar" : "circle";
+      const cdRaw = optionalNumber(args, "common_denominator"); if (isToolError(cdRaw)) return cdRaw;
+      let drawn = fractions;
+      if (cdRaw !== undefined) {
+        const cd = Math.round(cdRaw);
+        if (cd < 2 || cd > 24) return fail('"common_denominator" must be between 2 and 24.');
+        const bad = fractions.find((f) => cd % f.d !== 0);
+        if (bad) return fail(`"common_denominator" ${cd} is not a multiple of ${bad.d}; pick a common multiple of the denominators.`);
+        drawn = fractions.map((f) => ({ n: f.n * (cd / f.d), d: cd }));
+      }
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? raw }, () =>
-        board.drawFraction({ fractions, model, label: label.value, column: pickColumn(column.value) }),
+        board.drawFraction({ fractions: drawn, model, label: label.value, column: pickColumn(column.value) }),
       );
-      const parts = fractions.map((f) => describeFractionModel(f, model));
-      return ok(`Drew ${parts.join(" beside ")}${label.value ? `, captioned "${label.value}"` : ""}.`);
+      const parts = drawn.map((f) => describeFractionModel(f, model));
+      const recut = cdRaw !== undefined ? ` (${fractions.map((f) => `${f.n}/${f.d}`).join(" and ")} recut into ${Math.round(cdRaw)}ths)` : "";
+      return ok(`Drew ${parts.join(" beside ")}${recut}${label.value ? `, captioned "${label.value}"` : ""}.`);
     }
 
     case "add_number_line": {
@@ -278,8 +316,17 @@ export function dispatchWhiteboardTool(
       const marks = parseLineMarks(pointsRaw.value).filter((m) => m.value >= min && m.value <= max);
       const intervals = parseLineIntervals(intervalsRaw.value);
       const jumps = parseLineJumps(jumpsRaw.value).filter((j) => j.from >= min && j.from <= max && j.to >= min && j.to <= max);
+      const styleRaw = opt(args, "label_style"); if (styleRaw.error) return styleRaw.error;
+      const labelStyle = styleRaw.value === "fraction" || styleRaw.value === "decimal" ? styleRaw.value : undefined;
+      const secondMin = optionalNumber(args, "second_min"); if (isToolError(secondMin)) return secondMin;
+      const secondMax = optionalNumber(args, "second_max"); if (isToolError(secondMax)) return secondMax;
+      const secondLabel = opt(args, "second_label"); if (secondLabel.error) return secondLabel.error;
+      const hasSecond = secondMin !== undefined && secondMax !== undefined && secondMax !== secondMin;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `number line ${min} to ${max}` }, () =>
-        board.addNumberLine({ min, max, step, marks, intervals, jumps, label: label.value, column: pickColumn(column.value) }),
+        board.addNumberLine({
+          min, max, step, marks, intervals, jumps, label: label.value, column: pickColumn(column.value), labelStyle,
+          secondMin: hasSecond ? secondMin : undefined, secondMax: hasSecond ? secondMax : undefined, secondLabel: hasSecond ? secondLabel.value : undefined,
+        }),
       );
       const effectiveStep = step ?? niceStep(min, max);
       const bits = [
@@ -287,6 +334,7 @@ export function dispatchWhiteboardTool(
         marks.length ? `dots at ${marks.map((m) => (m.label ? `${formatTick(m.value, effectiveStep)} (${m.label})` : formatTick(m.value, effectiveStep))).join(", ")}` : "",
         intervals.length ? `${intervals.length} shaded range${intervals.length === 1 ? "" : "s"}` : "",
         jumps.length ? `${jumps.length} hop arrow${jumps.length === 1 ? "" : "s"}` : "",
+        hasSecond ? `second scale ${secondMin} to ${secondMax}${secondLabel.value ? ` (${secondLabel.value})` : ""} lined up underneath` : "",
       ].filter(Boolean);
       return ok(`${bits.join("; ")}.`);
     }
@@ -297,20 +345,27 @@ export function dispatchWhiteboardTool(
       const figureRaw = requiredString(args, "figure");
       if (isToolError(figureRaw)) return figureRaw;
       const figure = figureRaw.toLowerCase().replace(/[\s-]+/g, "_");
-      if (!isFigureKind(figure)) return fail('"figure" must be triangle, right_triangle, square, rectangle, or circle.');
+      if (!isFigureKind(figure)) return fail(`"figure" must be one of ${FIGURE_KINDS.join(", ")}.`);
       const sides = opt(args, "side_labels"); if (sides.error) return sides.error;
       const vertices = opt(args, "vertex_labels"); if (vertices.error) return vertices.error;
       const angles = opt(args, "angle_labels"); if (angles.error) return angles.error;
       const radius = opt(args, "radius_label"); if (radius.error) return radius.error;
       const diameter = opt(args, "diameter_label"); if (diameter.error) return diameter.error;
+      const height = opt(args, "height_label"); if (height.error) return height.error;
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       const markRaw = optionalBoolean(args, "mark_right_angle");
       if (isToolError(markRaw)) return markRaw;
       const markRightAngle = markRaw ?? figure === "right_triangle";
-      const sideLabels = splitPipe(sides.value);
-      const vertexLabels = splitPipe(vertices.value);
-      const angleLabels = splitPipe(angles.value);
+      // Positional: "12 | | 6" means base 12, right side blank, top 6.
+      const positional = (value: string | undefined) => {
+        const parts = (value ?? "").split("|").map((t) => t.trim());
+        while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+        return parts;
+      };
+      const sideLabels = positional(sides.value);
+      const vertexLabels = positional(vertices.value);
+      const angleLabels = positional(angles.value);
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? figure.replace("_", " ") }, () =>
         board.drawFigure({
           figure,
@@ -320,12 +375,14 @@ export function dispatchWhiteboardTool(
           markRightAngle,
           radiusLabel: radius.value,
           diameterLabel: diameter.value,
+          heightLabel: height.value,
           label: label.value,
           column: pickColumn(column.value),
         }),
       );
       const detail = [
-        sideLabels.length ? `sides ${sideLabels.join(", ")}` : "",
+        sideLabels.length ? `${isSolidFigure(figure) ? "dimensions" : "sides"} ${sideLabels.join(", ")}` : "",
+        height.value ? `height ${height.value}` : "",
         vertexLabels.length ? `vertices ${vertexLabels.join(", ")}` : "",
         angleLabels.length ? `angles ${angleLabels.join(", ")}` : "",
         radius.value ? `radius ${radius.value}` : "",
@@ -343,10 +400,13 @@ export function dispatchWhiteboardTool(
       const label = opt(args, "label"); if (label.error) return label.error;
       const caption = opt(args, "caption"); if (caption.error) return caption.error;
       const column = opt(args, "column"); if (column.error) return column.error;
+      const adjRaw = optionalNumber(args, "adjacent_degrees"); if (isToolError(adjRaw)) return adjRaw;
+      const adjacentDegrees = adjRaw && adjRaw > 0 && degrees + Math.round(adjRaw) < 360 ? Math.round(adjRaw) : undefined;
+      const adjacentLabel = opt(args, "adjacent_label"); if (adjacentLabel.error) return adjacentLabel.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: caption.value ?? `${degrees}° angle` }, () =>
-        board.drawAngle({ degrees, label: label.value, caption: caption.value, column: pickColumn(column.value) }),
+        board.drawAngle({ degrees, label: label.value, caption: caption.value, column: pickColumn(column.value), adjacentDegrees, adjacentLabel: adjacentLabel.value }),
       );
-      return ok(`Drew a ${degrees}° angle${label.value ? ` labelled ${label.value}` : ""}.`);
+      return ok(`Drew a ${degrees}° angle${label.value ? ` labelled ${label.value}` : ""}${adjacentDegrees ? ` next to a ${adjacentDegrees}° angle${adjacentLabel.value ? ` labelled ${adjacentLabel.value}` : ""}${degrees + adjacentDegrees === 180 ? " (together a straight line)" : ""}` : ""}.`);
     }
 
     case "draw_array": {
@@ -366,8 +426,11 @@ export function dispatchWhiteboardTool(
       const column = opt(args, "column"); if (column.error) return column.error;
       const splitAfterColumn = splitCol && splitCol >= 1 && splitCol < columns ? Math.round(splitCol) : undefined;
       const splitAfterRow = splitRow && splitRow >= 1 && splitRow < rows ? Math.round(splitRow) : undefined;
+      const shadedRaw = optionalNumber(args, "shaded");
+      if (isToolError(shadedRaw)) return shadedRaw;
+      const shaded = shadedRaw === undefined ? undefined : clamp(Math.round(shadedRaw), 0, rows * columns);
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${rows} by ${columns} array` }, () =>
-        board.drawArray({ rows, columns, splitAfterColumn, splitAfterRow, label: label.value, column: pickColumn(column.value) }),
+        board.drawArray({ rows, columns, splitAfterColumn, splitAfterRow, shaded, label: label.value, column: pickColumn(column.value) }),
       );
       const split = [
         splitAfterColumn ? `split into ${splitAfterColumn} + ${columns - splitAfterColumn} columns` : "",
@@ -477,7 +540,7 @@ export function dispatchWhiteboardTool(
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title.value }, () =>
         board.addTable(columns, rows, title.value, pickColumn(column.value)),
       );
-      return ok("Table drawn.");
+      return ok(`Table${title.value ? ` "${title.value}"` : ""} with columns ${columns.replace(/\s+/g, " ").slice(0, 80)}.`);
     }
 
     case "add_coordinate_axes": {
@@ -506,12 +569,13 @@ export function dispatchWhiteboardTool(
       const yMin = requiredNumber(args, "y_min"); if (isToolError(yMin)) return yMin;
       const yMax = requiredNumber(args, "y_max"); if (isToolError(yMax)) return yMax;
       if (!(xMax > xMin) || !(yMax > yMin)) return fail("Axis maxima must be greater than minima.");
+      const connect = optionalBoolean(args, "connect"); if (isToolError(connect)) return connect;
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value }, () =>
-        board.plotPoints(points, xMin, xMax, yMin, yMax, label.value, pickColumn(column.value)),
+        board.plotPoints(points, xMin, xMax, yMin, yMax, label.value, pickColumn(column.value), connect === true),
       );
-      return ok(`Plotted ${points}.`);
+      return ok(`Plotted ${points}${connect ? ", joined into a shape" : ""}.`);
     }
 
     case "add_function_graph": {
@@ -524,10 +588,21 @@ export function dispatchWhiteboardTool(
       if (!(xMax > xMin)) return fail('"x_max" must be greater than "x_min".');
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
+      const marks = opt(args, "mark_points"); if (marks.error) return marks.error;
+      const runRaw = opt(args, "slope_run"); if (runRaw.error) return runRaw.error;
+      const markPoints = parseXYPoints(marks.value);
+      const slopeRun = parseSlopeRun(runRaw.value);
+      const second = opt(args, "second_expression"); if (second.error) return second.error;
+      if (runRaw.value && !slopeRun) return fail('"slope_run" must look like "1..3" (two different x-values).');
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? expression }, () =>
-        board.addFunctionGraph(expression, xMin, xMax, label.value, pickColumn(column.value) ?? "right"),
+        board.addFunctionGraph(expression, xMin, xMax, label.value, pickColumn(column.value) ?? "right", { markPoints, slopeRun, secondExpression: second.value?.trim() || undefined }),
       );
-      return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}.`);
+      const extra = [
+        markPoints.length ? `marked ${markPoints.map((p) => `(${p.x}, ${p.y})${p.label ? ` ${p.label}` : ""}`).join(", ")}` : "",
+        slopeRun ? `slope triangle from x = ${slopeRun.x1} to x = ${slopeRun.x2}` : "",
+        second.value ? `second line y = ${second.value.trim()} with the crossing point marked` : "",
+      ].filter(Boolean).join("; ");
+      return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}${extra ? `; ${extra}` : ""}.`);
     }
 
     // ── Notes ──────────────────────────────────────────────────────────────
@@ -595,6 +670,183 @@ export function dispatchWhiteboardTool(
         board.addProcessMap(title, nodes, connectors.value, pickColumn(column.value)),
       );
       return ok(`Drew the process map "${title}".`);
+    }
+
+    case "draw_tape_diagram": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const rowsRaw = requiredString(args, "rows");
+      if (isToolError(rowsRaw)) return rowsRaw;
+      const rows = parseTapeRows(rowsRaw);
+      if (rows.length === 0) return fail('"rows" needs at least one row of boxes, e.g. \'Red: 2 | 2 | 2 = 6; Blue: 3 | 3\'.');
+      const totalLabel = opt(args, "total_label"); if (totalLabel.error) return totalLabel.error;
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? "tape diagram" }, () =>
+        board.drawTapeDiagram({ rows, totalLabel: totalLabel.value, label: label.value, column: pickColumn(column.value) }),
+      );
+      const desc = rows.map((r) => `${r.name ? `${r.name}: ` : ""}${r.segments.length} box${r.segments.length === 1 ? "" : "es"}${r.segments.some((s) => s.shaded) ? ` (${r.segments.filter((s) => s.shaded).length} shaded)` : ""}${r.total ? ` = ${r.total}` : ""}`).join("; ");
+      return ok(`Drew a tape diagram: ${desc}${totalLabel.value ? `; bracket "${totalLabel.value}"` : ""}${label.value ? `, captioned "${label.value}"` : ""}.`);
+    }
+
+    case "draw_grid": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const rowsRaw = requiredNumber(args, "rows"); if (isToolError(rowsRaw)) return rowsRaw;
+      const colsRaw = requiredNumber(args, "columns"); if (isToolError(colsRaw)) return colsRaw;
+      const rows = clamp(Math.round(rowsRaw), 1, 20);
+      const columns = clamp(Math.round(colsRaw), 1, 20);
+      const shadedRaw = optionalNumber(args, "shaded"); if (isToolError(shadedRaw)) return shadedRaw;
+      const shaded = clamp(Math.round(shadedRaw ?? 0), 0, rows * columns);
+      const srRaw = optionalNumber(args, "shade_rows"); if (isToolError(srRaw)) return srRaw;
+      const scRaw = optionalNumber(args, "shade_columns"); if (isToolError(scRaw)) return scRaw;
+      const shadeRows = srRaw ? clamp(Math.round(srRaw), 0, rows) : undefined;
+      const shadeColumns = scRaw ? clamp(Math.round(scRaw), 0, columns) : undefined;
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${rows} by ${columns} grid` }, () =>
+        board.drawGrid({ rows, columns, shaded, shadeRows, shadeColumns, label: label.value, column: pickColumn(column.value) }),
+      );
+      const bands = shadeRows || shadeColumns
+        ? `${shadeRows ? `${shadeRows} of ${rows} rows tinted` : ""}${shadeRows && shadeColumns ? ", " : ""}${shadeColumns ? `${shadeColumns} of ${columns} columns hatched` : ""}${shadeRows && shadeColumns ? `; overlap ${shadeRows * shadeColumns} of ${rows * columns}` : ""}`
+        : `${shaded} shaded`;
+      return ok(`Drew a ${rows} × ${columns} grid (${rows * columns} squares) with ${bands}${label.value ? `, captioned "${label.value}"` : ""}.`);
+    }
+
+    case "write_vertical": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const operandsRaw = requiredString(args, "operands"); if (isToolError(operandsRaw)) return operandsRaw;
+      const opRaw = requiredString(args, "operation"); if (isToolError(opRaw)) return opRaw;
+      const operation = parseOperation(opRaw);
+      if (!operation) return fail('"operation" must be +, -, or ×.');
+      const operands = splitPipe(operandsRaw).map((t) => t.replace(/\s+/g, "")).filter(Boolean).slice(0, 4);
+      if (operands.length < 2) return fail('"operands" needs two to four numbers separated by |, e.g. \'347 | 289\'.');
+      if (operands.some((t) => t.length > 12)) return fail("Each operand must be 12 characters or fewer.");
+      const result = opt(args, "result"); if (result.error) return result.error;
+      const carries = opt(args, "carries"); if (carries.error) return carries.error;
+      const partialsRaw = opt(args, "partial_products"); if (partialsRaw.error) return partialsRaw.error;
+      const partials = splitPipe(partialsRaw.value).map((t) => t.trim()).filter(Boolean).slice(0, 6);
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? operands.join(` ${operation} `) }, () =>
+        board.writeVertical({ operands, operation, result: result.value?.trim() || undefined, carries: carries.value, partials, label: label.value, column: pickColumn(column.value) }),
+      );
+      return ok(`Wrote ${operands.join(` ${operation} `)} in columns${partials.length ? ` with partial products ${partials.join(", ")}` : ""}${result.value ? ` = ${result.value}` : " (answer left blank)"}.`);
+    }
+
+    case "draw_long_division": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const dividend = requiredString(args, "dividend"); if (isToolError(dividend)) return dividend;
+      const divisor = requiredString(args, "divisor"); if (isToolError(divisor)) return divisor;
+      const quotient = opt(args, "quotient"); if (quotient.error) return quotient.error;
+      const stepsRaw = opt(args, "steps"); if (stepsRaw.error) return stepsRaw.error;
+      const steps = (stepsRaw.value ?? "").split("|").map((t) => t.replace(/\s+$/, "")).filter((t) => t.trim().length > 0).slice(0, 8);
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${dividend.trim()} ÷ ${divisor.trim()}` }, () =>
+        board.drawLongDivision({ dividend: dividend.trim(), divisor: divisor.trim(), quotient: quotient.value, steps, label: label.value, column: pickColumn(column.value) }),
+      );
+      return ok(`Set up ${dividend.trim()} ÷ ${divisor.trim()} as long division${quotient.value ? ` with quotient ${quotient.value.trim()}` : ""}${steps.length ? ` and ${steps.length} step line${steps.length === 1 ? "" : "s"}` : ""}.`);
+    }
+
+    case "draw_transversal": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const labelsRaw = requiredString(args, "angle_labels"); if (isToolError(labelsRaw)) return labelsRaw;
+      const angleLabels = labelsRaw.split("|").map((t) => t.trim()).slice(0, 8);
+      const marksRaw = opt(args, "mark_angles"); if (marksRaw.error) return marksRaw.error;
+      const marks = parseAngleMarks(marksRaw.value);
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? "parallel lines and a transversal" }, () =>
+        board.drawTransversal({ angleLabels, marks, label: label.value, column: pickColumn(column.value) }),
+      );
+      const named = angleLabels.map((t, i) => (t ? `${i + 1}: ${t}` : "")).filter(Boolean).join(", ");
+      return ok(`Drew two parallel lines cut by a transversal${named ? `; angles ${named}` : ""}${marks.length ? `; marked ${marks.join(", ")}` : ""}.`);
+    }
+
+    case "draw_icons": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const iconRaw = requiredString(args, "icon"); if (isToolError(iconRaw)) return iconRaw;
+      const names = BOARD_ICON_NAMES as readonly string[];
+      const icon = resolveIconName(iconRaw);
+      if (!icon) return fail(`No icon called "${iconRaw}". Pick one of: ${names.join(", ")}.`);
+      const countRaw = requiredNumber(args, "count"); if (isToolError(countRaw)) return countRaw;
+      const count = clamp(Math.round(countRaw), 1, 40);
+      const gsRaw = optionalNumber(args, "group_size"); if (isToolError(gsRaw)) return gsRaw;
+      const groupSize = gsRaw && gsRaw >= 2 ? clamp(Math.round(gsRaw), 2, 10) : undefined;
+      const crossedRaw = optionalNumber(args, "crossed"); if (isToolError(crossedRaw)) return crossedRaw;
+      const crossed = crossedRaw ? clamp(Math.round(crossedRaw), 0, count) : 0;
+      const secondRaw = opt(args, "second_icon"); if (secondRaw.error) return secondRaw.error;
+      const secondIcon = secondRaw.value ? resolveIconName(secondRaw.value) ?? undefined : undefined;
+      if (secondRaw.value && !secondIcon) return fail(`No icon called "${secondRaw.value}". Pick one of: ${names.join(", ")}.`);
+      const secondCountRaw = optionalNumber(args, "second_count"); if (isToolError(secondCountRaw)) return secondCountRaw;
+      const secondCount = secondIcon ? clamp(Math.round(secondCountRaw ?? count), 1, 40) : undefined;
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${count} ${icon.replaceAll("_", " ")}` }, () =>
+        board.drawIcons({ icon, count, groupSize, crossed, secondIcon, secondCount, label: label.value, column: pickColumn(column.value) }),
+      );
+      const bits = [
+        `${count} ${icon.replaceAll("_", " ")}${count === 1 ? "" : "s"}`,
+        groupSize ? `in groups of ${groupSize}` : "",
+        crossed ? `${crossed} crossed out` : "",
+        secondIcon ? `and ${secondCount} ${secondIcon.replaceAll("_", " ")}${secondCount === 1 ? "" : "s"} in a second row` : "",
+      ].filter(Boolean).join(", ");
+      return ok(`Drew ${bits}${label.value ? `, captioned "${label.value}"` : ""}.`);
+    }
+
+    case "point_at": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const target = requiredString(args, "target");
+      if (isToolError(target)) return target;
+      const item = board.withDirectMeta({ owner: "tutor" }, () => board.pointAt(target));
+      if (!item) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
+      return ok(`Pointing at ${item.id} (${item.label}).`);
+    }
+
+    case "circle_item": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const target = requiredString(args, "target");
+      if (isToolError(target)) return target;
+      const keep = optionalBoolean(args, "keep");
+      if (isToolError(keep)) return keep;
+      const item = board.withDirectMeta({ owner: "tutor" }, () => board.circleItem(target, keep === true));
+      if (!item) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
+      return ok(keep ? `Ringed ${item.id} (${item.label}) in orange.` : `Laser ring around ${item.id} (${item.label}), fading in a few seconds.`);
+    }
+
+    case "erase_items": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const targets = requiredString(args, "targets");
+      if (isToolError(targets)) return targets;
+      const list = parseTargetList(targets);
+      if (list.length === 0) return fail('Give at least one item id or label in "targets".');
+      const erased = board.withDirectMeta({ owner: "tutor" }, () => board.eraseItems(list));
+      if (erased.length === 0) return fail(`Nothing on the board matches ${list.map((t) => `"${t}"`).join(", ")}.`);
+      return ok(`Erased ${erased.length} item${erased.length === 1 ? "" : "s"}: ${erased.join("; ")}.`);
+    }
+
+    case "erase_older": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const keep = optionalNumber(args, "keep");
+      if (isToolError(keep)) return keep;
+      const erased = board.withDirectMeta({ owner: "tutor" }, () => board.eraseOlder(keep ?? 3));
+      if (erased.length === 0) return ok("Nothing older to erase; the board is already tidy.");
+      return ok(`Erased ${erased.length} older item${erased.length === 1 ? "" : "s"}, kept the heading and the newest ${keep ?? 3}.`);
+    }
+
+    case "look_at_board": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      return ok("Looking at the board; a fresh picture of it is on its way to you");
     }
 
     case "clear_whiteboard": {

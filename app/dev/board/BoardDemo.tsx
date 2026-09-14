@@ -26,9 +26,21 @@ export default function BoardDemo() {
     return () => clearInterval(timer);
   }, []);
 
+  // ?script=<URL-encoded JSON [{name,args}, …]> replays arbitrary calls, e.g.
+  // the tool calls a model made in an eval transcript.
+  const scriptParam = params.get("script");
   useEffect(() => {
     if (!ready) return;
-    const demo = (BOARD_DEMOS[demoKey] ?? BOARD_DEMOS.fractions).slice(0, count);
+    let scripted: Array<{ name: string; args: Record<string, unknown> }> | null = null;
+    if (scriptParam) {
+      try {
+        const parsed = JSON.parse(scriptParam) as unknown;
+        if (Array.isArray(parsed)) scripted = parsed.filter((c) => c && typeof c === "object" && typeof (c as { name?: unknown }).name === "string") as Array<{ name: string; args: Record<string, unknown> }>;
+      } catch {
+        scripted = null;
+      }
+    }
+    const demo = (scripted ?? BOARD_DEMOS[demoKey] ?? BOARD_DEMOS.fractions).slice(0, count);
     let cancelled = false;
     const timers = demo.map((call, i) =>
       setTimeout(() => {
@@ -42,7 +54,7 @@ export default function BoardDemo() {
       cancelled = true;
       timers.forEach(clearTimeout);
     };
-  }, [ready, demoKey, stepMs, count]);
+  }, [ready, demoKey, stepMs, count, scriptParam]);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#fff" }}>

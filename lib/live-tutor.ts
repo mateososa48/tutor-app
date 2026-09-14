@@ -559,6 +559,30 @@ export class LiveTutorSession {
     return this.requestBackendTurn();
   }
 
+  // A picture of the board for the backend. It is added to the conversation
+  // without starting a turn; the backend sees it on its next delegation.
+  // Images accumulate in the backend context, so the page only sends these
+  // on demand (look_at_board) for this client.
+  readonly boardFrames = "on-demand" as const;
+
+  sendBoardFrame(dataUrl: string): boolean {
+    if (!this.started || !dataUrl.startsWith("data:image/")) return false;
+    const ok = this.send({
+      type: "response.item.create",
+      event_id: `board_${++this.eventCounter}`,
+      item: {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "[A picture of the whiteboard as it looks right now, for you to check. Not a message from the student.]" },
+          { type: "input_image", detail: "low", image_url: dataUrl },
+        ],
+      },
+    });
+    this.debug("board", "board_frame_pushed", { bytes: dataUrl.length, delivered: ok });
+    return ok;
+  }
+
   private requestBackendTurn(): boolean {
     this.turns.handleDelegationCreated();
     return this.send({ type: "response.create", event_id: `turn_${++this.eventCounter}` });

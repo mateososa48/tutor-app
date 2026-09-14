@@ -19,7 +19,7 @@ const CONTEXT_PLACEHOLDERS = [
   "I struggle with story problems but love algebra…",
   "I learn best when I can see diagrams and examples…",
   "I'm trying to understand derivatives from scratch…",
-  "I want to improve my essay structure for English class…",
+  "I mix up when to flip the fraction when dividing…",
 ];
 
 type Prefs = {

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { forwardRef } from "react";
-import type { WhiteboardHandle, WhiteboardSnapshot } from "./TldrawCore";
+import type { TldrawCoreProps, WhiteboardHandle, WhiteboardSnapshot } from "./TldrawCore";
 
 export type { WhiteboardHandle, WhiteboardSnapshot };
 
@@ -16,9 +16,9 @@ const TldrawCore = dynamic(() => import("./TldrawCore"), {
   ),
 });
 
-const Whiteboard = forwardRef<WhiteboardHandle>(function Whiteboard(_, ref) {
+const Whiteboard = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Whiteboard(props, ref) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return <TldrawCore ref={ref as any} />;
+  return <TldrawCore ref={ref as any} onWriting={props.onWriting} autoFocus={props.autoFocus} />;
 });
 
 export default Whiteboard;

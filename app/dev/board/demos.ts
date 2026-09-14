@@ -10,6 +10,7 @@ const fractions: DemoCall[] = [
   { name: "draw_fraction", args: { fraction: "3/4", second_fraction: "6/8", model: "bar", label: "the same amount, cut differently" } },
   { name: "add_number_line", args: { min: 0, max: 2, step: 0.25, points: "3/4:three quarters, 1 1/2", label: "quarters on a number line" } },
   { name: "draw_fraction", args: { fraction: "5/4", model: "circle", column: "right", label: "five quarters is more than one whole" } },
+  { name: "draw_fraction", args: { fraction: "1/2", second_fraction: "1/3", common_denominator: 6, model: "bar", label: "1/2 + 1/3 = 3/6 + 2/6" } },
   { name: "add_callout", args: { text: "Same size pieces, or it is not a fair share.", style: "remember", column: "right" } },
 ];
 
@@ -54,6 +55,49 @@ const data: DemoCall[] = [
   { name: "add_vector_diagram", args: { title: "Forces on the ball", center_label: "ball", vectors: "down:Weight mg; up-right:Normal N; down-left:Friction f", column: "right" } },
 ];
 
+// Pointing, ringing, erasing: the tutor's hands, not just its pen.
+const marks: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Which piece is one half?" } },
+  { name: "draw_fraction", args: { fraction: "1/2", model: "circle", label: "one half of the pizza" } },
+  { name: "draw_fraction", args: { fraction: "2/4", model: "circle", label: "two quarters", column: "right" } },
+  { name: "add_callout", args: { text: "Are these the same amount?", style: "hint" } },
+  { name: "point_at", args: { target: "b2" } },
+  { name: "circle_item", args: { target: "two quarters" } },
+  { name: "add_student_attempt", args: { text: "no, four pieces is more" } },
+  { name: "circle_item", args: { target: "last", keep: true } },
+  { name: "draw_equation_step", args: { latex: "\\tfrac{2}{4} = \\tfrac{1}{2}" } },
+  { name: "erase_items", args: { targets: "b6" } },
+  { name: "point_at", args: { target: "last" } },
+  { name: "erase_older", args: { keep: 2 } },
+];
+
+// The math pictures: tape diagrams, grids, stacked arithmetic, long
+// division, transversals, solids, heights, slope triangles.
+const math: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Math pictures" } },
+  { name: "draw_tape_diagram", args: { rows: "Red: *4 | *4 = 8; Blue: 4 | 4 | 4 = 12", total_label: "20 marbles", label: "2 : 3" } },
+  { name: "draw_grid", args: { rows: 10, columns: 10, shaded: 25, label: "25 out of 100 = 25% = 0.25", column: "right" } },
+  { name: "draw_grid", args: { rows: 3, columns: 4, shade_rows: 2, shade_columns: 3, label: "2/3 × 3/4 = 6/12", column: "right" } },
+  { name: "add_number_line", args: { min: 0, max: 6, step: 1, points: "2, 2, 2, 3, 5, 5", label: "a dot plot of six scores", column: "right" } },
+  { name: "write_vertical", args: { operands: "347 | 289", operation: "+", carries: "1 1", result: "636" } },
+  { name: "write_vertical", args: { operands: "23 | 14", operation: "×", partial_products: "92 | 230", result: "322", column: "right" } },
+  { name: "draw_long_division", args: { dividend: "156", divisor: "12", quotient: "13", steps: "-12 | 36 | -36 | 0" } },
+  { name: "draw_figure", args: { figure: "triangle", side_labels: "8 | | ", height_label: "h = 5", label: "area = ½ × 8 × 5", column: "right" } },
+  { name: "draw_figure", args: { figure: "parallelogram", side_labels: "10", height_label: "4", label: "area = base × height" } },
+  { name: "draw_figure", args: { figure: "rectangular_prism", side_labels: "6 | 3 | 4", label: "volume = 6 × 3 × 4", column: "right" } },
+  { name: "draw_figure", args: { figure: "cylinder", side_labels: "r = 3 | h = 8", label: "V = πr²h" } },
+  { name: "draw_transversal", args: { angle_labels: "110° | ? | | | | 70° | |", mark_angles: "1 | 5", label: "corresponding angles are equal", column: "right" } },
+  { name: "add_function_graph", args: { expression: "2*x + 1", x_min: -1, x_max: 4, slope_run: "1..3", mark_points: "(0,1):y-intercept", label: "slope = rise / run = 4 / 2 = 2" } },
+  { name: "draw_array", args: { rows: 3, columns: 4, shaded: 3, label: "3 of 12 is one quarter", column: "right" } },
+  { name: "draw_figure", args: { figure: "hexagon", side_labels: "5 | 5 | 5 | 5 | 5 | 5", label: "perimeter = 6 × 5" } },
+  { name: "draw_figure", args: { figure: "trapezoid", side_labels: "12 | | 6 | ", height_label: "h = 4", column: "right" } },
+  { name: "draw_angle", args: { degrees: 110, adjacent_degrees: 70, adjacent_label: "?", caption: "angles on a straight line add to 180°" } },
+  { name: "add_number_line", args: { min: 0, max: 100, step: 25, second_min: 0, second_max: 80, second_label: "of 80", label: "25% of 80 = 20", column: "right" } },
+  { name: "add_number_line", args: { min: 0, max: 1, step: 0.1, points: "0.7, 0.65:0.65", label: "0.7 is bigger than 0.65" } },
+  { name: "plot_points", args: { points: "(1,1):A, (4,1):B, (4,3):C, (1,3):D", x_min: -1, x_max: 6, y_min: -1, y_max: 5, connect: true, label: "a 3 by 2 rectangle", column: "right" } },
+  { name: "add_function_graph", args: { expression: "x + 1", second_expression: "-x + 5", x_min: -1, x_max: 5, label: "y = x + 1 and y = -x + 5 cross at (2, 3)" } },
+];
+
 const all: DemoCall[] = [
   ...fractions,
   ...algebra.slice(1),
@@ -63,4 +107,49 @@ const all: DemoCall[] = [
   { name: "add_process_map", args: { title: "How to solve it", nodes: "Read | Draw | Try | Check", connectors: "then | then | then", column: "right" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, all };
+// Real things: counting, groups, taking away, comparing, an analogy.
+const icons: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "12 ÷ 4" } },
+  { name: "draw_icons", args: { icon: "cookie", count: 12, group_size: 4, label: "12 cookies in groups of 4" } },
+  { name: "draw_icons", args: { icon: "apple", count: 7, crossed: 3, label: "7 apples, eat 3", column: "right" } },
+  { name: "draw_icons", args: { icon: "coin", count: 8, second_icon: "dollar", second_count: 2, label: "8 coins and 2 bills" } },
+  { name: "draw_icons", args: { icon: "pizza", count: 3, label: "three slices", column: "right" } },
+  { name: "draw_icons", args: { icon: "car", count: 20, group_size: 5, column: "right", label: "20 cars in rows of 5" } },
+  { name: "point_at", args: { target: "cookies" } },
+  { name: "circle_item", args: { target: "apples" } },
+];
+
+// Equations under fire: the LaTeX a model really sends, tall lines, marks,
+// erasing, and a snapshot round trip driven from the test harness.
+const eqs: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Equations torture test" } },
+  { name: "draw_equation_step", args: { latex: "\\frac{1}{2} + \\frac{1}{3} = \\frac{3}{6} + \\frac{2}{6}" } },
+  { name: "draw_equation_step", args: { latex: "x² + y² ≤ 25", annotation: "unicode in" } },
+  { name: "draw_equation_step", args: { latex: "3 × 4 = 12 and 12 ÷ 4 = 3" } },
+  { name: "draw_equation_step", args: { latex: "\\sqrt{a^2 + b^2} = \\dfrac{\\frac{1}{2}}{3}", annotation: "tall" } },
+  { name: "draw_equation_step", args: { latex: "area = 8 × 3 = 24 cm²" } },
+  { name: "draw_equation_step", args: { latex: "\\frac{3}{4" , annotation: "broken brace" } },
+  { name: "draw_equation_step", args: { latex: "y = 2x + 1 \\\\ y = -x + 4" , annotation: "two lines" } },
+  { name: "add_equation_sequence", args: { title: "Solve", steps: "5x + 2 = 3x + 10 | 2x + 2 = 10 | 2x = 8 | x = 4", annotations: " | subtract 3x | subtract 2 | divide by 2", column: "right" } },
+  { name: "highlight_step", args: { step_label: "x = 4", style: "circle" } },
+  { name: "cross_out_step", args: { step_label: "2x + 2 = 10" } },
+  { name: "circle_item", args: { target: "tall" } },
+  { name: "point_at", args: { target: "unicode" } },
+  { name: "erase_items", args: { targets: "broken brace" } },
+  { name: "highlight_step", args: { style: "underline" } },
+  { name: "draw_equation_step", args: { latex: "\\begin{cases} x + y = 5 \\\\ x - y = 1 \\end{cases}", annotation: "a system", column: "right" } },
+];
+
+// Icon layout edge cases.
+const icons2: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Icon layout edge cases" } },
+  { name: "draw_icons", args: { icon: "balloon", count: 1, label: "one balloon" } },
+  { name: "draw_icons", args: { icon: "cookies", count: 40, group_size: 10, label: "40 cookies in tens", column: "right" } },
+  { name: "draw_icons", args: { icon: "apples", count: 20, group_size: 3, crossed: 5, label: "20 in threes, 5 eaten" } },
+  { name: "draw_icons", args: { icon: "kids", count: 7, group_size: 7, second_icon: "pizza slices", second_count: 14, label: "7 kids, 14 slices", column: "right" } },
+  { name: "draw_icons", args: { icon: "coins", count: 6, crossed: 6, label: "spent them all" } },
+  { name: "draw_icons", args: { icon: "ice cream", count: 9, second_icon: "money", second_count: 3, label: "9 ice creams, 3 coins" } },
+  { name: "circle_item", args: { target: "40 cookies" } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, icons, icons2, eqs, all };

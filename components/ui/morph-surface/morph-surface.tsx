@@ -7,9 +7,9 @@ import {
   type Transition,
   useAnimationControls,
   useMotionValue,
-  useReducedMotion,
   useTransform,
 } from "motion/react";
+import { useReduce } from "@/lib/reduced-motion";
 import {
   forwardRef,
   type ReactNode,
@@ -111,7 +111,7 @@ const MorphSurfaceRoot = forwardRef<HTMLDivElement, MorphSurfaceRootProps>(
     const transitionRef = useRef(transition);
     const previousValue = useRef(value);
     const contentControls = useAnimationControls();
-    const userPrefersReducedMotion = useReducedMotion();
+    const userPrefersReducedMotion = useReduce();
     const shouldReduceMotion =
       reducedMotion === "always" ||
       (reducedMotion === "user" && userPrefersReducedMotion === true);

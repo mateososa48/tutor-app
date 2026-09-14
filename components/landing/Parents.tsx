@@ -1,9 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { motion, useReducedMotion } from "motion/react";
 import { ArrowRight, Check } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { BlurFade } from "@/components/ui/blur-fade";
+import { TranscriptList } from "@/components/session/TranscriptPanel";
+import type { TranscriptEntry } from "@/lib/live-types";
 
 const POINTS = [
   ["Homework stays theirs", "Chalk guides. It never hands over the answer, so what your kid turns in is their own work."],
@@ -11,53 +13,38 @@ const POINTS = [
   ["You can read the session", "Every session keeps a transcript you can open. Voice audio is never stored."],
 ] as const;
 
-const LINES = [
-  { who: "you", text: "I don't get why the 3 moves to the other side." },
-  { who: "tutor", text: "Let's not move it yet. What's the opposite of adding three?" },
-  { who: "you", text: "subtracting 3?" },
-  { who: "tutor", text: "Exactly. Do that to both sides and read me what's left." },
+const LINES: TranscriptEntry[] = [
+  { id: "p1", role: "student", text: "I don't get why the 3 moves to the other side." },
+  { id: "p2", role: "tutor", text: "Let's not move it yet. What's the opposite of adding three?" },
+  { id: "p3", role: "student", text: "subtracting 3?" },
+  { id: "p4", role: "tutor", text: "Exactly. Do that to both sides and read me what's left." },
 ];
 
-// What a parent actually opens after a session: the recap card.
+// What a parent actually opens after a session: the review screen, with the
+// app's own header row, summary and transcript.
 function RecapCard() {
-  const reduce = useReducedMotion();
   return (
     <div className="lp-frame">
       <div className="lp-card overflow-hidden rounded-[20px]">
-        <div className="flex items-center justify-between border-b px-5 py-3.5" style={{ borderColor: "var(--lp-line)" }}>
-          <div>
-            <p className="lp-display text-[15px]">Solving 2x + 3 = 11</p>
-            <p className="mt-0.5 text-[12px] text-(--lp-ink-3)">Wednesday, 7:42 pm, 14 min</p>
-          </div>
-          <span className="rounded-full px-2.5 py-1 text-[11px] font-semibold" style={{ background: "var(--lp-sky-soft)", color: "var(--lp-sky-deep)" }}>
-            Algebra
-          </span>
+        <div className="flex h-[52px] items-center gap-3 border-b border-(--lp-line) px-5 text-[13.5px]">
+          <span className="truncate font-medium text-(--lp-ink)">Solving 2x + 3 = 11</span>
+          <span className="shrink-0 text-(--lp-ink-3)">Wednesday</span>
+          <span className="shrink-0 text-(--lp-ink-3)">14 min</span>
+          <Badge variant="outline" className="ml-auto shrink-0 rounded-full border-(--lp-line-strong) text-(--lp-ink-2)">
+            Ended
+          </Badge>
         </div>
 
-        <ul className="flex flex-col gap-3 px-5 py-4">
-          {LINES.map((l, i) => (
-            <motion.li
-              key={l.text}
-              initial={reduce ? false : { opacity: 0, y: 6 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.4 }}
-              transition={{ duration: 0.45, delay: i * 0.1, ease: [0.16, 1, 0.3, 1] }}
-              className={l.who === "you" ? "text-[13.5px] italic text-(--lp-ink-2)" : "flex gap-2.5 text-[13.5px] leading-[1.45] font-medium"}
-            >
-              {l.who === "tutor" && <span className="mt-[7px] h-[6px] w-[6px] shrink-0 rounded-full bg-(--lp-ink)" aria-hidden />}
-              {l.text}
-            </motion.li>
-          ))}
-        </ul>
-
-        <div className="border-t px-5 py-4" style={{ borderColor: "var(--lp-line)", background: "var(--lp-bg)" }}>
-          <p className="mb-2 text-[10.5px] font-semibold tracking-[0.08em] text-(--lp-ink-3) uppercase">What clicked</p>
-          <p className="flex items-start gap-2.5 text-[13.5px] leading-[1.45]">
-            <span className="mt-[2px] inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full" style={{ background: "var(--lp-sky-soft)", color: "var(--lp-sky-deep)" }}>
+        <div className="px-5 pt-5 pb-6">
+          <h3 className="lp-display m-0 mb-2 text-[16px] text-(--lp-ink)">Summary</h3>
+          <p className="m-0 flex items-start gap-2.5 text-[14px] leading-[1.5] text-(--lp-ink)">
+            <span className="mt-[3px] inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-(--lp-sky-soft) text-(--lp-sky-deep)">
               <Check size={10} strokeWidth={3} aria-hidden />
             </span>
-            Undoing an operation on both sides, after two tries.
+            Undoing an operation on both sides, after two tries. Next: equations with x on both sides.
           </p>
+          <h3 className="lp-display m-0 mt-6 mb-3 text-[16px] text-(--lp-ink)">Transcript</h3>
+          <TranscriptList transcript={LINES} />
         </div>
       </div>
     </div>

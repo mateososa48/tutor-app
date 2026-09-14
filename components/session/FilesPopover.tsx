@@ -18,9 +18,6 @@ type Props = {
 };
 
 export function FilesPopover({ files, onAddFiles, onRemoveFile, notice, disabled, className }: Props) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const { intake, processing, error } = useFileIntake(files, onAddFiles);
-
   return (
     <Popover>
       <PopoverTrigger
@@ -37,89 +34,108 @@ export function FilesPopover({ files, onAddFiles, onRemoveFile, notice, disabled
         )}
       </PopoverTrigger>
       <PopoverContent side="top" align="end" sideOffset={10} className="w-[340px] rounded-[16px] p-2">
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          disabled={processing}
-          className="group flex w-full flex-col items-center gap-1.5 rounded-[12px] border border-dashed border-(--lp-line-strong) px-4 py-6 text-center transition-colors hover:border-(--lp-sky) hover:bg-(--lp-sky-tint) focus-visible:outline-2 focus-visible:outline-(--lp-sky)"
-        >
-          <span className="flex size-9 items-center justify-center rounded-full bg-(--lp-gray) text-(--lp-ink-2) transition-colors group-hover:bg-white group-hover:text-(--lp-sky-deep)">
-            {processing ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" strokeWidth={2} />}
-          </span>
-          <span className="text-[13px] font-medium text-(--lp-ink)">
-            {processing ? "Reading file…" : "Drop a photo or PDF, or browse"}
-          </span>
-          <span className="text-[11.5px] text-(--lp-ink-3)">Homework photos, worksheets, notes. Or drop them anywhere on the board.</span>
-        </button>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={ACCEPTED_EXTENSIONS}
-          className="hidden"
-          onChange={(e) => {
-            if (e.target.files?.length) {
-              void intake(e.target.files);
-              e.target.value = "";
-            }
-          }}
-        />
-
-        <AnimatePresence initial={false}>
-          {error && (
-            <motion.p
-              key="error"
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: "auto" }}
-              exit={{ opacity: 0, height: 0 }}
-              className="m-0 overflow-hidden px-2 pt-2 text-[12px] text-(--danger)"
-            >
-              {error}
-            </motion.p>
-          )}
-        </AnimatePresence>
-
-        {files.length > 0 && (
-          <ul className="mt-2 flex max-h-[220px] flex-col gap-0.5 overflow-y-auto [scrollbar-width:thin]">
-            <AnimatePresence initial={false}>
-              {files.map((f) => {
-                const kind = fileTypeLabel(f.mimeType);
-                const isImage = f.mimeType.startsWith("image/");
-                return (
-                  <motion.li
-                    key={f.id}
-                    layout
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, x: 8 }}
-                    transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                    className="group/file flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 hover:bg-(--lp-gray)"
-                  >
-                    <span className="flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-(--lp-sky-soft) text-(--lp-sky-deep)">
-                      {isImage ? <ImageIcon className="size-3.5" /> : <FileText className="size-3.5" />}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-[13px] text-(--lp-ink)" title={f.name}>
-                      {f.name}
-                    </span>
-                    <span className="shrink-0 text-[10.5px] font-semibold tracking-[0.04em] text-(--lp-ink-3) uppercase">{kind}</span>
-                    <button
-                      type="button"
-                      onClick={() => onRemoveFile(f.id)}
-                      aria-label={`Remove ${f.name}`}
-                      className="flex size-6 shrink-0 items-center justify-center rounded-md text-(--lp-ink-3) opacity-0 transition-opacity group-hover/file:opacity-100 hover:bg-white hover:text-(--danger) focus-visible:opacity-100"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  </motion.li>
-                );
-              })}
-            </AnimatePresence>
-          </ul>
-        )}
-
-        {notice && <p className="m-0 px-2 pt-2 pb-1 text-[11.5px] text-(--lp-ink-3)">{notice}</p>}
+        <FilesPanel files={files} onAddFiles={onAddFiles} onRemoveFile={onRemoveFile} notice={notice} />
       </PopoverContent>
     </Popover>
+  );
+}
+
+// The popover's body on its own: the drop zone and the list of what has been
+// added. The session page shows it inside the Files popover; the landing page
+// shows it in the open.
+export function FilesPanel({
+  files,
+  onAddFiles,
+  onRemoveFile,
+  notice,
+}: Pick<Props, "files" | "onAddFiles" | "onRemoveFile" | "notice">) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { intake, processing, error } = useFileIntake(files, onAddFiles);
+
+  return (
+    <>
+    <button
+      type="button"
+      onClick={() => inputRef.current?.click()}
+      disabled={processing}
+      className="group flex w-full flex-col items-center gap-1.5 rounded-[12px] border border-dashed border-(--lp-line-strong) px-4 py-6 text-center transition-colors hover:border-(--lp-sky) hover:bg-(--lp-sky-tint) focus-visible:outline-2 focus-visible:outline-(--lp-sky)"
+    >
+      <span className="flex size-9 items-center justify-center rounded-full bg-(--lp-gray) text-(--lp-ink-2) transition-colors group-hover:bg-white group-hover:text-(--lp-sky-deep)">
+        {processing ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" strokeWidth={2} />}
+      </span>
+      <span className="text-[13px] font-medium text-(--lp-ink)">
+        {processing ? "Reading file…" : "Drop a photo or PDF, or browse"}
+      </span>
+      <span className="text-[11.5px] text-(--lp-ink-3)">Homework photos, worksheets, notes. Or drop them anywhere on the board.</span>
+    </button>
+    <input
+      ref={inputRef}
+      type="file"
+      multiple
+      accept={ACCEPTED_EXTENSIONS}
+      className="hidden"
+      onChange={(e) => {
+        if (e.target.files?.length) {
+          void intake(e.target.files);
+          e.target.value = "";
+        }
+      }}
+    />
+
+    <AnimatePresence initial={false}>
+      {error && (
+        <motion.p
+          key="error"
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          className="m-0 overflow-hidden px-2 pt-2 text-[12px] text-(--danger)"
+        >
+          {error}
+        </motion.p>
+      )}
+    </AnimatePresence>
+
+    {files.length > 0 && (
+      <ul className="mt-2 flex max-h-[220px] flex-col gap-0.5 overflow-y-auto [scrollbar-width:thin]">
+        <AnimatePresence initial={false}>
+          {files.map((f) => {
+            const kind = fileTypeLabel(f.mimeType);
+            const isImage = f.mimeType.startsWith("image/");
+            return (
+              <motion.li
+                key={f.id}
+                layout
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, x: 8 }}
+                transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                className="group/file flex items-center gap-2.5 rounded-[10px] px-2 py-1.5 hover:bg-(--lp-gray)"
+              >
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-(--lp-sky-soft) text-(--lp-sky-deep)">
+                  {isImage ? <ImageIcon className="size-3.5" /> : <FileText className="size-3.5" />}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-(--lp-ink)" title={f.name}>
+                  {f.name}
+                </span>
+                <span className="shrink-0 text-[10.5px] font-semibold tracking-[0.04em] text-(--lp-ink-3) uppercase">{kind}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveFile(f.id)}
+                  aria-label={`Remove ${f.name}`}
+                  className="flex size-6 shrink-0 items-center justify-center rounded-md text-(--lp-ink-3) opacity-0 transition-opacity group-hover/file:opacity-100 hover:bg-white hover:text-(--danger) focus-visible:opacity-100"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </motion.li>
+            );
+          })}
+        </AnimatePresence>
+      </ul>
+    )}
+
+    {notice && <p className="m-0 px-2 pt-2 pb-1 text-[11.5px] text-(--lp-ink-3)">{notice}</p>}
+    </>
   );
 }
 

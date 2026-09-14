@@ -9,6 +9,24 @@ import type { UploadedFile } from "./file-processor";
 
 type GeminiConfig = { instructions: string; voice: string };
 
+// Gemini sends a turn's audio and its transcript faster than real time, so
+// the caption is revealed in step with playback instead of all at once.
+function pcmMs(base64: string): number {
+  const pad = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  const bytes = Math.floor((base64.length * 3) / 4) - pad;
+  return bytes / 48; // 16-bit mono at 24 kHz: 48 bytes per millisecond
+}
+
+function revealByFraction(text: string, frac: number): string {
+  if (!text) return "";
+  if (frac >= 0.995) return text;
+  let n = Math.floor(text.length * frac);
+  if (n <= 0) return "";
+  const space = text.indexOf(" ", n);
+  n = space === -1 ? text.length : space;
+  return text.slice(0, n);
+}
+
 function describeStartFailure(status: number, detail: string): string {
   if (status === 401) return "Please sign in again to start a session.";
   let text = detail;
@@ -33,12 +51,34 @@ export class GeminiTutorSession {
   private muted = false;
   private ended = false;
   private turnText = "";
+  private turnAudioMs = 0;
+  private turnDone = false;
+  private shownCaption = "";
   private lastAudioAt = 0;
+
+  readonly boardFrames = "auto" as const;
 
   constructor(private readonly callbacks: LiveTutorCallbacks) {}
 
   private debug(kind: string, message: string, payload?: Record<string, unknown>) {
     this.callbacks.onDebugEvent?.({ kind, message, payload });
+  }
+
+  private resetTurn() {
+    this.turnText = "";
+    this.turnAudioMs = 0;
+    this.turnDone = false;
+  }
+
+  // The first audio or text after a completed turn starts the next one.
+  private beginTurnIfNeeded() {
+    if (this.turnDone) this.resetTurn();
+  }
+
+  private showCaption(text: string) {
+    if (text === this.shownCaption) return;
+    this.shownCaption = text;
+    this.callbacks.onCaption(text);
   }
 
   private setSpeaking(next: boolean) {
@@ -71,16 +111,19 @@ export class GeminiTutorSession {
     const session = new GeminiLiveSession(
       {
         onAudio: (base64) => {
+          this.beginTurnIfNeeded();
           player.enqueue(base64);
+          this.turnAudioMs += pcmMs(base64);
           this.lastAudioAt = Date.now();
           this.setSpeaking(true);
         },
         onTranscript: (entry) => {
           if (entry.role === "tutor") {
+            this.beginTurnIfNeeded();
             this.turnText = this.turnText ? `${this.turnText} ${entry.text}` : entry.text;
-            this.callbacks.onCaption(this.turnText);
           } else {
-            this.turnText = "";
+            this.resetTurn();
+            this.showCaption("");
             this.callbacks.onActivity("thinking");
           }
           this.callbacks.onTranscript(entry);
@@ -106,9 +149,12 @@ export class GeminiTutorSession {
         onError: (message) => this.callbacks.onError(message),
         onInterrupted: () => {
           player.flush();
-          this.turnText = "";
-          this.callbacks.onCaption("");
+          this.resetTurn();
+          this.showCaption("");
           this.setSpeaking(false);
+        },
+        onTurnComplete: () => {
+          this.turnDone = true;
         },
         onDebugEvent: (event) => this.callbacks.onDebugEvent?.(event),
       },
@@ -129,9 +175,13 @@ export class GeminiTutorSession {
     this.meter = setInterval(() => {
       const playing = player.isPlaying() || Date.now() - this.lastAudioAt < 220;
       this.setSpeaking(playing);
-      if (!playing && this.turnText && Date.now() - this.lastAudioAt > 900) {
-        this.turnText = "";
-        this.callbacks.onCaption("");
+      // Caption follows the audio: reveal the turn's text in proportion to
+      // how much of the turn's audio has actually played. The page decides
+      // how long the finished caption lingers.
+      if (this.turnText) {
+        const played = Math.max(0, this.turnAudioMs - player.getPendingDurationMs());
+        const frac = this.turnAudioMs > 0 ? Math.min(1, played / this.turnAudioMs) : 0;
+        this.showCaption(revealByFraction(this.turnText, frac));
       }
     }, 80);
 
@@ -166,5 +216,14 @@ export class GeminiTutorSession {
 
   sendFiles(files: UploadedFile[]): boolean {
     return this.session?.sendFiles(files) ?? false;
+  }
+
+  sendBoardFrame(dataUrl: string): boolean {
+    const comma = dataUrl.indexOf(",");
+    if (comma < 0 || !this.session) return false;
+    const mime = /^data:([^;]+)/.exec(dataUrl)?.[1] ?? "image/jpeg";
+    const sent = this.session.sendVideoFrame(dataUrl.slice(comma + 1), mime);
+    this.debug("board", "board_frame_sent", { bytes: dataUrl.length - comma - 1, sent });
+    return sent;
   }
 }

@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
-import { motion, useReducedMotion, useScroll, useSpring, useTransform } from "motion/react";
+import { motion, useScroll, useSpring, useTransform } from "motion/react";
 import { Highlight } from "@/components/animate-ui/primitives/effects/highlight";
 import { Wordmark } from "./Wordmark";
+import { useReduce } from "./useScript";
 
 const NAV = [
   ["How it works", "#how-it-works"],
@@ -31,7 +32,7 @@ function useIsSm() {
 // sits exactly on the page's text edge. Scrolled: a floating rounded panel,
 // radius matched to the buttons, nav dead-centred, room for the CTA's shadow.
 export function Header() {
-  const reduce = useReducedMotion();
+  const reduce = useReduce();
   const isSm = useIsSm();
   const { scrollY } = useScroll();
   const raw = useTransform(scrollY, [0, 140], [0, 1]);

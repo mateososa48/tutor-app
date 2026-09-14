@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { AudioLines, ChevronDown, Keyboard, MessageSquareText, Mic, MicOff, PenLine, SendHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,11 +33,14 @@ type Props = {
   onAddFiles: (files: UploadedFile[]) => void;
   onRemoveFile: (id: string) => void;
   fileNotice?: string;
+  /** Height of the surface the dock sits in. Defaults to the window, which is
+   *  right on the session page; a framed preview passes its own height. */
+  frameHeight?: number;
 };
 
 const CONTROLS_H = 68;
 const DOCK_H = 200;
-const INSET = 12; // gap between the dock and the open sheet's edges
+const INSET = 10; // gap between the dock and the open sheet's edges
 const PILL =
   "h-9 rounded-full border-(--lp-line-strong) bg-white/92 px-3.5 text-[13px] font-medium text-(--lp-ink) shadow-(--lp-shadow-card) backdrop-blur-md hover:bg-white";
 
@@ -50,6 +53,35 @@ const BADGE: Record<DockActivity, { status: AnimatedBadgeStatus; label: string; 
 };
 
 const SPRING = { type: "spring", stiffness: 260, damping: 32, mass: 0.9 } as const;
+
+function useWindowHeight() {
+  return useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener("resize", onChange);
+      return () => window.removeEventListener("resize", onChange);
+    },
+    () => window.innerHeight,
+    () => 800,
+  );
+}
+
+// The status badge in the dock's corner. The landing page shows the same one
+// on its tiles.
+export function DockBadge({ activity, className }: { activity: DockActivity; className?: string }) {
+  const badge = BADGE[activity];
+  return (
+    <AnimatedBadge
+      size="sm"
+      status={badge.status}
+      icon={badge.icon}
+      showIcon={badge.status !== "neutral"}
+      contentKey={activity}
+      className={cn("border-(--lp-line) bg-white/85 text-(--lp-ink-2) backdrop-blur-sm data-[status=info]:text-(--lp-sky-deep)", className)}
+    >
+      {badge.label}
+    </AnimatedBadge>
+  );
+}
 
 export function VoiceDock({
   activity,
@@ -64,21 +96,17 @@ export function VoiceDock({
   onAddFiles,
   onRemoveFile,
   fileNotice,
+  frameHeight,
 }: Props) {
   const reduce = useReducedMotion();
   const [composer, setComposer] = useState(false);
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const [sheetH, setSheetH] = useState(560);
+  const windowH = useWindowHeight();
 
   // The open sheet reaches up to just under the pills, which sit below the
   // title and End chips: 16 + 32 + 12 + 36 + 12 from the top, 16 at the bottom.
-  useEffect(() => {
-    const update = () => setSheetH(Math.max(360, window.innerHeight - 124));
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
+  const sheetH = frameHeight ? Math.max(300, frameHeight - 124) : Math.max(360, windowH - 124);
 
   useEffect(() => {
     if (composer) inputRef.current?.focus();
@@ -101,11 +129,10 @@ export function VoiceDock({
   };
 
   const open = transcriptOpen;
-  const badge = BADGE[activity];
   const spring = reduce ? { duration: 0 } : SPRING;
 
   return (
-    <div className="absolute right-4 bottom-4 z-30 w-[380px] max-w-[calc(100%-32px)]">
+    <div className="absolute right-4 bottom-4 z-30 w-[340px] max-w-[calc(100%-32px)]">
       {/* The sheet: grows upward behind the dock. */}
       <motion.div
         initial={false}
@@ -150,22 +177,13 @@ export function VoiceDock({
           <VoiceWave analyser={analyser} speaking={activity === "speaking"} />
         </div>
         <div className="absolute top-3 left-3">
-          <AnimatedBadge
-            size="sm"
-            status={badge.status}
-            icon={badge.icon}
-            showIcon={badge.status !== "neutral"}
-            contentKey={activity}
-            className="border-(--lp-line) bg-white/85 text-(--lp-ink-2) backdrop-blur-sm data-[status=info]:text-(--lp-sky-deep)"
-          >
-            {badge.label}
-          </AnimatedBadge>
+          <DockBadge activity={activity} />
         </div>
 
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-end px-3" style={{ height: CONTROLS_H }}>
           <MorphSurface.Root value={composer ? "typing" : "voice"} origin="right" className="rounded-[14px]">
             {composer ? (
-              <div className="flex w-[348px] items-center gap-1.5">
+              <div className="flex w-[308px] items-center gap-1.5">
                 <Button variant="ghost" size="icon" onClick={() => setComposer(false)} aria-label="Back to voice" className="size-10 rounded-full text-white hover:bg-white/15 hover:text-white">
                   <X className="size-[18px]" strokeWidth={2} />
                 </Button>
@@ -182,7 +200,7 @@ export function VoiceDock({
                 </Button>
               </div>
             ) : (
-              <div className="flex w-[348px] items-center justify-between">
+              <div className="flex w-[308px] items-center justify-between">
                 <Tooltip>
                   <TooltipTrigger
                     render={

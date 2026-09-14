@@ -7,12 +7,28 @@ import {
   forwardRef,
   useImperativeHandle,
   useRef,
-  useState,
   useCallback,
   useEffect,
 } from "react";
-import { Tldraw, type TLComponents } from "tldraw";
+import { Tldraw, renderPlaintextFromRichText, type TLComponents } from "tldraw";
 import { Editor, createShapeId, toRichText } from "@tldraw/editor";
+import { InstancePresenceRecordType, type TLInstancePresence, type TLShapeId } from "@tldraw/tlschema";
+import {
+  formatBoardItems,
+  isHeadingItem,
+  itemLabelFrom,
+  resolveItemTarget,
+  ringPoints,
+  type BoardItem,
+  type ItemBounds,
+} from "@/lib/board-items";
+import { planReveal, pointsShown, polylineLength, typedPrefix, type RevealInput, type RevealStep } from "@/lib/board-reveal";
+import { TutorPenOverlayUtil } from "@/components/board/TutorPenOverlay";
+import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
+import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
+
+const OVERLAY_UTILS = [TutorPenOverlayUtil];
+const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -23,7 +39,6 @@ import {
   type TLLineShapePoint,
 } from "@tldraw/tlschema";
 import { getIndices, type IndexKey } from "@tldraw/utils";
-import katex from "katex";
 import { createMathEvaluator } from "@/lib/math-expression";
 import {
   angleLabelPoint,
@@ -39,6 +54,19 @@ import {
   niceStep,
   parseLineMarks,
   sectorPolygon,
+  clamp,
+  altitude,
+  formatNumber,
+  isSolidFigure,
+  type TapeDrawing,
+  type GridDrawing,
+  type VerticalDrawing,
+  type LongDivisionDrawing,
+  type TransversalDrawing,
+  type GraphExtras,
+  type FigureKind,
+  type IconsDrawing,
+  autoTickStyle,
   tickValues,
   vertexLabelPoint,
   wholesNeeded,
@@ -58,7 +86,6 @@ import {
   applySemanticBoardAction,
   createEmptySemanticBoard,
   normalizeSemanticBoard,
-  summarizeSemanticBoard,
   type SemanticBoard,
   type SemanticBoardActionContext,
 } from "@/lib/semantic-board";
@@ -96,8 +123,6 @@ const MARKER_HEX: Record<string, string> = {
   red: "#e03131",
   "light-blue": "#4ba1f1",
 };
-const CORRECT_HEX = "#099268";
-const WRONG_HEX = "#e03131";
 const DIAGRAM_W = 520;
 // tldraw text metrics: theme font size 16px × size multiplier, line height 1.35.
 const FONT_PX: Record<TLDefaultSizeStyle, number> = { s: 18, m: 24, l: 36, xl: 44 };
@@ -145,6 +170,9 @@ export interface WhiteboardSnapshot {
   eqItems: EqItem[];
   semanticBoard?: SemanticBoard;
   pageState: { pageIndex: number; pageTop: number; leftY: number; rightY: number };
+  /** Board items (b1, b2, …) so a resumed session keeps its ids. */
+  items?: BoardItem[];
+  itemSeq?: number;
 }
 
 export type StepTarget = { step_label?: string; step_index?: number };
@@ -154,12 +182,12 @@ export interface WhiteboardHandle {
   startBoardSection(title: string, freshPage?: boolean): void;
   drawEquationStep(latex: string, annotation?: string, column?: "left" | "right"): void;
   addTextNote(text: string, size?: "heading" | "body", column?: "left" | "right"): void;
-  addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right"): void;
+  addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right", extras?: GraphExtras): void;
   drawShape(shape: string, label?: string, width?: number, height?: number, column?: "left" | "right"): void;
   addTable(columns: string, rows: string, title?: string, column?: "left" | "right"): void;
   addNumberLine(opts: NumberLineDrawing): void;
   addCoordinateAxes(xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right"): void;
-  plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right"): void;
+  plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right", connect?: boolean): void;
   addWorkedExampleBox(title: string, body: string, column?: "left" | "right"): void;
   addStudentAttempt(text: string, column?: "left" | "right"): void;
   addProblemSetup(goal: string, givens?: string, unknowns?: string, plan?: string, column?: "left" | "right"): void;
@@ -222,10 +250,35 @@ export interface WhiteboardHandle {
    */
   captureScreenshot(): Promise<string | null>;
   getBoardSummary(): string;
+  /** Item bookkeeping around one tool call: everything created between begin and end becomes one board item. */
+  beginItem(tool: string): ItemToken;
+  endItem(token: ItemToken, label: string | null, owner?: "tutor" | "student"): string | null;
+  /** The tutor's pointer glides to an item and rests there. Returns the item or null. */
+  pointAt(target: string): BoardItem | null;
+  /** Ring an item: a laser ring that fades, or a marker ring that stays. */
+  circleItem(target: string, keep: boolean): BoardItem | null;
+  /** Erase items by id or label. Returns the labels erased. */
+  eraseItems(targets: string[]): string[];
+  /** Erase everything except headings and the newest `keep` items. */
+  eraseOlder(keep: number): string[];
+  // Math pictures added Sept 14 2026.
+  drawTapeDiagram(opts: TapeDrawing): void;
+  drawGrid(opts: GridDrawing): void;
+  writeVertical(opts: VerticalDrawing): void;
+  drawLongDivision(opts: LongDivisionDrawing): void;
+  drawTransversal(opts: TransversalDrawing): void;
+  /** Rows of real things (apples, coins…) with optional groups, crossed-out ones, and a second row. */
+  drawIcons(opts: IconsDrawing): void;
+  /** The board as a JPEG data URL with its pixel size (or null when empty). */
+  exportImage(maxWidth?: number): Promise<{ url: string; width: number; height: number } | null>;
 }
 
-// ── Internal equation overlay item ─────────────────────────────────────────
-interface EqItem {
+export type ItemToken = { tool: string; shapes: Set<string>; eqs: Set<string> };
+
+// ── Legacy equation overlay item ────────────────────────────────────────────
+// Typeset math is a "math" shape in the store now (components/board/MathShape).
+// Old snapshots still carry these; loadSnapshot turns them into shapes.
+export interface EqItem {
   id: string;
   latex: string;
   annotation?: string;
@@ -238,6 +291,8 @@ interface EqItem {
   role?: "label";
   color?: string;
   meta?: BoardArtifactMeta;
+  /** 0..1 while being "written"; undefined once fully shown */
+  reveal?: number;
 }
 
 function compactArtifactMeta(meta: BoardArtifactMeta | null): BoardArtifactMeta | undefined {
@@ -289,7 +344,9 @@ function diffStringSet(after: Set<string>, before: Set<string>): string[] {
 
 // Walk eqRef newest→oldest, matching by latex substring (case-insensitive) or
 // exact tutorReferenceLabel. Falls back to numeric index. Returns -1 if no match.
-function resolveEqIndex(items: EqItem[], target: { step_label?: string; step_index?: number }): number {
+type MathLine = { id: string; latex: string; role?: "" | "label"; meta?: BoardArtifactMeta };
+
+function resolveEqIndex(items: MathLine[], target: { step_label?: string; step_index?: number }): number {
   const label = target.step_label?.trim();
   if (label && label.length > 0) {
     const needle = label.toLowerCase();
@@ -307,6 +364,7 @@ function resolveEqIndex(items: EqItem[], target: { step_label?: string; step_ind
   }
   const idx = target.step_index;
   const stepIndices = items.map((item, i) => (item.role === "label" ? -1 : i)).filter((i) => i >= 0);
+  if (idx === -1 && stepIndices.length > 0) return stepIndices[stepIndices.length - 1];
   if (typeof idx === "number" && Number.isInteger(idx) && idx >= 0 && idx < stepIndices.length) {
     return stepIndices[idx];
   }
@@ -314,6 +372,28 @@ function resolveEqIndex(items: EqItem[], target: { step_label?: string; step_ind
     console.warn("[TldrawCore] resolveEqIndex: no step_label or valid step_index provided");
   }
   return -1;
+}
+
+// Repeat each corner (a bend of more than ~35°) a few times. The freehand
+// stroke renderer streamlines its input, which turns sharp corners into
+// petals; repeated points make it stop and turn.
+function sharpenCorners(points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+  if (points.length < 3) return points;
+  const out: Array<{ x: number; y: number }> = [];
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    const prev = points[(i - 1 + n) % n];
+    const next = points[(i + 1) % n];
+    const a1 = Math.atan2(p.y - prev.y, p.x - prev.x);
+    const a2 = Math.atan2(next.y - p.y, next.x - p.x);
+    let d = Math.abs(a2 - a1);
+    if (d > Math.PI) d = Math.PI * 2 - d;
+    const corner = i === 0 || i === n - 1 || d > (35 * Math.PI) / 180;
+    out.push(p);
+    if (corner) out.push({ x: p.x, y: p.y }, { x: p.x, y: p.y }, { x: p.x, y: p.y });
+  }
+  return out;
 }
 
 function shapeSize(shape: unknown): { w: number; h: number } {
@@ -325,8 +405,6 @@ function shapeSize(shape: unknown): { w: number; h: number } {
 }
 
 // ── ID generator ────────────────────────────────────────────────────────────
-let _n = 0;
-const uid = () => String(++_n);
 
 // "(1,1):A, (3,4):B; (-2, 2)" — commas separate points as well as the two
 // coordinates, so match tuples directly instead of splitting the string.
@@ -401,118 +479,6 @@ function parseVectors(input: string): Array<{ direction: string; label: string }
 }
 
 // ── Equation block (KaTeX HTML overlay) ────────────────────────────────────
-function EqBlock({ item }: { item: EqItem }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    try {
-      // Labels render inline so they carry no display-mode margins and can be
-      // centred beside a diagram; steps keep display mode.
-      katex.render(item.latex, ref.current, { throwOnError: false, displayMode: item.role !== "label" });
-    } catch {
-      if (ref.current) ref.current.textContent = item.latex;
-    }
-  }, [item.latex, item.role]);
-
-  return (
-    <div style={{ position: "absolute", left: item.x, top: item.y }}>
-      <div style={{ position: "relative", display: "inline-block" }}>
-        <span
-          ref={ref}
-          style={{ fontSize: "1.45rem", color: item.color ?? "#383838", display: "block", padding: "2px 4px" }}
-        />
-
-        {item.annotation && (
-          <span
-            style={{
-              position: "absolute",
-              left: "calc(100% + 18px)",
-              top: "50%",
-              transform: "translateY(-50%)",
-              fontSize: 13,
-              fontStyle: "normal",
-              fontWeight: 400,
-              color: "oklch(0.55 0.005 220)",
-              whiteSpace: "nowrap",
-              letterSpacing: "0.01em",
-            }}
-          >
-            {item.annotation}
-          </span>
-        )}
-
-        {item.crossOut && (
-          <div
-            style={{
-              position: "absolute",
-              top: "calc(50% - 1px)",
-              left: -4,
-              right: -4,
-              height: 2,
-              background: WRONG_HEX,
-              opacity: 0.85,
-              transform: "rotate(-1.5deg)",
-              transformOrigin: "left center",
-              borderRadius: 1,
-            }}
-          />
-        )}
-
-        {item.highlight === "underline" && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: 2,
-              background: CORRECT_HEX,
-              borderRadius: 1,
-              opacity: 0.85,
-            }}
-          />
-        )}
-
-        {item.highlight === "box" && (
-          <div
-            style={{
-              position: "absolute",
-              inset: "-6px -10px",
-              border: `1.5px dashed ${CORRECT_HEX}`,
-              borderRadius: 6,
-              opacity: 0.85,
-            }}
-          />
-        )}
-
-        {item.highlight === "circle" && (
-          <svg
-            style={{
-              position: "absolute",
-              inset: "-12px -18px",
-              width: "calc(100% + 36px)",
-              height: "calc(100% + 24px)",
-              overflow: "visible",
-            }}
-            fill="none"
-          >
-            <ellipse
-              cx="50%"
-              cy="50%"
-              rx="48%"
-              ry="45%"
-              stroke={CORRECT_HEX}
-              strokeWidth={2}
-              opacity={0.85}
-              strokeDasharray="4 1.5"
-            />
-          </svg>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Main component ──────────────────────────────────────────────────────────
 // A plain white board. The dot grid read as clutter next to real diagrams.
 function PlainBackground() {
@@ -521,16 +487,21 @@ function PlainBackground() {
 
 const TLDRAW_COMPONENTS: TLComponents = { Background: PlainBackground };
 
-const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
+export type TldrawCoreProps = {
+  /** True while queued writing is still appearing on the board. */
+  onWriting?: (busy: boolean) => void;
+  /** Let tldraw take keyboard focus on mount (default). The landing page demo turns this off. */
+  autoFocus?: boolean;
+};
+
+const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting, autoFocus = true }, ref) {
   const editorRef = useRef<Editor | null>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const cameraSyncCleanupRef = useRef<() => void>(() => {});
   const leftY = useRef(START_Y);
   const rightY = useRef(START_Y);
   const pageTop = useRef(0);
   const pageIndex = useRef(1);
-  const [eqItems, setEqItems] = useState<EqItem[]>([]);
-  const eqRef = useRef<EqItem[]>([]);
+  // Typeset math shapes in creation order (newest last), for step lookups.
+  const mathOrderRef = useRef<string[]>([]);
   const semanticBoardRef = useRef<SemanticBoard>(createEmptySemanticBoard());
   const jobMetaRef = useRef<BoardArtifactMeta | null>(null);
   // Which marker the next diagram picks up; reset when the board is cleared.
@@ -553,10 +524,103 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
   // Accumulates the union of focus rects during a burst of draws so the camera
   // makes ONE move that frames everything just drawn, instead of thrashing.
   const pendingFocusRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  // Board items (b1, b2, …) and the tutor's presence (cursor + laser rings).
+  const itemsRef = useRef<BoardItem[]>([]);
+  const itemSeqRef = useRef(0);
+  // A mark drawn on an existing item (ring, strike) belongs to that item, so
+  // erasing the item erases its marks too.
+  const attachToItemRef = useRef<string | null>(null);
+  const presenceIdRef = useRef<TLInstancePresence["id"] | null>(null);
+  const cursorAnimRef = useRef<number | null>(null);
+  const scribbleAnimRef = useRef<number | null>(null);
+  // The reveal queue: tool calls appear one after another, written not pasted.
+  type RevealJob =
+    | { kind: "reveal"; steps: RevealStep[]; restAt: ItemBounds | null }
+    | { kind: "action"; run: () => void; wait: number };
+  const revealQueueRef = useRef<RevealJob[]>([]);
+  const revealActiveRef = useRef(false);
+  const revealRafRef = useRef<number | null>(null);
+  const revealWaitersRef = useRef<Array<() => void>>([]);
+  const strokePointsRef = useRef<Map<string, Array<{ x: number; y: number }>>>(new Map());
+  const revealTextRef = useRef<Map<string, string>>(new Map());
+  const onWritingRef = useRef(onWriting);
+  const handleRef = useRef<WhiteboardHandle | null>(null);
+  const writingRef = useRef(false);
+  useEffect(() => {
+    onWritingRef.current = onWriting;
+  }, [onWriting]);
+  const cursorHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scribbleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
   const colX = (col: "left" | "right") => col === "right" ? RIGHT_X : LEFT_X;
   const colY = (col: "left" | "right") => col === "right" ? rightY : leftY;
   const currentMeta = useCallback(() => compactArtifactMeta(jobMetaRef.current) ?? {}, []);
+
+  // A typeset line as a shape: measured first so its box fits, then created.
+  const createMath = useCallback((
+    editor: Editor,
+    opts: {
+      latex: string;
+      x: number;
+      y?: number;
+      centerY?: number;
+      annotation?: string;
+      display?: boolean;
+      role?: "" | "label";
+      color?: string;
+      crossOut?: boolean;
+      highlight?: MathHighlight;
+      meta?: BoardArtifactMeta;
+    },
+  ): { id: TLShapeId; w: number; h: number; mathW: number } => {
+    const display = opts.display ?? true;
+    // A line wider than its column shrinks (down to 70%) rather than spilling
+    // into the other column.
+    const MAX_W = RIGHT_X - LEFT_X - 40;
+    let scale = 1;
+    let m = measureMath(opts.latex, display, opts.annotation ?? "", scale);
+    while (m.w > MAX_W && scale > 0.6) {
+      scale = Math.max(0.6, Math.round((scale - 0.1) * 100) / 100);
+      m = measureMath(opts.latex, display, opts.annotation ?? "", scale);
+    }
+    const y = opts.centerY !== undefined ? opts.centerY - m.h / 2 : (opts.y ?? 0);
+    const id = createShapeId();
+    editor.createShape<TLMathShape>({
+      id,
+      type: "math",
+      x: opts.x,
+      y,
+      props: {
+        w: m.w,
+        h: m.h,
+        mathW: m.mathW,
+        latex: opts.latex,
+        color: opts.color ?? "#383838",
+        display,
+        annotation: opts.annotation ?? "",
+        crossOut: opts.crossOut ?? false,
+        highlight: opts.highlight ?? "",
+        reveal: 1,
+        role: opts.role ?? "",
+        scale,
+      },
+      meta: opts.meta ?? currentMeta(),
+    });
+    mathOrderRef.current = [...mathOrderRef.current, id];
+    return { id, w: m.w, h: m.h, mathW: m.mathW };
+  }, [currentMeta]);
+
+  // Equation lines in creation order, as light records for step lookups.
+  const mathLines = useCallback((editor: Editor): Array<MathLine & { shape: TLMathShape }> => {
+    const out: Array<MathLine & { shape: TLMathShape }> = [];
+    mathOrderRef.current = mathOrderRef.current.filter((id) => editor.getShape(id as TLShapeId));
+    for (const id of mathOrderRef.current) {
+      const shape = editor.getShape(id as TLShapeId) as TLMathShape | undefined;
+      if (!shape || shape.type !== "math") continue;
+      out.push({ id, latex: shape.props.latex, role: shape.props.role, meta: shape.meta as BoardArtifactMeta, shape });
+    }
+    return out;
+  }, []);
 
   const recordDirectSemanticAction = useCallback((
     action: BoardAgentAction,
@@ -584,30 +648,483 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     }
   }, []);
 
-  const syncOverlay = useCallback((editor: Editor) => {
-    const { x, y, z = 1 } = editor.getCamera();
-    if (overlayRef.current) {
-      // tldraw converts page -> viewport as: (point + camera) * zoom.
-      // Use an explicit matrix so LaTeX overlays track pan + zoom exactly.
-      overlayRef.current.style.transform =
-        `matrix(${z}, 0, 0, ${z}, ${x * z}, ${y * z})`;
+  // ── Tutor presence: a collaborator cursor tldraw draws for us ──────────────
+  const TUTOR_COLOR = "#2988f2";
+  const ensurePresence = useCallback((editor: Editor): TLInstancePresence | null => {
+    try {
+      const existing = presenceIdRef.current ? (editor.store.get(presenceIdRef.current) as TLInstancePresence | undefined) : undefined;
+      if (existing) return existing;
+      const id = InstancePresenceRecordType.createId("tutor");
+      const record = InstancePresenceRecordType.create({
+        id,
+        currentPageId: editor.getCurrentPageId(),
+        userId: "tutor",
+        userName: "Tutor",
+        color: TUTOR_COLOR,
+        cursor: null,
+        lastActivityTimestamp: Date.now(),
+        chatMessage: "",
+        scribbles: [],
+        selectedShapeIds: [],
+        brush: null,
+        screenBounds: null,
+        followingUserId: null,
+        camera: null,
+        meta: {},
+      });
+      editor.store.put([record]);
+      presenceIdRef.current = id;
+      return editor.store.get(id) as TLInstancePresence;
+    } catch (err) {
+      if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] presence", err);
+      return null;
     }
   }, []);
 
+  const patchPresence = useCallback((editor: Editor, patch: Partial<TLInstancePresence>) => {
+    const rec = ensurePresence(editor);
+    if (!rec) return;
+    editor.store.put([{ ...rec, ...patch, currentPageId: editor.getCurrentPageId(), lastActivityTimestamp: Date.now() }]);
+  }, [ensurePresence]);
+
+  const scheduleCursorHide = useCallback((editor: Editor, ms = 6000) => {
+    if (cursorHideRef.current) clearTimeout(cursorHideRef.current);
+    cursorHideRef.current = setTimeout(() => {
+      cursorHideRef.current = null;
+      if (editorRef.current === editor) patchPresence(editor, { cursor: null });
+    }, ms);
+  }, [patchPresence]);
+
+  // Glide the pointer to a page point. A hidden pointer fades in from just
+  // below-right of the target so it reads as "the tutor reached over".
+  const moveCursor = useCallback((editor: Editor, x: number, y: number, duration = 420, done?: () => void) => {
+    const rec = ensurePresence(editor);
+    if (!rec) return;
+    if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+    if (cursorHideRef.current) {
+      clearTimeout(cursorHideRef.current);
+      cursorHideRef.current = null;
+    }
+    const from = rec.cursor ? { x: rec.cursor.x, y: rec.cursor.y } : { x: x + 90, y: y + 70 };
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / Math.max(1, duration));
+      const e = 1 - Math.pow(1 - p, 3);
+      patchPresence(editor, { cursor: { x: from.x + (x - from.x) * e, y: from.y + (y - from.y) * e, type: "default", rotation: 0 } });
+      if (p < 1) {
+        cursorAnimRef.current = requestAnimationFrame(step);
+      } else {
+        cursorAnimRef.current = null;
+        scheduleCursorHide(editor);
+        done?.();
+      }
+    };
+    cursorAnimRef.current = requestAnimationFrame(step);
+  }, [ensurePresence, patchPresence, scheduleCursorHide]);
+
+  // A laser stroke drawn point by point under the pointer, held, then gone.
+  const tutorScribble = useCallback((editor: Editor, points: Array<{ x: number; y: number }>, opts?: { duration?: number; hold?: number; size?: number }) => {
+    const rec = ensurePresence(editor);
+    if (!rec || points.length < 2) return;
+    const duration = opts?.duration ?? 620;
+    const hold = opts?.hold ?? 2800;
+    const id = `tutor-scribble-${Date.now()}-${Math.round(Math.random() * 1e4)}`;
+    const base = { id, size: opts?.size ?? 5, color: "accent" as const, opacity: 0.9, state: "active" as const, delay: 0, shrink: 0, taper: false };
+    const others = () => ((editor.store.get(rec.id) as TLInstancePresence | undefined)?.scribbles ?? []).filter((sc) => sc.id !== id);
+    // The stroke owns its own frame loop: a later cursor move must not cut
+    // it short, or the hold and fade below would never be scheduled.
+    if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+    cursorAnimRef.current = null;
+    if (scribbleAnimRef.current !== null) cancelAnimationFrame(scribbleAnimRef.current);
+    if (cursorHideRef.current) {
+      clearTimeout(cursorHideRef.current);
+      cursorHideRef.current = null;
+    }
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / duration);
+      const n = Math.max(2, Math.round(points.length * p));
+      const head = points[n - 1];
+      const steering = cursorAnimRef.current === null;
+      patchPresence(editor, {
+        scribbles: [...others(), { ...base, points: points.slice(0, n).map((pt) => ({ x: pt.x, y: pt.y, z: 0.5 })) }],
+        ...(steering ? { cursor: { x: head.x, y: head.y, type: "default" as const, rotation: 0 } } : {}),
+      });
+      if (p < 1) {
+        scribbleAnimRef.current = requestAnimationFrame(step);
+        return;
+      }
+      scribbleAnimRef.current = null;
+      if (steering) scheduleCursorHide(editor);
+      const t1 = setTimeout(() => {
+        patchPresence(editor, { scribbles: [...others(), { ...base, opacity: 0.35, state: "stopping", points: points.map((pt) => ({ x: pt.x, y: pt.y, z: 0.5 })) }] });
+        const t2 = setTimeout(() => patchPresence(editor, { scribbles: others() }), 420);
+        scribbleTimersRef.current.push(t2);
+      }, hold);
+      scribbleTimersRef.current.push(t1);
+    };
+    scribbleAnimRef.current = requestAnimationFrame(step);
+  }, [ensurePresence, patchPresence, scheduleCursorHide]);
+
+  // ── Reveal runtime ──────────────────────────────────────────────────────────
+  const plainOf = useCallback((editor: Editor, richText: unknown): string => {
+    try {
+      return richText ? renderPlaintextFromRichText(editor, richText as Parameters<typeof renderPlaintextFromRichText>[1]) : "";
+    } catch {
+      return "";
+    }
+  }, []);
+
+
+  const lineIndicesFor = (n: number): IndexKey[] => getIndices(Math.max(1, n - 1));
+
+  // One frame of one step. `p` runs 0..1; the step's own state (original
+  // props) is read from the shape on the first frame.
+  const applyStep = useCallback((editor: Editor, step: RevealStep, p: number, state: { last?: number; fill?: string; closed?: boolean }) => {
+    const shape = editor.getShape(step.id as TLShapeId);
+    if (!shape) return;
+    const props = shape.props as Record<string, unknown>;
+    const run = (fn: () => void) => editor.run(fn, { history: "ignore" });
+    if (step.kind === "eq") {
+      const r = p >= 1 ? 1 : p;
+      if (state.last !== undefined && Math.abs(state.last - r) < 0.02 && p < 1) return;
+      state.last = r;
+      run(() => editor.updateShapes([{ id: shape.id, type: "math", opacity: 1, props: { reveal: r } }] as unknown as Parameters<Editor["updateShapes"]>[0]));
+      return;
+    }
+    if (step.kind === "text") {
+      const full = revealTextRef.current.get(step.id) ?? plainOf(editor, props.richText);
+      const text = typedPrefix(full, p);
+      if (state.last === text.length && p < 1) return;
+      state.last = text.length;
+      run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: 1, props: { richText: toRichText(p >= 1 ? full : text) } }] as unknown as Parameters<Editor["updateShapes"]>[0]));
+      return;
+    }
+    if (step.kind === "stroke") {
+      const pts = strokePointsRef.current.get(step.id);
+      if (!pts || pts.length < 2) {
+        run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: 1 }]));
+        return;
+      }
+      if (state.fill === undefined) {
+        state.fill = String(props.fill ?? "none");
+        state.closed = Boolean(props.isClosed);
+      }
+      const n = pointsShown(pts.length, p);
+      if (state.last === n && p < 1) return;
+      state.last = n;
+      const done = p >= 1;
+      run(() => editor.updateShapes([{
+        id: shape.id,
+        type: "draw",
+        opacity: 1,
+        props: {
+          segments: compressLegacySegments([{ type: "free", points: (done ? pts : pts.slice(0, n)).map((pt) => ({ x: pt.x, y: pt.y, z: 0.5 })) }]),
+          isClosed: done ? state.closed : false,
+          fill: (done ? state.fill : "none") as TLDefaultFillStyle,
+        },
+      }]));
+      return;
+    }
+    if (step.kind === "line") {
+      const pts = strokePointsRef.current.get(step.id);
+      if (!pts || pts.length < 2) {
+        run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: 1 }]));
+        return;
+      }
+      const n = pointsShown(pts.length, p);
+      if (state.last === n && p < 1) return;
+      state.last = n;
+      const shown = pts.slice(0, n);
+      const indices = lineIndicesFor(shown.length);
+      const pointMap: Record<string, { id: string; index: IndexKey; x: number; y: number }> = {};
+      shown.forEach((pt, i) => {
+        const id = `a${i + 1}`;
+        pointMap[id] = { id, index: indices[i], x: pt.x, y: pt.y };
+      });
+      run(() => editor.updateShapes([{ id: shape.id, type: "line", opacity: 1, props: { points: pointMap } }]));
+      return;
+    }
+    // box / fade: a quick fade-in
+    const op = Math.min(1, Math.max(0, p));
+    if (state.last !== undefined && Math.abs(state.last - op) < 0.08 && p < 1) return;
+    state.last = op;
+    run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: op }]));
+  }, [plainOf]);
+
+  // Where the pen is at time `p` of a step, in page coordinates.
+  const penAt = useCallback((editor: Editor, step: RevealStep, p: number): { x: number; y: number } | null => {
+    const shape = editor.getShape(step.id as TLShapeId);
+    if (!shape) return null;
+    const b = editor.getShapePageBounds(shape.id);
+    if (!b) return null;
+    if (step.kind === "eq") {
+      const mw = (shape.props as { mathW?: number }).mathW ?? b.w;
+      return { x: b.x + mw * p, y: b.y + b.h * 0.7 };
+    }
+    if (step.kind === "stroke" || step.kind === "line") {
+      const pts = strokePointsRef.current.get(step.id);
+      if (pts && pts.length > 1) {
+        const n = pointsShown(pts.length, p);
+        const pt = pts[n - 1];
+        return { x: shape.x + pt.x, y: shape.y + pt.y };
+      }
+      return { x: b.x + b.w * p, y: b.y + b.h * p };
+    }
+    if (step.kind === "text") {
+      const props = shape.props as { font?: TLDefaultFontStyle; size?: TLDefaultSizeStyle };
+      const full = revealTextRef.current.get(step.id) ?? "";
+      const lineH = props.size ? FONT_PX[props.size] * LINE_HEIGHT : 28;
+      const lines = Math.max(1, Math.round(b.h / lineH));
+      const pos = p * lines;
+      const line = Math.min(lines - 1, Math.floor(pos));
+      const frac = pos - line;
+      const lineW = Math.min(b.w, Math.max(40, (full.length / lines) * 9.5));
+      return { x: b.x + lineW * frac, y: b.y + line * lineH + lineH * 0.75 };
+    }
+    return { x: b.x + b.w * Math.min(1, p * 1.2), y: b.y + b.h * Math.min(1, p * 1.2) };
+  }, []);
+
+  const finishReveal = useCallback(() => {
+    revealActiveRef.current = false;
+    revealRafRef.current = null;
+    if (writingRef.current) {
+      writingRef.current = false;
+      onWritingRef.current?.(false);
+    }
+    const waiters = revealWaitersRef.current;
+    revealWaitersRef.current = [];
+    for (const w of waiters) w();
+  }, []);
+
+  const runQueue = useCallback(function runQueue() {
+    if (revealActiveRef.current) return;
+    const editor = editorRef.current;
+    const job = revealQueueRef.current.shift();
+    if (!editor || !job) {
+      finishReveal();
+      return;
+    }
+    revealActiveRef.current = true;
+    if (job.kind === "action") {
+      try {
+        job.run();
+      } catch (err) {
+        if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] queued action", err);
+      }
+      const t = setTimeout(() => {
+        revealActiveRef.current = false;
+        runQueue();
+      }, job.wait);
+      scribbleTimersRef.current.push(t);
+      return;
+    }
+    const steps = job.steps;
+    if (steps.length === 0) {
+      revealActiveRef.current = false;
+      runQueue();
+      return;
+    }
+    if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+    cursorAnimRef.current = null;
+    if (cursorHideRef.current) {
+      clearTimeout(cursorHideRef.current);
+      cursorHideRef.current = null;
+    }
+    const GAP_BIG = 40;
+    let i = 0;
+    let phase: "lead" | "draw" = "lead";
+    let phaseStart = performance.now();
+    let waitUntil = 0;
+    let leadMs = 0;
+    let leadInit = false;
+    let state: { last?: number; fill?: string; closed?: boolean } = {};
+    const rec = ensurePresence(editor);
+    let leadFrom: { x: number; y: number } | null = rec?.cursor ? { x: rec.cursor.x, y: rec.cursor.y } : null;
+    const finishJob = () => {
+      // Rest the pen just under what was written, then let it fade.
+      if (job.restAt) moveCursor(editor, job.restAt.x + Math.min(job.restAt.w, 160) * 0.6, job.restAt.y + job.restAt.h + 16, 300);
+      else scheduleCursorHide(editor);
+      revealActiveRef.current = false;
+      runQueue();
+    };
+    // Small pieces (ticks, dots, short labels) jump straight in and several
+    // can finish in one frame; only big pieces get a pen glide and a pause.
+    const frame = (now: number) => {
+      for (let guard = 0; guard < 8; guard++) {
+        const step = steps[i];
+        if (!step) {
+          finishJob();
+          return;
+        }
+        if (phase === "lead") {
+          if (now < waitUntil) break;
+          const target = penAt(editor, step, 0);
+          if (!target) {
+            i++;
+            state = {};
+            continue;
+          }
+          const from = leadFrom ?? { x: target.x + 60, y: target.y + 40 };
+          if (!leadInit) {
+            const dist = Math.hypot(target.x - from.x, target.y - from.y);
+            leadMs = step.duration > 200 && dist > 40 ? Math.min(130, dist * 0.6) : 0;
+            phaseStart = now;
+            leadInit = true;
+          }
+          const lp = leadMs <= 0 ? 1 : Math.min(1, (now - phaseStart) / leadMs);
+          const e = 1 - Math.pow(1 - lp, 3);
+          patchPresence(editor, { cursor: { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e, type: "default", rotation: 0 } });
+          if (lp < 1) break;
+          phase = "draw";
+          phaseStart = now;
+          state = {};
+          leadInit = false;
+        }
+        const p = step.duration <= 0 ? 1 : Math.min(1, (now - phaseStart) / step.duration);
+        applyStep(editor, step, p, state);
+        const pen = penAt(editor, step, p);
+        if (pen) patchPresence(editor, { cursor: { x: pen.x, y: pen.y, type: "default", rotation: 0 } });
+        if (p < 1) break;
+        leadFrom = pen;
+        i++;
+        phase = "lead";
+        state = {};
+        const next = steps[i];
+        const gap = next && next.duration > 200 ? GAP_BIG : 0;
+        waitUntil = now + gap;
+        if (gap > 0 || !next || next.duration > 120) break;
+      }
+      revealRafRef.current = requestAnimationFrame(frame);
+    };
+    revealRafRef.current = requestAnimationFrame(frame);
+  }, [applyStep, ensurePresence, finishReveal, moveCursor, patchPresence, penAt, scheduleCursorHide]);
+
+  const enqueue = useCallback((job: RevealJob) => {
+    revealQueueRef.current.push(job);
+    if (!writingRef.current) {
+      writingRef.current = true;
+      onWritingRef.current?.(true);
+    }
+    runQueue();
+  }, [runQueue]);
+
+  const resetReveal = useCallback(() => {
+    revealQueueRef.current = [];
+    if (revealRafRef.current !== null) cancelAnimationFrame(revealRafRef.current);
+    finishReveal();
+    strokePointsRef.current.clear();
+    revealTextRef.current.clear();
+  }, [finishReveal]);
+
+  const awaitRevealIdle = useCallback((): Promise<void> => {
+    if (!revealActiveRef.current && revealQueueRef.current.length === 0) return Promise.resolve();
+    return new Promise((resolve) => revealWaitersRef.current.push(resolve));
+  }, []);
+
+  // Hide everything a tool call just created and queue it to be written.
+  const revealItem = useCallback((editor: Editor, item: BoardItem, restAt: ItemBounds | null) => {
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+    const inputs: RevealInput[] = [];
+    const hide: Array<{ id: TLShapeId; type: string }> = [];
+    for (const sid of item.shapeIds) {
+      const shape = editor.getShape(sid as TLShapeId);
+      if (!shape) continue;
+      const b = editor.getShapePageBounds(shape.id);
+      const x = b?.x ?? shape.x;
+      const y = b?.y ?? shape.y;
+      const props = shape.props as Record<string, unknown>;
+      const plain = "richText" in props ? plainOf(editor, props.richText) : "";
+      if (shape.type === "math") {
+        inputs.push({ id: shape.id, kind: "eq", x, y, chars: String(props.latex ?? "").length });
+      } else if (shape.type === "draw") {
+        const pts = strokePointsRef.current.get(shape.id);
+        inputs.push({ id: shape.id, kind: "stroke", x, y, length: pts ? polylineLength(pts) : 240 });
+      } else if (shape.type === "line") {
+        const pts = strokePointsRef.current.get(shape.id);
+        inputs.push({ id: shape.id, kind: "line", x, y, length: pts ? polylineLength(pts) : 240 });
+      } else if (plain.length > 0 && (shape.type === "text" || shape.type === "note" || shape.type === "geo")) {
+        revealTextRef.current.set(shape.id, plain);
+        inputs.push({ id: shape.id, kind: "text", x, y, chars: plain.length });
+      } else if (shape.type === "geo") {
+        inputs.push({ id: shape.id, kind: "box", x, y });
+      } else {
+        inputs.push({ id: shape.id, kind: "fade", x, y });
+      }
+      hide.push({ id: shape.id, type: shape.type });
+    }
+    if (inputs.length === 0) return;
+    const steps = planReveal(inputs);
+    editor.run(() => {
+      if (hide.length > 0) editor.updateShapes(hide.map((h) => ({ id: h.id, type: h.type, opacity: 0 })) as unknown as Parameters<Editor["updateShapes"]>[0]);
+      const maths = hide.filter((h) => h.type === "math");
+      if (maths.length > 0) editor.updateShapes(maths.map((h) => ({ id: h.id, type: "math", props: { reveal: 0 } })) as unknown as Parameters<Editor["updateShapes"]>[0]);
+    }, { history: "ignore" });
+    enqueue({ kind: "reveal", steps, restAt });
+  }, [enqueue, plainOf]);
+
+  const itemBounds = useCallback((editor: Editor, item: BoardItem): ItemBounds | null => {
+    let box: ItemBounds | null = null;
+    const add = (b: ItemBounds) => {
+      if (!box) {
+        box = { ...b };
+        return;
+      }
+      const x = Math.min(box.x, b.x);
+      const y = Math.min(box.y, b.y);
+      const r = Math.max(box.x + box.w, b.x + b.w);
+      const btm = Math.max(box.y + box.h, b.y + b.h);
+      box = { x, y, w: r - x, h: btm - y };
+    };
+    for (const id of item.shapeIds) {
+      const shape = editor.getShape(id as TLShapeId);
+      const b = editor.getShapePageBounds(id as TLShapeId);
+      if (!shape || !b) continue;
+      if (shape.type === "text") {
+        // A caption's text box is much wider than its words; measure the words
+        // and place them by the shape's alignment so rings hug the text.
+        const props = shape.props as { richText?: unknown; font?: TLDefaultFontStyle; size?: TLDefaultSizeStyle; textAlign?: string; w?: number; autoSize?: boolean };
+        try {
+          // While a line is still being written its text is partial; the
+          // reveal keeps the full text, so bounds never come out empty.
+          const plain = revealTextRef.current.get(shape.id) ?? (props.richText ? renderPlaintextFromRichText(editor, props.richText as Parameters<typeof renderPlaintextFromRichText>[1]) : "");
+          if (plain && props.font && props.size && !props.autoSize) {
+            const m = measureText(editor, plain, props.font, props.size, b.w);
+            const w = Math.min(b.w, m.w + 8);
+            const x = props.textAlign === "middle" ? b.x + (b.w - w) / 2 : props.textAlign === "end" ? b.x + b.w - w : b.x;
+            add({ x, y: b.y, w, h: Math.min(b.h, m.h + 4) });
+            continue;
+          }
+        } catch {
+          // fall through to the raw bounds
+        }
+      }
+      add({ x: b.x, y: b.y, w: b.w, h: b.h });
+    }
+    return box;
+  }, []);
+
+  useEffect(() => {
+    const timers = scribbleTimersRef.current;
+    return () => {
+      if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+      if (scribbleAnimRef.current !== null) cancelAnimationFrame(scribbleAnimRef.current);
+      if (revealRafRef.current !== null) cancelAnimationFrame(revealRafRef.current);
+      if (cursorHideRef.current) clearTimeout(cursorHideRef.current);
+      for (const t of timers) clearTimeout(t);
+    };
+  }, []);
+
   const handleMount = useCallback((editor: Editor) => {
-    cameraSyncCleanupRef.current();
     editorRef.current = editor;
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as { __chalkEditor?: Editor }).__chalkEditor = editor;
+      (window as unknown as { __chalkBoard?: WhiteboardHandle | null }).__chalkBoard = handleRef.current;
+    }
     editor.setCurrentTool("hand");
     editor.setCamera({ x: 0, y: 0, z: 1 });
-    syncOverlay(editor);
-    const syncOnTick = () => syncOverlay(editor);
-    const unsubscribeStore = editor.store.listen(() => syncOverlay(editor));
-    editor.on("tick", syncOnTick);
-    cameraSyncCleanupRef.current = () => {
-      unsubscribeStore();
-      editor.off("tick", syncOnTick);
-    };
-  }, [syncOverlay]);
+  }, []);
 
   const focusOn = useCallback((editor: Editor, x: number, y: number, w = 420, h = 180) => {
     try {
@@ -686,8 +1203,6 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
 
   useEffect(() => {
     return () => {
-      cameraSyncCleanupRef.current();
-      cameraSyncCleanupRef.current = () => {};
       cancelPendingFocus();
     };
   }, [cancelPendingFocus]);
@@ -941,9 +1456,12 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       dash?: TLDefaultDashStyle;
       fill?: TLDefaultFillStyle;
       isClosed?: boolean;
+      /** Keep corners crisp: the freehand renderer rounds them off otherwise. */
+      sharp?: boolean;
     },
   ) => {
     if (points.length < 2) return;
+    if (opts.sharp) points = sharpenCorners(points);
     const baseX = typeof x === "number" && Number.isFinite(x)
       ? x
       : Math.min(...points.map((p) => p.x));
@@ -955,8 +1473,10 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       { type: "free", points: rebased },
     ]);
     const isClosed = opts.isClosed ?? false;
+    const id = createShapeId();
+    strokePointsRef.current.set(id, rebased);
     editor.createShape({
-      id: createShapeId(),
+      id,
       type: "draw",
       x: baseX,
       y: baseY,
@@ -1007,8 +1527,10 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const id = `p${i + 1}`;
       pointMap[id] = { id, index, x: p.x, y: p.y };
     });
+    const id = createShapeId();
+    strokePointsRef.current.set(id, rebased);
     editor.createShape({
-      id: createShapeId(),
+      id,
       type: "line",
       x: baseX,
       y: baseY,
@@ -1103,31 +1625,33 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     clearWhiteboard() {
       const editor = editorRef.current;
       if (!editor) return;
+      resetReveal();
       const shapes = editor.getCurrentPageShapes();
       if (shapes.length > 0) editor.deleteShapes(shapes.map(s => s.id));
       pageTop.current = 0;
       pageIndex.current = 1;
       leftY.current = START_Y;
       rightY.current = START_Y;
-      eqRef.current = [];
-      setEqItems([]);
+      mathOrderRef.current = [];
       markerRef.current = 0;
       semanticBoardRef.current = createEmptySemanticBoard();
+      itemsRef.current = [];
     },
 
     startNewProblem(title: string) {
       const editor = editorRef.current;
       if (!editor) return;
+      resetReveal();
       const shapes = editor.getCurrentPageShapes();
       if (shapes.length > 0) editor.deleteShapes(shapes.map(s => s.id));
       pageTop.current = 0;
       pageIndex.current = 1;
       leftY.current = START_Y;
       rightY.current = START_Y;
-      eqRef.current = [];
-      setEqItems([]);
+      mathOrderRef.current = [];
       markerRef.current = 0;
       semanticBoardRef.current = createEmptySemanticBoard(title);
+      itemsRef.current = [];
       // Ink heading with a thin pencil rule, the way a board title is written.
       const measured = measureText(editor, title, "sans", "xl", 1120);
       editor.createShape({
@@ -1189,15 +1713,14 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       ensureColumnRoom(editor, col, EQ_H + EQ_ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
-      const id = uid();
-      const item: EqItem = { id, latex, annotation, x, y, meta: compactArtifactMeta(jobMetaRef.current) };
-      eqRef.current = [...eqRef.current, item];
-      setEqItems((prev) => [...prev, item]);
-      colY(col).current += EQ_H + EQ_ROW_GAP;
-      focusOn(editor, x, y, 420, EQ_H);
+      const line = createMath(editor, { latex, annotation, x, y, display: true });
+      // Tall lines (stacked fractions, cases) take the room they need.
+      const pitch = Math.max(EQ_H, line.h + 6);
+      colY(col).current += pitch + EQ_ROW_GAP;
+      focusOn(editor, x, y, Math.max(420, line.w), pitch);
       recordDirectSemanticAction(
         { type: "equation_sequence", steps: latex, annotations: annotation, column: col },
-        { eqItemIds: [id], bounds: { x, y, w: 420, h: EQ_H, column: col, pageIndex: pageIndex.current } },
+        { shapeIds: [line.id], bounds: { x, y, w: Math.max(420, line.w), h: EQ_H, column: col, pageIndex: pageIndex.current } },
       );
     },
 
@@ -1221,26 +1744,28 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       );
     },
 
-    addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right") {
+    addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right", extras?: GraphExtras) {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "right";
       const W = 300;
       const H = 220;
       const fn = createMathEvaluator(expression);
+      const fn2 = extras?.secondExpression ? createMathEvaluator(extras.secondExpression) : null;
 
-      // Sample the curve, then pick a y-range that is padded, includes the
+      // Sample the curve(s), then pick a y-range that is padded, includes the
       // x-axis when it is nearby, and lands on round numbers.
       const samples: Pt[] = [];
+      const samples2: Pt[] = [];
       let yMin = Infinity;
       let yMax = -Infinity;
-      if (fn) {
+      const sampleInto = (f: (v: number) => number, into: Pt[]) => {
         for (let i = 0; i <= 120; i++) {
           const sx = xMin + ((xMax - xMin) * i) / 120;
           try {
-            const sy = fn(sx);
+            const sy = f(sx);
             if (Number.isFinite(sy)) {
-              samples.push({ x: sx, y: sy });
+              into.push({ x: sx, y: sy });
               yMin = Math.min(yMin, sy);
               yMax = Math.max(yMax, sy);
             }
@@ -1248,7 +1773,9 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
             // discontinuity; skip the sample
           }
         }
-      }
+      };
+      if (fn) sampleInto(fn, samples);
+      if (fn2) sampleInto(fn2, samples2);
       if (samples.length < 2) {
         yMin = -5;
         yMax = 5;
@@ -1286,10 +1813,104 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
         run.push({ x: px(s.x), y: py(s.y) });
       });
       flush();
+      if (fn2 && samples2.length >= 2) {
+        const pen2 = takePens(1)[0];
+        let run2: Pt[] = [];
+        const flush2 = () => {
+          if (run2.length >= 2) createLineShape(editor, undefined, undefined, run2, { color: pen2, size: "m", dash: "solid", spline: "line" });
+          run2 = [];
+        };
+        samples2.forEach((s2, i) => {
+          const prev = samples2[i - 1];
+          if (prev && Math.abs(s2.y - prev.y) > (yHi - yLo) * 0.8) flush2();
+          if (s2.y >= yLo && s2.y <= yHi) run2.push({ x: px(s2.x), y: py(s2.y) });
+          else flush2();
+        });
+        flush2();
+        // Where the curves cross: a sign change of the difference, refined.
+        if (fn) {
+          const diff = (v: number) => {
+            try {
+              const d = fn(v) - fn2(v);
+              return Number.isFinite(d) ? d : NaN;
+            } catch {
+              return NaN;
+            }
+          };
+          let found = 0;
+          for (let i = 1; i <= 240 && found < 3; i++) {
+            let a = xMin + ((xMax - xMin) * (i - 1)) / 240;
+            let b = xMin + ((xMax - xMin) * i) / 240;
+            let da = diff(a);
+            let db = diff(b);
+            if (!Number.isFinite(da) || !Number.isFinite(db) || da * db > 0) continue;
+            for (let k = 0; k < 30; k++) {
+              const m = (a + b) / 2;
+              const dm = diff(m);
+              if (!Number.isFinite(dm)) break;
+              if (da * dm <= 0) {
+                b = m;
+                db = dm;
+              } else {
+                a = m;
+                da = dm;
+              }
+            }
+            const ix = (a + b) / 2;
+            let iy = NaN;
+            try {
+              iy = fn(ix);
+            } catch {
+              // no point
+            }
+            if (!Number.isFinite(iy) || iy < yLo || iy > yHi) continue;
+            found++;
+            const gx = px(ix);
+            const gy = py(iy);
+            createFreeformGeo(editor, "ellipse", gx - 6, gy - 6, 12, 12, INK, "fill", { dash: "solid" });
+            createText(editor, `(${formatNumber(ix)}, ${formatNumber(iy)})`, gx + 9, gy + 3, { color: INK, size: "s", font: "sans", width: 130 });
+          }
+        }
+      }
       if (!fn) {
         createText(editor, "Could not read that expression", x, y + H / 2 - 12, { color: "red", size: "s", font: "sans", width: W, align: "middle" });
       }
 
+      // Marked points and a slope triangle ride on the same axes.
+      if (extras && (extras.markPoints.length > 0 || extras.slopeRun)) {
+        const mpens = takePens(extras.markPoints.length + (extras.slopeRun ? 1 : 0));
+        extras.markPoints.forEach((pt, i) => {
+          const gx = px(pt.x);
+          const gy = py(pt.y);
+          const mp = mpens[i % mpens.length];
+          createFreeformGeo(editor, "ellipse", gx - 6, gy - 6, 12, 12, mp, "fill", { dash: "solid" });
+          if (pt.label) createText(editor, pt.label, gx + 9, gy + 3, { color: mp, size: "s", font: "sans", width: 140 });
+        });
+        if (extras.slopeRun && fn) {
+          const { x1, x2 } = extras.slopeRun;
+          let y1 = NaN;
+          let y2 = NaN;
+          try {
+            y1 = fn(x1);
+            y2 = fn(x2);
+          } catch {
+            // off the curve
+          }
+          if (Number.isFinite(y1) && Number.isFinite(y2)) {
+            const sp = mpens[mpens.length - 1];
+            const ax = px(x1);
+            const ay = py(y1);
+            const bx = px(x2);
+            const by = py(y2);
+            createLineShape(editor, undefined, undefined, [{ x: ax, y: ay }, { x: bx, y: ay }], { color: sp, size: "s", dash: "dashed" });
+            createLineShape(editor, undefined, undefined, [{ x: bx, y: ay }, { x: bx, y: by }], { color: sp, size: "s", dash: "dashed" });
+            createFreeformGeo(editor, "ellipse", ax - 5, ay - 5, 10, 10, sp, "fill", { dash: "solid" });
+            createFreeformGeo(editor, "ellipse", bx - 5, by - 5, 10, 10, sp, "fill", { dash: "solid" });
+            createText(editor, `run ${formatNumber(x2 - x1)}`, (ax + bx) / 2 - 45, by < ay ? ay + 14 : ay - 34, { color: sp, size: "s", font: "sans", width: 90, align: "middle" });
+            createText(editor, `rise ${formatNumber(y2 - y1)}`, bx + 8, (ay + by) / 2 - 12, { color: sp, size: "s", font: "sans", width: 100 });
+          }
+        }
+      }
       colY(col).current += H + extra;
       focusOn(editor, x, y, W, H + extra);
       recordDirectSemanticAction(
@@ -1437,7 +2058,10 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const hasJumps = opts.jumps.length > 0;
       const hasTopLabels = opts.marks.some((m) => m.label) || opts.intervals.some((iv) => iv.label);
       const top = hasJumps ? 74 : hasTopLabels ? 44 : 18;
-      const h = top + 46 + (opts.label ? 30 : 0);
+      const second = opts.secondMin !== undefined && opts.secondMax !== undefined && opts.secondMax !== opts.secondMin;
+      const SECOND_DY = 70;
+      const h = top + 46 + (second ? SECOND_DY : 0) + (opts.label ? 30 : 0);
+      const tickStyle = opts.labelStyle ?? autoTickStyle(step);
       ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
@@ -1483,8 +2107,8 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const intervalPen = (i: number) => pens[i % pens.length];
       const markPen = (i: number) => pens[(opts.intervals.length + i) % pens.length];
       const jumpPen = (i: number) => pens[(opts.intervals.length + opts.marks.length + i) % pens.length];
-      const dot = (cx: number, open: boolean, color: TldrawColor) =>
-        createFreeformGeo(editor, "ellipse", cx - 7, lineY - 7, 14, 14, color, open ? "semi" : "fill", { dash: "solid" });
+      const dot = (cx: number, open: boolean, color: TldrawColor, dy = 0) =>
+        createFreeformGeo(editor, "ellipse", cx - 7, lineY - 7 + dy, 14, 14, color, open ? "semi" : "fill", { dash: "solid" });
 
       // Shaded ranges go under everything else.
       opts.intervals.forEach((iv, i) => {
@@ -1506,7 +2130,21 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       for (const v of tickValues(min, max, step)) {
         const tx = px(v);
         createLine(editor, tx, lineY - 8, tx, lineY + 8, INK);
-        createText(editor, formatTick(v, step), tx - 32, lineY + 14, { color: PENCIL, size: "s", font: "sans", width: 64, align: "middle" });
+        createText(editor, formatTick(v, step, tickStyle), tx - 32, lineY + 14, { color: PENCIL, size: "s", font: "sans", width: 64, align: "middle" });
+      }
+      if (second) {
+        // A double number line: same positions, a second scale of values.
+        const y2 = lineY + SECOND_DY;
+        const sMin = opts.secondMin as number;
+        const sMax = opts.secondMax as number;
+        arrow(x, x + w, { color: INK, size: "m", startHead: true, endHead: true, dy: SECOND_DY });
+        for (const v of tickValues(min, max, step)) {
+          const tx = px(v);
+          const mapped = sMin + ((v - min) / (max - min)) * (sMax - sMin);
+          createLine(editor, tx, y2 - 8, tx, y2 + 8, INK);
+          createText(editor, formatNumber(mapped), tx - 32, y2 + 14, { color: PENCIL, size: "s", font: "sans", width: 64, align: "middle" });
+        }
+        if (opts.secondLabel) createText(editor, opts.secondLabel, x + w + 4, y2 - 12, { color: PENCIL, size: "s", font: "sans", width: 120 });
       }
 
       // Interval endpoints (open = hollow), then marked values.
@@ -1514,9 +2152,14 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
         if (iv.from >= min && iv.from <= max) dot(px(iv.from), iv.openFrom, intervalPen(i));
         if (iv.to >= min && iv.to <= max) dot(px(iv.to), iv.openTo, intervalPen(i));
       });
+      // Repeated values stack upward: a dot plot.
+      const stacked = new Map<number, { count: number; first: number }>();
       opts.marks.forEach((m, i) => {
-        dot(px(m.value), false, markPen(i));
-        if (m.label) {
+        const entry = stacked.get(m.value) ?? { count: 0, first: i };
+        const k = entry.count;
+        stacked.set(m.value, { count: k + 1, first: entry.first });
+        dot(px(m.value), false, markPen(entry.first), -k * 16);
+        if (m.label && k === 0) {
           createText(editor, m.label, px(m.value) - 70, lineY - 40, { color: markPen(i), size: "s", font: "sans", width: 140, align: "middle" });
         }
       });
@@ -1529,7 +2172,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       });
 
       if (opts.label) {
-        createText(editor, opts.label, x, lineY + 44, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+        createText(editor, opts.label, x, lineY + 44 + (second ? SECOND_DY : 0), { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
       }
 
       colY(col).current += h + ROW_GAP;
@@ -1565,7 +2208,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       );
     },
 
-    plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right") {
+    plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right", connect?: boolean) {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "right";
@@ -1577,14 +2220,20 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       drawAxes(editor, x, y, w, h, xMin, xMax, yMin, yMax, label);
       const pen = takePens(1)[0];
 
+      const placed: Pt[] = [];
       for (const point of parseCoordinatePoints(points)) {
         if (point.x < xMin || point.x > xMax || point.y < yMin || point.y > yMax) continue;
         const px = x + ((point.x - xMin) / (xMax - xMin)) * w;
         const py = y + h - ((point.y - yMin) / (yMax - yMin)) * h;
+        placed.push({ x: px, y: py });
         createFreeformGeo(editor, "ellipse", px - 6, py - 6, 12, 12, pen, "fill", { dash: "solid" });
         if (point.label) {
           createText(editor, point.label, px + 8, py - 26, { color: pen, size: "s", font: "sans", width: 120 });
         }
+      }
+      if (connect && placed.length >= 2) {
+        // Join the points in order and close the shape.
+        createLineShape(editor, undefined, undefined, placed.length >= 3 ? [...placed, placed[0]] : placed, { color: pen, size: "m", dash: "solid", spline: "line" });
       }
 
       colY(col).current += h + (label ? 76 : 48);
@@ -1756,27 +2405,18 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
         y += titleHeight;
       }
 
-      const items: EqItem[] = stepList.map((latex, index) => {
-        const item: EqItem = {
-          id: uid(),
-          latex,
-          annotation: annotationList[index],
-          x,
-          y: y + index * (EQ_H + EQ_ROW_GAP),
-          meta: compactArtifactMeta(jobMetaRef.current),
-        };
-        return item;
+      let cy = y;
+      const created = stepList.map((latex, index) => {
+        const line = createMath(editor, { latex, annotation: annotationList[index], x, y: cy, display: true });
+        cy += Math.max(EQ_H, line.h + 6) + EQ_ROW_GAP;
+        return line;
       });
 
-      if (items.length > 0) {
-        eqRef.current = [...eqRef.current, ...items];
-        setEqItems((prev) => [...prev, ...items]);
+      if (created.length > 0) {
         if (stepList.length >= 2) {
-          const firstY = items[0].y + 12;
-          const lastY = items[items.length - 1].y + EQ_H - 12;
-          createLine(editor, x - 14, firstY, x - 14, lastY, "light-violet");
+          createLine(editor, x - 14, y + 12, x - 14, cy - EQ_ROW_GAP - 12, "light-violet");
         }
-        y = items[items.length - 1].y + EQ_H + EQ_ROW_GAP;
+        y = cy;
       }
 
       colY(col).current = y;
@@ -1784,7 +2424,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       recordDirectSemanticAction(
         { type: "equation_sequence", steps, annotations, title, column: col },
         {
-          eqItemIds: items.map((item) => item.id),
+          shapeIds: created.map((line) => line.id),
           bounds: { x, y: colY(col).current - totalHeight, w: 520, h: totalHeight, column: col, pageIndex: pageIndex.current },
         },
       );
@@ -1996,7 +2636,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       ensureColumnRoom(editor, col, h + ROW_GAP);
       const x0 = colX(col);
       const y0 = colY(col).current;
-      const items: EqItem[] = [];
+      const labelIds: string[] = [];
       const pens = takePens(opts.fractions.length);
       let cursor = x0;
       let right = x0;
@@ -2016,7 +2656,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
               const pts = f.d === 1
                 ? arcPolyline(cx, cy, R, -90, 270)
                 : sectorPolygon(cx, cy, R, -90 + (360 * i) / f.d, -90 + (360 * (i + 1)) / f.d);
-              createDrawStroke(editor, undefined, undefined, pts, { color: pen, fill: "solid", dash: "solid", size: "s", isClosed: true });
+              createDrawStroke(editor, undefined, undefined, pts, { color: pen, fill: "solid", dash: "solid", size: "s", isClosed: true, sharp: true });
             }
             createFreeformGeo(editor, "ellipse", cursor, y0, R * 2, R * 2, INK, "none", { dash: "solid" });
             for (const a of dividerAngles(f.d)) {
@@ -2035,23 +2675,19 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
         }
         void groupStart;
         // "= 3/4" beside the model, vertically centred on it.
-        items.push({
-          id: uid(),
+        const label = createMath(editor, {
           latex: `= ${fractionLatex(f)}`,
           x: cursor + 12,
-          y: y0 + modelH / 2 - (f.d === 1 ? 16 : 27),
+          centerY: y0 + modelH / 2,
           role: "label",
+          display: false,
           color: MARKER_HEX[pen],
-          meta: compactArtifactMeta(jobMetaRef.current),
         });
-        cursor += 12 + LABEL_W;
+        labelIds.push(label.id);
+        cursor += 12 + Math.max(LABEL_W, label.w);
         right = cursor;
       });
 
-      if (items.length > 0) {
-        eqRef.current = [...eqRef.current, ...items];
-        setEqItems((prev) => [...prev, ...items]);
-      }
       const w = Math.max(right - x0, 160);
       if (opts.label) {
         const captionW = Math.max(w, 360);
@@ -2061,7 +2697,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       focusOn(editor, x0, y0, w, h);
       recordDirectSemanticAction(
         { type: "fraction", text: opts.fractions.map(fractionText).join(" and "), label: opts.label, column: col },
-        { eqItemIds: items.map((item) => item.id), bounds: { x: x0, y: y0, w, h, column: col, pageIndex: pageIndex.current } },
+        { shapeIds: labelIds, bounds: { x: x0, y: y0, w, h, column: col, pageIndex: pageIndex.current } },
       );
     },
 
@@ -2070,8 +2706,12 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       if (!editor) return;
       const col = opts.column ?? "left";
       const PAD = 48;
-      const fw = opts.figure === "rectangle" ? 260 : opts.figure === "square" ? 200 : opts.figure === "circle" ? 180 : 230;
-      const fh = opts.figure === "rectangle" ? 150 : opts.figure === "square" ? 200 : opts.figure === "circle" ? 180 : 170;
+      const SIZE: Record<FigureKind, [number, number]> = {
+        rectangle: [260, 150], square: [200, 200], circle: [180, 180], triangle: [230, 170], right_triangle: [230, 170],
+        parallelogram: [260, 140], trapezoid: [250, 140], rhombus: [230, 150], pentagon: [200, 200], hexagon: [210, 190],
+        rectangular_prism: [270, 176], cube: [205, 190], cylinder: [150, 200],
+      };
+      const [fw, fh] = SIZE[opts.figure] ?? [230, 170];
       const w = fw + PAD * 2;
       const h = fh + PAD * 2 + (opts.label ? 22 : 0);
       ensureColumnRoom(editor, col, h + ROW_GAP);
@@ -2081,7 +2721,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const oy = y + PAD;
       const labelAt = (text: string, p: Pt, color: TldrawColor, width = 140) =>
         createText(editor, text, p.x - width / 2, p.y - 12, { color, size: "s", font: "sans", width, align: "middle" });
-      const pens = takePens(opts.sideLabels.length + opts.angleLabels.length + (opts.radiusLabel ? 1 : 0) + (opts.diameterLabel ? 1 : 0));
+      const pens = takePens(opts.sideLabels.length + opts.angleLabels.length + (opts.radiusLabel ? 1 : 0) + (opts.diameterLabel ? 1 : 0) + (opts.heightLabel ? 1 : 0));
       let penIdx = 0;
       const nextPen = () => pens[penIdx++ % pens.length];
 
@@ -2101,10 +2741,66 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
           createLine(editor, cx, cy, cx + r, cy, pen);
           labelAt(opts.radiusLabel, { x: cx + r / 2, y: cy - 18 }, pen);
         }
+      } else if (opts.figure === "cylinder") {
+        const rx = fw / 2;
+        const ry = fw * 0.17;
+        const cx = ox + rx;
+        const topY = oy + ry;
+        const botY = oy + fh - ry;
+        const ell = (cy: number, a0: number, a1: number) => {
+          const pts: Pt[] = [];
+          for (let i = 0; i <= 18; i++) {
+            const a = a0 + ((a1 - a0) * i) / 18;
+            pts.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) });
+          }
+          return pts;
+        };
+        createLineShape(editor, undefined, undefined, [...ell(topY, 0, Math.PI * 2), ell(topY, 0, 0)[0]], { color: INK, size: "m", dash: "solid", spline: "cubic" });
+        createLineShape(editor, undefined, undefined, ell(botY, 0, Math.PI), { color: INK, size: "m", dash: "solid", spline: "cubic" });
+        createLineShape(editor, undefined, undefined, ell(botY, Math.PI, Math.PI * 2), { color: INK, size: "s", dash: "dashed", spline: "cubic" });
+        createLine(editor, ox, topY, ox, botY, INK);
+        createLine(editor, ox + fw, topY, ox + fw, botY, INK);
+        if (opts.sideLabels[0]) {
+          const pen = nextPen();
+          createLine(editor, cx, topY, cx + rx, topY, pen);
+          labelAt(opts.sideLabels[0], { x: cx + rx / 2, y: topY - 18 }, pen, 90);
+        }
+        if (opts.sideLabels[1]) {
+          const pen = nextPen();
+          labelAt(opts.sideLabels[1], { x: ox + fw + 34, y: (topY + botY) / 2 }, pen, 70);
+        }
+      } else if (isSolidFigure(opts.figure)) {
+        // Cabinet projection: front face, then the back face shifted up and right.
+        const dx = opts.figure === "cube" ? 55 : 70;
+        const dy = opts.figure === "cube" ? 40 : 46;
+        const bw = fw - dx;
+        const bh = fh - dy;
+        const F = { x: ox, y: oy + dy };
+        const B = { x: ox + dx, y: oy };
+        const seg = (a: Pt, b: Pt, dash: TLDefaultDashStyle = "solid") =>
+          createLineShape(editor, undefined, undefined, [a, b], { color: INK, size: dash === "solid" ? "m" : "s", dash });
+        // front face
+        seg({ x: F.x, y: F.y }, { x: F.x + bw, y: F.y });
+        seg({ x: F.x + bw, y: F.y }, { x: F.x + bw, y: F.y + bh });
+        seg({ x: F.x + bw, y: F.y + bh }, { x: F.x, y: F.y + bh });
+        seg({ x: F.x, y: F.y + bh }, { x: F.x, y: F.y });
+        // top and right faces
+        seg({ x: F.x, y: F.y }, { x: B.x, y: B.y });
+        seg({ x: F.x + bw, y: F.y }, { x: B.x + bw, y: B.y });
+        seg({ x: B.x, y: B.y }, { x: B.x + bw, y: B.y });
+        seg({ x: F.x + bw, y: F.y + bh }, { x: B.x + bw, y: B.y + bh });
+        seg({ x: B.x + bw, y: B.y }, { x: B.x + bw, y: B.y + bh });
+        // hidden edges
+        seg({ x: F.x, y: F.y + bh }, { x: B.x, y: B.y + bh }, "dashed");
+        seg({ x: B.x, y: B.y }, { x: B.x, y: B.y + bh }, "dashed");
+        seg({ x: B.x, y: B.y + bh }, { x: B.x + bw, y: B.y + bh }, "dashed");
+        if (opts.sideLabels[0]) labelAt(opts.sideLabels[0], { x: F.x + bw / 2, y: F.y + bh + 18 }, nextPen(), 100);
+        if (opts.sideLabels[1]) labelAt(opts.sideLabels[1], { x: F.x + bw + dx / 2 + 26, y: F.y + bh - dy / 2 + 12 }, nextPen(), 90);
+        if (opts.sideLabels[2]) labelAt(opts.sideLabels[2], { x: F.x - 34, y: F.y + bh / 2 }, nextPen(), 70);
       } else {
         const pts = figureVertices(opts.figure, fw, fh).map((p) => ({ x: p.x + ox, y: p.y + oy }));
         createLineShape(editor, undefined, undefined, [...pts, pts[0]], { color: INK, size: "m", dash: "solid" });
-        if (opts.markRightAngle && opts.figure !== "triangle") {
+        if (opts.markRightAngle && (opts.figure === "right_triangle" || opts.figure === "square" || opts.figure === "rectangle")) {
           const v = pts[0];
           const s = 16;
           createLineShape(editor, undefined, undefined, [{ x: v.x, y: v.y - s }, { x: v.x + s, y: v.y - s }, { x: v.x + s, y: v.y }], { color: INK, size: "s", dash: "solid" });
@@ -2121,6 +2817,23 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
         });
         opts.vertexLabels.slice(0, pts.length).forEach((text, i) => labelAt(text, vertexLabelPoint(pts, i, 22), INK, 60));
         opts.angleLabels.slice(0, pts.length).forEach((text, i) => labelAt(text, angleLabelPoint(pts, i, 36), nextPen(), 80));
+        if (opts.heightLabel) {
+          const alt = altitude(pts);
+          if (alt) {
+            const pen = nextPen();
+            const onEdge = Math.abs(alt.apex.x - pts[0].x) < 1 || Math.abs(alt.apex.x - pts[1].x) < 1;
+            const left = Math.min(pts[0].x, pts[1].x);
+            const right = Math.max(pts[0].x, pts[1].x);
+            // Label on the roomier side so it clears a slanted edge.
+            const sx = alt.foot.x - left > right - alt.foot.x ? -1 : 1;
+            if (!onEdge) {
+              createLineShape(editor, undefined, undefined, [alt.apex, alt.foot], { color: pen, size: "s", dash: "dashed" });
+              const m = 11;
+              createLineShape(editor, undefined, undefined, [{ x: alt.foot.x, y: alt.foot.y - m }, { x: alt.foot.x + m * sx, y: alt.foot.y - m }, { x: alt.foot.x + m * sx, y: alt.foot.y }], { color: INK, size: "s", dash: "solid" });
+            }
+            labelAt(opts.heightLabel, { x: alt.apex.x + 30 * sx, y: (alt.apex.y + alt.foot.y) / 2 }, pen, 80);
+          }
+        }
       }
 
       if (opts.label) {
@@ -2134,6 +2847,320 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       );
     },
 
+    drawTapeDiagram(opts: TapeDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const SEG_H = 42;
+      const GAP = 14;
+      const maxSeg = Math.max(1, ...opts.rows.map((r) => r.segments.length));
+      const SEG_W = clamp(Math.floor(360 / maxSeg), 44, 92);
+      const nameW = opts.rows.some((r) => r.name)
+        ? Math.max(...opts.rows.map((r) => (r.name ? measureText(editor, r.name, "sans", "s", null).w : 0))) + 18
+        : 0;
+      const totalW = opts.rows.some((r) => r.total)
+        ? Math.max(...opts.rows.map((r) => (r.total ? measureText(editor, `= ${r.total}`, "sans", "s", null).w : 0))) + 18
+        : 0;
+      const braceW = opts.totalLabel ? measureText(editor, opts.totalLabel, "sans", "s", null).w + 36 : 0;
+      const rowsH = opts.rows.length * SEG_H + (opts.rows.length - 1) * GAP;
+      const w = nameW + maxSeg * SEG_W + totalW + braceW + 8;
+      const h = rowsH + (opts.label ? 34 : 0) + 8;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const pens = takePens(opts.rows.length);
+      opts.rows.forEach((row, ri) => {
+        const ry = y + ri * (SEG_H + GAP);
+        if (row.name) createText(editor, row.name, x, ry + 9, { color: INK, size: "s", font: "sans", width: nameW - 12, align: "end" });
+        row.segments.forEach((segment, si) => {
+          createBox(editor, x + nameW + si * SEG_W, ry, SEG_W, SEG_H, segment.text, segment.shaded ? pens[ri] : INK, segment.shaded ? "solid" : "none", { font: "sans", size: "s", dash: "solid" });
+        });
+        if (row.total) {
+          createText(editor, `= ${row.total}`, x + nameW + row.segments.length * SEG_W + 10, ry + 9, { color: pens[ri], size: "s", font: "sans", width: totalW });
+        }
+      });
+      if (opts.totalLabel) {
+        const bx = x + nameW + maxSeg * SEG_W + totalW + 10;
+        createLineShape(editor, undefined, undefined, [{ x: bx, y }, { x: bx + 10, y }, { x: bx + 10, y: y + rowsH }, { x: bx, y: y + rowsH }], { color: INK, size: "s", dash: "solid" });
+        createText(editor, opts.totalLabel, bx + 18, y + rowsH / 2 - 12, { color: INK, size: "s", font: "sans", width: braceW - 18 });
+      }
+      if (opts.label) createText(editor, opts.label, x, y + rowsH + 12, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      recordDirectSemanticAction(
+        { type: "tape_diagram", label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawGrid(opts: GridDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const CELL = clamp(Math.floor(320 / Math.max(opts.rows, opts.columns)), 14, 30);
+      const gw = opts.columns * CELL;
+      const gh = opts.rows * CELL;
+      const w = gw + 8;
+      const h = gh + (opts.label ? 34 : 0) + 8;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const ox = x + 4;
+      const oy = y + 4;
+      const bands = (opts.shadeRows ?? 0) > 0 || (opts.shadeColumns ?? 0) > 0;
+      const pens = takePens(bands ? 2 : 1);
+      const pen = pens[0];
+      if (bands) {
+        // A fraction of a fraction: rows tinted, columns hatched, the overlap shows both.
+        const sr = clamp(Math.round(opts.shadeRows ?? 0), 0, opts.rows);
+        const sc = clamp(Math.round(opts.shadeColumns ?? 0), 0, opts.columns);
+        if (sr > 0) createBox(editor, ox, oy, gw, sr * CELL, "", pens[0], "solid", { dash: "solid" });
+        if (sc > 0) createBox(editor, ox, oy, sc * CELL, gh, "", pens[1], "solid", { dash: "solid" });
+        // The product: where both bands cover, in full colour.
+        if (sr > 0 && sc > 0) createBox(editor, ox, oy, sc * CELL, sr * CELL, "", pens[0], "fill", { dash: "solid" });
+      } else {
+        const shaded = clamp(Math.round(opts.shaded), 0, opts.rows * opts.columns);
+        const full = Math.floor(shaded / opts.columns);
+        const rem = shaded % opts.columns;
+        if (full > 0) createBox(editor, ox, oy, gw, full * CELL, "", pen, "solid", { dash: "solid" });
+        if (rem > 0) createBox(editor, ox, oy + full * CELL, rem * CELL, CELL, "", pen, "solid", { dash: "solid" });
+      }
+      for (let r = 0; r <= opts.rows; r++) {
+        createLineShape(editor, undefined, undefined, [{ x: ox, y: oy + r * CELL }, { x: ox + gw, y: oy + r * CELL }], { color: INK, size: "s", dash: "solid" });
+      }
+      for (let c = 0; c <= opts.columns; c++) {
+        createLineShape(editor, undefined, undefined, [{ x: ox + c * CELL, y: oy }, { x: ox + c * CELL, y: oy + gh }], { color: INK, size: "s", dash: "solid" });
+      }
+      if (opts.label) {
+        const cw = Math.max(w, 240);
+        createText(editor, opts.label, x + (w - cw) / 2, oy + gh + 12, { color: PENCIL, size: "s", font: "sans", width: cw, align: "middle" });
+      }
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      recordDirectSemanticAction(
+        { type: "grid", label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    writeVertical(opts: VerticalDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const digitW = measureText(editor, "0", "mono", "m", null).w || 14;
+      const lineH = FONT_PX.m * LINE_HEIGHT;
+      const OP_W = 30;
+      const longest = Math.max(...[...opts.operands, opts.result ?? "", ...opts.partials, opts.carries ?? ""].map((t) => t.length));
+      const numW = longest * digitW + 8;
+      const w = OP_W + numW + 8;
+      const lines = (opts.carries ? 0.8 : 0) + opts.operands.length + opts.partials.length + (opts.result ? 1 : 0);
+      const rules = 1 + (opts.partials.length > 0 && opts.result ? 1 : 0);
+      const h = lines * lineH + rules * 10 + (opts.label ? 30 : 0) + 8;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const pens = takePens(2);
+      let cy = y;
+      const write = (text: string, color: TldrawColor) => {
+        createText(editor, text, x + OP_W, cy, { color, size: "m", font: "mono", width: numW, align: "end" });
+        cy += lineH;
+      };
+      if (opts.carries) {
+        createText(editor, opts.carries, x + OP_W, cy + 4, { color: PENCIL, size: "s", font: "mono", width: numW, align: "end" });
+        cy += lineH * 0.8;
+      }
+      opts.operands.forEach((operand, i) => {
+        if (i === opts.operands.length - 1) createText(editor, opts.operation, x, cy, { color: INK, size: "m", font: "mono", width: OP_W });
+        write(operand, INK);
+      });
+      const rule = () => {
+        createLineShape(editor, undefined, undefined, [{ x, y: cy + 2 }, { x: x + w, y: cy + 2 }], { color: INK, size: "m", dash: "solid" });
+        cy += 10;
+      };
+      rule();
+      if (opts.partials.length > 0) {
+        opts.partials.forEach((partial) => write(partial, pens[1]));
+        if (opts.result) rule();
+      }
+      if (opts.result) write(opts.result, pens[0]);
+      if (opts.label) createText(editor, opts.label, x, cy + 2, { color: PENCIL, size: "s", font: "sans", width: Math.max(w, 200), align: "start" });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, Math.max(w, 200), h);
+      recordDirectSemanticAction(
+        { type: "vertical_arithmetic", text: opts.operands.join(` ${opts.operation} `), label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawLongDivision(opts: LongDivisionDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const digitW = measureText(editor, "0", "mono", "m", null).w || 14;
+      const lineH = FONT_PX.m * LINE_HEIGHT;
+      const divisorW = opts.divisor.length * digitW + 10;
+      const widest = Math.max(opts.dividend.length, (opts.quotient ?? "").length, ...opts.steps.map((t) => t.length));
+      const dividendW = widest * digitW + 10;
+      const w = divisorW + 12 + dividendW + 8;
+      const h = lineH * (2 + opts.steps.length) + opts.steps.filter((t) => /^\s*[-−]/.test(t)).length * 6 + (opts.label ? 30 : 0) + 8;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const pens = takePens(2);
+      const bx = x + divisorW + 6;
+      const barY = y + lineH;
+      if (opts.quotient) createText(editor, opts.quotient, bx + 6, y, { color: pens[0], size: "m", font: "mono", width: dividendW, align: "end" });
+      createLineShape(editor, undefined, undefined, [{ x: bx, y: barY + 2 }, { x: bx, y: barY + lineH }], { color: INK, size: "m", dash: "solid" });
+      createLineShape(editor, undefined, undefined, [{ x: bx, y: barY + 2 }, { x: bx + dividendW + 8, y: barY + 2 }], { color: INK, size: "m", dash: "solid" });
+      createText(editor, opts.divisor, x, barY + 4, { color: INK, size: "m", font: "mono", width: divisorW, align: "end" });
+      createText(editor, opts.dividend, bx + 6, barY + 4, { color: INK, size: "m", font: "mono", width: dividendW, align: "end" });
+      let cy = barY + lineH + 6;
+      for (const step of opts.steps) {
+        const sub = /^\s*[-−]/.test(step);
+        // Leading spaces place the line under the right digits.
+        const lead = step.length - step.trimStart().length;
+        createText(editor, step.trimStart(), bx + 6 + lead * digitW, cy, { color: sub ? pens[1] : INK, size: "m", font: "mono", width: Math.max(digitW * 2, dividendW - lead * digitW), align: "start" });
+        cy += lineH;
+        if (sub) {
+          createLineShape(editor, undefined, undefined, [{ x: bx + 6, y: cy - 4 }, { x: bx + 6 + dividendW, y: cy - 4 }], { color: INK, size: "s", dash: "solid" });
+          cy += 6;
+        }
+      }
+      if (opts.label) createText(editor, opts.label, x, cy + 2, { color: PENCIL, size: "s", font: "sans", width: Math.max(w, 220) });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, Math.max(w, 220), h);
+      recordDirectSemanticAction(
+        { type: "long_division", text: `${opts.dividend} ÷ ${opts.divisor}`, label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawTransversal(opts: TransversalDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const W = 320;
+      const H = 200;
+      const PAD = 34;
+      const w = W + PAD * 2;
+      const h = H + PAD * 2 + (opts.label ? 30 : 0);
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const ox = x + PAD;
+      const oy = y + PAD;
+      const y1 = oy + 46;
+      const y2 = oy + H - 46;
+      const t0 = { x: ox + 70, y: oy + H };
+      const t1 = { x: ox + W - 70, y: oy };
+      const xAt = (yy: number) => t0.x + ((t0.y - yy) / (t0.y - t1.y)) * (t1.x - t0.x);
+      createLineShape(editor, undefined, undefined, [{ x: ox, y: y1 }, { x: ox + W, y: y1 }], { color: INK, size: "m", dash: "solid" });
+      createLineShape(editor, undefined, undefined, [{ x: ox, y: y2 }, { x: ox + W, y: y2 }], { color: INK, size: "m", dash: "solid" });
+      createLineShape(editor, undefined, undefined, [t0, t1], { color: INK, size: "m", dash: "solid" });
+      const chevron = (yy: number) =>
+        createLineShape(editor, undefined, undefined, [{ x: ox + W - 50, y: yy - 6 }, { x: ox + W - 42, y: yy }, { x: ox + W - 50, y: yy + 6 }], { color: INK, size: "s", dash: "solid" });
+      chevron(y1);
+      chevron(y2);
+      const tl = Math.hypot(t1.x - t0.x, t1.y - t0.y) || 1;
+      const tv = { x: (t1.x - t0.x) / tl, y: (t1.y - t0.y) / tl };
+      const hv = { x: 1, y: 0 };
+      const neg = (v: Pt) => ({ x: -v.x, y: -v.y });
+      const regions: Array<[Pt, Pt]> = [[neg(hv), tv], [tv, hv], [hv, neg(tv)], [neg(tv), neg(hv)]];
+      const centers = [{ x: xAt(y1), y: y1 }, { x: xAt(y2), y: y2 }];
+      const pens = takePens(Math.max(1, opts.marks.length));
+      let markIdx = 0;
+      const labelAt = (text: string, p: Pt, color: TldrawColor) =>
+        createText(editor, text, p.x - 28, p.y - 12, { color, size: "s", font: "sans", width: 56, align: "middle" });
+      centers.forEach((c, ci) => {
+        regions.forEach(([a, b], ri) => {
+          const idx = ci * 4 + ri;
+          const bis = { x: a.x + b.x, y: a.y + b.y };
+          const bl = Math.hypot(bis.x, bis.y) || 1;
+          const label = opts.angleLabels[idx];
+          if (label) labelAt(label, { x: c.x + (bis.x / bl) * 34, y: c.y + (bis.y / bl) * 34 }, INK);
+          if (opts.marks.includes(idx + 1)) {
+            const pen = pens[markIdx++ % pens.length];
+            const a0 = Math.atan2(a.y, a.x);
+            let sweep = Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
+            if (sweep < 0) sweep += 0;
+            const pts: Pt[] = [];
+            for (let i = 0; i <= 12; i++) {
+              const ang = a0 + (sweep * i) / 12;
+              pts.push({ x: c.x + 18 * Math.cos(ang), y: c.y + 18 * Math.sin(ang) });
+            }
+            createDrawStroke(editor, undefined, undefined, pts, { color: pen, size: "s", dash: "solid", fill: "none", isClosed: false });
+          }
+        });
+      });
+      if (opts.label) createText(editor, opts.label, x, oy + H + PAD - 6, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      recordDirectSemanticAction(
+        { type: "transversal", label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawIcons(opts: IconsDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const ICON = 44;
+      const GAP = 8;
+      const GROUP_GAP = 24;
+      const BLOCK_GAP = 18;
+      const specs = [
+        { icon: opts.icon, count: opts.count, crossed: opts.crossed ?? 0 },
+        ...(opts.secondIcon && opts.secondCount ? [{ icon: opts.secondIcon, count: opts.secondCount, crossed: 0 }] : []),
+      ];
+      const groupSize = opts.groupSize && opts.groupSize >= 2 ? opts.groupSize : 0;
+      const perRowFor = (count: number) => (groupSize ? groupSize * Math.max(1, Math.floor(10 / groupSize)) : Math.min(count, 10));
+      const blockWidth = (count: number) => {
+        const perRow = Math.min(count, perRowFor(count));
+        const groups = groupSize ? Math.ceil(perRow / groupSize) : 1;
+        return perRow * ICON + (perRow - 1) * GAP + (groups - 1) * (GROUP_GAP - GAP);
+      };
+      const blockHeight = (count: number) => Math.ceil(count / perRowFor(count)) * (ICON + GAP) - GAP;
+      const countW = 56;
+      const w = Math.max(...specs.map((sp) => blockWidth(sp.count))) + countW + 8;
+      const h = specs.reduce((sum, sp) => sum + blockHeight(sp.count), 0) + (specs.length - 1) * BLOCK_GAP + (opts.label ? 34 : 0) + 4;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      let cy = y;
+      specs.forEach((sp) => {
+        const perRow = perRowFor(sp.count);
+        for (let i = 0; i < sp.count; i++) {
+          const row = Math.floor(i / perRow);
+          const colIdx = i % perRow;
+          const g = groupSize ? Math.floor(colIdx / groupSize) : 0;
+          const ix = x + colIdx * (ICON + GAP) + g * (GROUP_GAP - GAP);
+          const iy = cy + row * (ICON + GAP);
+          editor.createShape<TLIconShape>({
+            id: createShapeId(),
+            type: "icon",
+            x: ix,
+            y: iy,
+            props: { w: ICON, h: ICON, icon: sp.icon, crossed: i >= sp.count - sp.crossed, reveal: 1 },
+            meta: currentMeta(),
+          });
+        }
+        const bh = blockHeight(sp.count);
+        createText(editor, `${sp.count}`, x + blockWidth(sp.count) + 10, cy + Math.min(bh, ICON) / 2 - 12, { color: PENCIL, size: "s", font: "sans", width: countW });
+        cy += bh + BLOCK_GAP;
+      });
+      if (opts.label) {
+        const cw = Math.max(w, 260);
+        createText(editor, opts.label, x + (w - cw) / 2, cy - BLOCK_GAP + 10, { color: PENCIL, size: "s", font: "sans", width: cw, align: "middle" });
+      }
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      recordDirectSemanticAction(
+        { type: "icons", text: `${opts.count} ${opts.icon}`, label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
     drawAngle(opts: AngleDrawing) {
       const editor = editorRef.current;
       if (!editor) return;
@@ -2143,11 +3170,15 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const rad = (-deg * Math.PI) / 180;
       const ex = Math.cos(rad) * L;
       const ey = Math.sin(rad) * L;
+      const adj = opts.adjacentDegrees && opts.adjacentDegrees > 0 && deg + opts.adjacentDegrees < 360 ? opts.adjacentDegrees : 0;
+      const rad2 = (-(deg + adj) * Math.PI) / 180;
+      const ex2 = adj ? Math.cos(rad2) * L : 0;
+      const ey2 = adj ? Math.sin(rad2) * L : 0;
       const PAD = 40;
-      const minX = Math.min(0, ex);
-      const maxX = Math.max(L, ex);
-      const minY = Math.min(0, ey);
-      const maxY = Math.max(0, ey);
+      const minX = Math.min(0, ex, ex2);
+      const maxX = Math.max(L, ex, ex2);
+      const minY = Math.min(0, ey, ey2);
+      const maxY = Math.max(0, ey, ey2);
       const w = maxX - minX + PAD * 2;
       const h = maxY - minY + PAD * 2 + (opts.caption ? 22 : 0);
       ensureColumnRoom(editor, col, h + ROW_GAP);
@@ -2155,7 +3186,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const y = colY(col).current;
       const vx = x + PAD - minX;
       const vy = y + PAD - minY;
-      const pen = takePens(1)[0];
+      const [pen, pen2] = takePens(adj ? 2 : 1);
       const ray = (tx: number, ty: number) => {
         editor.createShape({
           id: createShapeId(),
@@ -2190,6 +3221,12 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
         createLineShape(editor, undefined, undefined, [{ x: vx + s, y: vy }, { x: vx + s, y: vy - s }, { x: vx, y: vy - s }], { color: pen, size: "s", dash: "solid" });
       } else {
         createDrawStroke(editor, undefined, undefined, arcPolyline(vx, vy, 46, 0, -deg, 4), { color: pen, size: "s", dash: "solid", fill: "none", isClosed: false });
+      }
+      if (adj) {
+        ray(vx + ex2, vy + ey2);
+        createDrawStroke(editor, undefined, undefined, arcPolyline(vx, vy, 60, -deg, -(deg + adj), 4), { color: pen2, size: "s", dash: "solid", fill: "none", isClosed: false });
+        const mid2 = (-(deg + adj / 2) * Math.PI) / 180;
+        createText(editor, opts.adjacentLabel ?? `${adj}°`, vx + Math.cos(mid2) * 86 - 40, vy + Math.sin(mid2) * 86 - 12, { color: pen2, size: "s", font: "sans", width: 80, align: "middle" });
       }
       createFreeformGeo(editor, "ellipse", vx - 4, vy - 4, 8, 8, INK, "fill", { dash: "solid" });
       const mid = (-deg / 2) * (Math.PI / 180);
@@ -2228,7 +3265,8 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       for (let r = 0; r < opts.rows; r++) {
         for (let c = 0; c < opts.columns; c++) {
           const second = opts.splitAfterColumn ? c >= opts.splitAfterColumn : opts.splitAfterRow ? r >= opts.splitAfterRow : false;
-          createFreeformGeo(editor, "ellipse", ox + c * SP + (SP - DOT) / 2, oy + r * SP + (SP - DOT) / 2, DOT, DOT, second ? pens[1] : pens[0], "fill", { dash: "solid" });
+          const filled = opts.shaded === undefined || r * opts.columns + c < opts.shaded;
+          createFreeformGeo(editor, "ellipse", ox + c * SP + (SP - DOT) / 2, oy + r * SP + (SP - DOT) / 2, DOT, DOT, second ? pens[1] : pens[0], filled ? "fill" : "none", { dash: "solid" });
         }
       }
       const count = (text: string, lx: number, ly: number, width: number) =>
@@ -2413,29 +3451,64 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     //   2. Else fall back to step_index (0-based positional).
     //   3. If neither, console.warn in dev and return false.
     highlightStep(target: StepTarget, style: "circle" | "underline" | "box") {
-      const idx = resolveEqIndex(eqRef.current, target);
-      if (idx < 0) return false;
-      const item = eqRef.current[idx];
-      const updated = { ...item, highlight: style };
-      eqRef.current = eqRef.current.map((e, i) => i === idx ? updated : e);
-      setEqItems((prev) => prev.map((e, i) => i === idx ? updated : e));
+      const editor = editorRef.current;
+      if (!editor) return false;
+      const lines = mathLines(editor);
+      const idx = resolveEqIndex(lines, target);
+      if (idx < 0) {
+        // Not an equation line: ring, underline, or box any item by label
+        // (a student's attempt, a note) with a green marker.
+        const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
+        const b = item ? itemBounds(editor, item) : null;
+        if (!item || !b) return false;
+        attachToItemRef.current = item.id;
+        if (style === "circle") {
+          createDrawStroke(editor, undefined, undefined, ringPoints(b, 10), { color: "green", size: "m", dash: "solid", fill: "none", isClosed: false });
+        } else if (style === "underline") {
+          createLineShape(editor, undefined, undefined, [{ x: b.x - 4, y: b.y + b.h + 6 }, { x: b.x + b.w + 4, y: b.y + b.h + 6 }], { color: "green", size: "m", dash: "solid" });
+        } else {
+          createBox(editor, b.x - 8, b.y - 6, b.w + 16, b.h + 12, "", "green", "none", { dash: "dashed" });
+        }
+        recordDirectSemanticAction(
+          { type: "highlight_step", step_label: target.step_label, style },
+          { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
+        );
+        return true;
+      }
+      const line = lines[idx];
+      editor.updateShapes([{ id: line.shape.id, type: "math", props: { highlight: style } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+      const b = editor.getShapePageBounds(line.shape.id);
       recordDirectSemanticAction(
         { type: "highlight_step", step_label: target.step_label, step_index: target.step_index, style },
-        { eqItemIds: [item.id], bounds: { x: item.x, y: item.y, w: 420, h: EQ_H, pageIndex: pageIndex.current } },
+        { shapeIds: [line.id], bounds: b ? { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } : undefined },
       );
       return true;
     },
 
     crossOutStep(target: StepTarget) {
-      const idx = resolveEqIndex(eqRef.current, target);
-      if (idx < 0) return false;
-      const item = eqRef.current[idx];
-      const updated = { ...item, crossOut: true };
-      eqRef.current = eqRef.current.map((e, i) => i === idx ? updated : e);
-      setEqItems((prev) => prev.map((e, i) => i === idx ? updated : e));
+      const editor = editorRef.current;
+      if (!editor) return false;
+      const lines = mathLines(editor);
+      const idx = resolveEqIndex(lines, target);
+      if (idx < 0) {
+        // Not an equation line: strike through any item by label in red.
+        const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
+        const b = item ? itemBounds(editor, item) : null;
+        if (!item || !b) return false;
+        attachToItemRef.current = item.id;
+        createLineShape(editor, undefined, undefined, [{ x: b.x - 6, y: b.y + b.h * 0.55 }, { x: b.x + b.w + 6, y: b.y + b.h * 0.45 }], { color: "red", size: "m", dash: "solid" });
+        recordDirectSemanticAction(
+          { type: "cross_out_step", step_label: target.step_label },
+          { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
+        );
+        return true;
+      }
+      const line = lines[idx];
+      editor.updateShapes([{ id: line.shape.id, type: "math", props: { crossOut: true } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+      const b = editor.getShapePageBounds(line.shape.id);
       recordDirectSemanticAction(
         { type: "cross_out_step", step_label: target.step_label, step_index: target.step_index },
-        { eqItemIds: [item.id], bounds: { x: item.x, y: item.y, w: 420, h: EQ_H, pageIndex: pageIndex.current } },
+        { shapeIds: [line.id], bounds: b ? { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } : undefined },
       );
       return true;
     },
@@ -2492,7 +3565,6 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
           tutorReferenceLabel: action.tutorReferenceLabel ?? action.label ?? action.title,
         };
         const shapeIdsBeforeAction = currentShapeIdSet(editor);
-        const eqIdsBeforeAction = new Set(eqRef.current.map((item) => item.id));
         withJobMeta(meta, () => {
           switch (action.type) {
             case "clear_board":
@@ -2835,16 +3907,13 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
           }
         });
         const createdShapeIds = diffStringSet(currentShapeIdSet(editor), shapeIdsBeforeAction);
-        const createdEqIds = eqRef.current
-          .map((item) => item.id)
-          .filter((eqId) => !eqIdsBeforeAction.has(eqId));
         semanticBoardRef.current = applySemanticBoardAction(
           semanticBoardRef.current,
           action,
           meta,
           {
             shapeIds: createdShapeIds,
-            eqItemIds: createdEqIds,
+            eqItemIds: [],
           },
         );
       }
@@ -2897,7 +3966,9 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       } catch {}
       return {
         store,
-        eqItems: [...eqRef.current],
+        eqItems: [],
+        items: [...itemsRef.current],
+        itemSeq: itemSeqRef.current,
         semanticBoard: semanticBoardRef.current,
         pageState: {
           pageIndex: pageIndex.current,
@@ -2940,7 +4011,184 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     },
 
     getBoardSummary() {
-      return summarizeSemanticBoard(semanticBoardRef.current);
+      return formatBoardItems(itemsRef.current, semanticBoardRef.current.title);
+    },
+
+    beginItem(tool: string): ItemToken {
+      const editor = editorRef.current;
+      return {
+        tool,
+        shapes: editor ? currentShapeIdSet(editor) : new Set<string>(),
+        eqs: new Set<string>(),
+      };
+    },
+
+    endItem(token: ItemToken, label: string | null, owner: "tutor" | "student" = "tutor"): string | null {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const shapeIds = diffStringSet(currentShapeIdSet(editor), token.shapes);
+      const eqItemIds: string[] = [];
+      if (shapeIds.length === 0) return null;
+      const attachTo = attachToItemRef.current;
+      attachToItemRef.current = null;
+      if (attachTo) {
+        const host = itemsRef.current.find((item) => item.id === attachTo);
+        if (host) {
+          host.shapeIds = [...host.shapeIds, ...shapeIds];
+          try {
+            const updates = shapeIds
+              .map((shapeId) => editor.getShape(shapeId as TLShapeId))
+              .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape))
+              .map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, itemId: host.id } }));
+            if (updates.length > 0) editor.updateShapes(updates);
+          } catch {
+            // tagging is a nicety
+          }
+          revealItem(editor, { ...host, shapeIds }, itemBounds(editor, host));
+          return host.id;
+        }
+      }
+      const id = `b${++itemSeqRef.current}`;
+      const item: BoardItem = {
+        id,
+        tool: token.tool,
+        label: itemLabelFrom(label, token.tool.replaceAll("_", " ")),
+        shapeIds,
+        eqItemIds,
+        owner: token.tool === "add_student_attempt" ? "student" : owner,
+        createdAt: Date.now(),
+      };
+      itemsRef.current = [...itemsRef.current, item].slice(-200);
+      try {
+        const updates = shapeIds
+          .map((shapeId) => editor.getShape(shapeId as TLShapeId))
+          .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape))
+          .map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, itemId: id } }));
+        if (updates.length > 0) editor.updateShapes(updates);
+      } catch {
+        // Tagging is a nicety; the registry is the source of truth.
+      }
+      // Written, not pasted: hide what was just created and reveal it in order.
+      revealItem(editor, item, itemBounds(editor, item));
+      return id;
+    },
+
+    pointAt(target: string) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const item = resolveItemTarget(itemsRef.current, target);
+      if (!item) return null;
+      const b = itemBounds(editor, item);
+      if (!b) return null;
+      enqueue({
+        kind: "action",
+        wait: 520,
+        run: () => {
+          const bb = itemBounds(editor, item) ?? b;
+          focusOn(editor, bb.x, bb.y, bb.w, bb.h);
+          const px = bb.x + Math.min(40, bb.w * 0.25);
+          const py = bb.y + bb.h * 0.6;
+          // Glide over, then a small dip to the right and back: a tap.
+          moveCursor(editor, px, py, 420, () => {
+            moveCursor(editor, px + 14, py + 8, 150, () => moveCursor(editor, px, py, 150));
+          });
+        },
+      });
+      return item;
+    },
+
+    circleItem(target: string, keep: boolean) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const item = resolveItemTarget(itemsRef.current, target);
+      if (!item) return null;
+      const b = itemBounds(editor, item);
+      if (!b) return null;
+      focusOn(editor, b.x - 16, b.y - 16, b.w + 32, b.h + 32);
+      const ring = ringPoints(b, 12);
+      if (keep) {
+        // A marker ring is a real stroke, written like everything else, and
+        // it belongs to the item it rings.
+        attachToItemRef.current = item.id;
+        createDrawStroke(editor, undefined, undefined, ring, { color: "orange", size: "m", dash: "solid", fill: "none", isClosed: false });
+        recordDirectSemanticAction(
+          { type: "highlight_step", step_label: item.label, style: "circle" },
+          { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
+        );
+      } else {
+        enqueue({
+          kind: "action",
+          wait: 700,
+          run: () => {
+            const bb = itemBounds(editor, item) ?? b;
+            tutorScribble(editor, ringPoints(bb, 12), { duration: 640, hold: 3000, size: 5 });
+          },
+        });
+      }
+      return item;
+    },
+
+    eraseItems(targets: string[]) {
+      const editor = editorRef.current;
+      if (!editor) return [];
+      const erased: string[] = [];
+      const goneIds = new Set<string>();
+      // Closing the gap: everything lower in the same column moves up by the
+      // erased item's height, so the board does not keep holes.
+      const reflow = (b: ItemBounds) => {
+        // Headings and anything spanning both columns stay put.
+        const spansBoth = b.x < RIGHT_X - 20 && b.x + b.w > RIGHT_X + 60;
+        if (spansBoth || b.y < START_Y - 10) return;
+        const col: "left" | "right" = b.x >= RIGHT_X - 20 ? "right" : "left";
+        const inCol = (sx: number) => (sx >= RIGHT_X - 20) === (col === "right");
+        const dy = b.h + ROW_GAP;
+        const movers = editor.getCurrentPageShapes().filter((s) => inCol(s.x) && s.y > b.y + b.h - 2);
+        if (movers.length > 0) {
+          editor.run(() => editor.updateShapes(movers.map((s) => ({ id: s.id, type: s.type, y: s.y - dy })) as unknown as Parameters<Editor["updateShapes"]>[0]), { history: "ignore" });
+        }
+        const cursor = col === "right" ? rightY : leftY;
+        cursor.current = Math.max(START_Y, cursor.current - dy);
+      };
+      for (const target of targets) {
+        const item = resolveItemTarget(itemsRef.current.filter((i) => !goneIds.has(i.id)), target);
+        if (!item) continue;
+        goneIds.add(item.id);
+        erased.push(item.label);
+        const bounds = itemBounds(editor, item);
+        const shapeIds = item.shapeIds.filter((id) => editor.getShape(id as TLShapeId)).map((id) => id as TLShapeId);
+        if (shapeIds.length > 0) editor.deleteShapes(shapeIds);
+        if (bounds) reflow(bounds);
+        mathOrderRef.current = mathOrderRef.current.filter((mid) => editor.getShape(mid as TLShapeId));
+        recordDirectSemanticAction({ type: "delete_shape", target_ids: item.shapeIds });
+      }
+      if (goneIds.size > 0) itemsRef.current = itemsRef.current.filter((i) => !goneIds.has(i.id));
+      return erased;
+    },
+
+    eraseOlder(keep: number) {
+      const body = itemsRef.current.filter((i) => !isHeadingItem(i));
+      const n = Math.max(0, Math.min(body.length, Math.floor(keep)));
+      const victims = body.slice(0, body.length - n);
+      if (victims.length === 0) return [];
+      return api.eraseItems(victims.map((v) => v.id));
+    },
+
+    async exportImage(maxWidth = 1024) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      await awaitRevealIdle();
+      const ids = editor.getCurrentPageShapeIds();
+      if (ids.size === 0) return null;
+      try {
+        // Every shape exports itself, math included (as plain text).
+        const bounds = editor.getCurrentPageBounds();
+        const scale = bounds && bounds.w > maxWidth ? maxWidth / bounds.w : 1;
+        const out = await editor.toImageDataUrl(Array.from(ids), { format: "jpeg", quality: 0.72, scale, pixelRatio: 1, background: true, padding: 24 });
+        return out ? { url: out.url, width: out.width, height: out.height } : null;
+      } catch (err) {
+        if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] exportImage", err);
+        return null;
+      }
     },
 
     loadSnapshot(snap: WhiteboardSnapshot) {
@@ -2957,9 +4205,55 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       pageTop.current = snap.pageState?.pageTop ?? 0;
       leftY.current = snap.pageState?.leftY ?? START_Y;
       rightY.current = snap.pageState?.rightY ?? START_Y;
-      const items = snap.eqItems ?? [];
-      eqRef.current = items;
-      setEqItems(items);
+      // Math shapes came back with the store; old overlay items become shapes.
+      mathOrderRef.current = editor.getCurrentPageShapesSorted().filter((shape) => shape.type === "math").map((shape) => shape.id);
+      for (const item of snap.eqItems ?? []) {
+        if (!item || typeof item.latex !== "string") continue;
+        createMath(editor, {
+          latex: item.latex,
+          x: item.x,
+          y: item.y,
+          annotation: item.annotation,
+          display: item.role !== "label",
+          role: item.role === "label" ? "label" : "",
+          color: item.color,
+          crossOut: Boolean(item.crossOut),
+          highlight: (item.highlight ?? "") as MathHighlight,
+          meta: item.meta,
+        });
+      }
+      // Items: saved with the snapshot, or rebuilt from the itemId every
+      // shape carries in its meta (snapshots from before items were saved).
+      const live = new Set(editor.getCurrentPageShapes().map((shape) => shape.id as string));
+      if (Array.isArray(snap.items) && snap.items.length > 0) {
+        itemsRef.current = snap.items
+          .map((item) => ({ ...item, shapeIds: item.shapeIds.filter((id) => live.has(id)) }))
+          .filter((item) => item.shapeIds.length > 0 || item.eqItemIds.length > 0);
+      } else {
+        const byItem = new Map<string, BoardItem>();
+        for (const shape of editor.getCurrentPageShapesSorted()) {
+          const meta = shape.meta as { itemId?: unknown; tutorReferenceLabel?: unknown; owner?: unknown };
+          const itemId = typeof meta.itemId === "string" ? meta.itemId : null;
+          if (!itemId) continue;
+          const existing = byItem.get(itemId);
+          if (existing) {
+            existing.shapeIds.push(shape.id);
+            continue;
+          }
+          byItem.set(itemId, {
+            id: itemId,
+            tool: shape.type === "math" ? "draw_equation_step" : shape.type === "icon" ? "draw_icons" : "add_text_note",
+            label: typeof meta.tutorReferenceLabel === "string" ? meta.tutorReferenceLabel : shape.type,
+            shapeIds: [shape.id],
+            eqItemIds: [],
+            owner: meta.owner === "student" ? "student" : "tutor",
+            createdAt: Date.now(),
+          });
+        }
+        itemsRef.current = Array.from(byItem.values()).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+      }
+      const maxSeq = itemsRef.current.reduce((m, item) => Math.max(m, Number(item.id.slice(1)) || 0), 0);
+      itemSeqRef.current = Math.max(snap.itemSeq ?? 0, maxSeq, itemSeqRef.current);
       semanticBoardRef.current = normalizeSemanticBoard(snap.semanticBoard);
       // Defensive: ensure post-resume direct calls go through withDirectMeta
       // cleanly. (No prior path should leak meta across resume, but a snapshot
@@ -2967,6 +4261,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       jobMetaRef.current = null;
     },
     };
+    handleRef.current = api;
     return api;
   });
 
@@ -2974,24 +4269,13 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <Tldraw
         onMount={handleMount}
+        autoFocus={autoFocus}
         hideUi
         components={TLDRAW_COMPONENTS}
+        overlayUtils={OVERLAY_UTILS}
+        shapeUtils={SHAPE_UTILS}
         licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY}
       />
-      <div
-        ref={overlayRef}
-        style={{
-          position: "absolute",
-          inset: 0,
-          pointerEvents: "none",
-          transformOrigin: "0 0",
-          willChange: "transform",
-        }}
-      >
-        {eqItems.map((item) => (
-          <EqBlock key={item.id} item={item} />
-        ))}
-      </div>
     </div>
   );
 });

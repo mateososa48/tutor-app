@@ -1,7 +1,8 @@
 "use client";
 
-import { useReducedMotion } from "motion/react";
+
 import ScrollReveal from "@/components/ScrollReveal";
+import { useReduce } from "./useScript";
 
 const QUOTE =
   "I built Chalk for my little sister. She could do the math. She just needed someone with the patience to sit with her while she worked it out.";
@@ -9,7 +10,7 @@ const QUOTE =
 const TEXT_CLASS = "lp-display text-[clamp(1.6rem,3.2vw,2.5rem)] leading-[1.28] text-(--lp-ink)";
 
 export function Founder() {
-  const reduce = useReducedMotion();
+  const reduce = useReduce();
   return (
     <section className="py-16 sm:py-24">
       <figure className="mx-auto max-w-[820px] px-5 sm:px-8">

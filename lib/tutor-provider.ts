@@ -13,4 +13,13 @@ export function resolveTutorProvider(search: { get(name: string): string | null 
 }
 
 // The surface the session page relies on. Both clients implement it.
-export type TutorClient = Pick<LiveTutorSession, "start" | "end" | "setMuted" | "sendText" | "sendFiles">;
+export type TutorClient = Pick<LiveTutorSession, "start" | "end" | "setMuted" | "sendText" | "sendFiles"> & {
+  /** Show the model the board as a picture (data URL). */
+  sendBoardFrame?: (dataUrl: string) => boolean;
+  /**
+   * "auto": a frame after every drawing is cheap (Gemini video input).
+   * "on-demand": frames pile up in the conversation (GPT-Live backend items),
+   * so only look_at_board sends one.
+   */
+  boardFrames?: "auto" | "on-demand";
+};

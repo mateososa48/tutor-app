@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import { ArrowRight } from "lucide-react";
 import BlurText from "@/components/BlurText";
 import Magnet from "@/components/Magnet";
-import { SessionMock } from "./SessionMock";
+import { SessionDemo } from "./SessionDemo";
 import { DitherWave } from "./DitherWave";
+import { useReduce } from "./useScript";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 const WAVE: [number, number, number] = [0.55, 0.74, 1];
@@ -15,7 +16,7 @@ const BG: [number, number, number] = [0.984, 0.984, 0.988];
 // Dithered wave shader in the page's own white and sky. Masked so it fades
 // into the page at the edges and under the product window.
 function Backdrop() {
-  const reduce = useReducedMotion();
+  const reduce = useReduce();
   const mask = "radial-gradient(95% 85% at 78% 0%, #000 25%, transparent 100%)";
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
@@ -51,7 +52,7 @@ function Backdrop() {
 }
 
 export function Hero() {
-  const reduce = useReducedMotion();
+  const reduce = useReduce();
 
   return (
     <section className="relative isolate pt-32 pb-14 sm:pb-20 lg:pt-40 lg:pb-24">
@@ -97,7 +98,7 @@ export function Hero() {
         >
           <div className="lp-frame">
             <div className="lp-window relative overflow-hidden">
-              <SessionMock />
+              <SessionDemo />
             </div>
           </div>
         </motion.div>

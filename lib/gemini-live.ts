@@ -38,6 +38,7 @@ export type SessionCallbacks = {
   onDisconnected: () => void;
   onError: (msg: string) => void;
   onInterrupted: () => void;
+  onTurnComplete?: () => void;
   onDebugEvent?: (event: {
     kind: string;
     message: string;
@@ -207,6 +208,16 @@ export class GeminiLiveSession {
 
   sendText(text: string): boolean {
     return this.sendUserTurn([{ text }]);
+  }
+
+  // A picture of the board, sent the way a screen share sends frames: it
+  // lands in the model's context without starting a turn.
+  sendVideoFrame(base64: string, mimeType = "image/jpeg"): boolean {
+    return this.send({
+      realtimeInput: {
+        video: { data: base64, mimeType },
+      },
+    });
   }
 
   sendInitialGreeting(files: UploadedFile[]): boolean {
@@ -496,6 +507,7 @@ export class GeminiLiveSession {
       if (serverContent.turnComplete === true) {
         this.debug("turn", "turn_complete", { tutorChars: this.tutorTurnText.trim().length });
         this.finishTutorTurn();
+        this.callbacks.onTurnComplete?.();
       }
     }
 

@@ -40,6 +40,12 @@ export type BoardActionType =
   | "balance"
   | "bar_chart"
   | "sketch"
+  | "tape_diagram"
+  | "grid"
+  | "vertical_arithmetic"
+  | "long_division"
+  | "transversal"
+  | "icons"
   | "freeform_text"
   | "freeform_shape"
   | "freeform_arrow"
@@ -781,6 +787,12 @@ export function validateAction(value: unknown): ActionValidation {
       }
       break;
     }
+    case "tape_diagram":
+    case "grid":
+    case "vertical_arithmetic":
+    case "long_division":
+    case "transversal":
+    case "icons":
     case "clear_board":
       // no required fields
       break;
@@ -862,6 +874,23 @@ export function summarizeWhiteboardSnapshot(snapshot: unknown): {
     const annotation = asString(raw.annotation);
     return `Equation ${index}: ${latex}${annotation ? ` (${annotation})` : ""}`;
   });
+  // Typeset math lives in the store as "math" shapes now; legacy snapshots
+  // may still carry overlay items above.
+  {
+    const store = asRecord(snap.store);
+    const records = asRecord(store.records);
+    let index = eqItems.length;
+    for (const record of Object.values(records)) {
+      const raw = asRecord(record);
+      if (asString(raw.type) !== "math") continue;
+      const props = asRecord(raw.props);
+      if (asString(props.role) === "label") continue;
+      const latex = asString(props.latex, "(blank equation)");
+      const annotation = asString(props.annotation);
+      eqItems.push(`Equation ${index++}: ${latex}${annotation ? ` (${annotation})` : ""}`);
+      if (eqItems.length >= 24) break;
+    }
+  }
 
   const visibleShapes: string[] = [];
   const store = asRecord(snap.store);
