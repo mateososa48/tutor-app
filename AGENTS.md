@@ -40,7 +40,7 @@ Chalk tutors math and nothing else (arithmetic, fractions, decimals, percent, ra
 - `write_vertical` (stacked +, −, × with carries and partial products, right-aligned mono) and `draw_long_division` (bracket, quotient, step lines; leading spaces place digits).
 - `draw_transversal` (two parallels and a transversal, angles 1–8 clockwise from upper left, `mark_angles` arcs).
 - `draw_figure` grew parallelogram, trapezoid, rhombus, pentagon, hexagon, and 3D rectangular_prism / cube / cylinder (`side_labels` = dimensions), plus `height_label` (dashed altitude with a right-angle mark). Side labels are positional: "12 | | 6" skips the right side.
-- `add_function_graph` grew `mark_points` and `slope_run` (a rise/run triangle); `draw_array` grew `shaded`.
+- `add_function_graph` grew `mark_points`, `slope_run` (a rise/run triangle), and `second_expression` (two curves, crossing point marked: systems of equations); `draw_array` grew `shaded`; `draw_angle` grew `adjacent_degrees` (angles on a line / around a point); `add_number_line` grew `label_style` (tenths read as decimals by default) and `second_min`/`second_max` (a double number line for percent of an amount); `plot_points` grew `connect` (join into a polygon).
 - `/dev/board?demo=math` replays all of them. Equation-line labels are plain text (`lib/latex-plain.ts`) so `point_at "5/6"` resolves. The eval has a `--set math` scenario set (12 topics).
 
 ## The tutor's hands (Sept 14 2026)

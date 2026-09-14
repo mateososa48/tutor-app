@@ -1836,19 +1836,21 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const W = 300;
       const H = 220;
       const fn = createMathEvaluator(expression);
+      const fn2 = extras?.secondExpression ? createMathEvaluator(extras.secondExpression) : null;
 
-      // Sample the curve, then pick a y-range that is padded, includes the
+      // Sample the curve(s), then pick a y-range that is padded, includes the
       // x-axis when it is nearby, and lands on round numbers.
       const samples: Pt[] = [];
+      const samples2: Pt[] = [];
       let yMin = Infinity;
       let yMax = -Infinity;
-      if (fn) {
+      const sampleInto = (f: (v: number) => number, into: Pt[]) => {
         for (let i = 0; i <= 120; i++) {
           const sx = xMin + ((xMax - xMin) * i) / 120;
           try {
-            const sy = fn(sx);
+            const sy = f(sx);
             if (Number.isFinite(sy)) {
-              samples.push({ x: sx, y: sy });
+              into.push({ x: sx, y: sy });
               yMin = Math.min(yMin, sy);
               yMax = Math.max(yMax, sy);
             }
@@ -1856,7 +1858,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
             // discontinuity; skip the sample
           }
         }
-      }
+      };
+      if (fn) sampleInto(fn, samples);
+      if (fn2) sampleInto(fn2, samples2);
       if (samples.length < 2) {
         yMin = -5;
         yMax = 5;
@@ -1894,6 +1898,65 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         run.push({ x: px(s.x), y: py(s.y) });
       });
       flush();
+      if (fn2 && samples2.length >= 2) {
+        const pen2 = takePens(1)[0];
+        let run2: Pt[] = [];
+        const flush2 = () => {
+          if (run2.length >= 2) createLineShape(editor, undefined, undefined, run2, { color: pen2, size: "m", dash: "solid", spline: "line" });
+          run2 = [];
+        };
+        samples2.forEach((s2, i) => {
+          const prev = samples2[i - 1];
+          if (prev && Math.abs(s2.y - prev.y) > (yHi - yLo) * 0.8) flush2();
+          if (s2.y >= yLo && s2.y <= yHi) run2.push({ x: px(s2.x), y: py(s2.y) });
+          else flush2();
+        });
+        flush2();
+        // Where the curves cross: a sign change of the difference, refined.
+        if (fn) {
+          const diff = (v: number) => {
+            try {
+              const d = fn(v) - fn2(v);
+              return Number.isFinite(d) ? d : NaN;
+            } catch {
+              return NaN;
+            }
+          };
+          let found = 0;
+          for (let i = 1; i <= 240 && found < 3; i++) {
+            let a = xMin + ((xMax - xMin) * (i - 1)) / 240;
+            let b = xMin + ((xMax - xMin) * i) / 240;
+            let da = diff(a);
+            let db = diff(b);
+            if (!Number.isFinite(da) || !Number.isFinite(db) || da * db > 0) continue;
+            for (let k = 0; k < 30; k++) {
+              const m = (a + b) / 2;
+              const dm = diff(m);
+              if (!Number.isFinite(dm)) break;
+              if (da * dm <= 0) {
+                b = m;
+                db = dm;
+              } else {
+                a = m;
+                da = dm;
+              }
+            }
+            const ix = (a + b) / 2;
+            let iy = NaN;
+            try {
+              iy = fn(ix);
+            } catch {
+              // no point
+            }
+            if (!Number.isFinite(iy) || iy < yLo || iy > yHi) continue;
+            found++;
+            const gx = px(ix);
+            const gy = py(iy);
+            createFreeformGeo(editor, "ellipse", gx - 6, gy - 6, 12, 12, INK, "fill", { dash: "solid" });
+            createText(editor, `(${formatNumber(ix)}, ${formatNumber(iy)})`, gx + 9, gy + 3, { color: INK, size: "s", font: "sans", width: 130 });
+          }
+        }
+      }
       if (!fn) {
         createText(editor, "Could not read that expression", x, y + H / 2 - 12, { color: "red", size: "s", font: "sans", width: W, align: "middle" });
       }

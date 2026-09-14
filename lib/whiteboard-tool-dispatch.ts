@@ -581,13 +581,15 @@ function dispatchInner(
       const runRaw = opt(args, "slope_run"); if (runRaw.error) return runRaw.error;
       const markPoints = parseXYPoints(marks.value);
       const slopeRun = parseSlopeRun(runRaw.value);
+      const second = opt(args, "second_expression"); if (second.error) return second.error;
       if (runRaw.value && !slopeRun) return fail('"slope_run" must look like "1..3" (two different x-values).');
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? expression }, () =>
-        board.addFunctionGraph(expression, xMin, xMax, label.value, pickColumn(column.value) ?? "right", { markPoints, slopeRun }),
+        board.addFunctionGraph(expression, xMin, xMax, label.value, pickColumn(column.value) ?? "right", { markPoints, slopeRun, secondExpression: second.value?.trim() || undefined }),
       );
       const extra = [
         markPoints.length ? `marked ${markPoints.map((p) => `(${p.x}, ${p.y})${p.label ? ` ${p.label}` : ""}`).join(", ")}` : "",
         slopeRun ? `slope triangle from x = ${slopeRun.x1} to x = ${slopeRun.x2}` : "",
+        second.value ? `second line y = ${second.value.trim()} with the crossing point marked` : "",
       ].filter(Boolean).join("; ");
       return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}${extra ? `; ${extra}` : ""}.`);
     }

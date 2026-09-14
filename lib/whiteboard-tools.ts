@@ -407,6 +407,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         x_max: { type: "number", description: "Maximum x." },
         mark_points: { type: "string", description: "Optional points to mark on the graph: '(1,2):A, (3,6)'. Use for intercepts, a vertex, or the two points of a slope. 300 chars max." },
         slope_run: { type: "string", description: "Optional 'x1..x2': draws the rise/run triangle between those two x-values on the curve, labelled with the rise and the run. THE picture for slope. E.g. '1..3'." },
+        second_expression: { type: "string", description: "Optional second curve on the same axes, in a second colour; where the two cross is marked with its coordinates. THE picture for a system of two equations. 200 chars max." },
         label: { type: "string", description: "Optional caption, e.g. 'y = x² - 4x - 5'. 160 chars max." },
         column: COLUMN,
       },

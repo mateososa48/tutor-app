@@ -92,6 +92,7 @@ const math: DemoCall[] = [
   { name: "add_number_line", args: { min: 0, max: 100, step: 25, second_min: 0, second_max: 80, second_label: "of 80", label: "25% of 80 = 20", column: "right" } },
   { name: "add_number_line", args: { min: 0, max: 1, step: 0.1, points: "0.7, 0.65:0.65", label: "0.7 is bigger than 0.65" } },
   { name: "plot_points", args: { points: "(1,1):A, (4,1):B, (4,3):C, (1,3):D", x_min: -1, x_max: 6, y_min: -1, y_max: 5, connect: true, label: "a 3 by 2 rectangle", column: "right" } },
+  { name: "add_function_graph", args: { expression: "x + 1", second_expression: "-x + 5", x_min: -1, x_max: 5, label: "y = x + 1 and y = -x + 5 cross at (2, 3)" } },
 ];
 
 const all: DemoCall[] = [

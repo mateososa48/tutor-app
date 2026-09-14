@@ -621,7 +621,12 @@ export function parseSlopeRun(input: string | undefined): { x1: number; x2: numb
   return { x1, x2 };
 }
 
-export type GraphExtras = { markPoints: XYPoint[]; slopeRun: { x1: number; x2: number } | null };
+export type GraphExtras = {
+  markPoints: XYPoint[];
+  slopeRun: { x1: number; x2: number } | null;
+  /** A second curve on the same axes; where the two cross is marked. */
+  secondExpression?: string;
+};
 
 // Numbers as a tutor would write them on a board: 2, 2.5, -0.75.
 export function formatNumber(v: number): string {
