@@ -147,7 +147,7 @@ function dispatchInner(
           pickColumn(column.value),
         ),
       );
-      return ok("Problem setup box drawn.");
+      return ok(`Problem setup box: goal "${goal.replace(/\s+/g, " ").slice(0, 80)}".`);
     }
 
     case "add_equation_sequence": {
@@ -187,7 +187,7 @@ function dispatchInner(
       board.withDirectMeta({ owner: "tutor" }, () =>
         board.addTextNote(normalizeText(text), pickSize(size.value), pickColumn(column.value)),
       );
-      return ok("Note written.");
+      return ok(`Wrote the note "${normalizeText(text).replace(/\s+/g, " ").slice(0, 90)}".`);
     }
 
     case "add_callout": {
@@ -205,7 +205,7 @@ function dispatchInner(
       board.withDirectMeta({ owner: "tutor" }, () =>
         board.addCallout(normalizeText(text), style as CalloutStyle, pickColumn(column.value)),
       );
-      return ok(`Sticky note (${style}) added.`);
+      return ok(`Callout (${style}): "${normalizeText(text).replace(/\s+/g, " ").slice(0, 90)}".`);
     }
 
     case "add_student_attempt": {
@@ -532,7 +532,7 @@ function dispatchInner(
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title.value }, () =>
         board.addTable(columns, rows, title.value, pickColumn(column.value)),
       );
-      return ok("Table drawn.");
+      return ok(`Table${title.value ? ` "${title.value}"` : ""} with columns ${columns.replace(/\s+/g, " ").slice(0, 80)}.`);
     }
 
     case "add_coordinate_axes": {

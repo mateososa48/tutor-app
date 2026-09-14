@@ -2239,11 +2239,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         if (iv.to >= min && iv.to <= max) dot(px(iv.to), iv.openTo, intervalPen(i));
       });
       // Repeated values stack upward: a dot plot.
-      const stacked = new Map<number, number>();
+      const stacked = new Map<number, { count: number; first: number }>();
       opts.marks.forEach((m, i) => {
-        const k = stacked.get(m.value) ?? 0;
-        stacked.set(m.value, k + 1);
-        dot(px(m.value), false, markPen(i), -k * 16);
+        const entry = stacked.get(m.value) ?? { count: 0, first: i };
+        const k = entry.count;
+        stacked.set(m.value, { count: k + 1, first: entry.first });
+        dot(px(m.value), false, markPen(entry.first), -k * 16);
         if (m.label && k === 0) {
           createText(editor, m.label, px(m.value) - 70, lineY - 40, { color: markPen(i), size: "s", font: "sans", width: 140, align: "middle" });
         }
@@ -3013,7 +3014,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const sr = clamp(Math.round(opts.shadeRows ?? 0), 0, opts.rows);
         const sc = clamp(Math.round(opts.shadeColumns ?? 0), 0, opts.columns);
         if (sr > 0) createBox(editor, ox, oy, gw, sr * CELL, "", pens[0], "solid", { dash: "solid" });
-        if (sc > 0) createBox(editor, ox, oy, sc * CELL, gh, "", pens[1], "pattern", { dash: "solid" });
+        if (sc > 0) createBox(editor, ox, oy, sc * CELL, gh, "", pens[1], "solid", { dash: "solid" });
+        // The product: where both bands cover, in full colour.
+        if (sr > 0 && sc > 0) createBox(editor, ox, oy, sc * CELL, sr * CELL, "", pens[0], "fill", { dash: "solid" });
       } else {
         const shaded = clamp(Math.round(opts.shaded), 0, opts.rows * opts.columns);
         const full = Math.floor(shaded / opts.columns);
@@ -3027,7 +3030,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       for (let c = 0; c <= opts.columns; c++) {
         createLineShape(editor, undefined, undefined, [{ x: ox + c * CELL, y: oy }, { x: ox + c * CELL, y: oy + gh }], { color: INK, size: "s", dash: "solid" });
       }
-      if (opts.label) createText(editor, opts.label, x, oy + gh + 12, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+      if (opts.label) {
+        const cw = Math.max(w, 240);
+        createText(editor, opts.label, x + (w - cw) / 2, oy + gh + 12, { color: PENCIL, size: "s", font: "sans", width: cw, align: "middle" });
+      }
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);
       recordDirectSemanticAction(
