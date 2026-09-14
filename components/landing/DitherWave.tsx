@@ -81,9 +81,10 @@ void main() {
     vec2 warpB = vec2(fbm4(p + u_amp * 4.0 * warpA + vec2(1.7, 9.2) + t * 0.15),
                       fbm4(p + u_amp * 4.0 * warpA + vec2(8.3, 2.8) - t * 0.126));
     float n = fbm4(p + u_amp * 4.0 * warpB);
-    // Mostly colour, a spread of mid tones, and only the thinnest eddies fall
-    // back to the background.
-    f = smoothstep(0.3, 0.68, n);
+    // Calibrated against a JS model of this field (frequency 1.7, warp 0.45):
+    // most of the range lands on the deep and light blues, about 3% reaches
+    // the background, and the balance holds steady from frame to frame.
+    f = smoothstep(0.41, 0.81, n);
   } else {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
     float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);
@@ -94,8 +95,15 @@ void main() {
   float threshold = bayer[by][bx];
   float steps = max(u_colorNum - 1.0, 1.0);
   float q = floor(f * steps + threshold) / steps;
-  vec3 col = mix(u_bg, u_wave, clamp(q, 0.0, 1.0));
-  col = mix(col, u_deep, u_deepMix * smoothstep(0.55, 1.0, q));
+  vec3 col;
+  if (u_pattern == 1) {
+    // Swirl ramp: deep blue carries the field, the lighter blue sits in the
+    // middle, and the background only shows at the very top.
+    col = q < 0.5 ? mix(u_deep, u_wave, q * 2.0) : mix(u_wave, u_bg, (q - 0.5) * 2.0);
+  } else {
+    col = mix(u_bg, u_wave, clamp(q, 0.0, 1.0));
+    col = mix(col, u_deep, u_deepMix * smoothstep(0.55, 1.0, q));
+  }
   outColor = vec4(col, 1.0);
 }`;
 

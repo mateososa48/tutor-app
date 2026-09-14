@@ -614,10 +614,34 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Landing nav: a sky pen stroke draws itself under the link on hover, left to
+   right, and retracts when the pointer leaves. The path has pathLength 1. */
+.nav-scribble {
+  fill: none;
+  stroke: var(--lp-sky);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1 1.1;
+  stroke-dashoffset: 1.02;
+  opacity: 0;
+  transition: stroke-dashoffset 420ms cubic-bezier(0.65, 0, 0.35, 1), opacity 120ms ease 300ms;
+}
+.nav-link:hover .nav-scribble,
+.nav-link:focus-visible .nav-scribble {
+  stroke-dashoffset: 0;
+  opacity: 1;
+  transition: stroke-dashoffset 420ms cubic-bezier(0.65, 0, 0.35, 1), opacity 60ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-scribble,
+  .nav-link:hover .nav-scribble { transition: opacity 120ms ease; }
+}
+
 /* The wordmark: the word "chalk" next to the mark, everywhere, is Sora. */
 .lp-brand {
   font-family: var(--lp-font-brand), var(--lp-font-display), system-ui, sans-serif;
-  font-weight: 650;
+  font-weight: 500;
   letter-spacing: -0.04em;
 }
 

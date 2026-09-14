@@ -311,7 +311,7 @@ function SignIn() {
       </main>
 
       {/* The hero's shader, in the block's image slot. Decorative. */}
-      <aside aria-hidden className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-[#73adff] lg:block">
+      <aside aria-hidden className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-[#2988f2] lg:block">
         {wide && (
           <DitherWave
             pattern="swirl"
@@ -320,15 +320,15 @@ function SignIn() {
             backgroundColor={VOICE_BLUE.bg}
             colorNum={5}
             pixelSize={3}
-            waveAmplitude={0.65}
-            waveFrequency={1.1}
+            waveAmplitude={0.45}
+            waveFrequency={1.7}
             waveSpeed={0.035}
             animate={!reduce}
             className="absolute inset-0"
           />
         )}
         <p className="absolute bottom-6 left-6 m-0 flex items-center gap-2 text-(--lp-ink)">
-          <ChalkMark size={36} color="var(--lp-ink)" />
+          <ChalkMark size={36} color="var(--lp-sky)" />
           <span className="lp-brand text-[36px] leading-none">chalk</span>
         </p>
       </aside>
