@@ -48,9 +48,9 @@ void main() {
   float ripple = 0.035 * sin(uv.x * 12.0) * (0.5 + 0.5 * sin(t * 2.6))
                + 0.02 * cos(uv.x * 21.0) * (0.5 + 0.5 * cos(t * 3.9));
   float breath = 0.02 * sin(t * 0.8);
-  float surface = 0.24 + breath + L * 0.42 * mound + L * ripple * 4.0 + ripple * 0.4;
+  float surface = 0.14 + breath + L * 0.34 * mound + L * ripple * 4.0 + ripple * 0.4;
   float d = uv.y - surface;                 // negative below the surface
-  float f = smoothstep(0.42, -0.02, d);
+  float f = smoothstep(0.34, -0.02, d);
   int bx = int(mod(gl_FragCoord.x / u_pixel, 4.0));
   int by = int(mod(gl_FragCoord.y / u_pixel, 4.0));
   float threshold = bayer[by][bx];
