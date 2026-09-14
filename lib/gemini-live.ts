@@ -38,6 +38,7 @@ export type SessionCallbacks = {
   onDisconnected: () => void;
   onError: (msg: string) => void;
   onInterrupted: () => void;
+  onTurnComplete?: () => void;
   onDebugEvent?: (event: {
     kind: string;
     message: string;
@@ -496,6 +497,7 @@ export class GeminiLiveSession {
       if (serverContent.turnComplete === true) {
         this.debug("turn", "turn_complete", { tutorChars: this.tutorTurnText.trim().length });
         this.finishTutorTurn();
+        this.callbacks.onTurnComplete?.();
       }
     }
 

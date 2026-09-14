@@ -201,7 +201,7 @@ function SessionDetailPage({ id }: { id: string }) {
       speaking = !speaking;
       setIsTutorSpeaking(speaking);
       setTutorActivity(speaking ? "idle" : "writing");
-      setSubtitleText(speaking ? "Look at the board: the pizza is cut into two equal pieces and one is shaded. Which piece is one half?" : "");
+      if (speaking) setSubtitleText("Look at the board: the pizza is cut into two equal pieces and one is shaded. Which piece is one half?");
     }, 4200);
     const clock = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
     return () => {
@@ -352,6 +352,27 @@ function SessionDetailPage({ id }: { id: string }) {
     subtitleTimerRef.current = null;
     setSubtitleText("");
   }, []);
+
+  // Captions stay up for the whole utterance and linger after it so the last
+  // sentence can be read to the end; a fixed timer used to cut them off while
+  // the tutor was still talking.
+  useEffect(() => {
+    if (subtitleTimerRef.current) {
+      clearTimeout(subtitleTimerRef.current);
+      subtitleTimerRef.current = null;
+    }
+    if (isTutorSpeaking || !subtitleText) return;
+    subtitleTimerRef.current = setTimeout(() => {
+      subtitleTimerRef.current = null;
+      setSubtitleText("");
+    }, 4000);
+    return () => {
+      if (subtitleTimerRef.current) {
+        clearTimeout(subtitleTimerRef.current);
+        subtitleTimerRef.current = null;
+      }
+    };
+  }, [isTutorSpeaking, subtitleText]);
 
   const cleanupTimers = useCallback(() => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -506,12 +527,9 @@ function SessionDetailPage({ id }: { id: string }) {
         });
       },
       onCaption: (text) => {
+        // Lifetime is handled by the speaking effect: the caption stays while
+        // the tutor talks and lingers a few seconds after.
         setSubtitleText(text);
-        if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
-        subtitleTimerRef.current = setTimeout(() => {
-          subtitleTimerRef.current = null;
-          setSubtitleText("");
-        }, 3500);
       },
       onToolCall: handleToolCall,
       onConnected: ({ resumed, expiresAt }) => {

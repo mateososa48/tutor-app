@@ -7,6 +7,25 @@ import { AnimatePresence, motion } from "motion/react";
 // the voice dock, and lingers briefly after the sentence ends so it can be
 // read to the end.
 
+// A long turn arrives as one growing string; show its last sentence or two so
+// the caption follows the voice instead of pinning the start of the turn.
+function tail(text: string): string {
+  const t = text.trim();
+  if (t.length <= 160) return t;
+  const parts = t.match(/[^.!?]+(?:[.!?]+["')\]]*|$)/g) ?? [t];
+  let out = "";
+  let count = 0;
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const piece = parts[i].trim();
+    if (!piece) continue;
+    const candidate = out ? `${piece} ${out}` : piece;
+    if (count > 0 && (count >= 2 || candidate.length > 200)) break;
+    out = candidate;
+    count++;
+  }
+  return out;
+}
+
 export function CaptionBar({ text }: { text: string }) {
   const [shown, setShown] = useState("");
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -24,7 +43,7 @@ export function CaptionBar({ text }: { text: string }) {
   }, [text]);
 
   return (
-    <div className="pointer-events-none absolute inset-x-5 bottom-7 z-20 flex justify-center md:right-[424px]">
+    <div className="pointer-events-none absolute inset-x-5 bottom-7 z-20 flex justify-center md:right-[380px]">
       <AnimatePresence>
         {shown && (
           <motion.div
@@ -39,7 +58,7 @@ export function CaptionBar({ text }: { text: string }) {
               boxShadow: "0 1px 2px rgba(18,18,21,0.2), 0 12px 32px rgba(18,18,21,0.18)",
             }}
           >
-            <p className="m-0 line-clamp-3 text-[15.5px] leading-[1.5] font-medium tracking-[-0.005em] text-white">{shown}</p>
+            <p className="m-0 line-clamp-3 text-[15.5px] leading-[1.5] font-medium tracking-[-0.005em] text-white">{tail(shown)}</p>
           </motion.div>
         )}
       </AnimatePresence>

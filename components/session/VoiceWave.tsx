@@ -45,12 +45,14 @@ void main() {
   // amplitude pulses in time. Nothing travels sideways; it only rises and falls.
   float x = uv.x * 2.0 - 1.0;
   float mound = 1.0 - x * x * 0.55;
-  float ripple = 0.035 * sin(uv.x * 12.0) * (0.5 + 0.5 * sin(t * 2.6))
-               + 0.02 * cos(uv.x * 21.0) * (0.5 + 0.5 * cos(t * 3.9));
-  float breath = 0.02 * sin(t * 0.8);
-  float surface = 0.14 + breath + L * 0.34 * mound + L * ripple * 4.0 + ripple * 0.4;
+  float ripple = 0.04 * sin(uv.x * 12.0) * sin(t * 2.6)
+               + 0.025 * cos(uv.x * 21.0) * sin(t * 3.9 + 0.7)
+               + 0.03 * sin(uv.x * 6.0 + 1.3) * sin(t * 1.7);
+  float breath = 0.025 * sin(t * 1.1);
+  float surface = 0.10 + breath + L * 0.36 * mound + L * ripple * 2.8 + ripple * 0.7;
   float d = uv.y - surface;                 // negative below the surface
-  float f = smoothstep(0.34, -0.02, d);
+  // The bottom rows stay solid even in a trough.
+  float f = max(smoothstep(0.34, -0.02, d), smoothstep(0.07, 0.0, uv.y));
   int bx = int(mod(gl_FragCoord.x / u_pixel, 4.0));
   int by = int(mod(gl_FragCoord.y / u_pixel, 4.0));
   float threshold = bayer[by][bx];
@@ -182,7 +184,7 @@ export function VoiceWave({ analyser, speaking, className }: Props) {
       // Fast attack, slow release: the shape jumps up with a syllable and
       // settles gently after it.
       const target = sample(now);
-      smoothed += (target - smoothed) * (target > smoothed ? 0.35 : 0.07);
+      smoothed += (target - smoothed) * (target > smoothed ? 0.45 : 0.12);
       gl.uniform1f(uLevel, smoothed);
       gl.uniform1f(uTime, (now - start) / 1000);
       gl.drawArrays(gl.TRIANGLES, 0, 3);

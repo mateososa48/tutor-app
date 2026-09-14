@@ -37,7 +37,7 @@ type Props = {
 
 const CONTROLS_H = 68;
 const DOCK_H = 200;
-const INSET = 12; // gap between the dock and the open sheet's edges
+const INSET = 10; // gap between the dock and the open sheet's edges
 const PILL =
   "h-9 rounded-full border-(--lp-line-strong) bg-white/92 px-3.5 text-[13px] font-medium text-(--lp-ink) shadow-(--lp-shadow-card) backdrop-blur-md hover:bg-white";
 
@@ -105,7 +105,7 @@ export function VoiceDock({
   const spring = reduce ? { duration: 0 } : SPRING;
 
   return (
-    <div className="absolute right-4 bottom-4 z-30 w-[380px] max-w-[calc(100%-32px)]">
+    <div className="absolute right-4 bottom-4 z-30 w-[340px] max-w-[calc(100%-32px)]">
       {/* The sheet: grows upward behind the dock. */}
       <motion.div
         initial={false}
@@ -165,7 +165,7 @@ export function VoiceDock({
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-end px-3" style={{ height: CONTROLS_H }}>
           <MorphSurface.Root value={composer ? "typing" : "voice"} origin="right" className="rounded-[14px]">
             {composer ? (
-              <div className="flex w-[348px] items-center gap-1.5">
+              <div className="flex w-[308px] items-center gap-1.5">
                 <Button variant="ghost" size="icon" onClick={() => setComposer(false)} aria-label="Back to voice" className="size-10 rounded-full text-white hover:bg-white/15 hover:text-white">
                   <X className="size-[18px]" strokeWidth={2} />
                 </Button>
@@ -182,7 +182,7 @@ export function VoiceDock({
                 </Button>
               </div>
             ) : (
-              <div className="flex w-[348px] items-center justify-between">
+              <div className="flex w-[308px] items-center justify-between">
                 <Tooltip>
                   <TooltipTrigger
                     render={
