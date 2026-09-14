@@ -81,24 +81,29 @@ void main() {
     vec2 warpB = vec2(fbm4(p + u_amp * 4.0 * warpA + vec2(1.7, 9.2) + t * 0.15),
                       fbm4(p + u_amp * 4.0 * warpA + vec2(8.3, 2.8) - t * 0.126));
     float n = fbm4(p + u_amp * 4.0 * warpB);
-    // Calibrated against a JS model of this field (frequency 1.7, warp 0.45):
-    // Four breakpoints, one between each pair of neighbouring tones, fitted on
-    // this field as rendered over ten minutes (frequency 1.7, warp 0.45): the
-    // long-run mix is about 10.5% darkest, 15% mid, 22% light, 28.5% palest
-    // and 24% background. Any single moment drifts around that as it moves.
-    // Two things keep every area dithered rather than one flat colour: a
-    // finer, fainter grain on top, and ends that stop short of the darkest tone
-    // and the background (a hard clamp there left flat patches over a fifth of
-    // the panel; with these, under 1% even at the worst moment).
+    // Ribbons: the tone follows contour bands of the warped field (a triangle
+    // wave, dark to light and back), a finer grain bends the bands and a slow
+    // drift slides them, so every part of the panel carries swirling ribbons
+    // instead of settling into one broad patch of colour. Four bands and a
+    // light grain keep it calm (six with full grain read as too busy); rendered
+    // over ten minutes, the dark shades sit evenly in every corner (23-28%
+    // each, against 5-55% before).
+    const float RIBBONS = 4.0;
+    const float GRAIN = 0.45;
+    const float DRIFT = 0.03;
     float grain = fbm4(p * 3.1 + vec2(t * 0.21, -t * 0.17));
-    const float K0 = 0.4121;
-    const float K1 = 0.4834;
-    const float K2 = 0.5306;
-    const float K3 = 0.6096;
-    float g = n < K1 ? 0.125 + (n - K0) * 0.25 / (K1 - K0)
-            : n < K2 ? 0.375 + (n - K1) * 0.25 / (K2 - K1)
-            : 0.625 + (n - K2) * 0.25 / (K3 - K2);
-    f = clamp(g + 0.415 * (grain - 0.477), 0.04, 0.96);
+    float v = 1.0 - abs(1.0 - 2.0 * fract(n * RIBBONS + grain * GRAIN + t * DRIFT));
+    // v is spread roughly evenly, so each breakpoint sits near the cumulative
+    // share of the tones below it (darkest, mid, light, palest, background);
+    // corrected on the rendered field to about 10.5 / 15.3 / 22 / 28.5 / 23.8%.
+    const float K0 = 0.089;
+    const float K1 = 0.225;
+    const float K2 = 0.443;
+    const float K3 = 0.746;
+    float g = v < K1 ? 0.125 + (v - K0) * 0.25 / (K1 - K0)
+            : v < K2 ? 0.375 + (v - K1) * 0.25 / (K2 - K1)
+            : 0.625 + (v - K2) * 0.25 / (K3 - K2);
+    f = clamp(g, 0.0, 1.0);
   } else {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
     float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);
