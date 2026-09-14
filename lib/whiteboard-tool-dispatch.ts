@@ -83,7 +83,7 @@ export function dispatchWhiteboardTool(
   if (!board || !token) return result;
   const itemId = board.endItem(token, result.success ? result.message ?? null : null);
   if (result.success && itemId) {
-    return { success: true, message: `${(result.message ?? "Done").replace(/[.]\s*$/, "")} (item ${itemId}).` };
+    return { success: true, message: `${(result.message ?? "Done").replace(/[.]\s*$/, "")} (item ${itemId})` };
   }
   return result;
 }

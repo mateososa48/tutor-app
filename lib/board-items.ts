@@ -54,7 +54,8 @@ export function itemKind(tool: string): string {
 export function itemLabelFrom(message: string | null | undefined, fallback: string): string {
   const raw = (message ?? "").replace(/\s+/g, " ").trim().replace(/[.]+$/, "");
   const text = raw
-    .replace(/^(Cleared the board and wrote|Wrote the line|Wrote|Drew|Student's attempt written in their hand\.?)\s*/i, "")
+    .replace(/^(Cleared the board and wrote the heading|Cleared the board and wrote|Wrote the line|Wrote|Drew|Student's attempt written in their hand\.?)\s*/i, "")
+    .replace(/\s*\(item b\d+\)$/, "")
     .trim();
   const label = text || fallback;
   return label.length > 90 ? `${label.slice(0, 87).trimEnd()}…` : label;

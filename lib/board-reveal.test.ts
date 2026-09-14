@@ -21,8 +21,8 @@ test("a busy call is squeezed under the cap", () => {
 });
 
 test("durations scale with content and stay bounded", () => {
-  assert.equal(stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 0 }), 90);
-  assert.equal(stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 1000 }), 1600);
+  assert.equal(stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 0 }), 80);
+  assert.equal(stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 1000 }), 1400);
   assert.equal(stepDuration({ id: "x", kind: "stroke", x: 0, y: 0, length: 100 }), 290);
   assert.equal(stepDuration({ id: "x", kind: "box", x: 0, y: 0 }), 170);
 });

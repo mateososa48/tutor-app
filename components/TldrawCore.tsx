@@ -345,6 +345,28 @@ function resolveEqIndex(items: EqItem[], target: { step_label?: string; step_ind
   return -1;
 }
 
+// Repeat each corner (a bend of more than ~35°) a few times. The freehand
+// stroke renderer streamlines its input, which turns sharp corners into
+// petals; repeated points make it stop and turn.
+function sharpenCorners(points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+  if (points.length < 3) return points;
+  const out: Array<{ x: number; y: number }> = [];
+  const n = points.length;
+  for (let i = 0; i < n; i++) {
+    const p = points[i];
+    const prev = points[(i - 1 + n) % n];
+    const next = points[(i + 1) % n];
+    const a1 = Math.atan2(p.y - prev.y, p.x - prev.x);
+    const a2 = Math.atan2(next.y - p.y, next.x - p.x);
+    let d = Math.abs(a2 - a1);
+    if (d > Math.PI) d = Math.PI * 2 - d;
+    const corner = i === 0 || i === n - 1 || d > (35 * Math.PI) / 180;
+    out.push(p);
+    if (corner) out.push({ x: p.x, y: p.y }, { x: p.x, y: p.y }, { x: p.x, y: p.y });
+  }
+  return out;
+}
+
 function shapeSize(shape: unknown): { w: number; h: number } {
   const props = (shape as { props?: { w?: unknown; h?: unknown } }).props;
   return {
@@ -1495,9 +1517,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       dash?: TLDefaultDashStyle;
       fill?: TLDefaultFillStyle;
       isClosed?: boolean;
+      /** Keep corners crisp: the freehand renderer rounds them off otherwise. */
+      sharp?: boolean;
     },
   ) => {
     if (points.length < 2) return;
+    if (opts.sharp) points = sharpenCorners(points);
     const baseX = typeof x === "number" && Number.isFinite(x)
       ? x
       : Math.min(...points.map((p) => p.x));
@@ -2578,7 +2603,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
               const pts = f.d === 1
                 ? arcPolyline(cx, cy, R, -90, 270)
                 : sectorPolygon(cx, cy, R, -90 + (360 * i) / f.d, -90 + (360 * (i + 1)) / f.d);
-              createDrawStroke(editor, undefined, undefined, pts, { color: pen, fill: "solid", dash: "solid", size: "s", isClosed: true });
+              createDrawStroke(editor, undefined, undefined, pts, { color: pen, fill: "solid", dash: "solid", size: "s", isClosed: true, sharp: true });
             }
             createFreeformGeo(editor, "ellipse", cursor, y0, R * 2, R * 2, INK, "none", { dash: "solid" });
             for (const a of dividerAngles(f.d)) {

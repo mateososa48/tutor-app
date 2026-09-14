@@ -28,14 +28,14 @@ export type RevealInput = {
   length?: number;
 };
 
-export const REVEAL_CAP_MS = 2400;
+export const REVEAL_CAP_MS = 1800;
 
 // A hand writes about 40 characters a second on a board, draws a stroke at
 // roughly a pixel per millisecond, and drops a box or an arrow in a blink.
 export function stepDuration(input: RevealInput): number {
   switch (input.kind) {
     case "text":
-      return Math.min(1600, 90 + 24 * (input.chars ?? 0));
+      return Math.min(1400, 80 + 20 * (input.chars ?? 0));
     case "eq":
       return Math.min(900, 380 + 7 * (input.chars ?? 0));
     case "stroke":
