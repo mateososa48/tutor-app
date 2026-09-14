@@ -212,7 +212,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         second_label: { type: "string", description: "Optional short label after the second line, e.g. 'marbles'. 40 chars max." },
         points: {
           type: "string",
-          description: "Optional comma-separated dots: 'value' or 'value:label', fractions allowed. E.g. '3, 3/4:three quarters, -2:start'. 800 chars max.",
+          description: "Optional comma-separated dots: 'value' or 'value:label', fractions allowed. E.g. '3, 3/4:three quarters, -2:start'. Repeat a value to stack dots (a dot plot: '2, 2, 2, 3, 5, 5'). 800 chars max.",
         },
         intervals: {
           type: "string",
@@ -527,13 +527,15 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "draw_grid",
     description:
-      "Draw a grid of squares with the first N shaded. THE picture for percent and decimals (a 10 × 10 grid with 25 shaded is 25% = 0.25), for a fraction of a set, and for area as counting squares (a 3 × 4 rectangle has 12 squares).",
+      "Draw a grid of squares with the first N shaded. THE picture for percent and decimals (a 10 × 10 grid with 25 shaded is 25% = 0.25), for a fraction of a set, for area as counting squares (a 3 × 4 rectangle has 12 squares), and, with shade_rows and shade_columns, for multiplying fractions (the overlap).",
     parameters: {
       type: "object",
       properties: {
         rows: { type: "number", description: "Rows, 1 to 20." },
         columns: { type: "number", description: "Columns, 1 to 20." },
         shaded: { type: "number", description: "How many squares to shade, filling row by row from the top left. Default 0." },
+        shade_rows: { type: "number", description: "Optional: tint the first N rows (with shade_columns, the overlap is a fraction of a fraction: 2/3 × 3/4 is a 3 × 4 grid with shade_rows 2 and shade_columns 3, overlap 6 of 12)." },
+        shade_columns: { type: "number", description: "Optional: hatch the first M columns. THE picture for multiplying fractions when used with shade_rows." },
         label: { type: "string", description: "Optional caption, e.g. '25 out of 100 = 25%'. 160 chars max." },
         column: COLUMN,
       },

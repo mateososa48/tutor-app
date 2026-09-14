@@ -2193,8 +2193,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const intervalPen = (i: number) => pens[i % pens.length];
       const markPen = (i: number) => pens[(opts.intervals.length + i) % pens.length];
       const jumpPen = (i: number) => pens[(opts.intervals.length + opts.marks.length + i) % pens.length];
-      const dot = (cx: number, open: boolean, color: TldrawColor) =>
-        createFreeformGeo(editor, "ellipse", cx - 7, lineY - 7, 14, 14, color, open ? "semi" : "fill", { dash: "solid" });
+      const dot = (cx: number, open: boolean, color: TldrawColor, dy = 0) =>
+        createFreeformGeo(editor, "ellipse", cx - 7, lineY - 7 + dy, 14, 14, color, open ? "semi" : "fill", { dash: "solid" });
 
       // Shaded ranges go under everything else.
       opts.intervals.forEach((iv, i) => {
@@ -2238,9 +2238,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         if (iv.from >= min && iv.from <= max) dot(px(iv.from), iv.openFrom, intervalPen(i));
         if (iv.to >= min && iv.to <= max) dot(px(iv.to), iv.openTo, intervalPen(i));
       });
+      // Repeated values stack upward: a dot plot.
+      const stacked = new Map<number, number>();
       opts.marks.forEach((m, i) => {
-        dot(px(m.value), false, markPen(i));
-        if (m.label) {
+        const k = stacked.get(m.value) ?? 0;
+        stacked.set(m.value, k + 1);
+        dot(px(m.value), false, markPen(i), -k * 16);
+        if (m.label && k === 0) {
           createText(editor, m.label, px(m.value) - 70, lineY - 40, { color: markPen(i), size: "s", font: "sans", width: 140, align: "middle" });
         }
       });
@@ -3001,12 +3005,22 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const y = colY(col).current;
       const ox = x + 4;
       const oy = y + 4;
-      const pen = takePens(1)[0];
-      const shaded = clamp(Math.round(opts.shaded), 0, opts.rows * opts.columns);
-      const full = Math.floor(shaded / opts.columns);
-      const rem = shaded % opts.columns;
-      if (full > 0) createBox(editor, ox, oy, gw, full * CELL, "", pen, "solid", { dash: "solid" });
-      if (rem > 0) createBox(editor, ox, oy + full * CELL, rem * CELL, CELL, "", pen, "solid", { dash: "solid" });
+      const bands = (opts.shadeRows ?? 0) > 0 || (opts.shadeColumns ?? 0) > 0;
+      const pens = takePens(bands ? 2 : 1);
+      const pen = pens[0];
+      if (bands) {
+        // A fraction of a fraction: rows tinted, columns hatched, the overlap shows both.
+        const sr = clamp(Math.round(opts.shadeRows ?? 0), 0, opts.rows);
+        const sc = clamp(Math.round(opts.shadeColumns ?? 0), 0, opts.columns);
+        if (sr > 0) createBox(editor, ox, oy, gw, sr * CELL, "", pens[0], "solid", { dash: "solid" });
+        if (sc > 0) createBox(editor, ox, oy, sc * CELL, gh, "", pens[1], "pattern", { dash: "solid" });
+      } else {
+        const shaded = clamp(Math.round(opts.shaded), 0, opts.rows * opts.columns);
+        const full = Math.floor(shaded / opts.columns);
+        const rem = shaded % opts.columns;
+        if (full > 0) createBox(editor, ox, oy, gw, full * CELL, "", pen, "solid", { dash: "solid" });
+        if (rem > 0) createBox(editor, ox, oy + full * CELL, rem * CELL, CELL, "", pen, "solid", { dash: "solid" });
+      }
       for (let r = 0; r <= opts.rows; r++) {
         createLineShape(editor, undefined, undefined, [{ x: ox, y: oy + r * CELL }, { x: ox + gw, y: oy + r * CELL }], { color: INK, size: "s", dash: "solid" });
       }

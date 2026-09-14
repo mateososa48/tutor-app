@@ -546,7 +546,16 @@ export function parseTapeRows(input: string): TapeRow[] {
     .filter((row) => row.segments.length > 0);
 }
 
-export type GridDrawing = { rows: number; columns: number; shaded: number; label?: string; column?: BoardColumn };
+export type GridDrawing = {
+  rows: number;
+  columns: number;
+  shaded: number;
+  /** Shade the first N rows one way and the first M columns the other: the overlap is a fraction of a fraction. */
+  shadeRows?: number;
+  shadeColumns?: number;
+  label?: string;
+  column?: BoardColumn;
+};
 
 export type VerticalDrawing = {
   operands: string[];

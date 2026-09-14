@@ -77,6 +77,8 @@ const math: DemoCall[] = [
   { name: "start_new_problem", args: { title: "Math pictures" } },
   { name: "draw_tape_diagram", args: { rows: "Red: *4 | *4 = 8; Blue: 4 | 4 | 4 = 12", total_label: "20 marbles", label: "2 : 3" } },
   { name: "draw_grid", args: { rows: 10, columns: 10, shaded: 25, label: "25 out of 100 = 25% = 0.25", column: "right" } },
+  { name: "draw_grid", args: { rows: 3, columns: 4, shade_rows: 2, shade_columns: 3, label: "2/3 × 3/4 = 6/12", column: "right" } },
+  { name: "add_number_line", args: { min: 0, max: 6, step: 1, points: "2, 2, 2, 3, 5, 5", label: "a dot plot of six scores", column: "right" } },
   { name: "write_vertical", args: { operands: "347 | 289", operation: "+", carries: "1 1", result: "636" } },
   { name: "write_vertical", args: { operands: "23 | 14", operation: "×", partial_products: "92 | 230", result: "322", column: "right" } },
   { name: "draw_long_division", args: { dividend: "156", divisor: "12", quotient: "13", steps: "-12 | 36 | -36 | 0" } },

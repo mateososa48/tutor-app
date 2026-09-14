@@ -690,12 +690,19 @@ function dispatchInner(
       const columns = clamp(Math.round(colsRaw), 1, 20);
       const shadedRaw = optionalNumber(args, "shaded"); if (isToolError(shadedRaw)) return shadedRaw;
       const shaded = clamp(Math.round(shadedRaw ?? 0), 0, rows * columns);
+      const srRaw = optionalNumber(args, "shade_rows"); if (isToolError(srRaw)) return srRaw;
+      const scRaw = optionalNumber(args, "shade_columns"); if (isToolError(scRaw)) return scRaw;
+      const shadeRows = srRaw ? clamp(Math.round(srRaw), 0, rows) : undefined;
+      const shadeColumns = scRaw ? clamp(Math.round(scRaw), 0, columns) : undefined;
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${rows} by ${columns} grid` }, () =>
-        board.drawGrid({ rows, columns, shaded, label: label.value, column: pickColumn(column.value) }),
+        board.drawGrid({ rows, columns, shaded, shadeRows, shadeColumns, label: label.value, column: pickColumn(column.value) }),
       );
-      return ok(`Drew a ${rows} × ${columns} grid (${rows * columns} squares) with ${shaded} shaded${label.value ? `, captioned "${label.value}"` : ""}.`);
+      const bands = shadeRows || shadeColumns
+        ? `${shadeRows ? `${shadeRows} of ${rows} rows tinted` : ""}${shadeRows && shadeColumns ? ", " : ""}${shadeColumns ? `${shadeColumns} of ${columns} columns hatched` : ""}${shadeRows && shadeColumns ? `; overlap ${shadeRows * shadeColumns} of ${rows * columns}` : ""}`
+        : `${shaded} shaded`;
+      return ok(`Drew a ${rows} × ${columns} grid (${rows * columns} squares) with ${bands}${label.value ? `, captioned "${label.value}"` : ""}.`);
     }
 
     case "write_vertical": {
