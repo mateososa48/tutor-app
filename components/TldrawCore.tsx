@@ -357,6 +357,7 @@ function resolveEqIndex(items: EqItem[], target: { step_label?: string; step_ind
   }
   const idx = target.step_index;
   const stepIndices = items.map((item, i) => (item.role === "label" ? -1 : i)).filter((i) => i >= 0);
+  if (idx === -1 && stepIndices.length > 0) return stepIndices[stepIndices.length - 1];
   if (typeof idx === "number" && Number.isInteger(idx) && idx >= 0 && idx < stepIndices.length) {
     return stepIndices[idx];
   }

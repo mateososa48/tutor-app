@@ -98,6 +98,14 @@ export function resolveItemTarget(items: BoardItem[], target: string): BoardItem
     const item = items[i];
     if (item.label.toLowerCase().includes(t) || itemKind(item.tool) === t || (ts.length >= 2 && squash(item.label).includes(ts))) return item;
   }
+  // "3 | 4" or "sides 3, 4": every token has to appear somewhere in the label.
+  const tokens = t.split(/[\s|,;:]+/).filter(Boolean);
+  if (tokens.length > 0) {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const label = items[i].label.toLowerCase();
+      if (tokens.every((tok) => label.includes(tok))) return items[i];
+    }
+  }
   const words = t.split(/\s+/).filter((w) => w.length > 2);
   if (words.length === 0) return null;
   let best: { item: BoardItem; score: number } | null = null;

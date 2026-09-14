@@ -232,12 +232,9 @@ function dispatchInner(
       const stepIndex = optionalNumber(args, "step_index");
       if (isToolError(stepIndex)) return stepIndex;
       const stepLabel = opt(args, "step_label"); if (stepLabel.error) return stepLabel.error;
-      if (stepIndex === undefined && stepLabel.value === undefined) {
-        return fail('Provide "step_label" (preferred) or "step_index" to identify the target step.');
-      }
-      const done = board.withDirectMeta({ owner: "tutor" }, () =>
-        board.highlightStep({ step_label: stepLabel.value, step_index: stepIndex }, resolvedStyle),
-      );
+      // No target: the newest line is what the tutor means.
+      const target = stepIndex === undefined && stepLabel.value === undefined ? { step_index: -1 } : { step_label: stepLabel.value, step_index: stepIndex };
+      const done = board.withDirectMeta({ owner: "tutor" }, () => board.highlightStep(target, resolvedStyle));
       if (!done) return fail("That line is not on the board, so nothing was highlighted. Write the point fresh instead.");
       return ok(`Line ${resolvedStyle === "circle" ? "ringed" : resolvedStyle === "box" ? "boxed" : "underlined"}.`);
     }
@@ -248,12 +245,8 @@ function dispatchInner(
       const stepIndex = optionalNumber(args, "step_index");
       if (isToolError(stepIndex)) return stepIndex;
       const stepLabel = opt(args, "step_label"); if (stepLabel.error) return stepLabel.error;
-      if (stepIndex === undefined && stepLabel.value === undefined) {
-        return fail('Provide "step_label" (preferred) or "step_index" to identify the target step.');
-      }
-      const done = board.withDirectMeta({ owner: "tutor" }, () =>
-        board.crossOutStep({ step_label: stepLabel.value, step_index: stepIndex }),
-      );
+      const target = stepIndex === undefined && stepLabel.value === undefined ? { step_index: -1 } : { step_label: stepLabel.value, step_index: stepIndex };
+      const done = board.withDirectMeta({ owner: "tutor" }, () => board.crossOutStep(target));
       if (!done) return fail("That line is not on the board, so nothing was crossed out. Write the correction fresh instead.");
       return ok("Line crossed out.");
     }

@@ -54,3 +54,15 @@ test("long labels keep their caption", async () => {
   assert.ok(label.startsWith("a whole is 100%: "), label);
   assert.ok(label.length <= 92, String(label.length));
 });
+
+test("targets with separators match by tokens", async () => {
+  const { resolveItemTarget } = await import("./board-items");
+  const items = [
+    { id: "b1", tool: "draw_figure", label: "a right triangle with sides 3, 4, ?; vertices A, B, C", shapeIds: [], eqItemIds: [], owner: "tutor" as const, createdAt: 0 },
+    { id: "b2", tool: "draw_angle", label: "a 110° angle next to a 70° angle labelled ?", shapeIds: [], eqItemIds: [], owner: "tutor" as const, createdAt: 0 },
+  ];
+  assert.equal(resolveItemTarget(items, "3 | 4")?.id, "b1");
+  assert.equal(resolveItemTarget(items, "sides 3, 4")?.id, "b1");
+  assert.equal(resolveItemTarget(items, "70°")?.id, "b2");
+  assert.equal(resolveItemTarget(items, "180"), null);
+});
