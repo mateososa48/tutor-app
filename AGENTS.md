@@ -9,6 +9,7 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 ## Stack
 - Next.js 16 App Router, React 19, TypeScript, Tailwind v4 (CSS-first, tokens in `app/globals.css`).
 - Voice: **OpenAI GPT-Live-1** over WebRTC (`gpt-live-1`). Teaching brain: a Responses model via GPT-Live "Responses delegation" (`gpt-5.6-terra` by default).
+- Voice fallback: **Gemini Live** (`gemini-3.1-flash-live-preview`, one model talks and draws) behind the same client surface; picked per session, see "Voice provider switch".
 - Board: tldraw v5 + KaTeX (`components/TldrawCore.tsx`, `lib/semantic-board.ts`).
 - Auth: next-auth v5 (JWT). DB: Neon Postgres via Drizzle (`lib/db/schema.ts`). Route protection in `proxy.ts`.
 
@@ -49,6 +50,14 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 6. The voice model cannot see images. Photos and PDFs go to the backend as `input_image` / `input_file` items.
 7. The SDK (`openai@7.15`) has typed Live events in `node_modules/openai/resources/live/live.d.ts` and a WebSocket client (`openai/resources/live/ws`) that is handy for Node probes.
 
+## Voice provider switch (Sept 2026)
+Two live stacks share one interface (`TutorClient` in `lib/tutor-provider.ts`: `start/end/setMuted/sendText/sendFiles` with `LiveTutorCallbacks`). The session page picks one at start:
+- `NEXT_PUBLIC_TUTOR_PROVIDER=openai|gemini` in `.env.local` (and on Vercel) sets the default; `?provider=gemini` or `?provider=openai` on a session URL overrides it for that tab. The session chip shows a small "GEMINI" tag when Gemini is active.
+- OpenAI path: `lib/live-tutor.ts` + `app/api/live-session/route.ts` (unchanged).
+- Gemini path: `lib/gemini-tutor.ts` (adapter that speaks `LiveTutorCallbacks`) → `lib/gemini-live.ts` (WebSocket BidiGenerateContent client, resumable) + `lib/audio.ts` (mic capture at 16 kHz, PCM player with an AnalyserNode for the voice wave). `app/api/live-token/route.ts` composes the Gemini prompt (`buildGeminiInstructions` in `lib/tutor-prompts.ts`: voice persona + the backend teaching rules, for one model) and the voice (`geminiVoiceFor` maps the OpenAI voice choice to a Gemini prebuilt voice); `{ configOnly: true }` returns prompt + voice, a plain POST also mints a one-use ephemeral token.
+- Ephemeral tokens only work on the `BidiGenerateContentConstrained` WebSocket method with `?access_token=`; the plain `BidiGenerateContent` method closes with 1008 "unregistered callers". Verified 2026-09-14 with a handshake probe.
+- Gemini has no Responses-delegation split, so the whiteboard tools are called by the voice model directly. Expect it to draw less carefully than the OpenAI pair.
+
 ## Landing page (branch `landing-v3`, Sept 2026)
 - Lives in `components/landing/`. `LandingPage.tsx` composes: `Header` (full-width bar that morphs into a floating glass pill on scroll, driven by one Motion spring), `Hero` (dithered-wave WebGL backdrop in `DitherWave.tsx`, no three.js), `SessionMock` (the real session screen replayed: nav rail, board, transcript), `TopicsMarquee`, `HowItWorks` (React Bits CardSwap on sm+, static column on mobile), `Bento` (four double-bordered tiles with scripted product fragments), `Founder` (React Bits ScrollReveal), `Parents` (recap card), `Faq` (shadcn Accordion), `Footer`.
 - Own tokens under `.lp` in `app/globals.css` (off-white / off-black / light gray + sky accent). Buttons are `.lp-btn`: white face, 2px ink border, solid offset shadow that the face slides into on hover. Radius rule: 10px interactive, 20px surfaces, `.lp-frame` = double border.
@@ -63,7 +72,7 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 - QA without a microphone: open `/api/dev/qa-login` (dev only) → lands on `/session?debug=1`, a text-only session with the QA panel. Add `&mic=1` for a real mic plus the panel. In dev, `window.__liveTutor` exposes `debugStats()` and `debugSend(event)`.
 
 ## Environment (`.env.local`)
-`OPENAI_API_KEY` (required), `DATABASE_URL`, `AUTH_SECRET`, `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`. Optional: `OPENAI_TUTOR_BACKEND_MODEL` (default `gpt-5.6-terra`; `gpt-5.6-luna` is ~10x cheaper), `OPENAI_TUTOR_REASONING_EFFORT` (default `low`). Vercel needs the same variables in BOTH the Preview and Production environments (the Preview environment was missing `DATABASE_URL`, `AUTH_SECRET`, and the tldraw key, which is why every branch deploy failed). The DB client no longer throws at build time when the variable is missing; the first query fails instead. Gemini is no longer used: remove the `GEMINI_API_KEY` / `NEXT_PUBLIC_GEMINI_API_KEY` lines and revoke the key in AI Studio.
+`OPENAI_API_KEY` (required), `DATABASE_URL`, `AUTH_SECRET`, `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`. Optional: `OPENAI_TUTOR_BACKEND_MODEL` (default `gpt-5.6-terra`; `gpt-5.6-luna` is ~10x cheaper), `OPENAI_TUTOR_REASONING_EFFORT` (default `low`). Vercel needs the same variables in BOTH the Preview and Production environments (the Preview environment was missing `DATABASE_URL`, `AUTH_SECRET`, and the tldraw key, which is why every branch deploy failed). The DB client no longer throws at build time when the variable is missing; the first query fails instead. Gemini fallback: `GEMINI_API_KEY` (server only; `NEXT_PUBLIC_GEMINI_API_KEY` is unused and should be removed) and `NEXT_PUBLIC_TUTOR_PROVIDER=gemini` to make it the default (see "Voice provider switch").
 
 ## Costs
 gpt-live-1 bills $0.05 per minute of session, plus backend tokens. Expect roughly $1.60–2.10 per 30-minute session with terra.

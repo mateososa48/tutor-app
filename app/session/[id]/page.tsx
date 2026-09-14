@@ -19,6 +19,8 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { LiveTutorSession } from "@/lib/live-tutor";
 import type { LiveTutorCallbacks } from "@/lib/live-tutor";
+import { GeminiTutorSession } from "@/lib/gemini-tutor";
+import { resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
 import type { TranscriptEntry, ToolCallResult, TutorActivity } from "@/lib/live-types";
 import {
   SavedSession,
@@ -144,7 +146,9 @@ function SessionDetailPage({ id }: { id: string }) {
   });
 
   // live tutor refs
-  const sessionRef = useRef<LiveTutorSession | null>(null);
+  const sessionRef = useRef<TutorClient | null>(null);
+  // Which voice stack runs this session (env default, ?provider= override).
+  const [provider] = useState(() => resolveTutorProvider(searchParams));
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -585,9 +589,9 @@ function SessionDetailPage({ id }: { id: string }) {
       },
     };
 
-    const live = new LiveTutorSession(callbacks);
+    const live: TutorClient = provider === "gemini" ? new GeminiTutorSession(callbacks) : new LiveTutorSession(callbacks);
     sessionRef.current = live;
-    recordDebug("connection", "live_provider_selected", { provider: "gpt-live-1" });
+    recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
 
     try {
       await live.start({
@@ -608,7 +612,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, id, pauseLiveSession, persistSnapshot, recordDebug]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, id, pauseLiveSession, persistSnapshot, provider, recordDebug]);
 
   const handleAddFiles = useCallback(
     (newFiles: UploadedFile[]) => {
@@ -923,7 +927,7 @@ function SessionDetailPage({ id }: { id: string }) {
           liveState={liveState}
           title={sessionTitle}
           elapsed={formatTime(elapsedSeconds)}
-          qaLabel={debugMode ? (qaTextOnly ? "QA text" : "QA mic") : null}
+          qaLabel={debugMode ? `${qaTextOnly ? "QA text" : "QA mic"} on ${provider}` : provider === "gemini" ? "gemini" : null}
         />
         <div className="absolute top-4 right-4 z-30">
           <EndSessionButton disabled={liveState !== "active"} onConfirm={endSession} />
