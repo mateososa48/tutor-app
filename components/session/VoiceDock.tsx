@@ -102,7 +102,6 @@ export function VoiceDock({
   const open = transcriptOpen;
   const badge = BADGE[activity];
   const spring = reduce ? { duration: 0 } : SPRING;
-  const wrapperH = open ? DOCK_H + INSET : DOCK_H;
 
   return (
     <div className="absolute right-4 bottom-4 z-30 w-[380px] max-w-[calc(100%-32px)]">
@@ -111,11 +110,11 @@ export function VoiceDock({
         initial={false}
         animate={{ height: open ? sheetH : DOCK_H, opacity: open ? 1 : 0 }}
         transition={spring}
-        style={{ pointerEvents: open ? "auto" : "none" }}
+        style={{ pointerEvents: open ? "auto" : "none", left: -INSET * 2, right: 0 }}
         aria-hidden={!open}
-        className="absolute inset-x-0 bottom-0 overflow-hidden rounded-[20px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-window)"
+        className="absolute bottom-0 overflow-hidden rounded-[22px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-window)"
       >
-        <div className="h-full" style={{ paddingBottom: DOCK_H + INSET + 6 }}>
+        <div className="h-full" style={{ paddingBottom: DOCK_H + INSET * 2 }}>
           <TranscriptPanel
             transcript={transcript}
             live={activity !== "connecting"}
@@ -127,7 +126,7 @@ export function VoiceDock({
       {/* Pills ride the top edge of whatever is open. */}
       <motion.div
         initial={false}
-        animate={{ y: open ? -(sheetH - wrapperH) : 0 }}
+        animate={{ y: open ? -(sheetH - DOCK_H) : 0 }}
         transition={spring}
         className="absolute right-0 bottom-[calc(100%+10px)] flex items-center gap-2"
       >
@@ -142,7 +141,7 @@ export function VoiceDock({
           steps in from the sheet's edges when the transcript is open. */}
       <motion.div
         initial={false}
-        animate={{ paddingLeft: open ? INSET : 0, paddingRight: open ? INSET : 0, paddingBottom: open ? INSET : 0 }}
+        animate={{ x: open ? -INSET : 0, y: open ? -INSET : 0 }}
         transition={spring}
         className="relative z-10"
       >
@@ -156,8 +155,8 @@ export function VoiceDock({
         {/* The wave fades into the controls instead of stopping at a bar. */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-[128px]"
-          style={{ background: "linear-gradient(to top, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.94) 48px, rgba(255,255,255,0.55) 84px, rgba(255,255,255,0) 100%)" }}
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-[110px]"
+          style={{ background: "linear-gradient(to top, rgba(255,255,255,0.97) 0%, rgba(255,255,255,0.9) 40px, rgba(255,255,255,0.45) 74px, rgba(255,255,255,0) 100%)" }}
         />
         <div className="absolute top-3 left-3">
           <AnimatedBadge
@@ -218,7 +217,7 @@ export function VoiceDock({
                         aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
                         className={cn(
                           "relative flex size-12 items-center justify-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)",
-                          isMuted ? "btn-gloss-light" : "btn-gloss",
+                          isMuted ? "btn-mic-off" : "btn-mic",
                         )}
                       />
                     }

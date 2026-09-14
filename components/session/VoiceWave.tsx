@@ -13,7 +13,6 @@ type Props = {
   className?: string;
 };
 
-const BANDS = 48;
 const PIXEL = 3;
 
 const VERT = `#version 300 es
@@ -26,7 +25,7 @@ out vec4 outColor;
 uniform vec2 u_res;
 uniform float u_time;
 uniform float u_pixel;
-uniform float u_levels[${BANDS}];
+uniform float u_level;
 uniform vec3 u_bg;
 uniform vec3 u_top;
 uniform vec3 u_deep;
@@ -37,39 +36,35 @@ const mat4 bayer = mat4(
   3.0, 11.0, 1.0, 9.0,
   15.0, 7.0, 13.0, 5.0) / 16.0;
 
-float levelAt(float x) {
-  float f = clamp(x, 0.0, 1.0) * float(${BANDS} - 1);
-  int i = int(floor(f));
-  int j = min(i + 1, ${BANDS} - 1);
-  float t = f - float(i);
-  t = t * t * (3.0 - 2.0 * t);
-  return mix(u_levels[i], u_levels[j], t);
-}
-
 void main() {
   vec2 px = floor(gl_FragCoord.xy / u_pixel) * u_pixel;
   vec2 uv = px / u_res;
   float t = u_time;
-  // Resting water line plus a slow breath, then the voice on top of it.
-  float breath = 0.028 * sin(uv.x * 5.2 + t * 0.9) + 0.018 * sin(uv.x * 9.7 - t * 0.6);
-  float surface = 0.40 + breath + levelAt(uv.x) * 0.5;
+  float L = u_level;
+  // A standing profile: a soft mound in the middle with fixed ripples whose
+  // amplitude pulses in time. Nothing travels sideways; it only rises and falls.
+  float x = uv.x * 2.0 - 1.0;
+  float mound = 1.0 - x * x * 0.55;
+  float ripple = 0.035 * sin(uv.x * 12.0) * (0.5 + 0.5 * sin(t * 2.6))
+               + 0.02 * cos(uv.x * 21.0) * (0.5 + 0.5 * cos(t * 3.9));
+  float breath = 0.02 * sin(t * 0.8);
+  float surface = 0.30 + breath + L * 0.55 * mound + L * ripple * 4.0 + ripple * 0.4;
   float d = uv.y - surface;                 // negative below the surface
-  // Mostly dithered: solid only near the floor, sparse dots near the surface.
-  float f = smoothstep(0.46, -0.02, d);
+  float f = smoothstep(0.42, -0.02, d);
   int bx = int(mod(gl_FragCoord.x / u_pixel, 4.0));
   int by = int(mod(gl_FragCoord.y / u_pixel, 4.0));
   float threshold = bayer[by][bx];
   float steps = 5.0;
   float q = floor(f * steps + threshold) / steps;
-  float depth = smoothstep(0.55, 0.0, uv.y);
+  float depth = smoothstep(0.7, 0.0, uv.y);
   vec3 wave = mix(u_top, u_deep, depth);
   vec3 col = mix(u_bg, wave, clamp(q, 0.0, 1.0));
   outColor = vec4(col, 1.0);
 }`;
 
 const BG: [number, number, number] = [0.973, 0.976, 0.984];   // #f8f9fb
-const TOP: [number, number, number] = [0.62, 0.8, 1.0];       // pale sky
-const DEEP: [number, number, number] = [0.239, 0.612, 1.0];   // #3d9cff
+const TOP: [number, number, number] = [0.45, 0.68, 1.0];      // #73adff
+const DEEP: [number, number, number] = [0.16, 0.53, 0.95];    // #2988f2
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader | null {
   const sh = gl.createShader(type);
@@ -128,9 +123,8 @@ export function VoiceWave({ analyser, speaking, className }: Props) {
     const uRes = u("u_res");
     const uTime = u("u_time");
     const uPixel = u("u_pixel");
-    const uLevels = u("u_levels");
+    const uLevel = u("u_level");
 
-    const levels = new Float32Array(BANDS);
     const freq = new Uint8Array(1024);
     let smoothed = 0;
     let dpr = 1;
@@ -175,7 +169,6 @@ export function VoiceWave({ analyser, speaking, className }: Props) {
     };
 
     let raf = 0;
-    let last = 0;
     let visible = true;
     const io = new IntersectionObserver(([entry]) => {
       visible = entry.isIntersecting;
@@ -186,23 +179,18 @@ export function VoiceWave({ analyser, speaking, className }: Props) {
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       if (!visible) return;
-      // Fast attack, slow release, then scroll the history left every ~28 ms.
+      // Fast attack, slow release: the shape jumps up with a syllable and
+      // settles gently after it.
       const target = sample(now);
-      smoothed += (target - smoothed) * (target > smoothed ? 0.5 : 0.09);
-      if (now - last > 28) {
-        last = now;
-        levels.copyWithin(0, 1);
-        levels[BANDS - 1] = smoothed;
-      }
-      gl.uniform1fv(uLevels, levels);
+      smoothed += (target - smoothed) * (target > smoothed ? 0.35 : 0.07);
+      gl.uniform1f(uLevel, smoothed);
       gl.uniform1f(uTime, (now - start) / 1000);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
 
     if (reduce) {
       // One still frame with a calm level.
-      levels.fill(0.12);
-      gl.uniform1fv(uLevels, levels);
+      gl.uniform1f(uLevel, 0.12);
       gl.uniform1f(uTime, 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     } else {
