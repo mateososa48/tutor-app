@@ -82,9 +82,10 @@ void main() {
                       fbm4(p + u_amp * 4.0 * warpA + vec2(8.3, 2.8) - t * 0.126));
     float n = fbm4(p + u_amp * 4.0 * warpB);
     // Calibrated against a JS model of this field (frequency 1.7, warp 0.45):
-    // an even spread of blues (about a quarter each deep, deep-to-light and
-    // light, 18% pale) and 5% background, steady from frame to frame.
-    f = smoothstep(0.31, 0.81, n);
+    // a spread of blues leaning light (about 18% deep, a quarter each
+    // deep-to-light and light, a fifth pale) and 8% background, steady from
+    // frame to frame.
+    f = smoothstep(0.28, 0.8, n);
   } else {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
     float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);
