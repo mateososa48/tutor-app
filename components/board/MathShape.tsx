@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { HTMLContainer, Rectangle2d, ShapeUtil, T, type RecordProps, type TLBaseShape } from "tldraw";
 import katex from "katex";
 import { latexToPlain } from "@/lib/latex-plain";
+import { normalizeLatex } from "@/lib/latex-normalize";
 
 // Typeset math as a real tldraw shape. KaTeX renders it on the canvas; the
 // shape carries its cross-out, highlight ring, side annotation, and the
@@ -46,12 +47,25 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-export function renderMathHtml(latex: string, display: boolean): string {
+// Parse errors throw here (undefined commands, unbalanced braces), so the
+// caller can try a cleaner form instead of showing KaTeX's error markup.
+function tryKatex(latex: string, display: boolean): string | null {
   try {
-    return katex.renderToString(latex, { throwOnError: false, displayMode: display, strict: "ignore" });
+    return katex.renderToString(latex, { throwOnError: true, displayMode: display, strict: "ignore" });
   } catch {
-    return escapeHtml(latex);
+    return null;
   }
+}
+
+// As written, then normalised, then as plain text in the math face: the
+// board never shows KaTeX's red error markup.
+export function renderMathHtml(latex: string, display: boolean): string {
+  const direct = tryKatex(latex, display);
+  if (direct) return direct;
+  const normalised = tryKatex(normalizeLatex(latex), display);
+  if (normalised) return normalised;
+  const plain = tryKatex(`\\text{${latexToPlain(latex).replace(/[{}\\]/g, "")}}`, display);
+  return plain ?? `<span class="katex">${escapeHtml(latexToPlain(latex))}</span>`;
 }
 
 let measurer: HTMLDivElement | null = null;

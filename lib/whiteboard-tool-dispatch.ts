@@ -27,6 +27,8 @@ import {
 import { parseTargetList } from "@/lib/board-items";
 import { latexToPlain } from "@/lib/latex-plain";
 import { BOARD_ICON_NAMES } from "@/lib/board-icon-names.generated";
+import { resolveIconName } from "@/lib/board-icons";
+import { normalizeLatex, splitLatexLines } from "@/lib/latex-normalize";
 import {
   fail,
   isToolError,
@@ -154,8 +156,10 @@ function dispatchInner(
     case "add_equation_sequence": {
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;
-      const steps = requiredString(args, "steps");
-      if (isToolError(steps)) return steps;
+      const stepsRaw = requiredString(args, "steps");
+      if (isToolError(stepsRaw)) return stepsRaw;
+      const steps = splitPipe(stepsRaw).map(normalizeLatex).filter(Boolean).join(" | ");
+      if (!steps) return fail('"steps" is empty.');
       const annotations = opt(args, "annotations"); if (annotations.error) return annotations.error;
       const title = opt(args, "title"); if (title.error) return title.error;
       const column = opt(args, "column"); if (column.error) return column.error;
@@ -170,12 +174,15 @@ function dispatchInner(
       if (isToolError(board)) return board;
       const latex = requiredString(args, "latex");
       if (isToolError(latex)) return latex;
+      // "a = 1 \\\\ b = 2" is two lines; unicode operators become LaTeX.
+      const lines = splitLatexLines(latex).map(normalizeLatex).filter(Boolean);
+      if (lines.length === 0) return fail('"latex" is empty.');
       const annotation = opt(args, "annotation"); if (annotation.error) return annotation.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: latex }, () =>
-        board.drawEquationStep(latex, annotation.value, pickColumn(column.value)),
+        lines.forEach((line, i) => board.drawEquationStep(line, i === lines.length - 1 ? annotation.value : undefined, pickColumn(column.value))),
       );
-      return ok(`Wrote the line ${latexToPlain(latex)}${annotation.value ? ` (${annotation.value})` : ""}.`);
+      return ok(`Wrote the line ${lines.map(latexToPlain).join(" / ")}${annotation.value ? ` (${annotation.value})` : ""}.`);
     }
 
     case "add_text_note": {
@@ -764,10 +771,9 @@ function dispatchInner(
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;
       const iconRaw = requiredString(args, "icon"); if (isToolError(iconRaw)) return iconRaw;
-      const normalizeIcon = (v: string) => v.trim().toLowerCase().replace(/[\s-]+/g, "_");
-      const icon = normalizeIcon(iconRaw);
       const names = BOARD_ICON_NAMES as readonly string[];
-      if (!names.includes(icon)) return fail(`No icon called "${iconRaw}". Pick one of: ${names.join(", ")}.`);
+      const icon = resolveIconName(iconRaw);
+      if (!icon) return fail(`No icon called "${iconRaw}". Pick one of: ${names.join(", ")}.`);
       const countRaw = requiredNumber(args, "count"); if (isToolError(countRaw)) return countRaw;
       const count = clamp(Math.round(countRaw), 1, 40);
       const gsRaw = optionalNumber(args, "group_size"); if (isToolError(gsRaw)) return gsRaw;
@@ -775,8 +781,8 @@ function dispatchInner(
       const crossedRaw = optionalNumber(args, "crossed"); if (isToolError(crossedRaw)) return crossedRaw;
       const crossed = crossedRaw ? clamp(Math.round(crossedRaw), 0, count) : 0;
       const secondRaw = opt(args, "second_icon"); if (secondRaw.error) return secondRaw.error;
-      const secondIcon = secondRaw.value ? normalizeIcon(secondRaw.value) : undefined;
-      if (secondIcon && !names.includes(secondIcon)) return fail(`No icon called "${secondRaw.value}". Pick one of: ${names.join(", ")}.`);
+      const secondIcon = secondRaw.value ? resolveIconName(secondRaw.value) ?? undefined : undefined;
+      if (secondRaw.value && !secondIcon) return fail(`No icon called "${secondRaw.value}". Pick one of: ${names.join(", ")}.`);
       const secondCountRaw = optionalNumber(args, "second_count"); if (isToolError(secondCountRaw)) return secondCountRaw;
       const secondCount = secondIcon ? clamp(Math.round(secondCountRaw ?? count), 1, 40) : undefined;
       const label = opt(args, "label"); if (label.error) return label.error;

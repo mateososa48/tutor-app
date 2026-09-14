@@ -89,6 +89,16 @@ const MATH_SCENARIOS: Scenario[] = [
   { name: "decimals", student: ["which is bigger, 0.7 or 0.65", "0.65 because 65 is bigger than 7", "oh tenths and hundredths", "so 0.70", "0.7 is bigger", "yes"] },
 ];
 
+// Where a picture of real things should win.
+const ICON_SCENARIOS: Scenario[] = [
+  { name: "share-cookies", student: ["I have 12 cookies and 4 friends, how many does each get", "3?", "how do you know", "ok what if it was 5 friends", "so 2 each and 2 left over"] },
+  { name: "take-away", student: ["there are 7 apples and I eat 3, how many are left", "4", "what about 15 minus 8", "7", "ok"] },
+  { name: "groups-multiply", student: ["why is 3 times 4 the same as 4 times 3", "I don't get it", "oh they're the same amount", "what about 6 times 2", "12"] },
+  { name: "ratio-marbles", student: ["for every 2 red marbles there are 3 blue ones, if I have 6 red how many blue", "6?", "hmm 9?", "yes 9", "what if I had 10 red"] },
+  { name: "money", student: ["I have 3 dollars and 4 quarters, how much money is that", "4 dollars", "oh 4 quarters is a dollar", "so 4 dollars", "and if I spend 2 dollars 50"] },
+  { name: "analogy-negatives", student: ["I don't understand why 5 minus 8 is negative", "you can't take 8 from 5", "so it's like owing?", "ok so negative 3", "what about 3 minus 10"] },
+];
+
 const DRAW_TOOLS = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name).filter((n) =>
   !["point_at", "circle_item", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step"].includes(n)));
 const NON_CREATING = new Set(["point_at", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step"]);
@@ -233,7 +243,8 @@ async function main() {
   const only = arg("scenario", "");
   const turns = Number(arg("turns", "6"));
   const runs = Number(arg("runs", "1"));
-  const set = arg("set", "core") === "math" ? MATH_SCENARIOS : arg("set", "core") === "all" ? [...SCENARIOS, ...MATH_SCENARIOS] : SCENARIOS;
+  const setName = arg("set", "core");
+  const set = setName === "math" ? MATH_SCENARIOS : setName === "icons" ? ICON_SCENARIOS : setName === "all" ? [...SCENARIOS, ...MATH_SCENARIOS, ...ICON_SCENARIOS] : SCENARIOS;
   const scenarios = set.filter((s) => !only || s.name === only);
   const rows: Array<{ name: string; turns: number; board: number; pointed: number; erased: number; asked: number; askedWithBoard: number; tools: number; errors: number; fallback: number }> = [];
   for (const scenario of scenarios) {

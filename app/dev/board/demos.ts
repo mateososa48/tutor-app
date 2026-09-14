@@ -119,4 +119,37 @@ const icons: DemoCall[] = [
   { name: "circle_item", args: { target: "apples" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, icons, all };
+// Equations under fire: the LaTeX a model really sends, tall lines, marks,
+// erasing, and a snapshot round trip driven from the test harness.
+const eqs: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Equations torture test" } },
+  { name: "draw_equation_step", args: { latex: "\\frac{1}{2} + \\frac{1}{3} = \\frac{3}{6} + \\frac{2}{6}" } },
+  { name: "draw_equation_step", args: { latex: "x² + y² ≤ 25", annotation: "unicode in" } },
+  { name: "draw_equation_step", args: { latex: "3 × 4 = 12 and 12 ÷ 4 = 3" } },
+  { name: "draw_equation_step", args: { latex: "\\sqrt{a^2 + b^2} = \\dfrac{\\frac{1}{2}}{3}", annotation: "tall" } },
+  { name: "draw_equation_step", args: { latex: "area = 8 × 3 = 24 cm²" } },
+  { name: "draw_equation_step", args: { latex: "\\frac{3}{4" , annotation: "broken brace" } },
+  { name: "draw_equation_step", args: { latex: "y = 2x + 1 \\\\ y = -x + 4" , annotation: "two lines" } },
+  { name: "add_equation_sequence", args: { title: "Solve", steps: "5x + 2 = 3x + 10 | 2x + 2 = 10 | 2x = 8 | x = 4", annotations: " | subtract 3x | subtract 2 | divide by 2", column: "right" } },
+  { name: "highlight_step", args: { step_label: "x = 4", style: "circle" } },
+  { name: "cross_out_step", args: { step_label: "2x + 2 = 10" } },
+  { name: "circle_item", args: { target: "tall" } },
+  { name: "point_at", args: { target: "unicode" } },
+  { name: "erase_items", args: { targets: "broken brace" } },
+  { name: "highlight_step", args: { style: "underline" } },
+  { name: "draw_equation_step", args: { latex: "\\begin{cases} x + y = 5 \\\\ x - y = 1 \\end{cases}", annotation: "a system", column: "right" } },
+];
+
+// Icon layout edge cases.
+const icons2: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Icon layout edge cases" } },
+  { name: "draw_icons", args: { icon: "balloon", count: 1, label: "one balloon" } },
+  { name: "draw_icons", args: { icon: "cookies", count: 40, group_size: 10, label: "40 cookies in tens", column: "right" } },
+  { name: "draw_icons", args: { icon: "apples", count: 20, group_size: 3, crossed: 5, label: "20 in threes, 5 eaten" } },
+  { name: "draw_icons", args: { icon: "kids", count: 7, group_size: 7, second_icon: "pizza slices", second_count: 14, label: "7 kids, 14 slices", column: "right" } },
+  { name: "draw_icons", args: { icon: "coins", count: 6, crossed: 6, label: "spent them all" } },
+  { name: "draw_icons", args: { icon: "ice cream", count: 9, second_icon: "money", second_count: 3, label: "9 ice creams, 3 coins" } },
+  { name: "circle_item", args: { target: "40 cookies" } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, icons, icons2, eqs, all };

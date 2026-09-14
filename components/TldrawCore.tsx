@@ -487,9 +487,11 @@ const TLDRAW_COMPONENTS: TLComponents = { Background: PlainBackground };
 export type TldrawCoreProps = {
   /** True while queued writing is still appearing on the board. */
   onWriting?: (busy: boolean) => void;
+  /** Let tldraw take keyboard focus on mount (default). The landing page demo turns this off. */
+  autoFocus?: boolean;
 };
 
-const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting }, ref) {
+const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting, autoFocus = true }, ref) {
   const editorRef = useRef<Editor | null>(null);
   const leftY = useRef(START_Y);
   const rightY = useRef(START_Y);
@@ -1695,8 +1697,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const x = colX(col);
       const y = colY(col).current;
       const line = createMath(editor, { latex, annotation, x, y, display: true });
-      colY(col).current += EQ_H + EQ_ROW_GAP;
-      focusOn(editor, x, y, Math.max(420, line.w), EQ_H);
+      // Tall lines (stacked fractions, cases) take the room they need.
+      const pitch = Math.max(EQ_H, line.h + 6);
+      colY(col).current += pitch + EQ_ROW_GAP;
+      focusOn(editor, x, y, Math.max(420, line.w), pitch);
       recordDirectSemanticAction(
         { type: "equation_sequence", steps: latex, annotations: annotation, column: col },
         { shapeIds: [line.id], bounds: { x, y, w: Math.max(420, line.w), h: EQ_H, column: col, pageIndex: pageIndex.current } },
@@ -2384,16 +2388,18 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         y += titleHeight;
       }
 
-      const created = stepList.map((latex, index) =>
-        createMath(editor, { latex, annotation: annotationList[index], x, y: y + index * (EQ_H + EQ_ROW_GAP), display: true }),
-      );
+      let cy = y;
+      const created = stepList.map((latex, index) => {
+        const line = createMath(editor, { latex, annotation: annotationList[index], x, y: cy, display: true });
+        cy += Math.max(EQ_H, line.h + 6) + EQ_ROW_GAP;
+        return line;
+      });
 
       if (created.length > 0) {
-        const lastTop = y + (created.length - 1) * (EQ_H + EQ_ROW_GAP);
         if (stepList.length >= 2) {
-          createLine(editor, x - 14, y + 12, x - 14, lastTop + EQ_H - 12, "light-violet");
+          createLine(editor, x - 14, y + 12, x - 14, cy - EQ_ROW_GAP - 12, "light-violet");
         }
-        y = lastTop + EQ_H + EQ_ROW_GAP;
+        y = cy;
       }
 
       colY(col).current = y;
@@ -4057,13 +4063,29 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return [];
       const erased: string[] = [];
       const goneIds = new Set<string>();
+      // Closing the gap: everything lower in the same column moves up by the
+      // erased item's height, so the board does not keep holes.
+      const reflow = (b: ItemBounds) => {
+        if (b.w > 500 || b.y < START_Y - 10) return;
+        const col: "left" | "right" = b.x >= RIGHT_X - 20 ? "right" : "left";
+        const inCol = (sx: number) => (sx >= RIGHT_X - 20) === (col === "right");
+        const dy = b.h + ROW_GAP;
+        const movers = editor.getCurrentPageShapes().filter((s) => inCol(s.x) && s.y > b.y + b.h - 2);
+        if (movers.length > 0) {
+          editor.run(() => editor.updateShapes(movers.map((s) => ({ id: s.id, type: s.type, y: s.y - dy })) as unknown as Parameters<Editor["updateShapes"]>[0]), { history: "ignore" });
+        }
+        const cursor = col === "right" ? rightY : leftY;
+        cursor.current = Math.max(START_Y, cursor.current - dy);
+      };
       for (const target of targets) {
         const item = resolveItemTarget(itemsRef.current.filter((i) => !goneIds.has(i.id)), target);
         if (!item) continue;
         goneIds.add(item.id);
         erased.push(item.label);
+        const bounds = itemBounds(editor, item);
         const shapeIds = item.shapeIds.filter((id) => editor.getShape(id as TLShapeId)).map((id) => id as TLShapeId);
         if (shapeIds.length > 0) editor.deleteShapes(shapeIds);
+        if (bounds) reflow(bounds);
         mathOrderRef.current = mathOrderRef.current.filter((mid) => editor.getShape(mid as TLShapeId));
         recordDirectSemanticAction({ type: "delete_shape", target_ids: item.shapeIds });
       }
@@ -4143,6 +4165,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <Tldraw
         onMount={handleMount}
+        autoFocus={autoFocus}
         hideUi
         components={TLDRAW_COMPONENTS}
         overlayUtils={OVERLAY_UTILS}
