@@ -333,8 +333,10 @@ function SessionDetailPage({ id }: { id: string }) {
     if (!img || sessionRef.current !== live) return;
     live.sendBoardFrame(img.url);
   }, []);
-  const scheduleBoardFrame = useCallback((delayMs: number) => {
-    if (!sessionRef.current?.sendBoardFrame) return;
+  const scheduleBoardFrame = useCallback((delayMs: number, force = false) => {
+    const live = sessionRef.current;
+    if (!live?.sendBoardFrame) return;
+    if (!force && live.boardFrames !== "auto") return;
     if (boardFrameTimerRef.current) clearTimeout(boardFrameTimerRef.current);
     boardFrameTimerRef.current = setTimeout(() => {
       boardFrameTimerRef.current = null;
@@ -348,7 +350,7 @@ function SessionDetailPage({ id }: { id: string }) {
         whiteboard: whiteboardRef.current,
       });
       if (result.success) {
-        scheduleBoardFrame(name === "look_at_board" ? 0 : 900);
+        scheduleBoardFrame(name === "look_at_board" ? 0 : 900, name === "look_at_board");
         const summary = whiteboardRef.current?.getBoardSummary?.();
         if (summary) {
           return {

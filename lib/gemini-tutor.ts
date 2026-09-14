@@ -56,6 +56,8 @@ export class GeminiTutorSession {
   private shownCaption = "";
   private lastAudioAt = 0;
 
+  readonly boardFrames = "auto" as const;
+
   constructor(private readonly callbacks: LiveTutorCallbacks) {}
 
   private debug(kind: string, message: string, payload?: Record<string, unknown>) {
