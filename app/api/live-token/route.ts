@@ -20,7 +20,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  // Prefer the server-only key; the NEXT_PUBLIC_ one is a leftover from the
+  // browser-side era that production still carries.
+  const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
   if (!apiKey) {
     console.error("[live-token] GEMINI_API_KEY is not set");
     return NextResponse.json({ error: "misconfigured", detail: "GEMINI_API_KEY is not set" }, { status: 500 });
