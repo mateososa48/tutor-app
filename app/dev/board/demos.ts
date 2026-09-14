@@ -10,6 +10,7 @@ const fractions: DemoCall[] = [
   { name: "draw_fraction", args: { fraction: "3/4", second_fraction: "6/8", model: "bar", label: "the same amount, cut differently" } },
   { name: "add_number_line", args: { min: 0, max: 2, step: 0.25, points: "3/4:three quarters, 1 1/2", label: "quarters on a number line" } },
   { name: "draw_fraction", args: { fraction: "5/4", model: "circle", column: "right", label: "five quarters is more than one whole" } },
+  { name: "draw_fraction", args: { fraction: "1/2", second_fraction: "1/3", common_denominator: 6, model: "bar", label: "1/2 + 1/3 = 3/6 + 2/6" } },
   { name: "add_callout", args: { text: "Same size pieces, or it is not a fair share.", style: "remember", column: "right" } },
 ];
 

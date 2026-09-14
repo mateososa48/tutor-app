@@ -276,13 +276,23 @@ function dispatchInner(
       }
       const modelRaw = opt(args, "model"); if (modelRaw.error) return modelRaw.error;
       const model = modelRaw.value === "bar" ? "bar" : "circle";
+      const cdRaw = optionalNumber(args, "common_denominator"); if (isToolError(cdRaw)) return cdRaw;
+      let drawn = fractions;
+      if (cdRaw !== undefined) {
+        const cd = Math.round(cdRaw);
+        if (cd < 2 || cd > 24) return fail('"common_denominator" must be between 2 and 24.');
+        const bad = fractions.find((f) => cd % f.d !== 0);
+        if (bad) return fail(`"common_denominator" ${cd} is not a multiple of ${bad.d}; pick a common multiple of the denominators.`);
+        drawn = fractions.map((f) => ({ n: f.n * (cd / f.d), d: cd }));
+      }
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? raw }, () =>
-        board.drawFraction({ fractions, model, label: label.value, column: pickColumn(column.value) }),
+        board.drawFraction({ fractions: drawn, model, label: label.value, column: pickColumn(column.value) }),
       );
-      const parts = fractions.map((f) => describeFractionModel(f, model));
-      return ok(`Drew ${parts.join(" beside ")}${label.value ? `, captioned "${label.value}"` : ""}.`);
+      const parts = drawn.map((f) => describeFractionModel(f, model));
+      const recut = cdRaw !== undefined ? ` (${fractions.map((f) => `${f.n}/${f.d}`).join(" and ")} recut into ${Math.round(cdRaw)}ths)` : "";
+      return ok(`Drew ${parts.join(" beside ")}${recut}${label.value ? `, captioned "${label.value}"` : ""}.`);
     }
 
     case "add_number_line": {
