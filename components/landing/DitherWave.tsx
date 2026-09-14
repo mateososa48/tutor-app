@@ -84,22 +84,23 @@ void main() {
     // Ribbons: the tone follows contour bands of the warped field (a triangle
     // wave, dark to light and back), a finer grain bends the bands and a slow
     // drift slides them, so every part of the panel carries swirling ribbons
-    // instead of settling into one broad patch of colour. Four bands and a
-    // light grain keep it calm (six with full grain read as too busy); rendered
-    // over ten minutes, the dark shades sit evenly in every corner (23-28%
-    // each, against 5-55% before).
-    const float RIBBONS = 4.0;
-    const float GRAIN = 0.45;
+    // instead of settling into one broad patch of colour. Three and a half
+    // bands with a faint grain keep it calm (four and six read as too busy;
+    // three with no grain fell back into big patches); rendered over ten
+    // minutes, the dark shades sit evenly in every corner (24-27% each,
+    // against 5-55% before).
+    const float RIBBONS = 3.5;
+    const float GRAIN = 0.15;
     const float DRIFT = 0.03;
     float grain = fbm4(p * 3.1 + vec2(t * 0.21, -t * 0.17));
     float v = 1.0 - abs(1.0 - 2.0 * fract(n * RIBBONS + grain * GRAIN + t * DRIFT));
     // v is spread roughly evenly, so each breakpoint sits near the cumulative
     // share of the tones below it (darkest, mid, light, palest, background);
     // corrected on the rendered field to about 10.5 / 15.3 / 22 / 28.5 / 23.8%.
-    const float K0 = 0.089;
-    const float K1 = 0.225;
-    const float K2 = 0.443;
-    const float K3 = 0.746;
+    const float K0 = 0.099;
+    const float K1 = 0.239;
+    const float K2 = 0.465;
+    const float K3 = 0.762;
     float g = v < K1 ? 0.125 + (v - K0) * 0.25 / (K1 - K0)
             : v < K2 ? 0.375 + (v - K1) * 0.25 / (K2 - K1)
             : 0.625 + (v - K2) * 0.25 / (K3 - K2);
