@@ -27,9 +27,13 @@ type Errors = Partial<Record<FieldName, string>>;
 const GOOGLE_ENABLED = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// The panel uses the tutor's voice wave palette (VoiceWave.tsx): its light and
-// deep blues over its near-white, so the two dithered surfaces match. The
-// constants are module-level, so the shader is not rebuilt on every render.
+// The panel uses the tutor's voice wave palette (VoiceWave.tsx): its light blue
+// over its near-white, with the darkest tone pulled 40% from the voice's deep
+// blue toward its light blue, so the panel reads light. Module-level, so the
+// shader is not rebuilt on every render.
+const PANEL_DEEP: [number, number, number] = [0, 1, 2].map(
+  (i) => VOICE_BLUE.deep[i] + (VOICE_BLUE.top[i] - VOICE_BLUE.deep[i]) * 0.4,
+) as [number, number, number];
 
 const INPUT = "h-11 sm:h-10 rounded-[10px] border-(--lp-line-strong) bg-white px-3 text-[14px] md:text-[14px]";
 
@@ -311,12 +315,12 @@ function SignIn() {
       </main>
 
       {/* The hero's shader, in the block's image slot. Decorative. */}
-      <aside aria-hidden className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-[#2988f2] lg:block">
+      <aside aria-hidden className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-[#4696f7] lg:block">
         {wide && (
           <DitherWave
             pattern="swirl"
             waveColor={VOICE_BLUE.top}
-            deepColor={VOICE_BLUE.deep}
+            deepColor={PANEL_DEEP}
             backgroundColor={VOICE_BLUE.bg}
             colorNum={5}
             pixelSize={3}
@@ -328,7 +332,7 @@ function SignIn() {
           />
         )}
         <p className="absolute bottom-6 left-6 m-0 flex items-center gap-2 text-(--lp-ink)">
-          <ChalkMark size={36} color="var(--lp-sky)" />
+          <ChalkMark size={36} color="var(--lp-ink)" />
           <span className="lp-brand text-[36px] leading-none">chalk</span>
         </p>
       </aside>
