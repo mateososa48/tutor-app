@@ -12,4 +12,6 @@ test("fractions, roots, and symbols read as plain text", () => {
   assert.equal(latexToPlain("\\text{area} = 8 \\cdot 3"), "area = 8 · 3");
   assert.equal(latexToPlain("\\left( x \\right)"), "( x )");
   assert.equal(latexToPlain("3 \\div 4 \\neq 1"), "3 ÷ 4 ≠ 1");
+  assert.equal(latexToPlain("\\begin{cases} x + y = 5 \\\\ x - y = 1 \\end{cases}"), "x + y = 5 ; x - y = 1");
+  assert.equal(latexToPlain("24\\,\\text{cm}^{2}"), "24cm^2");
 });

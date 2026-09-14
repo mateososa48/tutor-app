@@ -72,7 +72,12 @@ function replaceCommand(input: string, cmd: string, arity: 1 | 2, fn: (...args: 
 }
 
 export function latexToPlain(latex: string): string {
-  let s = latex.replace(/\\left|\\right|\\,|\;|\\!|\\quad|\\qquad/g, (m) => (m === "\\quad" || m === "\\qquad" ? " " : ""));
+  let s = latex
+    // environments: rows become "; ", alignment marks vanish
+    .replace(/\\begin\{[a-z*]+\}|\\end\{[a-z*]+\}/g, " ")
+    .replace(/\\\\/g, "; ")
+    .replace(/&/g, "")
+    .replace(/\\left|\\right|\\,|\\;|\\!|\\quad|\\qquad/g, (m) => (m === "\\quad" || m === "\\qquad" ? " " : ""));
   s = replaceCommand(s, "dfrac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);
   s = replaceCommand(s, "tfrac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);
   s = replaceCommand(s, "frac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);

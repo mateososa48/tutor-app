@@ -143,6 +143,8 @@ export class MathShapeUtil extends ShapeUtil<TLMathShape> {
     const text = latexToPlain(latex);
     const fontPx = 23;
     const base = h * 0.68;
+    // Plain text can run wider than the typeset math; keep the annotation clear of it.
+    const textW = Math.max(mathW, text.length * fontPx * 0.52);
     return (
       <g>
         {highlight === "box" && <rect x={-6} y={-4} width={mathW + 12} height={h + 8} fill="none" stroke={MATH_CORRECT_HEX} strokeWidth={1.5} strokeDasharray="4 3" rx={6} />}
@@ -153,7 +155,7 @@ export class MathShapeUtil extends ShapeUtil<TLMathShape> {
         {highlight === "underline" && <line x1={0} y1={h - 2} x2={mathW} y2={h - 2} stroke={MATH_CORRECT_HEX} strokeWidth={2} />}
         {crossOut && <line x1={-4} y1={h / 2 + 2} x2={mathW + 4} y2={h / 2 - 3} stroke={MATH_WRONG_HEX} strokeWidth={2} />}
         {annotation && (
-          <text x={mathW + 18} y={base} fontFamily="sans-serif" fontSize={13} fill="#7a8a99">
+          <text x={textW + 18} y={base} fontFamily="sans-serif" fontSize={13} fill="#7a8a99">
             {annotation}
           </text>
         )}
