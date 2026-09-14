@@ -25,6 +25,9 @@ import {
 } from "@/lib/board-items";
 import { planReveal, pointsShown, polylineLength, typedPrefix, type RevealInput, type RevealStep } from "@/lib/board-reveal";
 import { latexToPlain } from "@/lib/latex-plain";
+import { TutorPenOverlayUtil } from "@/components/board/TutorPenOverlay";
+
+const OVERLAY_UTILS = [TutorPenOverlayUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -3772,6 +3775,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         onMount={handleMount}
         hideUi
         components={TLDRAW_COMPONENTS}
+        overlayUtils={OVERLAY_UTILS}
         licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY}
       />
       <div
