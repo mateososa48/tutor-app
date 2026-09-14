@@ -65,7 +65,8 @@ Chalk tutors math and nothing else (arithmetic, fractions, decimals, percent, ra
 - **Free design preview:** sign in, then open `/session?mock=1` (dev only). It creates a session and renders the live screen with a scripted transcript and a synthetic voice, never opening an OpenAI session. `/api/dev/qa-login?to=/` signs in as the QA user and lands on any path.
 - The tldraw "made with" badge is moved to the bottom-left in `globals.css` so the dock never covers it (its license requires it to stay visible).
 - Sidebar buttons run the pressed-CTA vocabulary in reverse (`.sb-btn` in `globals.css`): New session rests flat and lifts 2px up-left on hover, sinking back on press; the home page's Start a session button does the same through `.lp-btn-lift` (3px). The landing's `.lp-btn` still rests raised and presses in on hover. The sidebar toggle is a plain `PanelLeft` glyph, always full white (`.sb-toggle`).
-- Old `LeftNav`, `Sidebar`, `SubtitleBar`, `FloatingPanel` are gone. The sign-in and onboarding pages still use the older honey tokens.
+- Old `LeftNav`, `Sidebar`, `SubtitleBar`, `FloatingPanel` are gone. The onboarding page still uses the older honey tokens.
+- **Sign-in** (`app/signin/page.tsx`, Sept 14 2026): layout from shadcnui-blocks `login-04` (narrow centred form beside a tall rounded panel), built from our own parts: shadcn `Field` / `Label` (added from the base-nova registry, `components/ui/field.tsx`, `label.tsx`), `Input`, `Button` (outline for Google), `.lp-btn .lp-btn-lift` for submit, the `Wordmark` tile, and the hero's `DitherWave` filling the panel (lg+ only, still under reduced motion). One screen for sign in and sign up (`?mode=signup`), `?error=` codes mapped to plain messages, same-site `?callbackUrl=` honoured, client validation with focus on the first bad field, show-password toggle, proper `autoComplete`. The block's react-hook-form + zod were left out: three fields did not justify three dependencies. No "forgot password" link because there is no reset flow yet.
 
 ## GPT-Live protocol facts we verified (do not relearn these)
 1. The Live model's clock is driven by **inbound audio**. With no mic track nothing happens: appended context is never injected and the model never speaks. Text-only QA sessions send faint synthetic room tone (`createSyntheticMicStream`).
@@ -93,7 +94,7 @@ Two live stacks share one interface (`TutorClient` in `lib/tutor-provider.ts`: `
 - Fonts via `next/font` in `components/landing/fonts.ts`: Schibsted Grotesk (display), Hanken Grotesk (body), Shantell Sans (board handwriting, the same face tldraw uses).
 - Registries in `components.json`: shadcn (base-nova style, Base UI), `@magicui`, `@animate-ui`, `@react-bits`, plus `@reactbits-starter` / `@reactbits-pro` which need `REACTBITS_LICENSE_KEY` in `.env.local` before `npx shadcn add @reactbits-pro/faq-2` or `@reactbits-starter/dither-wave-tw` will install. 21st.dev now requires an account for its registry.
 - Vendored registry copies (`components/*.tsx`, `components/ui`, `components/animate-ui`) are ours to edit; a few carry small typing patches.
-- The sign-in page and app home still use the older honey accent; retokening them to the landing palette is an open task.
+- The landing's "Try a session free" buttons still open `/signin` in sign-in mode; `/signin?mode=signup` opens account creation.
 
 ## Commands
 - `npm run dev` — dev server. `npm test` — `tsx --test lib/*.test.ts` (board-diagrams, board-items, board-reveal, latex-plain, live-events, tutor-state). `npx tsc --noEmit`. `npm run lint` (six pre-existing errors in vendored landing components and `Sidebar.tsx`, none in `lib/` or `TldrawCore.tsx`).
