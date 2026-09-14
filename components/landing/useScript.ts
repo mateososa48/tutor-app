@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+export { useReduce } from "@/lib/reduced-motion";
 
 export type ScriptStep<K extends string> = { at: number; key: K };
 

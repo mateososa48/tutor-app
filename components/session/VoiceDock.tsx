@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { AudioLines, ChevronDown, Keyboard, MessageSquareText, Mic, MicOff, PenLine, SendHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,35 @@ const BADGE: Record<DockActivity, { status: AnimatedBadgeStatus; label: string; 
 
 const SPRING = { type: "spring", stiffness: 260, damping: 32, mass: 0.9 } as const;
 
+function useWindowHeight() {
+  return useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener("resize", onChange);
+      return () => window.removeEventListener("resize", onChange);
+    },
+    () => window.innerHeight,
+    () => 800,
+  );
+}
+
+// The status badge in the dock's corner. The landing page shows the same one
+// on its tiles.
+export function DockBadge({ activity, className }: { activity: DockActivity; className?: string }) {
+  const badge = BADGE[activity];
+  return (
+    <AnimatedBadge
+      size="sm"
+      status={badge.status}
+      icon={badge.icon}
+      showIcon={badge.status !== "neutral"}
+      contentKey={activity}
+      className={cn("border-(--lp-line) bg-white/85 text-(--lp-ink-2) backdrop-blur-sm data-[status=info]:text-(--lp-sky-deep)", className)}
+    >
+      {badge.label}
+    </AnimatedBadge>
+  );
+}
+
 export function VoiceDock({
   activity,
   isMuted,
@@ -73,20 +102,11 @@ export function VoiceDock({
   const [composer, setComposer] = useState(false);
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const [sheetH, setSheetH] = useState(560);
+  const windowH = useWindowHeight();
 
   // The open sheet reaches up to just under the pills, which sit below the
   // title and End chips: 16 + 32 + 12 + 36 + 12 from the top, 16 at the bottom.
-  useEffect(() => {
-    if (frameHeight) {
-      setSheetH(Math.max(300, frameHeight - 124));
-      return;
-    }
-    const update = () => setSheetH(Math.max(360, window.innerHeight - 124));
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, [frameHeight]);
+  const sheetH = frameHeight ? Math.max(300, frameHeight - 124) : Math.max(360, windowH - 124);
 
   useEffect(() => {
     if (composer) inputRef.current?.focus();
@@ -109,7 +129,6 @@ export function VoiceDock({
   };
 
   const open = transcriptOpen;
-  const badge = BADGE[activity];
   const spring = reduce ? { duration: 0 } : SPRING;
 
   return (
@@ -158,16 +177,7 @@ export function VoiceDock({
           <VoiceWave analyser={analyser} speaking={activity === "speaking"} />
         </div>
         <div className="absolute top-3 left-3">
-          <AnimatedBadge
-            size="sm"
-            status={badge.status}
-            icon={badge.icon}
-            showIcon={badge.status !== "neutral"}
-            contentKey={activity}
-            className="border-(--lp-line) bg-white/85 text-(--lp-ink-2) backdrop-blur-sm data-[status=info]:text-(--lp-sky-deep)"
-          >
-            {badge.label}
-          </AnimatedBadge>
+          <DockBadge activity={activity} />
         </div>
 
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-end px-3" style={{ height: CONTROLS_H }}>

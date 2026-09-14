@@ -13,12 +13,12 @@ import {
 import {
   AnimatePresence,
   motion,
-  useReducedMotion,
   type HTMLMotionProps,
   type Variants,
 } from "motion/react";
 import type { ReactNode } from "react";
 import { EASE_OUT } from "@/lib/ease";
+import { useReduce } from "@/lib/reduced-motion";
 import { cn } from "@/lib/utils";
 
 export type AnimatedBadgeStatus =
@@ -135,7 +135,7 @@ export function AnimatedBadge({
   className,
   ...rest
 }: AnimatedBadgeProps) {
-  const reduce = useReducedMotion();
+  const reduce = useReduce();
   const Icon = ICONS[status];
   const resolvedContentKey =
     contentKey ??

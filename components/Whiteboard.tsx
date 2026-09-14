@@ -18,7 +18,7 @@ const TldrawCore = dynamic(() => import("./TldrawCore"), {
 
 const Whiteboard = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Whiteboard(props, ref) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return <TldrawCore ref={ref as any} onWriting={props.onWriting} />;
+  return <TldrawCore ref={ref as any} onWriting={props.onWriting} autoFocus={props.autoFocus} />;
 });
 
 export default Whiteboard;
