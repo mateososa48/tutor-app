@@ -17,6 +17,7 @@ import {
   type BoardColumn,
   type Fraction,
 } from "@/lib/board-diagrams";
+import { parseTargetList } from "@/lib/board-items";
 import {
   fail,
   isToolError,
@@ -69,7 +70,25 @@ function opt(args: Args, key: string): { error?: ToolCallResult; value?: string 
   return { value };
 }
 
+// Every tool call is one board item: whatever it creates gets an id (b7) the
+// model can point at, ring, or erase later. The id rides along in the result.
 export function dispatchWhiteboardTool(
+  name: string,
+  args: Args,
+  ctx: DispatchCtx,
+): ToolCallResult {
+  const board = ctx.whiteboard;
+  const token = board ? board.beginItem(name) : null;
+  const result = dispatchInner(name, args, ctx);
+  if (!board || !token) return result;
+  const itemId = board.endItem(token, result.success ? result.message ?? null : null);
+  if (result.success && itemId) {
+    return { success: true, message: `${(result.message ?? "Done").replace(/[.]\s*$/, "")} (item ${itemId}).` };
+  }
+  return result;
+}
+
+function dispatchInner(
   name: string,
   args: Args,
   ctx: DispatchCtx,
@@ -595,6 +614,50 @@ export function dispatchWhiteboardTool(
         board.addProcessMap(title, nodes, connectors.value, pickColumn(column.value)),
       );
       return ok(`Drew the process map "${title}".`);
+    }
+
+    case "point_at": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const target = requiredString(args, "target");
+      if (isToolError(target)) return target;
+      const item = board.withDirectMeta({ owner: "tutor" }, () => board.pointAt(target));
+      if (!item) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
+      return ok(`Pointing at ${item.id} (${item.label}).`);
+    }
+
+    case "circle_item": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const target = requiredString(args, "target");
+      if (isToolError(target)) return target;
+      const keep = optionalBoolean(args, "keep");
+      if (isToolError(keep)) return keep;
+      const item = board.withDirectMeta({ owner: "tutor" }, () => board.circleItem(target, keep === true));
+      if (!item) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
+      return ok(keep ? `Ringed ${item.id} (${item.label}) in orange.` : `Laser ring around ${item.id} (${item.label}), fading in a few seconds.`);
+    }
+
+    case "erase_items": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const targets = requiredString(args, "targets");
+      if (isToolError(targets)) return targets;
+      const list = parseTargetList(targets);
+      if (list.length === 0) return fail('Give at least one item id or label in "targets".');
+      const erased = board.withDirectMeta({ owner: "tutor" }, () => board.eraseItems(list));
+      if (erased.length === 0) return fail(`Nothing on the board matches ${list.map((t) => `"${t}"`).join(", ")}.`);
+      return ok(`Erased ${erased.length} item${erased.length === 1 ? "" : "s"}: ${erased.join("; ")}.`);
+    }
+
+    case "erase_older": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const keep = optionalNumber(args, "keep");
+      if (isToolError(keep)) return keep;
+      const erased = board.withDirectMeta({ owner: "tutor" }, () => board.eraseOlder(keep ?? 3));
+      if (erased.length === 0) return ok("Nothing older to erase; the board is already tidy.");
+      return ok(`Erased ${erased.length} older item${erased.length === 1 ? "" : "s"}, kept the heading and the newest ${keep ?? 3}.`);
     }
 
     case "clear_whiteboard": {

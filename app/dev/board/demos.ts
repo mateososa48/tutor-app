@@ -54,6 +54,22 @@ const data: DemoCall[] = [
   { name: "add_vector_diagram", args: { title: "Forces on the ball", center_label: "ball", vectors: "down:Weight mg; up-right:Normal N; down-left:Friction f", column: "right" } },
 ];
 
+// Pointing, ringing, erasing: the tutor's hands, not just its pen.
+const marks: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Which piece is one half?" } },
+  { name: "draw_fraction", args: { fraction: "1/2", model: "circle", label: "one half of the pizza" } },
+  { name: "draw_fraction", args: { fraction: "2/4", model: "circle", label: "two quarters", column: "right" } },
+  { name: "add_callout", args: { text: "Are these the same amount?", style: "hint" } },
+  { name: "point_at", args: { target: "b2" } },
+  { name: "circle_item", args: { target: "two quarters" } },
+  { name: "add_student_attempt", args: { text: "no, four pieces is more" } },
+  { name: "circle_item", args: { target: "last", keep: true } },
+  { name: "draw_equation_step", args: { latex: "\\tfrac{2}{4} = \\tfrac{1}{2}" } },
+  { name: "erase_items", args: { targets: "b6" } },
+  { name: "point_at", args: { target: "last" } },
+  { name: "erase_older", args: { keep: 2 } },
+];
+
 const all: DemoCall[] = [
   ...fractions,
   ...algebra.slice(1),
@@ -63,4 +79,4 @@ const all: DemoCall[] = [
   { name: "add_process_map", args: { title: "How to solve it", nodes: "Read | Draw | Try | Check", connectors: "then | then | then", column: "right" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, all };
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, all };

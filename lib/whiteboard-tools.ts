@@ -26,6 +26,10 @@ export type WhiteboardToolName =
   | "add_vector_diagram"
   | "add_process_map"
   | "draw_sketch"
+  | "point_at"
+  | "circle_item"
+  | "erase_items"
+  | "erase_older"
   | "clear_whiteboard";
 
 export type CalloutStyle = "hint" | "correct" | "wrong" | "warning" | "important" | "remember";
@@ -496,6 +500,59 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         column: COLUMN,
       },
       required: ["strokes"],
+    },
+  },
+  // ── Pointing, marking, erasing ─────────────────────────────────────────────
+  {
+    name: "point_at",
+    description:
+      "Move your pointer onto something on the board while you talk about it ('this piece', 'that line', 'here'). Free and quick: use it whenever you refer to something that is on the board, especially when asking a question about it.",
+    parameters: {
+      type: "object",
+      properties: {
+        target: {
+          type: "string",
+          description: "An item id from the [Board: …] list (e.g. 'b3'), or a few words from its label ('shaded pizza'), or 'last' for the newest item.",
+        },
+      },
+      required: ["target"],
+    },
+  },
+  {
+    name: "circle_item",
+    description:
+      "Draw a ring around something on the board to mark it: the part a question is about, the line that matters, a mistake. By default a laser ring that fades after a few seconds; keep=true leaves an orange ring on the board.",
+    parameters: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Item id ('b3'), label words, or 'last'." },
+        keep: { type: "boolean", description: "true = permanent orange ring. Default false (fades)." },
+      },
+      required: ["target"],
+    },
+  },
+  {
+    name: "erase_items",
+    description:
+      "Erase specific items from the board: a wrong attempt after it has been corrected, a picture the student no longer needs, a hint they have used. Keeps the rest.",
+    parameters: {
+      type: "object",
+      properties: {
+        targets: { type: "string", description: "Item ids or label words, separated by '|': 'b4|b5' or 'first pizza|hint'." },
+      },
+      required: ["targets"],
+    },
+  },
+  {
+    name: "erase_older",
+    description:
+      "Tidy the board: erase everything except the heading and the newest items. Use when more than about six items are up, or when the student has moved past the earlier work. Prefer this to clear_whiteboard.",
+    parameters: {
+      type: "object",
+      properties: {
+        keep: { type: "number", description: "How many of the newest items to keep. Default 3." },
+      },
+      required: [],
     },
   },
   {

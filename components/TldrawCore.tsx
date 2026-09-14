@@ -11,8 +11,18 @@ import {
   useCallback,
   useEffect,
 } from "react";
-import { Tldraw, type TLComponents } from "tldraw";
+import { Tldraw, renderPlaintextFromRichText, type TLComponents } from "tldraw";
 import { Editor, createShapeId, toRichText } from "@tldraw/editor";
+import { InstancePresenceRecordType, type TLInstancePresence, type TLShapeId } from "@tldraw/tlschema";
+import {
+  formatBoardItems,
+  isHeadingItem,
+  itemLabelFrom,
+  resolveItemTarget,
+  ringPoints,
+  type BoardItem,
+  type ItemBounds,
+} from "@/lib/board-items";
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -222,7 +232,22 @@ export interface WhiteboardHandle {
    */
   captureScreenshot(): Promise<string | null>;
   getBoardSummary(): string;
+  /** Item bookkeeping around one tool call: everything created between begin and end becomes one board item. */
+  beginItem(tool: string): ItemToken;
+  endItem(token: ItemToken, label: string | null, owner?: "tutor" | "student"): string | null;
+  /** The tutor's pointer glides to an item and rests there. Returns the item or null. */
+  pointAt(target: string): BoardItem | null;
+  /** Ring an item: a laser ring that fades, or a marker ring that stays. */
+  circleItem(target: string, keep: boolean): BoardItem | null;
+  /** Erase items by id or label. Returns the labels erased. */
+  eraseItems(targets: string[]): string[];
+  /** Erase everything except headings and the newest `keep` items. */
+  eraseOlder(keep: number): string[];
+  /** The board as a JPEG data URL with its pixel size (or null when empty). */
+  exportImage(maxWidth?: number): Promise<{ url: string; width: number; height: number } | null>;
 }
+
+export type ItemToken = { tool: string; shapes: Set<string>; eqs: Set<string> };
 
 // ── Internal equation overlay item ─────────────────────────────────────────
 interface EqItem {
@@ -415,7 +440,7 @@ function EqBlock({ item }: { item: EqItem }) {
   }, [item.latex, item.role]);
 
   return (
-    <div style={{ position: "absolute", left: item.x, top: item.y }}>
+    <div data-eq-id={item.id} style={{ position: "absolute", left: item.x, top: item.y }}>
       <div style={{ position: "relative", display: "inline-block" }}>
         <span
           ref={ref}
@@ -553,6 +578,14 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
   // Accumulates the union of focus rects during a burst of draws so the camera
   // makes ONE move that frames everything just drawn, instead of thrashing.
   const pendingFocusRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  // Board items (b1, b2, …) and the tutor's presence (cursor + laser rings).
+  const itemsRef = useRef<BoardItem[]>([]);
+  const itemSeqRef = useRef(0);
+  const presenceIdRef = useRef<TLInstancePresence["id"] | null>(null);
+  const cursorAnimRef = useRef<number | null>(null);
+  const scribbleAnimRef = useRef<number | null>(null);
+  const cursorHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scribbleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
   const colX = (col: "left" | "right") => col === "right" ? RIGHT_X : LEFT_X;
   const colY = (col: "left" | "right") => col === "right" ? rightY : leftY;
@@ -594,9 +627,191 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     }
   }, []);
 
+  // ── Tutor presence: a collaborator cursor tldraw draws for us ──────────────
+  const TUTOR_COLOR = "#2988f2";
+  const ensurePresence = useCallback((editor: Editor): TLInstancePresence | null => {
+    try {
+      const existing = presenceIdRef.current ? (editor.store.get(presenceIdRef.current) as TLInstancePresence | undefined) : undefined;
+      if (existing) return existing;
+      const id = InstancePresenceRecordType.createId("tutor");
+      const record = InstancePresenceRecordType.create({
+        id,
+        currentPageId: editor.getCurrentPageId(),
+        userId: "tutor",
+        userName: "Tutor",
+        color: TUTOR_COLOR,
+        cursor: null,
+        lastActivityTimestamp: Date.now(),
+        chatMessage: "",
+        scribbles: [],
+        selectedShapeIds: [],
+        brush: null,
+        screenBounds: null,
+        followingUserId: null,
+        camera: null,
+        meta: {},
+      });
+      editor.store.put([record]);
+      presenceIdRef.current = id;
+      return editor.store.get(id) as TLInstancePresence;
+    } catch (err) {
+      if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] presence", err);
+      return null;
+    }
+  }, []);
+
+  const patchPresence = useCallback((editor: Editor, patch: Partial<TLInstancePresence>) => {
+    const rec = ensurePresence(editor);
+    if (!rec) return;
+    editor.store.put([{ ...rec, ...patch, currentPageId: editor.getCurrentPageId(), lastActivityTimestamp: Date.now() }]);
+  }, [ensurePresence]);
+
+  const scheduleCursorHide = useCallback((editor: Editor, ms = 6000) => {
+    if (cursorHideRef.current) clearTimeout(cursorHideRef.current);
+    cursorHideRef.current = setTimeout(() => {
+      cursorHideRef.current = null;
+      if (editorRef.current === editor) patchPresence(editor, { cursor: null });
+    }, ms);
+  }, [patchPresence]);
+
+  // Glide the pointer to a page point. A hidden pointer fades in from just
+  // below-right of the target so it reads as "the tutor reached over".
+  const moveCursor = useCallback((editor: Editor, x: number, y: number, duration = 420, done?: () => void) => {
+    const rec = ensurePresence(editor);
+    if (!rec) return;
+    if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+    if (cursorHideRef.current) {
+      clearTimeout(cursorHideRef.current);
+      cursorHideRef.current = null;
+    }
+    const from = rec.cursor ? { x: rec.cursor.x, y: rec.cursor.y } : { x: x + 90, y: y + 70 };
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / Math.max(1, duration));
+      const e = 1 - Math.pow(1 - p, 3);
+      patchPresence(editor, { cursor: { x: from.x + (x - from.x) * e, y: from.y + (y - from.y) * e, type: "default", rotation: 0 } });
+      if (p < 1) {
+        cursorAnimRef.current = requestAnimationFrame(step);
+      } else {
+        cursorAnimRef.current = null;
+        scheduleCursorHide(editor);
+        done?.();
+      }
+    };
+    cursorAnimRef.current = requestAnimationFrame(step);
+  }, [ensurePresence, patchPresence, scheduleCursorHide]);
+
+  // A laser stroke drawn point by point under the pointer, held, then gone.
+  const tutorScribble = useCallback((editor: Editor, points: Array<{ x: number; y: number }>, opts?: { duration?: number; hold?: number; size?: number }) => {
+    const rec = ensurePresence(editor);
+    if (!rec || points.length < 2) return;
+    const duration = opts?.duration ?? 620;
+    const hold = opts?.hold ?? 2800;
+    const id = `tutor-scribble-${Date.now()}-${Math.round(Math.random() * 1e4)}`;
+    const base = { id, size: opts?.size ?? 5, color: "accent" as const, opacity: 0.9, state: "active" as const, delay: 0, shrink: 0, taper: false };
+    const others = () => ((editor.store.get(rec.id) as TLInstancePresence | undefined)?.scribbles ?? []).filter((sc) => sc.id !== id);
+    // The stroke owns its own frame loop: a later cursor move must not cut
+    // it short, or the hold and fade below would never be scheduled.
+    if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+    cursorAnimRef.current = null;
+    if (scribbleAnimRef.current !== null) cancelAnimationFrame(scribbleAnimRef.current);
+    if (cursorHideRef.current) {
+      clearTimeout(cursorHideRef.current);
+      cursorHideRef.current = null;
+    }
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const p = Math.min(1, (now - t0) / duration);
+      const n = Math.max(2, Math.round(points.length * p));
+      const head = points[n - 1];
+      const steering = cursorAnimRef.current === null;
+      patchPresence(editor, {
+        scribbles: [...others(), { ...base, points: points.slice(0, n).map((pt) => ({ x: pt.x, y: pt.y, z: 0.5 })) }],
+        ...(steering ? { cursor: { x: head.x, y: head.y, type: "default" as const, rotation: 0 } } : {}),
+      });
+      if (p < 1) {
+        scribbleAnimRef.current = requestAnimationFrame(step);
+        return;
+      }
+      scribbleAnimRef.current = null;
+      if (steering) scheduleCursorHide(editor);
+      const t1 = setTimeout(() => {
+        patchPresence(editor, { scribbles: [...others(), { ...base, opacity: 0.35, state: "stopping", points: points.map((pt) => ({ x: pt.x, y: pt.y, z: 0.5 })) }] });
+        const t2 = setTimeout(() => patchPresence(editor, { scribbles: others() }), 420);
+        scribbleTimersRef.current.push(t2);
+      }, hold);
+      scribbleTimersRef.current.push(t1);
+    };
+    scribbleAnimRef.current = requestAnimationFrame(step);
+  }, [ensurePresence, patchPresence, scheduleCursorHide]);
+
+  const itemBounds = useCallback((editor: Editor, item: BoardItem): ItemBounds | null => {
+    let box: ItemBounds | null = null;
+    const add = (b: ItemBounds) => {
+      if (!box) {
+        box = { ...b };
+        return;
+      }
+      const x = Math.min(box.x, b.x);
+      const y = Math.min(box.y, b.y);
+      const r = Math.max(box.x + box.w, b.x + b.w);
+      const btm = Math.max(box.y + box.h, b.y + b.h);
+      box = { x, y, w: r - x, h: btm - y };
+    };
+    for (const id of item.shapeIds) {
+      const shape = editor.getShape(id as TLShapeId);
+      const b = editor.getShapePageBounds(id as TLShapeId);
+      if (!shape || !b) continue;
+      if (shape.type === "text") {
+        // A caption's text box is much wider than its words; measure the words
+        // and place them by the shape's alignment so rings hug the text.
+        const props = shape.props as { richText?: unknown; font?: TLDefaultFontStyle; size?: TLDefaultSizeStyle; textAlign?: string; w?: number; autoSize?: boolean };
+        try {
+          const plain = props.richText ? renderPlaintextFromRichText(editor, props.richText as Parameters<typeof renderPlaintextFromRichText>[1]) : "";
+          if (plain && props.font && props.size && !props.autoSize) {
+            const m = measureText(editor, plain, props.font, props.size, b.w);
+            const w = Math.min(b.w, m.w + 8);
+            const x = props.textAlign === "middle" ? b.x + (b.w - w) / 2 : props.textAlign === "end" ? b.x + b.w - w : b.x;
+            add({ x, y: b.y, w, h: Math.min(b.h, m.h + 4) });
+            continue;
+          }
+        } catch {
+          // fall through to the raw bounds
+        }
+      }
+      add({ x: b.x, y: b.y, w: b.w, h: b.h });
+    }
+    for (const eqId of item.eqItemIds) {
+      const eq = eqRef.current.find((e) => e.id === eqId);
+      if (!eq) continue;
+      // The typeset overlay is untransformed CSS inside the camera matrix, so
+      // its offset size is already in page units.
+      const node = overlayRef.current?.querySelector<HTMLElement>(`[data-eq-id="${eq.id}"] > div`);
+      if (node && node.offsetWidth > 0) {
+        add({ x: eq.x, y: eq.y, w: node.offsetWidth, h: node.offsetHeight });
+      } else {
+        add({ x: eq.x, y: eq.y, w: eq.role === "label" ? 80 : 360, h: EQ_H });
+      }
+    }
+    return box;
+  }, []);
+
+  useEffect(() => {
+    const timers = scribbleTimersRef.current;
+    return () => {
+      if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+      if (scribbleAnimRef.current !== null) cancelAnimationFrame(scribbleAnimRef.current);
+      if (cursorHideRef.current) clearTimeout(cursorHideRef.current);
+      for (const t of timers) clearTimeout(t);
+    };
+  }, []);
+
   const handleMount = useCallback((editor: Editor) => {
     cameraSyncCleanupRef.current();
     editorRef.current = editor;
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as { __chalkEditor?: Editor }).__chalkEditor = editor;
+    }
     editor.setCurrentTool("hand");
     editor.setCamera({ x: 0, y: 0, z: 1 });
     syncOverlay(editor);
@@ -1113,6 +1328,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       setEqItems([]);
       markerRef.current = 0;
       semanticBoardRef.current = createEmptySemanticBoard();
+      itemsRef.current = [];
     },
 
     startNewProblem(title: string) {
@@ -1128,6 +1344,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       setEqItems([]);
       markerRef.current = 0;
       semanticBoardRef.current = createEmptySemanticBoard(title);
+      itemsRef.current = [];
       // Ink heading with a thin pencil rule, the way a board title is written.
       const measured = measureText(editor, title, "sans", "xl", 1120);
       editor.createShape({
@@ -2940,7 +3157,134 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     },
 
     getBoardSummary() {
-      return summarizeSemanticBoard(semanticBoardRef.current);
+      return formatBoardItems(itemsRef.current, semanticBoardRef.current.title);
+    },
+
+    beginItem(tool: string): ItemToken {
+      const editor = editorRef.current;
+      return {
+        tool,
+        shapes: editor ? currentShapeIdSet(editor) : new Set<string>(),
+        eqs: new Set(eqRef.current.map((item) => item.id)),
+      };
+    },
+
+    endItem(token: ItemToken, label: string | null, owner: "tutor" | "student" = "tutor"): string | null {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const shapeIds = diffStringSet(currentShapeIdSet(editor), token.shapes);
+      const eqItemIds = eqRef.current.map((item) => item.id).filter((id) => !token.eqs.has(id));
+      if (shapeIds.length === 0 && eqItemIds.length === 0) return null;
+      const id = `b${++itemSeqRef.current}`;
+      const item: BoardItem = {
+        id,
+        tool: token.tool,
+        label: itemLabelFrom(label, token.tool.replaceAll("_", " ")),
+        shapeIds,
+        eqItemIds,
+        owner: token.tool === "add_student_attempt" ? "student" : owner,
+        createdAt: Date.now(),
+      };
+      itemsRef.current = [...itemsRef.current, item].slice(-200);
+      try {
+        const updates = shapeIds
+          .map((shapeId) => editor.getShape(shapeId as TLShapeId))
+          .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape))
+          .map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, itemId: id } }));
+        if (updates.length > 0) editor.updateShapes(updates);
+      } catch {
+        // Tagging is a nicety; the registry is the source of truth.
+      }
+      // The pointer rests just under what was written, like a pen lifting off.
+      const b = itemBounds(editor, item);
+      if (b) moveCursor(editor, b.x + Math.min(b.w, 160) * 0.6, b.y + b.h + 16, 380);
+      return id;
+    },
+
+    pointAt(target: string) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const item = resolveItemTarget(itemsRef.current, target);
+      if (!item) return null;
+      const b = itemBounds(editor, item);
+      if (!b) return null;
+      focusOn(editor, b.x, b.y, b.w, b.h);
+      const px = b.x + Math.min(40, b.w * 0.25);
+      const py = b.y + b.h * 0.6;
+      // Glide over, then a small dip to the right and back: a tap.
+      moveCursor(editor, px, py, 460, () => {
+        moveCursor(editor, px + 14, py + 8, 160, () => moveCursor(editor, px, py, 160));
+      });
+      return item;
+    },
+
+    circleItem(target: string, keep: boolean) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const item = resolveItemTarget(itemsRef.current, target);
+      if (!item) return null;
+      const b = itemBounds(editor, item);
+      if (!b) return null;
+      focusOn(editor, b.x - 16, b.y - 16, b.w + 32, b.h + 32);
+      const ring = ringPoints(b, 12);
+      if (keep) {
+        createDrawStroke(editor, undefined, undefined, ring, { color: "orange", size: "m", dash: "solid", fill: "none", isClosed: false });
+        moveCursor(editor, ring[ring.length - 1].x, ring[ring.length - 1].y, 500);
+        recordDirectSemanticAction(
+          { type: "highlight_step", step_label: item.label, style: "circle" },
+          { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
+        );
+      } else {
+        tutorScribble(editor, ring, { duration: 640, hold: 3000, size: 5 });
+      }
+      return item;
+    },
+
+    eraseItems(targets: string[]) {
+      const editor = editorRef.current;
+      if (!editor) return [];
+      const erased: string[] = [];
+      const goneIds = new Set<string>();
+      for (const target of targets) {
+        const item = resolveItemTarget(itemsRef.current.filter((i) => !goneIds.has(i.id)), target);
+        if (!item) continue;
+        goneIds.add(item.id);
+        erased.push(item.label);
+        const shapeIds = item.shapeIds.filter((id) => editor.getShape(id as TLShapeId)).map((id) => id as TLShapeId);
+        if (shapeIds.length > 0) editor.deleteShapes(shapeIds);
+        if (item.eqItemIds.length > 0) {
+          const eqGone = new Set(item.eqItemIds);
+          eqRef.current = eqRef.current.filter((e) => !eqGone.has(e.id));
+          setEqItems((prev) => prev.filter((e) => !eqGone.has(e.id)));
+        }
+        recordDirectSemanticAction({ type: "delete_shape", target_ids: item.shapeIds });
+      }
+      if (goneIds.size > 0) itemsRef.current = itemsRef.current.filter((i) => !goneIds.has(i.id));
+      return erased;
+    },
+
+    eraseOlder(keep: number) {
+      const body = itemsRef.current.filter((i) => !isHeadingItem(i));
+      const n = Math.max(0, Math.min(body.length, Math.floor(keep)));
+      const victims = body.slice(0, body.length - n);
+      if (victims.length === 0) return [];
+      return api.eraseItems(victims.map((v) => v.id));
+    },
+
+    async exportImage(maxWidth = 1024) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const ids = editor.getCurrentPageShapeIds();
+      if (ids.size === 0) return null;
+      try {
+        const bounds = editor.getCurrentPageBounds();
+        const scale = bounds && bounds.w > maxWidth ? maxWidth / bounds.w : 1;
+        const out = await editor.toImageDataUrl(Array.from(ids), { format: "jpeg", quality: 0.72, scale, background: true, padding: 24 });
+        return out ? { url: out.url, width: out.width, height: out.height } : null;
+      } catch (err) {
+        if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] exportImage", err);
+        return null;
+      }
     },
 
     loadSnapshot(snap: WhiteboardSnapshot) {

@@ -6,6 +6,8 @@ export const ok = (message?: string): ToolCallResult => ({ success: true, messag
 export const fail = (error: string): ToolCallResult => ({ success: false, error });
 
 export const TOOL_STRING_LIMITS: Record<string, number> = {
+  target: 160,
+  targets: 400,
   teaching_goal: 240,
   board_request: 2000,
   subject: 80,
