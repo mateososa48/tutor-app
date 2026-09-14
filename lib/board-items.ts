@@ -43,6 +43,11 @@ const KIND_BY_TOOL: Record<string, string> = {
   add_vector_diagram: "vector diagram",
   add_process_map: "process map",
   draw_sketch: "sketch",
+  draw_tape_diagram: "tape diagram",
+  draw_grid: "grid",
+  write_vertical: "stacked arithmetic",
+  draw_long_division: "long division",
+  draw_transversal: "transversal",
   circle_item: "ring",
 };
 
@@ -79,9 +84,11 @@ export function resolveItemTarget(items: BoardItem[], target: string): BoardItem
     const id = `b${idMatch[1]}`;
     return items.find((item) => item.id === id) ?? null;
   }
+  const squash = (v: string) => v.toLowerCase().replace(/\s+/g, "");
+  const ts = squash(t);
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i];
-    if (item.label.toLowerCase().includes(t) || itemKind(item.tool) === t) return item;
+    if (item.label.toLowerCase().includes(t) || itemKind(item.tool) === t || (ts.length >= 2 && squash(item.label).includes(ts))) return item;
   }
   const words = t.split(/\s+/).filter((w) => w.length > 2);
   if (words.length === 0) return null;

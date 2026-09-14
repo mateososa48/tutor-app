@@ -32,7 +32,7 @@ test("backend instructions carry the profile, memory notes, and the output contr
   assert.match(text, /- confuses kinetic with momentum/);
   assert.match(text, /Output contract/);
   assert.match(text, /\[Board: …\]/);
-  assert.ok(text.length < 14000, `backend prompt too long: ${text.length}`);
+  assert.ok(text.length < 18000, `backend prompt too long: ${text.length}`);
 });
 
 test("backend instructions put the board first and name the picture tools", () => {

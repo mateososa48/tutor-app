@@ -38,8 +38,8 @@ const SCENARIOS = [
     text: "Explain y = x squared minus four with a graph or plotted points.",
   },
   {
-    label: "Physics",
-    text: "A block is pushed right with friction. Help me set up the forces.",
+    label: "Ratio",
+    text: "For every 2 red marbles there are 3 blue. There are 20 marbles. How many are blue?",
   },
   {
     label: "Wrong answer",

@@ -7,7 +7,7 @@ A live AI voice tutoring application for middle and high school students. The st
 product
 
 ## Users
-Middle and high school students (12–18) studying math, physics, chemistry, writing, history. Often stressed about homework or exams. Using on a laptop at a desk or kitchen table. Sessions are 15–45 minutes.
+Upper elementary through high school students (10–18) studying math: arithmetic, fractions, ratios, algebra, geometry, graphs, basic statistics. Often stressed about homework or exams. Using on a laptop at a desk or kitchen table. Sessions are 15–45 minutes.
 
 ## Tone
 Warm, focused, calm. Intelligent without being cold. Not childish. Not corporate.

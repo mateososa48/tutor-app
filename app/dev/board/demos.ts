@@ -70,6 +70,26 @@ const marks: DemoCall[] = [
   { name: "erase_older", args: { keep: 2 } },
 ];
 
+// The math pictures: tape diagrams, grids, stacked arithmetic, long
+// division, transversals, solids, heights, slope triangles.
+const math: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Math pictures" } },
+  { name: "draw_tape_diagram", args: { rows: "Red: *4 | *4 = 8; Blue: 4 | 4 | 4 = 12", total_label: "20 marbles", label: "2 : 3" } },
+  { name: "draw_grid", args: { rows: 10, columns: 10, shaded: 25, label: "25 out of 100 = 25% = 0.25", column: "right" } },
+  { name: "write_vertical", args: { operands: "347 | 289", operation: "+", carries: "1 1", result: "636" } },
+  { name: "write_vertical", args: { operands: "23 | 14", operation: "×", partial_products: "92 | 230", result: "322", column: "right" } },
+  { name: "draw_long_division", args: { dividend: "156", divisor: "12", quotient: "13", steps: "-12 | 36 | -36 | 0" } },
+  { name: "draw_figure", args: { figure: "triangle", side_labels: "8 | | ", height_label: "h = 5", label: "area = ½ × 8 × 5", column: "right" } },
+  { name: "draw_figure", args: { figure: "parallelogram", side_labels: "10", height_label: "4", label: "area = base × height" } },
+  { name: "draw_figure", args: { figure: "rectangular_prism", side_labels: "6 | 3 | 4", label: "volume = 6 × 3 × 4", column: "right" } },
+  { name: "draw_figure", args: { figure: "cylinder", side_labels: "r = 3 | h = 8", label: "V = πr²h" } },
+  { name: "draw_transversal", args: { angle_labels: "110° | ? | | | | 70° | |", mark_angles: "1 | 5", label: "corresponding angles are equal", column: "right" } },
+  { name: "add_function_graph", args: { expression: "2*x + 1", x_min: -1, x_max: 4, slope_run: "1..3", mark_points: "(0,1):y-intercept", label: "slope = rise / run = 4 / 2 = 2" } },
+  { name: "draw_array", args: { rows: 3, columns: 4, shaded: 3, label: "3 of 12 is one quarter", column: "right" } },
+  { name: "draw_figure", args: { figure: "hexagon", side_labels: "5 | 5 | 5 | 5 | 5 | 5", label: "perimeter = 6 × 5" } },
+  { name: "draw_figure", args: { figure: "trapezoid", side_labels: "12 | | 6 | ", height_label: "h = 4", column: "right" } },
+];
+
 const all: DemoCall[] = [
   ...fractions,
   ...algebra.slice(1),
@@ -79,4 +99,4 @@ const all: DemoCall[] = [
   { name: "add_process_map", args: { title: "How to solve it", nodes: "Read | Draw | Try | Check", connectors: "then | then | then", column: "right" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, all };
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, all };

@@ -40,6 +40,11 @@ export type BoardActionType =
   | "balance"
   | "bar_chart"
   | "sketch"
+  | "tape_diagram"
+  | "grid"
+  | "vertical_arithmetic"
+  | "long_division"
+  | "transversal"
   | "freeform_text"
   | "freeform_shape"
   | "freeform_arrow"
@@ -781,6 +786,11 @@ export function validateAction(value: unknown): ActionValidation {
       }
       break;
     }
+    case "tape_diagram":
+    case "grid":
+    case "vertical_arithmetic":
+    case "long_division":
+    case "transversal":
     case "clear_board":
       // no required fields
       break;

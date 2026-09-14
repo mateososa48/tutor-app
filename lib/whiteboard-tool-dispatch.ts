@@ -16,8 +16,16 @@ import {
   splitPipe,
   type BoardColumn,
   type Fraction,
+  parseTapeRows,
+  parseOperation,
+  parseAngleMarks,
+  parseXYPoints,
+  parseSlopeRun,
+  isSolidFigure,
+  FIGURE_KINDS,
 } from "@/lib/board-diagrams";
 import { parseTargetList } from "@/lib/board-items";
+import { latexToPlain } from "@/lib/latex-plain";
 import {
   fail,
   isToolError,
@@ -166,7 +174,7 @@ function dispatchInner(
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: latex }, () =>
         board.drawEquationStep(latex, annotation.value, pickColumn(column.value)),
       );
-      return ok(`Wrote the line ${latex}${annotation.value ? ` (${annotation.value})` : ""}.`);
+      return ok(`Wrote the line ${latexToPlain(latex)}${annotation.value ? ` (${annotation.value})` : ""}.`);
     }
 
     case "add_text_note": {
@@ -316,20 +324,27 @@ function dispatchInner(
       const figureRaw = requiredString(args, "figure");
       if (isToolError(figureRaw)) return figureRaw;
       const figure = figureRaw.toLowerCase().replace(/[\s-]+/g, "_");
-      if (!isFigureKind(figure)) return fail('"figure" must be triangle, right_triangle, square, rectangle, or circle.');
+      if (!isFigureKind(figure)) return fail(`"figure" must be one of ${FIGURE_KINDS.join(", ")}.`);
       const sides = opt(args, "side_labels"); if (sides.error) return sides.error;
       const vertices = opt(args, "vertex_labels"); if (vertices.error) return vertices.error;
       const angles = opt(args, "angle_labels"); if (angles.error) return angles.error;
       const radius = opt(args, "radius_label"); if (radius.error) return radius.error;
       const diameter = opt(args, "diameter_label"); if (diameter.error) return diameter.error;
+      const height = opt(args, "height_label"); if (height.error) return height.error;
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       const markRaw = optionalBoolean(args, "mark_right_angle");
       if (isToolError(markRaw)) return markRaw;
       const markRightAngle = markRaw ?? figure === "right_triangle";
-      const sideLabels = splitPipe(sides.value);
-      const vertexLabels = splitPipe(vertices.value);
-      const angleLabels = splitPipe(angles.value);
+      // Positional: "12 | | 6" means base 12, right side blank, top 6.
+      const positional = (value: string | undefined) => {
+        const parts = (value ?? "").split("|").map((t) => t.trim());
+        while (parts.length > 0 && parts[parts.length - 1] === "") parts.pop();
+        return parts;
+      };
+      const sideLabels = positional(sides.value);
+      const vertexLabels = positional(vertices.value);
+      const angleLabels = positional(angles.value);
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? figure.replace("_", " ") }, () =>
         board.drawFigure({
           figure,
@@ -339,12 +354,14 @@ function dispatchInner(
           markRightAngle,
           radiusLabel: radius.value,
           diameterLabel: diameter.value,
+          heightLabel: height.value,
           label: label.value,
           column: pickColumn(column.value),
         }),
       );
       const detail = [
-        sideLabels.length ? `sides ${sideLabels.join(", ")}` : "",
+        sideLabels.length ? `${isSolidFigure(figure) ? "dimensions" : "sides"} ${sideLabels.join(", ")}` : "",
+        height.value ? `height ${height.value}` : "",
         vertexLabels.length ? `vertices ${vertexLabels.join(", ")}` : "",
         angleLabels.length ? `angles ${angleLabels.join(", ")}` : "",
         radius.value ? `radius ${radius.value}` : "",
@@ -385,8 +402,11 @@ function dispatchInner(
       const column = opt(args, "column"); if (column.error) return column.error;
       const splitAfterColumn = splitCol && splitCol >= 1 && splitCol < columns ? Math.round(splitCol) : undefined;
       const splitAfterRow = splitRow && splitRow >= 1 && splitRow < rows ? Math.round(splitRow) : undefined;
+      const shadedRaw = optionalNumber(args, "shaded");
+      if (isToolError(shadedRaw)) return shadedRaw;
+      const shaded = shadedRaw === undefined ? undefined : clamp(Math.round(shadedRaw), 0, rows * columns);
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${rows} by ${columns} array` }, () =>
-        board.drawArray({ rows, columns, splitAfterColumn, splitAfterRow, label: label.value, column: pickColumn(column.value) }),
+        board.drawArray({ rows, columns, splitAfterColumn, splitAfterRow, shaded, label: label.value, column: pickColumn(column.value) }),
       );
       const split = [
         splitAfterColumn ? `split into ${splitAfterColumn} + ${columns - splitAfterColumn} columns` : "",
@@ -543,10 +563,19 @@ function dispatchInner(
       if (!(xMax > xMin)) return fail('"x_max" must be greater than "x_min".');
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
+      const marks = opt(args, "mark_points"); if (marks.error) return marks.error;
+      const runRaw = opt(args, "slope_run"); if (runRaw.error) return runRaw.error;
+      const markPoints = parseXYPoints(marks.value);
+      const slopeRun = parseSlopeRun(runRaw.value);
+      if (runRaw.value && !slopeRun) return fail('"slope_run" must look like "1..3" (two different x-values).');
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? expression }, () =>
-        board.addFunctionGraph(expression, xMin, xMax, label.value, pickColumn(column.value) ?? "right"),
+        board.addFunctionGraph(expression, xMin, xMax, label.value, pickColumn(column.value) ?? "right", { markPoints, slopeRun }),
       );
-      return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}.`);
+      const extra = [
+        markPoints.length ? `marked ${markPoints.map((p) => `(${p.x}, ${p.y})${p.label ? ` ${p.label}` : ""}`).join(", ")}` : "",
+        slopeRun ? `slope triangle from x = ${slopeRun.x1} to x = ${slopeRun.x2}` : "",
+      ].filter(Boolean).join("; ");
+      return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}${extra ? `; ${extra}` : ""}.`);
     }
 
     // ── Notes ──────────────────────────────────────────────────────────────
@@ -614,6 +643,94 @@ function dispatchInner(
         board.addProcessMap(title, nodes, connectors.value, pickColumn(column.value)),
       );
       return ok(`Drew the process map "${title}".`);
+    }
+
+    case "draw_tape_diagram": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const rowsRaw = requiredString(args, "rows");
+      if (isToolError(rowsRaw)) return rowsRaw;
+      const rows = parseTapeRows(rowsRaw);
+      if (rows.length === 0) return fail('"rows" needs at least one row of boxes, e.g. \'Red: 2 | 2 | 2 = 6; Blue: 3 | 3\'.');
+      const totalLabel = opt(args, "total_label"); if (totalLabel.error) return totalLabel.error;
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? "tape diagram" }, () =>
+        board.drawTapeDiagram({ rows, totalLabel: totalLabel.value, label: label.value, column: pickColumn(column.value) }),
+      );
+      const desc = rows.map((r) => `${r.name ? `${r.name}: ` : ""}${r.segments.length} box${r.segments.length === 1 ? "" : "es"}${r.segments.some((s) => s.shaded) ? ` (${r.segments.filter((s) => s.shaded).length} shaded)` : ""}${r.total ? ` = ${r.total}` : ""}`).join("; ");
+      return ok(`Drew a tape diagram: ${desc}${totalLabel.value ? `; bracket "${totalLabel.value}"` : ""}${label.value ? `, captioned "${label.value}"` : ""}.`);
+    }
+
+    case "draw_grid": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const rowsRaw = requiredNumber(args, "rows"); if (isToolError(rowsRaw)) return rowsRaw;
+      const colsRaw = requiredNumber(args, "columns"); if (isToolError(colsRaw)) return colsRaw;
+      const rows = clamp(Math.round(rowsRaw), 1, 20);
+      const columns = clamp(Math.round(colsRaw), 1, 20);
+      const shadedRaw = optionalNumber(args, "shaded"); if (isToolError(shadedRaw)) return shadedRaw;
+      const shaded = clamp(Math.round(shadedRaw ?? 0), 0, rows * columns);
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${rows} by ${columns} grid` }, () =>
+        board.drawGrid({ rows, columns, shaded, label: label.value, column: pickColumn(column.value) }),
+      );
+      return ok(`Drew a ${rows} × ${columns} grid (${rows * columns} squares) with ${shaded} shaded${label.value ? `, captioned "${label.value}"` : ""}.`);
+    }
+
+    case "write_vertical": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const operandsRaw = requiredString(args, "operands"); if (isToolError(operandsRaw)) return operandsRaw;
+      const opRaw = requiredString(args, "operation"); if (isToolError(opRaw)) return opRaw;
+      const operation = parseOperation(opRaw);
+      if (!operation) return fail('"operation" must be +, -, or ×.');
+      const operands = splitPipe(operandsRaw).map((t) => t.replace(/\s+/g, "")).filter(Boolean).slice(0, 4);
+      if (operands.length < 2) return fail('"operands" needs two to four numbers separated by |, e.g. \'347 | 289\'.');
+      if (operands.some((t) => t.length > 12)) return fail("Each operand must be 12 characters or fewer.");
+      const result = opt(args, "result"); if (result.error) return result.error;
+      const carries = opt(args, "carries"); if (carries.error) return carries.error;
+      const partialsRaw = opt(args, "partial_products"); if (partialsRaw.error) return partialsRaw.error;
+      const partials = splitPipe(partialsRaw.value).map((t) => t.trim()).filter(Boolean).slice(0, 6);
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? operands.join(` ${operation} `) }, () =>
+        board.writeVertical({ operands, operation, result: result.value?.trim() || undefined, carries: carries.value, partials, label: label.value, column: pickColumn(column.value) }),
+      );
+      return ok(`Wrote ${operands.join(` ${operation} `)} in columns${partials.length ? ` with partial products ${partials.join(", ")}` : ""}${result.value ? ` = ${result.value}` : " (answer left blank)"}.`);
+    }
+
+    case "draw_long_division": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const dividend = requiredString(args, "dividend"); if (isToolError(dividend)) return dividend;
+      const divisor = requiredString(args, "divisor"); if (isToolError(divisor)) return divisor;
+      const quotient = opt(args, "quotient"); if (quotient.error) return quotient.error;
+      const stepsRaw = opt(args, "steps"); if (stepsRaw.error) return stepsRaw.error;
+      const steps = (stepsRaw.value ?? "").split("|").map((t) => t.replace(/\s+$/, "")).filter((t) => t.trim().length > 0).slice(0, 8);
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${dividend.trim()} ÷ ${divisor.trim()}` }, () =>
+        board.drawLongDivision({ dividend: dividend.trim(), divisor: divisor.trim(), quotient: quotient.value, steps, label: label.value, column: pickColumn(column.value) }),
+      );
+      return ok(`Set up ${dividend.trim()} ÷ ${divisor.trim()} as long division${quotient.value ? ` with quotient ${quotient.value.trim()}` : ""}${steps.length ? ` and ${steps.length} step line${steps.length === 1 ? "" : "s"}` : ""}.`);
+    }
+
+    case "draw_transversal": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const labelsRaw = requiredString(args, "angle_labels"); if (isToolError(labelsRaw)) return labelsRaw;
+      const angleLabels = labelsRaw.split("|").map((t) => t.trim()).slice(0, 8);
+      const marksRaw = opt(args, "mark_angles"); if (marksRaw.error) return marksRaw.error;
+      const marks = parseAngleMarks(marksRaw.value);
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? "parallel lines and a transversal" }, () =>
+        board.drawTransversal({ angleLabels, marks, label: label.value, column: pickColumn(column.value) }),
+      );
+      const named = angleLabels.map((t, i) => (t ? `${i + 1}: ${t}` : "")).filter(Boolean).join(", ");
+      return ok(`Drew two parallel lines cut by a transversal${named ? `; angles ${named}` : ""}${marks.length ? `; marked ${marks.join(", ")}` : ""}.`);
     }
 
     case "point_at": {

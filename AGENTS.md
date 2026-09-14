@@ -18,7 +18,7 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 - `lib/live-tutor.ts` — browser client: mic track + `oai-events` data channel, transcript assembly, backend tool loop, speaking meter (RMS on the remote track), reconnect-with-history on drop.
 - `lib/live-events.ts` — pure reducers (`TranscriptAssembler`, `BackendTurnTracker`), unit-tested.
 - `lib/tutor-prompts.ts` — the two prompts. Voice model: short persona + concrete "delegate when / do not delegate when" policy. Backend: output contract (spoken prose, one idea, no LaTeX), teaching loop, downshift, hint ladder, board policy, profile + memory, examples.
-- `lib/whiteboard-tools.ts` — the 34 tool declarations (single source of truth) and `WHITEBOARD_FUNCTION_TOOLS` (Responses format). `lib/whiteboard-tool-dispatch.ts` validates arguments, calls the board handle, and returns a result that describes the picture ("Drew 1 circle cut into 2 equal parts, 1 shaded"); the session page appends a `[Board: …]` summary so the backend knows what the student sees.
+- `lib/whiteboard-tools.ts` — the 39 tool declarations (single source of truth) and `WHITEBOARD_FUNCTION_TOOLS` (Responses format). `lib/whiteboard-tool-dispatch.ts` validates arguments, calls the board handle, and returns a result that describes the picture ("Drew 1 circle cut into 2 equal parts, 1 shaded"); the session page appends a `[Board: …]` summary so the backend knows what the student sees.
 - `lib/board-diagrams.ts` — pure, unit-tested math and parsers behind the picture tools (fractions, tick steps and fraction labels, intervals/jumps syntax, figure vertices and label placement, sketch strokes). `components/TldrawCore.tsx` turns the parsed inputs into tldraw shapes.
 
 - `app/api/profile/notes/route.ts` — durable tutor memory (`user_profiles.tutor_notes`), written by the `remember_about_student` tool and loaded into the backend prompt at session start.
@@ -32,6 +32,16 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 - Camera: `focusOn` treats "visible but zoomed out below 0.8" as not visible, so new content always comes back to a readable zoom (this is why the first drawing looked tiny when the student had zoomed out).
 - Backend prompt (`lib/tutor-prompts.ts`) has a board-first rule: one diagnostic question at most, then draw the picture in the same reply as the idea; never describe a picture in words or fake one with brackets; one to three board actions per reply. Examples B, B2, B3 show fractions, a sketch and the balance.
 - **Free visual QA:** `npm run dev` then open `/dev/board?demo=fractions|algebra|geometry|data|all&step=300&count=N`. It mounts the whiteboard and replays scripted tool calls with no OpenAI session (`app/dev/board/demos.ts`). The route is dev-only (404 in production, public in `proxy.ts` only in development). Screenshot it before touching a renderer.
+
+## Math only (Sept 14 2026)
+Chalk tutors math and nothing else (arithmetic, fractions, decimals, percent, ratios, negatives, algebra, geometry, graphs, basic statistics). The prompts say so in the persona, a "# Math only" section, and the Gemini contract; the landing FAQ, onboarding examples, and debug panel match. The board section carries a topic playbook: which picture tool for which topic. Picture tools added for the math focus, all in `components/TldrawCore.tsx` with pure helpers in `lib/board-diagrams.ts`:
+- `draw_tape_diagram` (bar model: rows of boxes, `*` shades a box, `= total`, a bracket for the grand total) for ratios, parts and totals, a fraction of an amount.
+- `draw_grid` (rows × columns, first N shaded) for percent, decimals, fraction of a set, area as counting squares.
+- `write_vertical` (stacked +, −, × with carries and partial products, right-aligned mono) and `draw_long_division` (bracket, quotient, step lines; leading spaces place digits).
+- `draw_transversal` (two parallels and a transversal, angles 1–8 clockwise from upper left, `mark_angles` arcs).
+- `draw_figure` grew parallelogram, trapezoid, rhombus, pentagon, hexagon, and 3D rectangular_prism / cube / cylinder (`side_labels` = dimensions), plus `height_label` (dashed altitude with a right-angle mark). Side labels are positional: "12 | | 6" skips the right side.
+- `add_function_graph` grew `mark_points` and `slope_run` (a rise/run triangle); `draw_array` grew `shaded`.
+- `/dev/board?demo=math` replays all of them. Equation-line labels are plain text (`lib/latex-plain.ts`) so `point_at "5/6"` resolves. The eval has a `--set math` scenario set (12 topics).
 
 ## The tutor's hands (Sept 14 2026)
 - **Board items.** Every tool call is one item with a short id (`b1`, `b2`, …). `dispatchWhiteboardTool` wraps each call in `board.beginItem/endItem`; the id rides in the result ("… (item b7)") and `getBoardSummary()` returns the item list (`formatBoardItems` in `lib/board-items.ts`) that the page appends as `[Board: …]`. Items resolve by id, label words, kind, or `last` (`resolveItemTarget`, unit-tested). Item bounds measure rendered text and typeset math, not their wide layout boxes.

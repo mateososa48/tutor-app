@@ -73,6 +73,22 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
+// Math-focused scenarios: the topics a grade 5–9 tutor must draw well.
+const MATH_SCENARIOS: Scenario[] = [
+  { name: "add-fractions", student: ["how do I add 1/2 and 1/3", "um, 2/5?", "why can't I just add the tops and bottoms", "oh so I need the same size pieces", "6?", "so 3/6 + 2/6 = 5/6"] },
+  { name: "percent", student: ["what is 25% of 80", "I don't know what percent even means", "out of 100?", "so 25 out of 100", "20?", "yes"] },
+  { name: "ratio-word", student: ["for every 2 red marbles there are 3 blue. if there are 20 marbles how many are blue", "10?", "hmm 5 groups?", "so 12 blue", "and 8 red", "ok"] },
+  { name: "two-step-eq", student: ["3x - 5 = 16", "add 5?", "3x = 21", "x = 7", "can you give me a harder one", "5x + 2 = 3x + 10... subtract 3x?"] },
+  { name: "distributive", student: ["what is 3(x + 4)", "3x + 4?", "why does the 3 go to both", "oh, so 3x + 12", "what about 4(2x - 3)", "8x - 12"] },
+  { name: "triangle-area", student: ["how do you find the area of a triangle with base 8 and height 5", "8 times 5 is 40", "divide by 2?", "20", "what if it's slanted, like not a right triangle", "ok"] },
+  { name: "angles", student: ["a triangle has angles 50 and 60, what's the third", "I don't remember the rule", "180?", "so 70", "what about a straight line, like two angles on it", "they add to 180"] },
+  { name: "pythagoras", student: ["I have a right triangle with legs 6 and 8, what's the hypotenuse", "6 + 8 = 14?", "oh, squares. 36 + 64", "100", "so c is 10", "what if I know the hypotenuse and one leg"] },
+  { name: "slope", student: ["what is slope", "rise over run?", "so for the points (1,2) and (3,6)", "rise 4 run 2, slope 2", "what about a negative slope", "ok"] },
+  { name: "long-multiply", student: ["how do I do 23 times 14", "I always mess up the carrying", "20 times 10 is 200", "20 times 4 is 80", "3 times 10 is 30 and 3 times 4 is 12", "322"] },
+  { name: "negatives-mult", student: ["why is negative times negative positive", "I just don't get it", "so -2 times 3 is -6", "and -2 times -3 is 6", "ok what is -12 divided by -4", "3"] },
+  { name: "decimals", student: ["which is bigger, 0.7 or 0.65", "0.65 because 65 is bigger than 7", "oh tenths and hundredths", "so 0.70", "0.7 is bigger", "yes"] },
+];
+
 const DRAW_TOOLS = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name).filter((n) =>
   !["point_at", "circle_item", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step"].includes(n)));
 const NON_CREATING = new Set(["point_at", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step"]);
@@ -141,7 +157,7 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 8): Promise<T> {
   }
 }
 
-type TurnStats = { student: string; tutor: string; tools: string[]; errors: string[]; boardUsed: boolean; pointed: boolean; erased: boolean; asked: boolean };
+type TurnStats = { student: string; tutor: string; tools: string[]; errors: string[]; boardUsed: boolean; pointed: boolean; erased: boolean; asked: boolean; fallback: boolean };
 
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -159,7 +175,7 @@ async function runScenario(ai: GoogleGenAI, model: string, scenario: Scenario, t
   for (const line of scenario.student.slice(0, turns)) {
     contents.push({ role: "user", parts: [{ text: line }] });
     await new Promise((r) => setTimeout(r, Number(arg("pace", "0"))));
-    const turn: TurnStats = { student: line, tutor: "", tools: [], errors: [], boardUsed: false, pointed: false, erased: false, asked: false };
+    const turn: TurnStats = { student: line, tutor: "", tools: [], errors: [], boardUsed: false, pointed: false, erased: false, asked: false, fallback: false };
     for (let round = 0; round < 6; round++) {
       const res = await withRetry(() => ai.models.generateContent({
         model,
@@ -200,6 +216,7 @@ async function runScenario(ai: GoogleGenAI, model: string, scenario: Scenario, t
     turn.pointed = turn.tools.some((t) => t === "point_at" || t === "circle_item" || t === "highlight_step");
     turn.erased = turn.tools.some((t) => t.startsWith("erase"));
     turn.asked = /\?/.test(turn.tutor);
+    turn.fallback = turn.tools.some((t) => t === "draw_sketch" || t === "add_text_note");
     stats.push(turn);
     if (verbose) console.log(`  student: ${line}\n  tutor:   ${turn.tutor.slice(0, 300)}\n  tools:   ${turn.tools.join(", ") || "(none)"}${turn.errors.length ? `\n  errors:  ${turn.errors.join(" | ")}` : ""}\n`);
   }
@@ -216,8 +233,9 @@ async function main() {
   const only = arg("scenario", "");
   const turns = Number(arg("turns", "6"));
   const runs = Number(arg("runs", "1"));
-  const scenarios = SCENARIOS.filter((s) => !only || s.name === only);
-  const rows: Array<{ name: string; turns: number; board: number; pointed: number; erased: number; asked: number; askedWithBoard: number; tools: number; errors: number }> = [];
+  const set = arg("set", "core") === "math" ? MATH_SCENARIOS : arg("set", "core") === "all" ? [...SCENARIOS, ...MATH_SCENARIOS] : SCENARIOS;
+  const scenarios = set.filter((s) => !only || s.name === only);
+  const rows: Array<{ name: string; turns: number; board: number; pointed: number; erased: number; asked: number; askedWithBoard: number; tools: number; errors: number; fallback: number }> = [];
   for (const scenario of scenarios) {
     for (let r = 0; r < runs; r++) {
       if (verbose) console.log(`\n=== ${scenario.name} (${model}) run ${r + 1}`);
@@ -232,14 +250,15 @@ async function main() {
         askedWithBoard: stats.filter((t) => t.asked && (t.boardUsed || t.pointed)).length,
         tools: stats.reduce((s, t) => s + t.tools.length, 0),
         errors: stats.reduce((s, t) => s + t.errors.length, 0),
+        fallback: stats.filter((t) => t.fallback).length,
       });
     }
   }
   const total = rows.reduce((a, r) => ({ turns: a.turns + r.turns, board: a.board + r.board, pointed: a.pointed + r.pointed, erased: a.erased + r.erased, asked: a.asked + r.asked, askedWithBoard: a.askedWithBoard + r.askedWithBoard, tools: a.tools + r.tools, errors: a.errors + r.errors }), { turns: 0, board: 0, pointed: 0, erased: 0, asked: 0, askedWithBoard: 0, tools: 0, errors: 0 });
   console.log(`\nmodel ${model}`);
-  console.log("scenario      turns  board  pointed  erased  asked  asked+board  tools  errors");
-  for (const r of rows) console.log(`${r.name.padEnd(13)} ${String(r.turns).padStart(5)} ${String(r.board).padStart(6)} ${String(r.pointed).padStart(8)} ${String(r.erased).padStart(7)} ${String(r.asked).padStart(6)} ${String(r.askedWithBoard).padStart(12)} ${String(r.tools).padStart(6)} ${String(r.errors).padStart(7)}`);
-  console.log(`${"TOTAL".padEnd(13)} ${String(total.turns).padStart(5)} ${String(total.board).padStart(6)} ${String(total.pointed).padStart(8)} ${String(total.erased).padStart(7)} ${String(total.asked).padStart(6)} ${String(total.askedWithBoard).padStart(12)} ${String(total.tools).padStart(6)} ${String(total.errors).padStart(7)}`);
+  console.log("scenario        turns  board  pointed  erased  asked  asked+board  tools  errors  sketch/text");
+  for (const r of rows) console.log(`${r.name.padEnd(15)} ${String(r.turns).padStart(5)} ${String(r.board).padStart(6)} ${String(r.pointed).padStart(8)} ${String(r.erased).padStart(7)} ${String(r.asked).padStart(6)} ${String(r.askedWithBoard).padStart(12)} ${String(r.tools).padStart(6)} ${String(r.errors).padStart(7)} ${String(r.fallback).padStart(12)}`);
+  console.log(`${"TOTAL".padEnd(15)} ${String(total.turns).padStart(5)} ${String(total.board).padStart(6)} ${String(total.pointed).padStart(8)} ${String(total.erased).padStart(7)} ${String(total.asked).padStart(6)} ${String(total.askedWithBoard).padStart(12)} ${String(total.tools).padStart(6)} ${String(total.errors).padStart(7)}`);
   console.log(`board-use rate ${(100 * total.board / Math.max(1, total.turns)).toFixed(0)}%  pointing rate ${(100 * total.pointed / Math.max(1, total.turns)).toFixed(0)}%  tools/turn ${(total.tools / Math.max(1, total.turns)).toFixed(2)}  errors ${total.errors}`);
 }
 

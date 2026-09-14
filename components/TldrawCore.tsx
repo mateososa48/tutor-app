@@ -54,6 +54,17 @@ import {
   niceStep,
   parseLineMarks,
   sectorPolygon,
+  clamp,
+  altitude,
+  formatNumber,
+  isSolidFigure,
+  type TapeDrawing,
+  type GridDrawing,
+  type VerticalDrawing,
+  type LongDivisionDrawing,
+  type TransversalDrawing,
+  type GraphExtras,
+  type FigureKind,
   tickValues,
   vertexLabelPoint,
   wholesNeeded,
@@ -169,7 +180,7 @@ export interface WhiteboardHandle {
   startBoardSection(title: string, freshPage?: boolean): void;
   drawEquationStep(latex: string, annotation?: string, column?: "left" | "right"): void;
   addTextNote(text: string, size?: "heading" | "body", column?: "left" | "right"): void;
-  addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right"): void;
+  addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right", extras?: GraphExtras): void;
   drawShape(shape: string, label?: string, width?: number, height?: number, column?: "left" | "right"): void;
   addTable(columns: string, rows: string, title?: string, column?: "left" | "right"): void;
   addNumberLine(opts: NumberLineDrawing): void;
@@ -248,6 +259,12 @@ export interface WhiteboardHandle {
   eraseItems(targets: string[]): string[];
   /** Erase everything except headings and the newest `keep` items. */
   eraseOlder(keep: number): string[];
+  // Math pictures added Sept 14 2026.
+  drawTapeDiagram(opts: TapeDrawing): void;
+  drawGrid(opts: GridDrawing): void;
+  writeVertical(opts: VerticalDrawing): void;
+  drawLongDivision(opts: LongDivisionDrawing): void;
+  drawTransversal(opts: TransversalDrawing): void;
   /** The board as a JPEG data URL with its pixel size (or null when empty). */
   exportImage(maxWidth?: number): Promise<{ url: string; width: number; height: number } | null>;
 }
@@ -1811,7 +1828,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
-    addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right") {
+    addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right", extras?: GraphExtras) {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "right";
@@ -1880,6 +1897,41 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         createText(editor, "Could not read that expression", x, y + H / 2 - 12, { color: "red", size: "s", font: "sans", width: W, align: "middle" });
       }
 
+      // Marked points and a slope triangle ride on the same axes.
+      if (extras && (extras.markPoints.length > 0 || extras.slopeRun)) {
+        const mpens = takePens(extras.markPoints.length + (extras.slopeRun ? 1 : 0));
+        extras.markPoints.forEach((pt, i) => {
+          const gx = px(pt.x);
+          const gy = py(pt.y);
+          const mp = mpens[i % mpens.length];
+          createFreeformGeo(editor, "ellipse", gx - 6, gy - 6, 12, 12, mp, "fill", { dash: "solid" });
+          if (pt.label) createText(editor, pt.label, gx + 9, gy + 3, { color: mp, size: "s", font: "sans", width: 140 });
+        });
+        if (extras.slopeRun && fn) {
+          const { x1, x2 } = extras.slopeRun;
+          let y1 = NaN;
+          let y2 = NaN;
+          try {
+            y1 = fn(x1);
+            y2 = fn(x2);
+          } catch {
+            // off the curve
+          }
+          if (Number.isFinite(y1) && Number.isFinite(y2)) {
+            const sp = mpens[mpens.length - 1];
+            const ax = px(x1);
+            const ay = py(y1);
+            const bx = px(x2);
+            const by = py(y2);
+            createLineShape(editor, undefined, undefined, [{ x: ax, y: ay }, { x: bx, y: ay }], { color: sp, size: "s", dash: "dashed" });
+            createLineShape(editor, undefined, undefined, [{ x: bx, y: ay }, { x: bx, y: by }], { color: sp, size: "s", dash: "dashed" });
+            createFreeformGeo(editor, "ellipse", ax - 5, ay - 5, 10, 10, sp, "fill", { dash: "solid" });
+            createFreeformGeo(editor, "ellipse", bx - 5, by - 5, 10, 10, sp, "fill", { dash: "solid" });
+            createText(editor, `run ${formatNumber(x2 - x1)}`, (ax + bx) / 2 - 45, by < ay ? ay + 14 : ay - 34, { color: sp, size: "s", font: "sans", width: 90, align: "middle" });
+            createText(editor, `rise ${formatNumber(y2 - y1)}`, bx + 8, (ay + by) / 2 - 12, { color: sp, size: "s", font: "sans", width: 100 });
+          }
+        }
+      }
       colY(col).current += H + extra;
       focusOn(editor, x, y, W, H + extra);
       recordDirectSemanticAction(
@@ -2660,8 +2712,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return;
       const col = opts.column ?? "left";
       const PAD = 48;
-      const fw = opts.figure === "rectangle" ? 260 : opts.figure === "square" ? 200 : opts.figure === "circle" ? 180 : 230;
-      const fh = opts.figure === "rectangle" ? 150 : opts.figure === "square" ? 200 : opts.figure === "circle" ? 180 : 170;
+      const SIZE: Record<FigureKind, [number, number]> = {
+        rectangle: [260, 150], square: [200, 200], circle: [180, 180], triangle: [230, 170], right_triangle: [230, 170],
+        parallelogram: [260, 140], trapezoid: [250, 140], rhombus: [230, 150], pentagon: [200, 200], hexagon: [210, 190],
+        rectangular_prism: [270, 176], cube: [205, 190], cylinder: [150, 200],
+      };
+      const [fw, fh] = SIZE[opts.figure] ?? [230, 170];
       const w = fw + PAD * 2;
       const h = fh + PAD * 2 + (opts.label ? 22 : 0);
       ensureColumnRoom(editor, col, h + ROW_GAP);
@@ -2671,7 +2727,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const oy = y + PAD;
       const labelAt = (text: string, p: Pt, color: TldrawColor, width = 140) =>
         createText(editor, text, p.x - width / 2, p.y - 12, { color, size: "s", font: "sans", width, align: "middle" });
-      const pens = takePens(opts.sideLabels.length + opts.angleLabels.length + (opts.radiusLabel ? 1 : 0) + (opts.diameterLabel ? 1 : 0));
+      const pens = takePens(opts.sideLabels.length + opts.angleLabels.length + (opts.radiusLabel ? 1 : 0) + (opts.diameterLabel ? 1 : 0) + (opts.heightLabel ? 1 : 0));
       let penIdx = 0;
       const nextPen = () => pens[penIdx++ % pens.length];
 
@@ -2691,10 +2747,66 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           createLine(editor, cx, cy, cx + r, cy, pen);
           labelAt(opts.radiusLabel, { x: cx + r / 2, y: cy - 18 }, pen);
         }
+      } else if (opts.figure === "cylinder") {
+        const rx = fw / 2;
+        const ry = fw * 0.17;
+        const cx = ox + rx;
+        const topY = oy + ry;
+        const botY = oy + fh - ry;
+        const ell = (cy: number, a0: number, a1: number) => {
+          const pts: Pt[] = [];
+          for (let i = 0; i <= 18; i++) {
+            const a = a0 + ((a1 - a0) * i) / 18;
+            pts.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) });
+          }
+          return pts;
+        };
+        createLineShape(editor, undefined, undefined, [...ell(topY, 0, Math.PI * 2), ell(topY, 0, 0)[0]], { color: INK, size: "m", dash: "solid", spline: "cubic" });
+        createLineShape(editor, undefined, undefined, ell(botY, 0, Math.PI), { color: INK, size: "m", dash: "solid", spline: "cubic" });
+        createLineShape(editor, undefined, undefined, ell(botY, Math.PI, Math.PI * 2), { color: INK, size: "s", dash: "dashed", spline: "cubic" });
+        createLine(editor, ox, topY, ox, botY, INK);
+        createLine(editor, ox + fw, topY, ox + fw, botY, INK);
+        if (opts.sideLabels[0]) {
+          const pen = nextPen();
+          createLine(editor, cx, topY, cx + rx, topY, pen);
+          labelAt(opts.sideLabels[0], { x: cx + rx / 2, y: topY - 18 }, pen, 90);
+        }
+        if (opts.sideLabels[1]) {
+          const pen = nextPen();
+          labelAt(opts.sideLabels[1], { x: ox + fw + 34, y: (topY + botY) / 2 }, pen, 70);
+        }
+      } else if (isSolidFigure(opts.figure)) {
+        // Cabinet projection: front face, then the back face shifted up and right.
+        const dx = opts.figure === "cube" ? 55 : 70;
+        const dy = opts.figure === "cube" ? 40 : 46;
+        const bw = fw - dx;
+        const bh = fh - dy;
+        const F = { x: ox, y: oy + dy };
+        const B = { x: ox + dx, y: oy };
+        const seg = (a: Pt, b: Pt, dash: TLDefaultDashStyle = "solid") =>
+          createLineShape(editor, undefined, undefined, [a, b], { color: INK, size: dash === "solid" ? "m" : "s", dash });
+        // front face
+        seg({ x: F.x, y: F.y }, { x: F.x + bw, y: F.y });
+        seg({ x: F.x + bw, y: F.y }, { x: F.x + bw, y: F.y + bh });
+        seg({ x: F.x + bw, y: F.y + bh }, { x: F.x, y: F.y + bh });
+        seg({ x: F.x, y: F.y + bh }, { x: F.x, y: F.y });
+        // top and right faces
+        seg({ x: F.x, y: F.y }, { x: B.x, y: B.y });
+        seg({ x: F.x + bw, y: F.y }, { x: B.x + bw, y: B.y });
+        seg({ x: B.x, y: B.y }, { x: B.x + bw, y: B.y });
+        seg({ x: F.x + bw, y: F.y + bh }, { x: B.x + bw, y: B.y + bh });
+        seg({ x: B.x + bw, y: B.y }, { x: B.x + bw, y: B.y + bh });
+        // hidden edges
+        seg({ x: F.x, y: F.y + bh }, { x: B.x, y: B.y + bh }, "dashed");
+        seg({ x: B.x, y: B.y }, { x: B.x, y: B.y + bh }, "dashed");
+        seg({ x: B.x, y: B.y + bh }, { x: B.x + bw, y: B.y + bh }, "dashed");
+        if (opts.sideLabels[0]) labelAt(opts.sideLabels[0], { x: F.x + bw / 2, y: F.y + bh + 18 }, nextPen(), 100);
+        if (opts.sideLabels[1]) labelAt(opts.sideLabels[1], { x: F.x + bw + dx / 2 + 26, y: F.y + bh - dy / 2 + 12 }, nextPen(), 90);
+        if (opts.sideLabels[2]) labelAt(opts.sideLabels[2], { x: F.x - 34, y: F.y + bh / 2 }, nextPen(), 70);
       } else {
         const pts = figureVertices(opts.figure, fw, fh).map((p) => ({ x: p.x + ox, y: p.y + oy }));
         createLineShape(editor, undefined, undefined, [...pts, pts[0]], { color: INK, size: "m", dash: "solid" });
-        if (opts.markRightAngle && opts.figure !== "triangle") {
+        if (opts.markRightAngle && (opts.figure === "right_triangle" || opts.figure === "square" || opts.figure === "rectangle")) {
           const v = pts[0];
           const s = 16;
           createLineShape(editor, undefined, undefined, [{ x: v.x, y: v.y - s }, { x: v.x + s, y: v.y - s }, { x: v.x + s, y: v.y }], { color: INK, size: "s", dash: "solid" });
@@ -2711,6 +2823,23 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         });
         opts.vertexLabels.slice(0, pts.length).forEach((text, i) => labelAt(text, vertexLabelPoint(pts, i, 22), INK, 60));
         opts.angleLabels.slice(0, pts.length).forEach((text, i) => labelAt(text, angleLabelPoint(pts, i, 36), nextPen(), 80));
+        if (opts.heightLabel) {
+          const alt = altitude(pts);
+          if (alt) {
+            const pen = nextPen();
+            const onEdge = Math.abs(alt.apex.x - pts[0].x) < 1 || Math.abs(alt.apex.x - pts[1].x) < 1;
+            const left = Math.min(pts[0].x, pts[1].x);
+            const right = Math.max(pts[0].x, pts[1].x);
+            // Label on the roomier side so it clears a slanted edge.
+            const sx = alt.foot.x - left > right - alt.foot.x ? -1 : 1;
+            if (!onEdge) {
+              createLineShape(editor, undefined, undefined, [alt.apex, alt.foot], { color: pen, size: "s", dash: "dashed" });
+              const m = 11;
+              createLineShape(editor, undefined, undefined, [{ x: alt.foot.x, y: alt.foot.y - m }, { x: alt.foot.x + m * sx, y: alt.foot.y - m }, { x: alt.foot.x + m * sx, y: alt.foot.y }], { color: INK, size: "s", dash: "solid" });
+            }
+            labelAt(opts.heightLabel, { x: alt.apex.x + 30 * sx, y: (alt.apex.y + alt.foot.y) / 2 }, pen, 80);
+          }
+        }
       }
 
       if (opts.label) {
@@ -2720,6 +2849,245 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       focusOn(editor, x, y, w, h);
       recordDirectSemanticAction(
         { type: "figure", text: opts.figure, label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawTapeDiagram(opts: TapeDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const SEG_H = 42;
+      const GAP = 14;
+      const maxSeg = Math.max(1, ...opts.rows.map((r) => r.segments.length));
+      const SEG_W = clamp(Math.floor(360 / maxSeg), 44, 92);
+      const nameW = opts.rows.some((r) => r.name)
+        ? Math.max(...opts.rows.map((r) => (r.name ? measureText(editor, r.name, "sans", "s", null).w : 0))) + 18
+        : 0;
+      const totalW = opts.rows.some((r) => r.total)
+        ? Math.max(...opts.rows.map((r) => (r.total ? measureText(editor, `= ${r.total}`, "sans", "s", null).w : 0))) + 18
+        : 0;
+      const braceW = opts.totalLabel ? measureText(editor, opts.totalLabel, "sans", "s", null).w + 36 : 0;
+      const rowsH = opts.rows.length * SEG_H + (opts.rows.length - 1) * GAP;
+      const w = nameW + maxSeg * SEG_W + totalW + braceW + 8;
+      const h = rowsH + (opts.label ? 34 : 0) + 8;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const pens = takePens(opts.rows.length);
+      opts.rows.forEach((row, ri) => {
+        const ry = y + ri * (SEG_H + GAP);
+        if (row.name) createText(editor, row.name, x, ry + 9, { color: INK, size: "s", font: "sans", width: nameW - 12, align: "end" });
+        row.segments.forEach((segment, si) => {
+          createBox(editor, x + nameW + si * SEG_W, ry, SEG_W, SEG_H, segment.text, segment.shaded ? pens[ri] : INK, segment.shaded ? "solid" : "none", { font: "sans", size: "s", dash: "solid" });
+        });
+        if (row.total) {
+          createText(editor, `= ${row.total}`, x + nameW + row.segments.length * SEG_W + 10, ry + 9, { color: pens[ri], size: "s", font: "sans", width: totalW });
+        }
+      });
+      if (opts.totalLabel) {
+        const bx = x + nameW + maxSeg * SEG_W + totalW + 10;
+        createLineShape(editor, undefined, undefined, [{ x: bx, y }, { x: bx + 10, y }, { x: bx + 10, y: y + rowsH }, { x: bx, y: y + rowsH }], { color: INK, size: "s", dash: "solid" });
+        createText(editor, opts.totalLabel, bx + 18, y + rowsH / 2 - 12, { color: INK, size: "s", font: "sans", width: braceW - 18 });
+      }
+      if (opts.label) createText(editor, opts.label, x, y + rowsH + 12, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      recordDirectSemanticAction(
+        { type: "tape_diagram", label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawGrid(opts: GridDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const CELL = clamp(Math.floor(320 / Math.max(opts.rows, opts.columns)), 14, 30);
+      const gw = opts.columns * CELL;
+      const gh = opts.rows * CELL;
+      const w = gw + 8;
+      const h = gh + (opts.label ? 34 : 0) + 8;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const ox = x + 4;
+      const oy = y + 4;
+      const pen = takePens(1)[0];
+      const shaded = clamp(Math.round(opts.shaded), 0, opts.rows * opts.columns);
+      const full = Math.floor(shaded / opts.columns);
+      const rem = shaded % opts.columns;
+      if (full > 0) createBox(editor, ox, oy, gw, full * CELL, "", pen, "solid", { dash: "solid" });
+      if (rem > 0) createBox(editor, ox, oy + full * CELL, rem * CELL, CELL, "", pen, "solid", { dash: "solid" });
+      for (let r = 0; r <= opts.rows; r++) {
+        createLineShape(editor, undefined, undefined, [{ x: ox, y: oy + r * CELL }, { x: ox + gw, y: oy + r * CELL }], { color: INK, size: "s", dash: "solid" });
+      }
+      for (let c = 0; c <= opts.columns; c++) {
+        createLineShape(editor, undefined, undefined, [{ x: ox + c * CELL, y: oy }, { x: ox + c * CELL, y: oy + gh }], { color: INK, size: "s", dash: "solid" });
+      }
+      if (opts.label) createText(editor, opts.label, x, oy + gh + 12, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      recordDirectSemanticAction(
+        { type: "grid", label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    writeVertical(opts: VerticalDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const digitW = measureText(editor, "0", "mono", "m", null).w || 14;
+      const lineH = FONT_PX.m * LINE_HEIGHT;
+      const OP_W = 30;
+      const longest = Math.max(...[...opts.operands, opts.result ?? "", ...opts.partials, opts.carries ?? ""].map((t) => t.length));
+      const numW = longest * digitW + 8;
+      const w = OP_W + numW + 8;
+      const lines = (opts.carries ? 0.8 : 0) + opts.operands.length + opts.partials.length + (opts.result ? 1 : 0);
+      const rules = 1 + (opts.partials.length > 0 && opts.result ? 1 : 0);
+      const h = lines * lineH + rules * 10 + (opts.label ? 30 : 0) + 8;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const pens = takePens(2);
+      let cy = y;
+      const write = (text: string, color: TldrawColor) => {
+        createText(editor, text, x + OP_W, cy, { color, size: "m", font: "mono", width: numW, align: "end" });
+        cy += lineH;
+      };
+      if (opts.carries) {
+        createText(editor, opts.carries, x + OP_W, cy + 4, { color: PENCIL, size: "s", font: "mono", width: numW, align: "end" });
+        cy += lineH * 0.8;
+      }
+      opts.operands.forEach((operand, i) => {
+        if (i === opts.operands.length - 1) createText(editor, opts.operation, x, cy, { color: INK, size: "m", font: "mono", width: OP_W });
+        write(operand, INK);
+      });
+      const rule = () => {
+        createLineShape(editor, undefined, undefined, [{ x, y: cy + 2 }, { x: x + w, y: cy + 2 }], { color: INK, size: "m", dash: "solid" });
+        cy += 10;
+      };
+      rule();
+      if (opts.partials.length > 0) {
+        opts.partials.forEach((partial) => write(partial, pens[1]));
+        if (opts.result) rule();
+      }
+      if (opts.result) write(opts.result, pens[0]);
+      if (opts.label) createText(editor, opts.label, x, cy + 2, { color: PENCIL, size: "s", font: "sans", width: Math.max(w, 200), align: "start" });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, Math.max(w, 200), h);
+      recordDirectSemanticAction(
+        { type: "vertical_arithmetic", text: opts.operands.join(` ${opts.operation} `), label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawLongDivision(opts: LongDivisionDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const digitW = measureText(editor, "0", "mono", "m", null).w || 14;
+      const lineH = FONT_PX.m * LINE_HEIGHT;
+      const divisorW = opts.divisor.length * digitW + 10;
+      const widest = Math.max(opts.dividend.length, (opts.quotient ?? "").length, ...opts.steps.map((t) => t.length));
+      const dividendW = widest * digitW + 10;
+      const w = divisorW + 12 + dividendW + 8;
+      const h = lineH * (2 + opts.steps.length) + opts.steps.filter((t) => /^\s*[-−]/.test(t)).length * 6 + (opts.label ? 30 : 0) + 8;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const pens = takePens(2);
+      const bx = x + divisorW + 6;
+      const barY = y + lineH;
+      if (opts.quotient) createText(editor, opts.quotient, bx + 6, y, { color: pens[0], size: "m", font: "mono", width: dividendW, align: "end" });
+      createLineShape(editor, undefined, undefined, [{ x: bx, y: barY + 2 }, { x: bx, y: barY + lineH }], { color: INK, size: "m", dash: "solid" });
+      createLineShape(editor, undefined, undefined, [{ x: bx, y: barY + 2 }, { x: bx + dividendW + 8, y: barY + 2 }], { color: INK, size: "m", dash: "solid" });
+      createText(editor, opts.divisor, x, barY + 4, { color: INK, size: "m", font: "mono", width: divisorW, align: "end" });
+      createText(editor, opts.dividend, bx + 6, barY + 4, { color: INK, size: "m", font: "mono", width: dividendW, align: "end" });
+      let cy = barY + lineH + 6;
+      for (const step of opts.steps) {
+        const sub = /^\s*[-−]/.test(step);
+        // Leading spaces place the line under the right digits.
+        const lead = step.length - step.trimStart().length;
+        createText(editor, step.trimStart(), bx + 6 + lead * digitW, cy, { color: sub ? pens[1] : INK, size: "m", font: "mono", width: Math.max(digitW * 2, dividendW - lead * digitW), align: "start" });
+        cy += lineH;
+        if (sub) {
+          createLineShape(editor, undefined, undefined, [{ x: bx + 6, y: cy - 4 }, { x: bx + 6 + dividendW, y: cy - 4 }], { color: INK, size: "s", dash: "solid" });
+          cy += 6;
+        }
+      }
+      if (opts.label) createText(editor, opts.label, x, cy + 2, { color: PENCIL, size: "s", font: "sans", width: Math.max(w, 220) });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, Math.max(w, 220), h);
+      recordDirectSemanticAction(
+        { type: "long_division", text: `${opts.dividend} ÷ ${opts.divisor}`, label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawTransversal(opts: TransversalDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const W = 320;
+      const H = 200;
+      const PAD = 34;
+      const w = W + PAD * 2;
+      const h = H + PAD * 2 + (opts.label ? 30 : 0);
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      const ox = x + PAD;
+      const oy = y + PAD;
+      const y1 = oy + 46;
+      const y2 = oy + H - 46;
+      const t0 = { x: ox + 70, y: oy + H };
+      const t1 = { x: ox + W - 70, y: oy };
+      const xAt = (yy: number) => t0.x + ((t0.y - yy) / (t0.y - t1.y)) * (t1.x - t0.x);
+      createLineShape(editor, undefined, undefined, [{ x: ox, y: y1 }, { x: ox + W, y: y1 }], { color: INK, size: "m", dash: "solid" });
+      createLineShape(editor, undefined, undefined, [{ x: ox, y: y2 }, { x: ox + W, y: y2 }], { color: INK, size: "m", dash: "solid" });
+      createLineShape(editor, undefined, undefined, [t0, t1], { color: INK, size: "m", dash: "solid" });
+      const chevron = (yy: number) =>
+        createLineShape(editor, undefined, undefined, [{ x: ox + W - 50, y: yy - 6 }, { x: ox + W - 42, y: yy }, { x: ox + W - 50, y: yy + 6 }], { color: INK, size: "s", dash: "solid" });
+      chevron(y1);
+      chevron(y2);
+      const tl = Math.hypot(t1.x - t0.x, t1.y - t0.y) || 1;
+      const tv = { x: (t1.x - t0.x) / tl, y: (t1.y - t0.y) / tl };
+      const hv = { x: 1, y: 0 };
+      const neg = (v: Pt) => ({ x: -v.x, y: -v.y });
+      const regions: Array<[Pt, Pt]> = [[neg(hv), tv], [tv, hv], [hv, neg(tv)], [neg(tv), neg(hv)]];
+      const centers = [{ x: xAt(y1), y: y1 }, { x: xAt(y2), y: y2 }];
+      const pens = takePens(Math.max(1, opts.marks.length));
+      let markIdx = 0;
+      const labelAt = (text: string, p: Pt, color: TldrawColor) =>
+        createText(editor, text, p.x - 28, p.y - 12, { color, size: "s", font: "sans", width: 56, align: "middle" });
+      centers.forEach((c, ci) => {
+        regions.forEach(([a, b], ri) => {
+          const idx = ci * 4 + ri;
+          const bis = { x: a.x + b.x, y: a.y + b.y };
+          const bl = Math.hypot(bis.x, bis.y) || 1;
+          const label = opts.angleLabels[idx];
+          if (label) labelAt(label, { x: c.x + (bis.x / bl) * 34, y: c.y + (bis.y / bl) * 34 }, INK);
+          if (opts.marks.includes(idx + 1)) {
+            const pen = pens[markIdx++ % pens.length];
+            const a0 = Math.atan2(a.y, a.x);
+            let sweep = Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
+            if (sweep < 0) sweep += 0;
+            const pts: Pt[] = [];
+            for (let i = 0; i <= 12; i++) {
+              const ang = a0 + (sweep * i) / 12;
+              pts.push({ x: c.x + 18 * Math.cos(ang), y: c.y + 18 * Math.sin(ang) });
+            }
+            createDrawStroke(editor, undefined, undefined, pts, { color: pen, size: "s", dash: "solid", fill: "none", isClosed: false });
+          }
+        });
+      });
+      if (opts.label) createText(editor, opts.label, x, oy + H + PAD - 6, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      recordDirectSemanticAction(
+        { type: "transversal", label: opts.label, column: col },
         { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
       );
     },
@@ -2818,7 +3186,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       for (let r = 0; r < opts.rows; r++) {
         for (let c = 0; c < opts.columns; c++) {
           const second = opts.splitAfterColumn ? c >= opts.splitAfterColumn : opts.splitAfterRow ? r >= opts.splitAfterRow : false;
-          createFreeformGeo(editor, "ellipse", ox + c * SP + (SP - DOT) / 2, oy + r * SP + (SP - DOT) / 2, DOT, DOT, second ? pens[1] : pens[0], "fill", { dash: "solid" });
+          const filled = opts.shaded === undefined || r * opts.columns + c < opts.shaded;
+          createFreeformGeo(editor, "ellipse", ox + c * SP + (SP - DOT) / 2, oy + r * SP + (SP - DOT) / 2, DOT, DOT, second ? pens[1] : pens[0], filled ? "fill" : "none", { dash: "solid" });
         }
       }
       const count = (text: string, lx: number, ly: number, width: number) =>

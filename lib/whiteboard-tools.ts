@@ -26,6 +26,11 @@ export type WhiteboardToolName =
   | "add_vector_diagram"
   | "add_process_map"
   | "draw_sketch"
+  | "draw_tape_diagram"
+  | "draw_grid"
+  | "write_vertical"
+  | "draw_long_division"
+  | "draw_transversal"
   | "point_at"
   | "circle_item"
   | "erase_items"
@@ -52,7 +57,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
       properties: {
         title: {
           type: "string",
-          description: "Short heading, 160 chars or fewer, e.g. 'Solving 2x + 3 = 11', 'One half', 'Forces on a sled'.",
+          description: "Short heading, 160 chars or fewer, e.g. 'Solving 2x + 3 = 11', 'One half', 'Area of a triangle'.",
         },
       },
       required: ["title"],
@@ -73,7 +78,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "add_problem_setup",
     description:
-      "A boxed 'Goal / Givens / Unknown / Plan' block. Use at the start of word problems, physics, and multi-step algebra so the setup is explicit before any computation.",
+      "A boxed 'Goal / Givens / Unknown / Plan' block. Use at the start of word problems and multi-step algebra so the setup is explicit before any computation.",
     parameters: {
       type: "object",
       properties: {
@@ -221,11 +226,15 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "draw_figure",
     description:
-      "Draw a clean geometry figure with labels: triangle, right triangle, square, rectangle, or circle. Labels go on sides, vertices, angles, radius, or diameter. Use for area, perimeter, Pythagoras, angles in a triangle, similar shapes, circles, and any 'picture the shape' moment.",
+      "Draw a clean geometry figure with labels: triangle, right triangle, square, rectangle, circle, parallelogram, trapezoid, rhombus, pentagon, hexagon, or a 3D rectangular prism, cube, or cylinder. Labels go on sides, vertices, angles, radius, diameter, or the height. Use for area, perimeter, Pythagoras, angles in a polygon, similar shapes, circles, volume and surface area, and any 'picture the shape' moment.",
     parameters: {
       type: "object",
       properties: {
-        figure: { type: "string", enum: ["triangle", "right_triangle", "square", "rectangle", "circle"], description: "Which figure. right_triangle puts the right angle at the bottom left." },
+        figure: {
+          type: "string",
+          enum: ["triangle", "right_triangle", "square", "rectangle", "circle", "parallelogram", "trapezoid", "rhombus", "pentagon", "hexagon", "rectangular_prism", "cube", "cylinder"],
+          description: "Which figure. right_triangle puts the right angle at the bottom left. Solids (rectangular_prism, cube, cylinder) are drawn in 3D; their side_labels are 'length | width | height' (cylinder: 'radius | height').",
+        },
         side_labels: {
           type: "string",
           description: "Optional pipe-separated side labels starting from the bottom side and going counter-clockwise: triangle 'base | right side | left side', rectangle 'width | height'. Use '?' for an unknown. E.g. '3 | 4 | ?'. 200 chars max.",
@@ -235,6 +244,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         mark_right_angle: { type: "boolean", description: "Draw the small square at the right angle (right_triangle, square, rectangle). Default true for right_triangle." },
         radius_label: { type: "string", description: "Circle only: draws the radius and labels it, e.g. 'r = 5 cm'. 80 chars max." },
         diameter_label: { type: "string", description: "Circle only: draws the diameter and labels it, e.g. 'd = 10'. 80 chars max." },
+        height_label: { type: "string", description: "Triangle, parallelogram, trapezoid: draws the dashed height (altitude) from the top down to the base with a right-angle mark and this label, e.g. 'h = 5'. THE way to show area = base × height. 80 chars max." },
         label: { type: "string", description: "Optional caption under the figure. 160 chars max." },
         column: COLUMN,
       },
@@ -267,6 +277,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         columns: { type: "number", description: "Number of columns, 1 to 12." },
         split_after_column: { type: "number", description: "Optional: draw a dashed divider after this column to show two groups." },
         split_after_row: { type: "number", description: "Optional: dashed divider after this row." },
+        shaded: { type: "number", description: "Optional: fill only the first N dots (reading order) and leave the rest hollow. For a fraction of a set: 12 dots with 3 shaded is one quarter." },
         label: { type: "string", description: "Optional caption, e.g. '3 × 7'. 160 chars max." },
         column: COLUMN,
       },
@@ -329,7 +340,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "add_table",
     description:
-      "A table for comparing values or laying out cases: function value tables, unit conversions, before/after, kinetic vs potential energy.",
+      "A table for comparing values or laying out cases: input/output tables, unit conversions, before/after, ratio tables, place value.",
     parameters: {
       type: "object",
       properties: {
@@ -377,7 +388,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   },
   {
     name: "add_function_graph",
-    description: "Plot a continuous y = f(x) curve on a grid: lines, parabolas, trig, exponentials, absolute value.",
+    description: "Plot a continuous y = f(x) curve on a grid: lines, parabolas, trig, exponentials, absolute value. Can mark points and draw a slope (rise/run) triangle.",
     parameters: {
       type: "object",
       properties: {
@@ -387,6 +398,8 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         },
         x_min: { type: "number", description: "Minimum x." },
         x_max: { type: "number", description: "Maximum x." },
+        mark_points: { type: "string", description: "Optional points to mark on the graph: '(1,2):A, (3,6)'. Use for intercepts, a vertex, or the two points of a slope. 300 chars max." },
+        slope_run: { type: "string", description: "Optional 'x1..x2': draws the rise/run triangle between those two x-values on the curve, labelled with the rise and the run. THE picture for slope. E.g. '1..3'." },
         label: { type: "string", description: "Optional caption, e.g. 'y = x² - 4x - 5'. 160 chars max." },
         column: COLUMN,
       },
@@ -454,11 +467,11 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   },
   {
     name: "add_vector_diagram",
-    description: "A free-body style diagram: a labelled centre object with labelled arrows in named directions. Forces, velocities, fields.",
+    description: "A labelled centre object with labelled arrows in named directions. Use for vectors, translations, and directions in a word problem (a boat and a current, a walk north then east).",
     parameters: {
       type: "object",
       properties: {
-        title: { type: "string", description: "Caption, e.g. 'Forces on the block'. 160 chars max." },
+        title: { type: "string", description: "Caption, e.g. 'Walking 3 north then 4 east'. 160 chars max." },
         center_label: { type: "string", description: "Centre object label, e.g. 'block'. 80 chars max." },
         vectors: {
           type: "string",
@@ -483,10 +496,95 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
       required: ["title", "nodes"],
     },
   },
+  // ── Math pictures (Sept 14 2026) ───────────────────────────────────────────
+  {
+    name: "draw_tape_diagram",
+    description:
+      "Draw a tape diagram (bar model): one or more rows of equal boxes. THE picture for ratios ('2 red for every 3 blue'), parts of a whole, word problems about totals and differences, and a fraction of a quantity (a quarter of 12). Mark boxes with * to shade them; end a row with '= total' to write its total.",
+    parameters: {
+      type: "object",
+      properties: {
+        rows: {
+          type: "string",
+          description: "Semicolon-separated rows. Each row: optional 'Name:' then pipe-separated box labels, '*' before a label shades it, optional '= total' at the end. E.g. 'Red: *4 | *4 = 8; Blue: 4 | 4 | 4 = 12' or '3 | 3 | 3 | 3 = 12'. Up to 4 rows, 12 boxes each. 400 chars max.",
+        },
+        total_label: { type: "string", description: "Optional label on a bracket spanning all rows, e.g. '20 marbles'. 80 chars max." },
+        label: { type: "string", description: "Optional caption, e.g. '2 : 3'. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["rows"],
+    },
+  },
+  {
+    name: "draw_grid",
+    description:
+      "Draw a grid of squares with the first N shaded. THE picture for percent and decimals (a 10 × 10 grid with 25 shaded is 25% = 0.25), for a fraction of a set, and for area as counting squares (a 3 × 4 rectangle has 12 squares).",
+    parameters: {
+      type: "object",
+      properties: {
+        rows: { type: "number", description: "Rows, 1 to 20." },
+        columns: { type: "number", description: "Columns, 1 to 20." },
+        shaded: { type: "number", description: "How many squares to shade, filling row by row from the top left. Default 0." },
+        label: { type: "string", description: "Optional caption, e.g. '25 out of 100 = 25%'. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["rows", "columns"],
+    },
+  },
+  {
+    name: "write_vertical",
+    description:
+      "Write an addition, subtraction, or multiplication the way it is done on paper: numbers stacked and right-aligned, the operator on the left, a line, then the answer. Use for multi-digit arithmetic, carrying and borrowing, and long multiplication (give the partial products). Leave result blank while the student works it out.",
+    parameters: {
+      type: "object",
+      properties: {
+        operands: { type: "string", description: "Pipe-separated numbers top to bottom, e.g. '347 | 289'. Decimals allowed. 2 to 4 numbers." },
+        operation: { type: "string", enum: ["+", "-", "×"], description: "The operation." },
+        result: { type: "string", description: "Optional answer line under the rule. Omit while the student is still working." },
+        carries: { type: "string", description: "Optional small carry digits written above the top number, right-aligned; use spaces to place them, e.g. '1 1'." },
+        partial_products: { type: "string", description: "Multiplication only: optional pipe-separated partial products between the rule and the answer, e.g. '92 | 230'." },
+        label: { type: "string", description: "Optional caption. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["operands", "operation"],
+    },
+  },
+  {
+    name: "draw_long_division",
+    description:
+      "Set up long division with the bracket: divisor outside, dividend inside, quotient on top. Give steps as they appear line by line under the dividend (use leading spaces to line digits up; start a line with '-' for the subtraction, which gets a rule under it). Add steps one at a time as the student works.",
+    parameters: {
+      type: "object",
+      properties: {
+        dividend: { type: "string", description: "The number being divided, e.g. '156'." },
+        divisor: { type: "string", description: "The number dividing, e.g. '12'." },
+        quotient: { type: "string", description: "Optional digits on top so far, right-aligned over the dividend, e.g. '13' or '1 '. Use spaces to place partial quotients." },
+        steps: { type: "string", description: "Optional pipe-separated lines under the dividend, e.g. '-12 | 36 | -36 | 0'. Leading spaces line digits up. 8 lines max." },
+        label: { type: "string", description: "Optional caption. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["dividend", "divisor"],
+    },
+  },
+  {
+    name: "draw_transversal",
+    description:
+      "Two parallel lines cut by a transversal, with the eight angles labelled. THE picture for corresponding, alternate interior, alternate exterior, and co-interior angles. Angles are numbered clockwise from the upper left: 1-4 at the top intersection, 5-8 at the bottom.",
+    parameters: {
+      type: "object",
+      properties: {
+        angle_labels: { type: "string", description: "Pipe-separated labels for angles 1 to 8, e.g. '1 | 2 | 3 | 4 | 5 | 6 | 7 | 8' or '110° | ? | | | | 70°'. Leave blank to skip an angle. 200 chars max." },
+        mark_angles: { type: "string", description: "Optional angle numbers to mark with a coloured arc, e.g. '1 | 5' for a pair of corresponding angles." },
+        label: { type: "string", description: "Optional caption, e.g. 'corresponding angles are equal'. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["angle_labels"],
+    },
+  },
   {
     name: "draw_sketch",
     description:
-      "Freehand sketch for anything the other picture tools do not cover: a ramp with a box, a cell, a water cycle, a simple map. Strokes are polylines in a 0-100 box (x right, y down). Keep it to a few strokes and label the parts. Prefer draw_fraction, draw_figure, add_number_line and the other picture tools when they fit.",
+      "Freehand sketch for anything the other picture tools do not cover: a garden plot with a path, a ladder against a wall, a shape made of two rectangles, a simple map. Strokes are polylines in a 0-100 box (x right, y down). Keep it to a few strokes and label the parts. Prefer draw_fraction, draw_figure, add_number_line and the other picture tools when they fit.",
     parameters: {
       type: "object",
       properties: {
@@ -574,7 +672,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
     parameters: {
       type: "object",
       properties: {
-        note: { type: "string", description: "One short fact, e.g. 'confuses kinetic with momentum' or 'got fractions after the pizza picture'." },
+        note: { type: "string", description: "One short fact, e.g. 'mixes up numerator and denominator' or 'got fractions after the pizza picture'." },
       },
       required: ["note"],
     },

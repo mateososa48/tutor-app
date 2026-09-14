@@ -7,7 +7,7 @@ const ITEMS = [
   },
   {
     q: "What subjects and grades does it cover?",
-    a: "Math, physics, and chemistry are the strongest, from upper elementary through high school. It can also talk through writing and history. Bring the actual homework and it adapts to the level.",
+    a: "Math, from upper elementary through high school: arithmetic, fractions and decimals, percent and ratios, negatives, algebra, geometry, graphs, and the basics of statistics. It is a math tutor only. Bring the actual homework and it adapts to the level.",
   },
   {
     q: "Can I upload a photo of the worksheet?",
