@@ -98,7 +98,7 @@ export function AppSidebar() {
             }
           >
             <ChalkMark size={24} />
-            {!collapsed && <span className="lp-display animate-in fade-in text-[16.5px] tracking-[-0.02em] text-white duration-300">chalk</span>}
+            {!collapsed && <span className="lp-brand animate-in fade-in text-[16.5px] text-white duration-300">chalk</span>}
           </TooltipTrigger>
           {collapsed && <TooltipContent side="right">Home</TooltipContent>}
         </Tooltip>

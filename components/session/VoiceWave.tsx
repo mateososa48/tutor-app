@@ -68,6 +68,9 @@ const BG: [number, number, number] = [0.973, 0.976, 0.984];   // #f8f9fb
 const TOP: [number, number, number] = [0.45, 0.68, 1.0];      // #73adff
 const DEEP: [number, number, number] = [0.16, 0.53, 0.95];    // #2988f2
 
+/** The voice wave's palette, shared so other dithered surfaces use the same blues. */
+export const VOICE_BLUE = { bg: BG, top: TOP, deep: DEEP };
+
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader | null {
   const sh = gl.createShader(type);
   if (!sh) return null;

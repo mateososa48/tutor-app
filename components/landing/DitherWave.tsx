@@ -3,8 +3,10 @@
 import { useEffect, useRef } from "react";
 
 // A dithered wave background in raw WebGL: layered value noise makes a slow
-// wave field, an ordered 4x4 Bayer matrix quantizes it into a few tones, and
-// the tones are mixed between the page background and the accent. No three.js.
+// field, an ordered 4x4 Bayer matrix quantizes it into a few tones, and the
+// tones are mixed between the page background and the accent. No three.js.
+// Two patterns: "bands" (the landing hero: soft horizontal waves) and "swirl"
+// (noise warped by itself twice, so it folds into drifting eddies).
 
 type Props = {
   waveColor?: [number, number, number];
@@ -15,6 +17,10 @@ type Props = {
   waveFrequency?: number;
   waveAmplitude?: number;
   animate?: boolean;
+  /** "bands" (default, the hero) or "swirl". */
+  pattern?: "bands" | "swirl";
+  /** Optional third tone for the densest parts of the field. */
+  deepColor?: [number, number, number];
   className?: string;
 };
 
@@ -33,6 +39,9 @@ uniform float u_colorNum;
 uniform float u_pixel;
 uniform float u_freq;
 uniform float u_amp;
+uniform vec3 u_deep;
+uniform float u_deepMix;
+uniform int u_pattern;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
 float noise(vec2 p) {
@@ -43,6 +52,12 @@ float noise(vec2 p) {
 float fbm(vec2 p) {
   float v = 0.0; float a = 0.5;
   for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.02 + vec2(1.7, 9.2); a *= 0.5; }
+  return v;
+}
+// Four octaves: the swirl samples the field five times per pixel.
+float fbm4(vec2 p) {
+  float v = 0.0; float a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * noise(p); p = p * 2.02 + vec2(1.7, 9.2); a *= 0.5; }
   return v;
 }
 const mat4 bayer = mat4(
@@ -57,15 +72,30 @@ void main() {
   uv.x *= u_res.x / u_res.y;
   float t = u_time;
   vec2 p = uv * u_freq;
-  float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
-  float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);
-  float f = smoothstep(0.15, 0.95, ridge * w * 1.6);
+  float f;
+  if (u_pattern == 1) {
+    // Domain warping: the field's own noise bends where it samples next, twice,
+    // and each layer drifts on its own clock, so shapes curl and stretch
+    // instead of travelling as bands.
+    vec2 warpA = vec2(fbm4(p + vec2(0.0, t * 0.12)), fbm4(p + vec2(5.2, 1.3) - t * 0.10));
+    vec2 warpB = vec2(fbm4(p + u_amp * 4.0 * warpA + vec2(1.7, 9.2) + t * 0.15),
+                      fbm4(p + u_amp * 4.0 * warpA + vec2(8.3, 2.8) - t * 0.126));
+    float n = fbm4(p + u_amp * 4.0 * warpB);
+    // Mostly colour, a spread of mid tones, and only the thinnest eddies fall
+    // back to the background.
+    f = smoothstep(0.3, 0.68, n);
+  } else {
+    float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
+    float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);
+    f = smoothstep(0.15, 0.95, ridge * w * 1.6);
+  }
   int bx = int(mod(gl_FragCoord.x / u_pixel, 4.0));
   int by = int(mod(gl_FragCoord.y / u_pixel, 4.0));
   float threshold = bayer[by][bx];
   float steps = max(u_colorNum - 1.0, 1.0);
   float q = floor(f * steps + threshold) / steps;
   vec3 col = mix(u_bg, u_wave, clamp(q, 0.0, 1.0));
+  col = mix(col, u_deep, u_deepMix * smoothstep(0.55, 1.0, q));
   outColor = vec4(col, 1.0);
 }`;
 
@@ -78,6 +108,8 @@ export function DitherWave({
   waveFrequency = 2.2,
   waveAmplitude = 0.55,
   animate = true,
+  pattern = "bands",
+  deepColor,
   className = "",
 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -121,6 +153,9 @@ export function DitherWave({
     gl.uniform1f(u("u_pixel"), pixelSize);
     gl.uniform1f(u("u_freq"), waveFrequency);
     gl.uniform1f(u("u_amp"), waveAmplitude);
+    gl.uniform3fv(u("u_deep"), deepColor ?? waveColor);
+    gl.uniform1f(u("u_deepMix"), deepColor ? 1 : 0);
+    gl.uniform1i(u("u_pattern"), pattern === "swirl" ? 1 : 0);
     const uRes = u("u_res");
     const uTime = u("u_time");
 
@@ -171,7 +206,7 @@ export function DitherWave({
       gl.deleteProgram(prog);
       gl.deleteBuffer(buf);
     };
-  }, [waveColor, backgroundColor, colorNum, pixelSize, waveSpeed, waveFrequency, waveAmplitude, animate]);
+  }, [waveColor, backgroundColor, colorNum, pixelSize, waveSpeed, waveFrequency, waveAmplitude, animate, pattern, deepColor]);
 
   return <canvas ref={ref} aria-hidden className={`block h-full w-full ${className}`} />;
 }

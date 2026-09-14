@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { body, display, hand } from "@/components/landing/fonts";
+import { body, brand, display, hand } from "@/components/landing/fonts";
 
 export const metadata: Metadata = {
   title: "Chalk: a tutor at the board",
@@ -15,7 +15,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`h-full ${display.variable} ${body.variable} ${hand.variable}`}>
+    <html lang="en" className={`h-full ${display.variable} ${body.variable} ${hand.variable} ${brand.variable}`}>
       <body className="h-full">
         <SessionProvider>
           <TooltipProvider>{children}</TooltipProvider>

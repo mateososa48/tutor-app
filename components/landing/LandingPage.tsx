@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { body, display, hand } from "./fonts";
+import { body, brand, display, hand } from "./fonts";
 import { Header } from "./Header";
 import { Hero } from "./Hero";
 import { TopicsMarquee } from "./TopicsMarquee";
@@ -12,7 +12,7 @@ import { Footer } from "./Footer";
 
 export default function LandingPage() {
   return (
-    <div className={cn("lp min-h-[100dvh]", display.variable, body.variable, hand.variable)}>
+    <div className={cn("lp min-h-[100dvh]", display.variable, body.variable, hand.variable, brand.variable)}>
       <Header />
       <main>
         <Hero />

@@ -9,14 +9,16 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldSeparator } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { DitherWave } from "@/components/landing/DitherWave";
-import { Wordmark } from "@/components/landing/Wordmark";
+import { VOICE_BLUE } from "@/components/session/VoiceWave";
+import { ChalkMark } from "@/components/app/ChalkMark";
 import { useReduce } from "@/lib/reduced-motion";
 import { cn } from "@/lib/utils";
 
 // Sign in and sign up on one screen. The layout follows shadcnui-blocks'
 // login-04 (a narrow centred form beside a tall rounded panel); the pieces are
-// the app's own: shadcn Field / Input / Button, the pressed CTA, the Chalk
-// mark, and the landing hero's dithered wave shader filling the panel.
+// the app's own: shadcn Field / Input, the glossy default Button, the Chalk
+// scribble mark, and the landing hero's dithered shader in its swirl pattern
+// filling the panel, with the mark and the Sora wordmark at its foot.
 
 type Mode = "signin" | "signup";
 type FieldName = "name" | "email" | "password";
@@ -25,11 +27,11 @@ type Errors = Partial<Record<FieldName, string>>;
 const GOOGLE_ENABLED = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Module-level so the shader is not rebuilt on every render.
-const WAVE: [number, number, number] = [0.45, 0.68, 1];
-const PANEL_BG: [number, number, number] = [0.953, 0.973, 1];
+// The panel uses the tutor's voice wave palette (VoiceWave.tsx): its light and
+// deep blues over its near-white, so the two dithered surfaces match. The
+// constants are module-level, so the shader is not rebuilt on every render.
 
-const INPUT = "h-12 rounded-[10px] border-(--lp-line-strong) bg-white px-3.5 text-[15px] md:text-[15px]";
+const INPUT = "h-11 sm:h-10 rounded-[10px] border-(--lp-line-strong) bg-white px-3 text-[14px] md:text-[14px]";
 
 function urlError(code: string | null): string {
   switch (code) {
@@ -161,23 +163,23 @@ function SignIn() {
   }
 
   const describedBy = (field: FieldName) => (errors[field] ? `auth-${field}-error` : undefined);
-  const spinner = <LoaderCircle className="size-[18px] animate-spin motion-reduce:animate-none" aria-hidden />;
+  const spinner = <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />;
 
   return (
     <div className="flex min-h-[100dvh] bg-white p-3 text-(--lp-ink) sm:p-4">
       <main className="flex flex-1 items-center justify-center px-4 py-10">
-        <div className="flex w-full max-w-[340px] flex-col items-center">
+        <div className="flex w-full max-w-[320px] flex-col items-center">
           <Link
             href="/"
             aria-label="Chalk home"
             className="rounded-[10px] outline-none focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
           >
-            <Wordmark iconOnly size={31} />
+            <ChalkMark size={48} />
           </Link>
-          <h1 className="lp-display mt-5 text-center text-[24px] leading-[1.2] text-balance">
+          <h1 className="lp-display mt-4 text-center text-[22px] leading-[1.2] text-balance">
             {signup ? "Create your Chalk account" : "Sign in to Chalk"}
           </h1>
-          <p className="mt-1.5 text-center text-[15px] leading-[1.5] text-(--lp-ink-2)">
+          <p className="mt-1 text-center text-[14px] leading-[1.5] text-(--lp-ink-2)">
             {signup ? "Then start your first session." : "Pick up where you left off."}
           </p>
 
@@ -188,17 +190,17 @@ function SignIn() {
                 variant="outline"
                 onClick={onGoogle}
                 disabled={busy}
-                className="mt-8 h-12 w-full gap-2.5 rounded-[10px] border-(--lp-line-strong) bg-white text-[15px] font-semibold text-(--lp-ink)"
+                className="mt-7 h-11 w-full gap-2.5 rounded-[10px] sm:h-10 border-(--lp-line-strong) bg-white text-[14px] font-semibold text-(--lp-ink)"
               >
                 {pending === "google" ? spinner : <GoogleIcon />}
                 Continue with Google
               </Button>
-              <FieldSeparator className="my-6 w-full">or</FieldSeparator>
+              <FieldSeparator className="my-5 w-full">or</FieldSeparator>
             </>
           )}
 
-          <form noValidate onSubmit={onSubmit} className={cn("w-full", !GOOGLE_ENABLED && "mt-8")}>
-            <FieldGroup className="gap-4">
+          <form noValidate onSubmit={onSubmit} className={cn("w-full", !GOOGLE_ENABLED && "mt-7")}>
+            <FieldGroup className="gap-3.5">
               {signup && (
                 <Field data-invalid={Boolean(errors.name)}>
                   <FieldLabel htmlFor="auth-name">Name</FieldLabel>
@@ -259,7 +261,7 @@ function SignIn() {
                     disabled={busy}
                     aria-invalid={Boolean(errors.password)}
                     aria-describedby={describedBy("password") ?? (signup ? "auth-password-hint" : undefined)}
-                    className={cn(INPUT, "pr-12")}
+                    className={cn(INPUT, "pr-11")}
                   />
                   <Button
                     type="button"
@@ -269,9 +271,9 @@ function SignIn() {
                     aria-label={showPassword ? "Hide password" : "Show password"}
                     aria-pressed={showPassword}
                     disabled={busy}
-                    className="absolute top-1.5 right-1.5 size-9 rounded-[8px] text-(--lp-ink-2) hover:text-(--lp-ink)"
+                    className="absolute top-1 right-1 size-9 rounded-[8px] sm:size-8 text-(--lp-ink-2) hover:text-(--lp-ink)"
                   >
-                    {showPassword ? <EyeOff className="size-[18px]" /> : <Eye className="size-[18px]" />}
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                   </Button>
                 </div>
                 {errors.password ? (
@@ -282,19 +284,20 @@ function SignIn() {
               </Field>
 
               {formError && (
-                <p role="alert" className="m-0 rounded-[10px] bg-[#fff1f0] px-3.5 py-2.5 text-[14px] leading-[1.45] text-(--danger)">
+                <p role="alert" className="m-0 rounded-[10px] bg-[#fff1f0] px-3 py-2 text-[13.5px] leading-[1.45] text-(--danger)">
                   {formError}
                 </p>
               )}
 
-              <button type="submit" disabled={busy} className="lp-btn lp-btn-lift mt-1 w-full disabled:pointer-events-none disabled:opacity-70">
+              {/* The glossy black default Button (.btn-gloss), squared to the inputs' radius. */}
+              <Button type="submit" disabled={busy} className="btn-gloss-lift mt-1 h-11 w-full gap-2 rounded-[10px] text-[14px] font-semibold sm:h-10">
                 {pending === "email" && spinner}
                 {pending === "email" ? (signup ? "Creating account…" : "Signing in…") : signup ? "Create account" : "Sign in"}
-              </button>
+              </Button>
             </FieldGroup>
           </form>
 
-          <p className="mt-6 text-center text-[14px] text-(--lp-ink-2)">
+          <p className="mt-5 text-center text-[13.5px] text-(--lp-ink-2)">
             {signup ? "Already have an account?" : "New to Chalk?"}{" "}
             <button
               type="button"
@@ -308,24 +311,25 @@ function SignIn() {
       </main>
 
       {/* The hero's shader, in the block's image slot. Decorative. */}
-      <aside aria-hidden className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-(--lp-sky-tint) lg:block">
+      <aside aria-hidden className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-[#73adff] lg:block">
         {wide && (
           <DitherWave
-            waveColor={WAVE}
-            backgroundColor={PANEL_BG}
-            colorNum={4}
+            pattern="swirl"
+            waveColor={VOICE_BLUE.top}
+            deepColor={VOICE_BLUE.deep}
+            backgroundColor={VOICE_BLUE.bg}
+            colorNum={5}
             pixelSize={3}
-            waveAmplitude={0.5}
-            waveFrequency={1.8}
+            waveAmplitude={0.65}
+            waveFrequency={1.1}
             waveSpeed={0.035}
             animate={!reduce}
             className="absolute inset-0"
           />
         )}
-        {/* A calm ground under the line, so the dither never runs through the letters. */}
-        <div className="absolute inset-x-0 bottom-0 h-[40%] bg-linear-to-t from-(--lp-sky-tint) from-45% to-transparent" />
-        <p className="lp-display absolute right-9 bottom-9 left-9 m-0 max-w-[20ch] text-[36px] leading-[1.08] text-balance text-(--lp-ink)">
-          A tutor at the board, whenever you&rsquo;re stuck.
+        <p className="absolute bottom-6 left-6 m-0 flex items-center gap-2 text-(--lp-ink)">
+          <ChalkMark size={36} color="var(--lp-ink)" />
+          <span className="lp-brand text-[36px] leading-none">chalk</span>
         </p>
       </aside>
     </div>
