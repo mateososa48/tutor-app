@@ -923,7 +923,6 @@ function SessionDetailPage({ id }: { id: string }) {
           liveState={liveState}
           title={sessionTitle}
           elapsed={formatTime(elapsedSeconds)}
-          errorMessage={errorMessage}
           qaLabel={debugMode ? (qaTextOnly ? "QA text" : "QA mic") : null}
         />
         <div className="absolute top-4 right-4 z-30">
@@ -989,13 +988,11 @@ function SessionChip({
   liveState,
   title,
   elapsed,
-  errorMessage,
   qaLabel,
 }: {
   liveState: LiveState;
   title: string;
   elapsed: string;
-  errorMessage: string;
   qaLabel: string | null;
 }) {
   return (
@@ -1010,7 +1007,7 @@ function SessionChip({
       )}
       {(liveState === "connecting" || liveState === "idle") && <span className="text-(--lp-ink-3)">Connecting…</span>}
       {liveState === "ending" && <span className="text-(--lp-ink-3)">Ending session…</span>}
-      {liveState === "error" && <span className="truncate text-(--danger)">{errorMessage || "Session error"}</span>}
+      {liveState === "error" && <span className="text-(--lp-ink-3)">Not connected</span>}
     </div>
   );
 }

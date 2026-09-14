@@ -196,6 +196,31 @@ class SpeakingMeter {
   }
 }
 
+// Turn the create-session failure into something a student (or the person
+// running the app) can act on. The server forwards OpenAI's message in
+// `detail`; the two cases worth naming are billing and a bad key.
+function describeStartFailure(status: number, detail: string): string {
+  if (status === 401) return "Please sign in again to start a session.";
+  let text = detail;
+  try {
+    const parsed = JSON.parse(detail) as { detail?: unknown; error?: unknown };
+    if (typeof parsed.detail === "string") text = parsed.detail;
+    else if (typeof parsed.error === "string") text = parsed.error;
+  } catch {
+    // plain text
+  }
+  if (/no credits|insufficient_quota|billing|exceeded your current quota/i.test(text)) {
+    return "The tutor is paused: the OpenAI account is out of credits. Add credits at platform.openai.com and try again.";
+  }
+  if (/invalid_api_key|incorrect api key|misconfigured/i.test(text)) {
+    return "The tutor is not set up: the OpenAI API key is missing or invalid.";
+  }
+  if (/rate limit|429/i.test(text)) {
+    return "The tutor is busy right now. Wait a moment and try again.";
+  }
+  return "Couldn't reach your tutor. Check your internet connection and try again.";
+}
+
 export class LiveTutorSession {
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
@@ -383,11 +408,7 @@ export class LiveTutorSession {
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       this.debug("error", "live_session_create_failed", { status: res.status, detail: detail.slice(0, 300) });
-      throw new Error(
-        res.status === 401
-          ? "Please sign in again to start a session."
-          : "Couldn't reach your tutor. Check your internet connection and try again.",
-      );
+      throw new Error(describeStartFailure(res.status, detail));
     }
     const data = (await res.json()) as LiveSessionResponse;
     if (Array.isArray(data.notes)) this.notesList = data.notes.filter((n): n is string => typeof n === "string");
