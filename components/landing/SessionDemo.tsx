@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import Image from "next/image";
 import useMeasure from "react-use-measure";
 import { useInView } from "motion/react";
-import { House, Plus, SlidersHorizontal, Square } from "lucide-react";
+import { ChevronsRight, House, Plus, SlidersHorizontal, Square } from "lucide-react";
 import Whiteboard, { type WhiteboardHandle } from "@/components/Whiteboard";
 import { ChalkMark } from "@/components/app/ChalkMark";
 import { SessionChip } from "@/components/session/SessionChip";
@@ -31,29 +31,40 @@ function formatClock(total: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-// The collapsed sidebar, as the live screen shows it. Decoration here: the
-// buttons go nowhere on the landing page.
-function Rail() {
+// The collapsed sidebar, as the live screen shows it: plain black, white
+// strokes, the pressed-button vocabulary of the app's `.sb-btn` / `.sb-item`
+// (styles inlined so the replica never depends on the app's stylesheet).
+// Decoration here: the buttons go nowhere on the landing page.
+const RAIL_ITEM = "flex size-8 items-center justify-center rounded-md";
+const RAIL_INK = "rgba(255,255,255,0.72)";
+
+function Rail({ scale }: { scale: number }) {
   return (
-    <div
-      aria-hidden
-      className="hidden w-12 shrink-0 flex-col items-center border-r sm:flex"
-      style={{ background: "var(--sidebar)", borderColor: "var(--sidebar-border)" }}
-    >
-      <div className="flex h-14 items-center justify-center">
-        <ChalkMark size={26} />
+    <div aria-hidden className="hidden w-12 shrink-0 flex-col bg-black sm:flex" style={{ zoom: scale }}>
+      <div className="relative h-[92px] shrink-0">
+        <span className="absolute top-2.5 left-2 flex h-9 items-center px-2">
+          <ChalkMark size={24} />
+        </span>
+        <span className={`${RAIL_ITEM} absolute top-[52px] left-2`} style={{ color: RAIL_INK }}>
+          <ChevronsRight className="size-[18px]" strokeWidth={2.5} />
+        </span>
       </div>
-      <span className="btn-gloss-light mt-1 flex size-8 items-center justify-center rounded-md">
-        <Plus className="size-4" strokeWidth={2.4} />
-      </span>
-      <div className="mt-auto flex flex-col items-center gap-0.5 pb-3">
-        <span className="flex size-8 items-center justify-center text-white/70">
-          <House className="size-4" strokeWidth={1.8} />
+      <div className="px-2 pt-1">
+        <span
+          className={`${RAIL_ITEM} text-white`}
+          style={{ borderRadius: 10, border: "2px solid #fff", background: "#000", boxShadow: "4px 4px 0 0 #fff" }}
+        >
+          <Plus className="size-4" strokeWidth={2.75} />
         </span>
-        <span className="flex size-8 items-center justify-center text-white/70">
-          <SlidersHorizontal className="size-4" strokeWidth={1.8} />
+      </div>
+      <div className="mt-auto flex flex-col gap-1.5 px-2 pb-3">
+        <span className={RAIL_ITEM} style={{ color: RAIL_INK }}>
+          <House className="size-4" strokeWidth={2.5} />
         </span>
-        <span className="mt-1 flex size-8 items-center justify-center rounded-md bg-white/12 text-[11.5px] font-semibold text-white">AL</span>
+        <span className={RAIL_ITEM} style={{ color: RAIL_INK }}>
+          <SlidersHorizontal className="size-4" strokeWidth={2.5} />
+        </span>
+        <span className={`${RAIL_ITEM} mt-1 bg-white text-[11.5px] font-bold text-black`}>AL</span>
       </div>
     </div>
   );
@@ -181,9 +192,14 @@ export function SessionDemo() {
   // the poster keeps the scripted state.
   const shownActivity: DockActivity = boardBusy ? "writing" : activity === "writing" && boardReady ? "listening" : activity;
 
+  // The frame stands in for a whole screen, so the chrome (rail, chips, dock,
+  // captions) shrinks to the proportion it has on one: a 1480px-wide screen
+  // scaled to the frame. The board keeps its own zoom.
+  const scale = wide && stage.width ? Math.min(1, Math.max(0.66, stage.width / 1480)) : 1;
+
   return (
     <div ref={rootRef} className="flex h-[520px] sm:h-[600px] lg:h-[640px]" data-cycle={cycle}>
-      <Rail />
+      <Rail scale={scale} />
       <main ref={stageRef} className="relative min-w-0 flex-1 overflow-hidden bg-white">
         {wantsBoard ? (
           <div className="pointer-events-none absolute inset-0" aria-hidden>
@@ -201,6 +217,7 @@ export function SessionDemo() {
           />
         )}
 
+        <div className="absolute inset-0" style={{ zoom: scale }}>
         <SessionChip liveState="active" title={LESSON_TITLE} elapsed={formatClock(elapsed)} qaLabel={null} />
         <span
           aria-hidden
@@ -224,8 +241,9 @@ export function SessionDemo() {
           files={files}
           onAddFiles={(added) => setFiles((f) => [...f, ...added])}
           onRemoveFile={(id) => setFiles((f) => f.filter((x) => x.id !== id))}
-          frameHeight={stage.height || undefined}
+          frameHeight={stage.height ? stage.height / scale : undefined}
         />
+        </div>
       </main>
     </div>
   );
