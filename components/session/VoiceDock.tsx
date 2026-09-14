@@ -71,9 +71,10 @@ export function VoiceDock({
   const inputRef = useRef<HTMLInputElement>(null);
   const [sheetH, setSheetH] = useState(560);
 
-  // The open sheet reaches up to just under the chips at the top of the board.
+  // The open sheet reaches up to just under the pills, which sit below the
+  // title and End chips: 16 + 32 + 12 + 36 + 12 from the top, 16 at the bottom.
   useEffect(() => {
-    const update = () => setSheetH(Math.max(360, window.innerHeight - 196));
+    const update = () => setSheetH(Math.max(360, window.innerHeight - 124));
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
@@ -115,11 +116,7 @@ export function VoiceDock({
         className="absolute bottom-0 overflow-hidden rounded-[22px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-card)"
       >
         <div className="h-full" style={{ paddingBottom: DOCK_H + INSET * 2 }}>
-          <TranscriptPanel
-            transcript={transcript}
-            live={activity !== "connecting"}
-            emptyText="Say something to the tutor, or type below."
-          />
+          <TranscriptPanel transcript={transcript} emptyText="Say something to the tutor, or type below." />
         </div>
       </motion.div>
 

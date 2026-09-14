@@ -133,7 +133,7 @@ function SessionDetailPage({ id }: { id: string }) {
   const [fileNotice, setFileNotice] = useState("");
   const [subtitleText, setSubtitleText] = useState("");
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [transcriptOpen, setTranscriptOpen] = useState(true);
   const [debugTrace, setDebugTrace] = useState<TutorDebugEvent[]>([]);
   const [debugConfig] = useState(() => {
     const enabled = searchParams.get("debug") === "1" || searchParams.get("qa") === "1";
