@@ -112,7 +112,7 @@ export function VoiceDock({
         transition={spring}
         style={{ pointerEvents: open ? "auto" : "none", left: -INSET * 2, right: 0 }}
         aria-hidden={!open}
-        className="absolute bottom-0 overflow-hidden rounded-[22px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-window)"
+        className="absolute bottom-0 overflow-hidden rounded-[22px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-card)"
       >
         <div className="h-full" style={{ paddingBottom: DOCK_H + INSET * 2 }}>
           <TranscriptPanel
@@ -146,18 +146,12 @@ export function VoiceDock({
         className="relative z-10"
       >
       <div
-        className="relative overflow-hidden rounded-[20px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-window)"
+        className="relative isolate overflow-hidden rounded-[20px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-card) [transform:translateZ(0)]"
         style={{ height: DOCK_H }}
       >
         <div className="absolute inset-0">
           <VoiceWave analyser={analyser} speaking={activity === "speaking"} />
         </div>
-        {/* The wave fades into the controls instead of stopping at a bar. */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-[110px]"
-          style={{ background: "linear-gradient(to top, rgba(255,255,255,0.97) 0%, rgba(255,255,255,0.9) 40px, rgba(255,255,255,0.45) 74px, rgba(255,255,255,0) 100%)" }}
-        />
         <div className="absolute top-3 left-3">
           <AnimatedBadge
             size="sm"
@@ -175,7 +169,7 @@ export function VoiceDock({
           <MorphSurface.Root value={composer ? "typing" : "voice"} origin="right" className="rounded-[14px]">
             {composer ? (
               <div className="flex w-[348px] items-center gap-1.5">
-                <Button variant="ghost" size="icon" onClick={() => setComposer(false)} aria-label="Back to voice" className="size-10 rounded-full text-(--lp-ink-2)">
+                <Button variant="ghost" size="icon" onClick={() => setComposer(false)} aria-label="Back to voice" className="size-10 rounded-full text-white hover:bg-white/15 hover:text-white">
                   <X className="size-[18px]" strokeWidth={2} />
                 </Button>
                 <input
@@ -195,7 +189,7 @@ export function VoiceDock({
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <Button variant="ghost" size="icon" onClick={() => setComposer(true)} aria-label="Type to the tutor" className="size-10 rounded-full text-(--lp-ink-2) hover:text-(--lp-ink)" />
+                      <Button variant="ghost" size="icon" onClick={() => setComposer(true)} aria-label="Type to the tutor" className="size-10 rounded-full text-white/90 hover:bg-white/15 hover:text-white" />
                     }
                   >
                     <Keyboard className="size-[19px]" strokeWidth={1.9} />
@@ -203,7 +197,7 @@ export function VoiceDock({
                   <TooltipContent>Type to the tutor</TooltipContent>
                 </Tooltip>
 
-                <span className={cn("text-[12.5px] font-medium transition-colors", isMuted ? "text-(--danger)" : "text-(--lp-ink-3)")}>
+                <span className={cn("text-[12.5px] font-semibold text-white transition-opacity", isMuted ? "opacity-100" : "opacity-85")}>
                   {isMuted ? "Mic is off" : "Mic is on"}
                 </span>
 

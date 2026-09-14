@@ -307,10 +307,10 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
     inset 0 -1px 0 rgba(0, 0, 0, 0.35),
     0 1px 1px rgba(18, 18, 21, 0.18);
-  transition: transform 160ms var(--lp-ease), box-shadow 160ms var(--lp-ease), filter 160ms ease;
+  transition: transform 160ms var(--lp-ease), box-shadow 160ms var(--lp-ease), background 160ms ease;
 }
 .btn-mic:hover {
-  filter: brightness(1.14);
+  background: linear-gradient(180deg, #43434a 0%, #25252a 100%);
 }
 .btn-mic:active {
   transform: translateY(1px);
@@ -341,7 +341,7 @@ body {
   transition: transform 160ms var(--lp-ease), box-shadow 160ms var(--lp-ease), filter 160ms ease;
 }
 .btn-gloss:hover {
-  filter: brightness(1.14);
+  background: linear-gradient(180deg, #3a3a41 0%, #222227 100%);
 }
 .btn-gloss:active {
   transform: translateY(1px);
@@ -361,7 +361,7 @@ body {
   transition: transform 160ms var(--lp-ease), box-shadow 160ms var(--lp-ease), filter 160ms ease;
 }
 .btn-gloss-light:hover {
-  filter: brightness(0.985);
+  background: linear-gradient(180deg, #fbfbfc 0%, #e8e8ed 100%);
 }
 .btn-gloss-light:active {
   transform: translateY(1px);
