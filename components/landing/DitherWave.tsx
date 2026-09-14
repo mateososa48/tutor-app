@@ -86,14 +86,19 @@ void main() {
     // this field as rendered over ten minutes (frequency 1.7, warp 0.45): the
     // long-run mix is about 10.5% darkest, 15% mid, 22% light, 28.5% palest
     // and 24% background. Any single moment drifts around that as it moves.
-    const float K0 = 0.4127;
-    const float K1 = 0.4878;
-    const float K2 = 0.5294;
-    const float K3 = 0.6271;
+    // Two things keep every area dithered rather than one flat colour: a
+    // finer, fainter grain on top, and ends that stop short of the darkest tone
+    // and the background (a hard clamp there left flat patches over a fifth of
+    // the panel; with these, under 1% even at the worst moment).
+    float grain = fbm4(p * 3.1 + vec2(t * 0.21, -t * 0.17));
+    const float K0 = 0.4121;
+    const float K1 = 0.4834;
+    const float K2 = 0.5306;
+    const float K3 = 0.6096;
     float g = n < K1 ? 0.125 + (n - K0) * 0.25 / (K1 - K0)
             : n < K2 ? 0.375 + (n - K1) * 0.25 / (K2 - K1)
             : 0.625 + (n - K2) * 0.25 / (K3 - K2);
-    f = clamp(g, 0.0, 1.0);
+    f = clamp(g + 0.415 * (grain - 0.477), 0.04, 0.96);
   } else {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
     float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);
