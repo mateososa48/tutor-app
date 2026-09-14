@@ -45,6 +45,7 @@ export type BoardActionType =
   | "vertical_arithmetic"
   | "long_division"
   | "transversal"
+  | "icons"
   | "freeform_text"
   | "freeform_shape"
   | "freeform_arrow"
@@ -791,6 +792,7 @@ export function validateAction(value: unknown): ActionValidation {
     case "vertical_arithmetic":
     case "long_division":
     case "transversal":
+    case "icons":
     case "clear_board":
       // no required fields
       break;

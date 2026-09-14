@@ -130,6 +130,7 @@ const KIND_BY_ACTION: Partial<Record<BoardActionType, SemanticBoardArtifactKind>
   vertical_arithmetic: "equation",
   long_division: "equation",
   transversal: "diagram",
+  icons: "diagram",
   freeform_text: "scene_text",
   freeform_shape: "scene_shape",
   freeform_arrow: "scene_arrow",

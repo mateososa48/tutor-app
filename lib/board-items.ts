@@ -48,6 +48,7 @@ const KIND_BY_TOOL: Record<string, string> = {
   write_vertical: "stacked arithmetic",
   draw_long_division: "long division",
   draw_transversal: "transversal",
+  draw_icons: "icons",
   circle_item: "ring",
 };
 

@@ -25,9 +25,10 @@ import {
 import { planReveal, pointsShown, polylineLength, typedPrefix, type RevealInput, type RevealStep } from "@/lib/board-reveal";
 import { TutorPenOverlayUtil } from "@/components/board/TutorPenOverlay";
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
+import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
 
 const OVERLAY_UTILS = [TutorPenOverlayUtil];
-const SHAPE_UTILS = [MathShapeUtil];
+const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -64,6 +65,7 @@ import {
   type TransversalDrawing,
   type GraphExtras,
   type FigureKind,
+  type IconsDrawing,
   autoTickStyle,
   tickValues,
   vertexLabelPoint,
@@ -262,6 +264,8 @@ export interface WhiteboardHandle {
   writeVertical(opts: VerticalDrawing): void;
   drawLongDivision(opts: LongDivisionDrawing): void;
   drawTransversal(opts: TransversalDrawing): void;
+  /** Rows of real things (apples, coins…) with optional groups, crossed-out ones, and a second row. */
+  drawIcons(opts: IconsDrawing): void;
   /** The board as a JPEG data URL with its pixel size (or null when empty). */
   exportImage(maxWidth?: number): Promise<{ url: string; width: number; height: number } | null>;
 }
@@ -3070,6 +3074,66 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       focusOn(editor, x, y, w, h);
       recordDirectSemanticAction(
         { type: "transversal", label: opts.label, column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+      );
+    },
+
+    drawIcons(opts: IconsDrawing) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "left";
+      const ICON = 44;
+      const GAP = 8;
+      const GROUP_GAP = 24;
+      const BLOCK_GAP = 18;
+      const specs = [
+        { icon: opts.icon, count: opts.count, crossed: opts.crossed ?? 0 },
+        ...(opts.secondIcon && opts.secondCount ? [{ icon: opts.secondIcon, count: opts.secondCount, crossed: 0 }] : []),
+      ];
+      const groupSize = opts.groupSize && opts.groupSize >= 2 ? opts.groupSize : 0;
+      const perRowFor = (count: number) => (groupSize ? groupSize * Math.max(1, Math.floor(10 / groupSize)) : Math.min(count, 10));
+      const blockWidth = (count: number) => {
+        const perRow = Math.min(count, perRowFor(count));
+        const groups = groupSize ? Math.ceil(perRow / groupSize) : 1;
+        return perRow * ICON + (perRow - 1) * GAP + (groups - 1) * (GROUP_GAP - GAP);
+      };
+      const blockHeight = (count: number) => Math.ceil(count / perRowFor(count)) * (ICON + GAP) - GAP;
+      const countW = 56;
+      const w = Math.max(...specs.map((sp) => blockWidth(sp.count))) + countW + 8;
+      const h = specs.reduce((sum, sp) => sum + blockHeight(sp.count), 0) + (specs.length - 1) * BLOCK_GAP + (opts.label ? 34 : 0) + 4;
+      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const x = colX(col);
+      const y = colY(col).current;
+      let cy = y;
+      specs.forEach((sp) => {
+        const perRow = perRowFor(sp.count);
+        for (let i = 0; i < sp.count; i++) {
+          const row = Math.floor(i / perRow);
+          const colIdx = i % perRow;
+          const g = groupSize ? Math.floor(colIdx / groupSize) : 0;
+          const ix = x + colIdx * (ICON + GAP) + g * (GROUP_GAP - GAP);
+          const iy = cy + row * (ICON + GAP);
+          editor.createShape<TLIconShape>({
+            id: createShapeId(),
+            type: "icon",
+            x: ix,
+            y: iy,
+            props: { w: ICON, h: ICON, icon: sp.icon, crossed: i >= sp.count - sp.crossed, reveal: 1 },
+            meta: currentMeta(),
+          });
+        }
+        const bh = blockHeight(sp.count);
+        createText(editor, `${sp.count}`, x + blockWidth(sp.count) + 10, cy + Math.min(bh, ICON) / 2 - 12, { color: PENCIL, size: "s", font: "sans", width: countW });
+        cy += bh + BLOCK_GAP;
+      });
+      if (opts.label) {
+        const cw = Math.max(w, 260);
+        createText(editor, opts.label, x + (w - cw) / 2, cy - BLOCK_GAP + 10, { color: PENCIL, size: "s", font: "sans", width: cw, align: "middle" });
+      }
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      recordDirectSemanticAction(
+        { type: "icons", text: `${opts.count} ${opts.icon}`, label: opts.label, column: col },
         { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
       );
     },

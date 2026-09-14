@@ -25,6 +25,8 @@ export const TOOL_STRING_LIMITS: Record<string, number> = {
   second_label: 40,
   label_style: 20,
   second_expression: 200,
+  icon: 40,
+  second_icon: 40,
   teaching_goal: 240,
   board_request: 2000,
   subject: 80,

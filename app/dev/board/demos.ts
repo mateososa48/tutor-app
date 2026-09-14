@@ -107,4 +107,16 @@ const all: DemoCall[] = [
   { name: "add_process_map", args: { title: "How to solve it", nodes: "Read | Draw | Try | Check", connectors: "then | then | then", column: "right" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, all };
+// Real things: counting, groups, taking away, comparing, an analogy.
+const icons: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "12 ÷ 4" } },
+  { name: "draw_icons", args: { icon: "cookie", count: 12, group_size: 4, label: "12 cookies in groups of 4" } },
+  { name: "draw_icons", args: { icon: "apple", count: 7, crossed: 3, label: "7 apples, eat 3", column: "right" } },
+  { name: "draw_icons", args: { icon: "coin", count: 8, second_icon: "dollar", second_count: 2, label: "8 coins and 2 bills" } },
+  { name: "draw_icons", args: { icon: "pizza", count: 3, label: "three slices", column: "right" } },
+  { name: "draw_icons", args: { icon: "car", count: 20, group_size: 5, column: "right", label: "20 cars in rows of 5" } },
+  { name: "point_at", args: { target: "cookies" } },
+  { name: "circle_item", args: { target: "apples" } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, icons, all };

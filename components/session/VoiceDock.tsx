@@ -33,6 +33,9 @@ type Props = {
   onAddFiles: (files: UploadedFile[]) => void;
   onRemoveFile: (id: string) => void;
   fileNotice?: string;
+  /** Height of the surface the dock sits in. Defaults to the window, which is
+   *  right on the session page; a framed preview passes its own height. */
+  frameHeight?: number;
 };
 
 const CONTROLS_H = 68;
@@ -64,6 +67,7 @@ export function VoiceDock({
   onAddFiles,
   onRemoveFile,
   fileNotice,
+  frameHeight,
 }: Props) {
   const reduce = useReducedMotion();
   const [composer, setComposer] = useState(false);
@@ -74,11 +78,15 @@ export function VoiceDock({
   // The open sheet reaches up to just under the pills, which sit below the
   // title and End chips: 16 + 32 + 12 + 36 + 12 from the top, 16 at the bottom.
   useEffect(() => {
+    if (frameHeight) {
+      setSheetH(Math.max(300, frameHeight - 124));
+      return;
+    }
     const update = () => setSheetH(Math.max(360, window.innerHeight - 124));
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
-  }, []);
+  }, [frameHeight]);
 
   useEffect(() => {
     if (composer) inputRef.current?.focus();

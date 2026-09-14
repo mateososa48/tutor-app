@@ -26,6 +26,7 @@ import {
 } from "@/lib/board-diagrams";
 import { parseTargetList } from "@/lib/board-items";
 import { latexToPlain } from "@/lib/latex-plain";
+import { BOARD_ICON_NAMES } from "@/lib/board-icon-names.generated";
 import {
   fail,
   isToolError,
@@ -757,6 +758,39 @@ function dispatchInner(
       );
       const named = angleLabels.map((t, i) => (t ? `${i + 1}: ${t}` : "")).filter(Boolean).join(", ");
       return ok(`Drew two parallel lines cut by a transversal${named ? `; angles ${named}` : ""}${marks.length ? `; marked ${marks.join(", ")}` : ""}.`);
+    }
+
+    case "draw_icons": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const iconRaw = requiredString(args, "icon"); if (isToolError(iconRaw)) return iconRaw;
+      const normalizeIcon = (v: string) => v.trim().toLowerCase().replace(/[\s-]+/g, "_");
+      const icon = normalizeIcon(iconRaw);
+      const names = BOARD_ICON_NAMES as readonly string[];
+      if (!names.includes(icon)) return fail(`No icon called "${iconRaw}". Pick one of: ${names.join(", ")}.`);
+      const countRaw = requiredNumber(args, "count"); if (isToolError(countRaw)) return countRaw;
+      const count = clamp(Math.round(countRaw), 1, 40);
+      const gsRaw = optionalNumber(args, "group_size"); if (isToolError(gsRaw)) return gsRaw;
+      const groupSize = gsRaw && gsRaw >= 2 ? clamp(Math.round(gsRaw), 2, 10) : undefined;
+      const crossedRaw = optionalNumber(args, "crossed"); if (isToolError(crossedRaw)) return crossedRaw;
+      const crossed = crossedRaw ? clamp(Math.round(crossedRaw), 0, count) : 0;
+      const secondRaw = opt(args, "second_icon"); if (secondRaw.error) return secondRaw.error;
+      const secondIcon = secondRaw.value ? normalizeIcon(secondRaw.value) : undefined;
+      if (secondIcon && !names.includes(secondIcon)) return fail(`No icon called "${secondRaw.value}". Pick one of: ${names.join(", ")}.`);
+      const secondCountRaw = optionalNumber(args, "second_count"); if (isToolError(secondCountRaw)) return secondCountRaw;
+      const secondCount = secondIcon ? clamp(Math.round(secondCountRaw ?? count), 1, 40) : undefined;
+      const label = opt(args, "label"); if (label.error) return label.error;
+      const column = opt(args, "column"); if (column.error) return column.error;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${count} ${icon.replaceAll("_", " ")}` }, () =>
+        board.drawIcons({ icon, count, groupSize, crossed, secondIcon, secondCount, label: label.value, column: pickColumn(column.value) }),
+      );
+      const bits = [
+        `${count} ${icon.replaceAll("_", " ")}${count === 1 ? "" : "s"}`,
+        groupSize ? `in groups of ${groupSize}` : "",
+        crossed ? `${crossed} crossed out` : "",
+        secondIcon ? `and ${secondCount} ${secondIcon.replaceAll("_", " ")}${secondCount === 1 ? "" : "s"} in a second row` : "",
+      ].filter(Boolean).join(", ");
+      return ok(`Drew ${bits}${label.value ? `, captioned "${label.value}"` : ""}.`);
     }
 
     case "point_at": {

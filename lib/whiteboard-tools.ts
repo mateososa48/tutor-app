@@ -1,3 +1,5 @@
+import { BOARD_ICON_NAMES } from "@/lib/board-icon-names.generated";
+
 export type WhiteboardToolName =
   | "start_new_problem"
   | "start_board_section"
@@ -31,6 +33,7 @@ export type WhiteboardToolName =
   | "write_vertical"
   | "draw_long_division"
   | "draw_transversal"
+  | "draw_icons"
   | "point_at"
   | "circle_item"
   | "erase_items"
@@ -590,6 +593,25 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         column: COLUMN,
       },
       required: ["angle_labels"],
+    },
+  },
+  {
+    name: "draw_icons",
+    description:
+      "Draw rows of real things: apples, coins, pizzas, cars, cats, cookies, balloons and so on. THE picture for counting, equal groups, sharing, multiplication as groups, taking away (crossed), comparing two amounts (second_icon), and for an everyday analogy when the abstract version is not landing. Twelve cookies in groups of three is a picture of 12 ÷ 3.",
+    parameters: {
+      type: "object",
+      properties: {
+        icon: { type: "string", enum: [...BOARD_ICON_NAMES], description: "Which thing." },
+        count: { type: "number", description: "How many, 1 to 40." },
+        group_size: { type: "number", description: "Optional: put a gap after every N icons to show equal groups, 2 to 10." },
+        crossed: { type: "number", description: "Optional: cross out the last N icons with a red X (eaten, spent, given away)." },
+        second_icon: { type: "string", enum: [...BOARD_ICON_NAMES], description: "Optional second row of a different thing, to compare or to show a ratio." },
+        second_count: { type: "number", description: "How many in the second row, 1 to 40." },
+        label: { type: "string", description: "Optional caption, e.g. '12 cookies, 4 friends'. 160 chars max." },
+        column: COLUMN,
+      },
+      required: ["icon", "count"],
     },
   },
   {

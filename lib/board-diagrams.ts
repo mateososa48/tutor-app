@@ -675,3 +675,15 @@ export function altitude(pts: Pt[]): { apex: Pt; foot: Pt } | null {
   const apex = candidates.reduce((a, b) => (b.y < a.y ? b : a));
   return { apex, foot: { x: apex.x, y: baseY } };
 }
+
+export type IconsDrawing = {
+  icon: string;
+  count: number;
+  groupSize?: number;
+  /** How many of the last icons get a red X (taken away). */
+  crossed?: number;
+  secondIcon?: string;
+  secondCount?: number;
+  label?: string;
+  column?: BoardColumn;
+};
