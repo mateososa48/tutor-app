@@ -322,12 +322,33 @@ function SessionDetailPage({ id }: { id: string }) {
   // ── Tool call handler ────────────────────────────────────────────────
   // Every successful board action returns the semantic board summary, so the
   // teaching backend always knows what the student is actually looking at.
+  // The tutor sees the board: after it draws, a picture of the finished board
+  // goes to the model (clients with vision only). look_at_board asks for one
+  // right away; other tool calls are debounced so a burst sends one frame.
+  const boardFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sendBoardFrame = useCallback(async () => {
+    const live = sessionRef.current;
+    if (!live?.sendBoardFrame) return;
+    const img = await whiteboardRef.current?.exportImage?.(896);
+    if (!img || sessionRef.current !== live) return;
+    live.sendBoardFrame(img.url);
+  }, []);
+  const scheduleBoardFrame = useCallback((delayMs: number) => {
+    if (!sessionRef.current?.sendBoardFrame) return;
+    if (boardFrameTimerRef.current) clearTimeout(boardFrameTimerRef.current);
+    boardFrameTimerRef.current = setTimeout(() => {
+      boardFrameTimerRef.current = null;
+      void sendBoardFrame();
+    }, delayMs);
+  }, [sendBoardFrame]);
+
   const handleToolCall = useCallback(
     (name: string, args: Record<string, unknown>): ToolCallResult => {
       const result = dispatchWhiteboardTool(name, args, {
         whiteboard: whiteboardRef.current,
       });
       if (result.success) {
+        scheduleBoardFrame(name === "look_at_board" ? 0 : 900);
         const summary = whiteboardRef.current?.getBoardSummary?.();
         if (summary) {
           return {
@@ -338,8 +359,13 @@ function SessionDetailPage({ id }: { id: string }) {
       }
       return result;
     },
-    [],
+    [scheduleBoardFrame],
   );
+
+  // While queued writing is still appearing, the badge says so.
+  const handleBoardWriting = useCallback((busy: boolean) => {
+    setTutorActivity((prev) => (busy ? "writing" : prev === "writing" ? "idle" : prev));
+  }, []);
 
   const setTemporaryFileNotice = useCallback((message: string) => {
     setFileNotice(message);
@@ -735,6 +761,7 @@ function SessionDetailPage({ id }: { id: string }) {
       cleanupTimers();
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
       if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
+      if (boardFrameTimerRef.current) clearTimeout(boardFrameTimerRef.current);
     };
   }, [cleanupTimers, id]);
 
@@ -939,7 +966,7 @@ function SessionDetailPage({ id }: { id: string }) {
   return (
     <AppShell defaultOpen={false}>
       <main className="relative min-h-0 flex-1 overflow-hidden bg-white" {...dropHandlers}>
-        <Whiteboard ref={whiteboardRef} />
+        <Whiteboard ref={whiteboardRef} onWriting={handleBoardWriting} />
 
         <SessionChip
           liveState={liveState}

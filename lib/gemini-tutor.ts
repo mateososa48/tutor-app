@@ -215,4 +215,13 @@ export class GeminiTutorSession {
   sendFiles(files: UploadedFile[]): boolean {
     return this.session?.sendFiles(files) ?? false;
   }
+
+  sendBoardFrame(dataUrl: string): boolean {
+    const comma = dataUrl.indexOf(",");
+    if (comma < 0 || !this.session) return false;
+    const mime = /^data:([^;]+)/.exec(dataUrl)?.[1] ?? "image/jpeg";
+    const sent = this.session.sendVideoFrame(dataUrl.slice(comma + 1), mime);
+    this.debug("board", "board_frame_sent", { bytes: dataUrl.length - comma - 1, sent });
+    return sent;
+  }
 }

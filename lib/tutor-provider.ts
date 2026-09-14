@@ -13,4 +13,7 @@ export function resolveTutorProvider(search: { get(name: string): string | null 
 }
 
 // The surface the session page relies on. Both clients implement it.
-export type TutorClient = Pick<LiveTutorSession, "start" | "end" | "setMuted" | "sendText" | "sendFiles">;
+export type TutorClient = Pick<LiveTutorSession, "start" | "end" | "setMuted" | "sendText" | "sendFiles"> & {
+  /** Show the model the board as a picture (data URL). Only clients with vision implement it. */
+  sendBoardFrame?: (dataUrl: string) => boolean;
+};

@@ -210,6 +210,16 @@ export class GeminiLiveSession {
     return this.sendUserTurn([{ text }]);
   }
 
+  // A picture of the board, sent the way a screen share sends frames: it
+  // lands in the model's context without starting a turn.
+  sendVideoFrame(base64: string, mimeType = "image/jpeg"): boolean {
+    return this.send({
+      realtimeInput: {
+        video: { data: base64, mimeType },
+      },
+    });
+  }
+
   sendInitialGreeting(files: UploadedFile[]): boolean {
     const parts = this.buildFileParts(files);
     const fileContext = files.length > 0

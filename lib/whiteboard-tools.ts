@@ -30,6 +30,7 @@ export type WhiteboardToolName =
   | "circle_item"
   | "erase_items"
   | "erase_older"
+  | "look_at_board"
   | "clear_whiteboard";
 
 export type CalloutStyle = "hint" | "correct" | "wrong" | "warning" | "important" | "remember";
@@ -554,6 +555,12 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
       },
       required: [],
     },
+  },
+  {
+    name: "look_at_board",
+    description:
+      "Look at the board: returns the list of items and sends you a fresh picture of the whole board. Use it to check a drawing came out right, to read something the student drew or wrote on the board, or whenever you are unsure what is up there.",
+    parameters: { type: "object", properties: {}, required: [] },
   },
   {
     name: "clear_whiteboard",

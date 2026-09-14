@@ -12,7 +12,7 @@ import {
   useEffect,
 } from "react";
 import { Tldraw, renderPlaintextFromRichText, type TLComponents } from "tldraw";
-import { Editor, createShapeId, toRichText } from "@tldraw/editor";
+import { Box, Editor, createShapeId, toRichText } from "@tldraw/editor";
 import { InstancePresenceRecordType, type TLInstancePresence, type TLShapeId } from "@tldraw/tlschema";
 import {
   formatBoardItems,
@@ -23,6 +23,8 @@ import {
   type BoardItem,
   type ItemBounds,
 } from "@/lib/board-items";
+import { planReveal, pointsShown, polylineLength, typedPrefix, type RevealInput, type RevealStep } from "@/lib/board-reveal";
+import { latexToPlain } from "@/lib/latex-plain";
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -263,6 +265,8 @@ interface EqItem {
   role?: "label";
   color?: string;
   meta?: BoardArtifactMeta;
+  /** 0..1 while being "written"; undefined once fully shown */
+  reveal?: number;
 }
 
 function compactArtifactMeta(meta: BoardArtifactMeta | null): BoardArtifactMeta | undefined {
@@ -441,7 +445,14 @@ function EqBlock({ item }: { item: EqItem }) {
 
   return (
     <div data-eq-id={item.id} style={{ position: "absolute", left: item.x, top: item.y }}>
-      <div style={{ position: "relative", display: "inline-block" }}>
+      <div
+        style={{
+          position: "relative",
+          display: "inline-block",
+          opacity: item.reveal === undefined ? 1 : Math.min(1, item.reveal * 1.6),
+          clipPath: item.reveal === undefined || item.reveal >= 1 ? undefined : `inset(-10px ${(1 - item.reveal) * 100}% -10px -10px)`,
+        }}
+      >
         <span
           ref={ref}
           style={{ fontSize: "1.45rem", color: item.color ?? "#383838", display: "block", padding: "2px 4px" }}
@@ -546,7 +557,12 @@ function PlainBackground() {
 
 const TLDRAW_COMPONENTS: TLComponents = { Background: PlainBackground };
 
-const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
+export type TldrawCoreProps = {
+  /** True while queued writing is still appearing on the board. */
+  onWriting?: (busy: boolean) => void;
+};
+
+const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting }, ref) {
   const editorRef = useRef<Editor | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const cameraSyncCleanupRef = useRef<() => void>(() => {});
@@ -584,6 +600,22 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
   const presenceIdRef = useRef<TLInstancePresence["id"] | null>(null);
   const cursorAnimRef = useRef<number | null>(null);
   const scribbleAnimRef = useRef<number | null>(null);
+  // The reveal queue: tool calls appear one after another, written not pasted.
+  type RevealJob =
+    | { kind: "reveal"; steps: RevealStep[]; restAt: ItemBounds | null }
+    | { kind: "action"; run: () => void; wait: number };
+  const revealQueueRef = useRef<RevealJob[]>([]);
+  const revealActiveRef = useRef(false);
+  const revealRafRef = useRef<number | null>(null);
+  const revealWaitersRef = useRef<Array<() => void>>([]);
+  const strokePointsRef = useRef<Map<string, Array<{ x: number; y: number }>>>(new Map());
+  const revealTextRef = useRef<Map<string, string>>(new Map());
+  const onWritingRef = useRef(onWriting);
+  const handleRef = useRef<WhiteboardHandle | null>(null);
+  const writingRef = useRef(false);
+  useEffect(() => {
+    onWritingRef.current = onWriting;
+  }, [onWriting]);
   const cursorHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scribbleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
 
@@ -745,6 +777,311 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     scribbleAnimRef.current = requestAnimationFrame(step);
   }, [ensurePresence, patchPresence, scheduleCursorHide]);
 
+  // ── Reveal runtime ──────────────────────────────────────────────────────────
+  const plainOf = useCallback((editor: Editor, richText: unknown): string => {
+    try {
+      return richText ? renderPlaintextFromRichText(editor, richText as Parameters<typeof renderPlaintextFromRichText>[1]) : "";
+    } catch {
+      return "";
+    }
+  }, []);
+
+  const setEqReveal = useCallback((id: string, reveal: number | undefined) => {
+    const apply = (items: EqItem[]) => items.map((e) => (e.id === id ? { ...e, reveal } : e));
+    eqRef.current = apply(eqRef.current);
+    setEqItems((prev) => apply(prev));
+  }, []);
+
+  const lineIndicesFor = (n: number): IndexKey[] => getIndices(Math.max(1, n - 1));
+
+  // One frame of one step. `p` runs 0..1; the step's own state (original
+  // props) is read from the shape on the first frame.
+  const applyStep = useCallback((editor: Editor, step: RevealStep, p: number, state: { last?: number; fill?: string; closed?: boolean }) => {
+    if (step.kind === "eq") {
+      setEqReveal(step.id, p >= 1 ? undefined : p);
+      return;
+    }
+    const shape = editor.getShape(step.id as TLShapeId);
+    if (!shape) return;
+    const props = shape.props as Record<string, unknown>;
+    const run = (fn: () => void) => editor.run(fn, { history: "ignore" });
+    if (step.kind === "text") {
+      const full = revealTextRef.current.get(step.id) ?? plainOf(editor, props.richText);
+      const text = typedPrefix(full, p);
+      if (state.last === text.length && p < 1) return;
+      state.last = text.length;
+      run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: 1, props: { richText: toRichText(p >= 1 ? full : text) } }] as unknown as Parameters<Editor["updateShapes"]>[0]));
+      return;
+    }
+    if (step.kind === "stroke") {
+      const pts = strokePointsRef.current.get(step.id);
+      if (!pts || pts.length < 2) {
+        run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: 1 }]));
+        return;
+      }
+      if (state.fill === undefined) {
+        state.fill = String(props.fill ?? "none");
+        state.closed = Boolean(props.isClosed);
+      }
+      const n = pointsShown(pts.length, p);
+      if (state.last === n && p < 1) return;
+      state.last = n;
+      const done = p >= 1;
+      run(() => editor.updateShapes([{
+        id: shape.id,
+        type: "draw",
+        opacity: 1,
+        props: {
+          segments: compressLegacySegments([{ type: "free", points: (done ? pts : pts.slice(0, n)).map((pt) => ({ x: pt.x, y: pt.y, z: 0.5 })) }]),
+          isClosed: done ? state.closed : false,
+          fill: (done ? state.fill : "none") as TLDefaultFillStyle,
+        },
+      }]));
+      return;
+    }
+    if (step.kind === "line") {
+      const pts = strokePointsRef.current.get(step.id);
+      if (!pts || pts.length < 2) {
+        run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: 1 }]));
+        return;
+      }
+      const n = pointsShown(pts.length, p);
+      if (state.last === n && p < 1) return;
+      state.last = n;
+      const shown = pts.slice(0, n);
+      const indices = lineIndicesFor(shown.length);
+      const pointMap: Record<string, { id: string; index: IndexKey; x: number; y: number }> = {};
+      shown.forEach((pt, i) => {
+        const id = `a${i + 1}`;
+        pointMap[id] = { id, index: indices[i], x: pt.x, y: pt.y };
+      });
+      run(() => editor.updateShapes([{ id: shape.id, type: "line", opacity: 1, props: { points: pointMap } }]));
+      return;
+    }
+    // box / fade: a quick fade-in
+    const op = Math.min(1, Math.max(0, p));
+    if (state.last !== undefined && Math.abs(state.last - op) < 0.08 && p < 1) return;
+    state.last = op;
+    run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: op }]));
+  }, [plainOf, setEqReveal]);
+
+  // Where the pen is at time `p` of a step, in page coordinates.
+  const penAt = useCallback((editor: Editor, step: RevealStep, p: number): { x: number; y: number } | null => {
+    if (step.kind === "eq") {
+      const eq = eqRef.current.find((e) => e.id === step.id);
+      if (!eq) return null;
+      const node = overlayRef.current?.querySelector<HTMLElement>(`[data-eq-id="${eq.id}"] > div`);
+      const w = node?.offsetWidth ?? 120;
+      const h = node?.offsetHeight ?? EQ_H;
+      return { x: eq.x + w * p, y: eq.y + h * 0.7 };
+    }
+    const shape = editor.getShape(step.id as TLShapeId);
+    if (!shape) return null;
+    const b = editor.getShapePageBounds(shape.id);
+    if (!b) return null;
+    if (step.kind === "stroke" || step.kind === "line") {
+      const pts = strokePointsRef.current.get(step.id);
+      if (pts && pts.length > 1) {
+        const n = pointsShown(pts.length, p);
+        const pt = pts[n - 1];
+        return { x: shape.x + pt.x, y: shape.y + pt.y };
+      }
+      return { x: b.x + b.w * p, y: b.y + b.h * p };
+    }
+    if (step.kind === "text") {
+      const props = shape.props as { font?: TLDefaultFontStyle; size?: TLDefaultSizeStyle };
+      const full = revealTextRef.current.get(step.id) ?? "";
+      const lineH = props.size ? FONT_PX[props.size] * LINE_HEIGHT : 28;
+      const lines = Math.max(1, Math.round(b.h / lineH));
+      const pos = p * lines;
+      const line = Math.min(lines - 1, Math.floor(pos));
+      const frac = pos - line;
+      const lineW = Math.min(b.w, Math.max(40, (full.length / lines) * 9.5));
+      return { x: b.x + lineW * frac, y: b.y + line * lineH + lineH * 0.75 };
+    }
+    return { x: b.x + b.w * Math.min(1, p * 1.2), y: b.y + b.h * Math.min(1, p * 1.2) };
+  }, []);
+
+  const finishReveal = useCallback(() => {
+    revealActiveRef.current = false;
+    revealRafRef.current = null;
+    if (writingRef.current) {
+      writingRef.current = false;
+      onWritingRef.current?.(false);
+    }
+    const waiters = revealWaitersRef.current;
+    revealWaitersRef.current = [];
+    for (const w of waiters) w();
+  }, []);
+
+  const runQueue = useCallback(function runQueue() {
+    if (revealActiveRef.current) return;
+    const editor = editorRef.current;
+    const job = revealQueueRef.current.shift();
+    if (!editor || !job) {
+      finishReveal();
+      return;
+    }
+    revealActiveRef.current = true;
+    if (job.kind === "action") {
+      try {
+        job.run();
+      } catch (err) {
+        if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] queued action", err);
+      }
+      const t = setTimeout(() => {
+        revealActiveRef.current = false;
+        runQueue();
+      }, job.wait);
+      scribbleTimersRef.current.push(t);
+      return;
+    }
+    const steps = job.steps;
+    if (steps.length === 0) {
+      revealActiveRef.current = false;
+      runQueue();
+      return;
+    }
+    if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+    cursorAnimRef.current = null;
+    if (cursorHideRef.current) {
+      clearTimeout(cursorHideRef.current);
+      cursorHideRef.current = null;
+    }
+    const GAP_BIG = 40;
+    let i = 0;
+    let phase: "lead" | "draw" = "lead";
+    let phaseStart = performance.now();
+    let waitUntil = 0;
+    let leadMs = 0;
+    let leadInit = false;
+    let state: { last?: number; fill?: string; closed?: boolean } = {};
+    const rec = ensurePresence(editor);
+    let leadFrom: { x: number; y: number } | null = rec?.cursor ? { x: rec.cursor.x, y: rec.cursor.y } : null;
+    const finishJob = () => {
+      // Rest the pen just under what was written, then let it fade.
+      if (job.restAt) moveCursor(editor, job.restAt.x + Math.min(job.restAt.w, 160) * 0.6, job.restAt.y + job.restAt.h + 16, 300);
+      else scheduleCursorHide(editor);
+      revealActiveRef.current = false;
+      runQueue();
+    };
+    // Small pieces (ticks, dots, short labels) jump straight in and several
+    // can finish in one frame; only big pieces get a pen glide and a pause.
+    const frame = (now: number) => {
+      for (let guard = 0; guard < 8; guard++) {
+        const step = steps[i];
+        if (!step) {
+          finishJob();
+          return;
+        }
+        if (phase === "lead") {
+          if (now < waitUntil) break;
+          const target = penAt(editor, step, 0);
+          if (!target) {
+            i++;
+            state = {};
+            continue;
+          }
+          const from = leadFrom ?? { x: target.x + 60, y: target.y + 40 };
+          if (!leadInit) {
+            const dist = Math.hypot(target.x - from.x, target.y - from.y);
+            leadMs = step.duration > 200 && dist > 40 ? Math.min(130, dist * 0.6) : 0;
+            phaseStart = now;
+            leadInit = true;
+          }
+          const lp = leadMs <= 0 ? 1 : Math.min(1, (now - phaseStart) / leadMs);
+          const e = 1 - Math.pow(1 - lp, 3);
+          patchPresence(editor, { cursor: { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e, type: "default", rotation: 0 } });
+          if (lp < 1) break;
+          phase = "draw";
+          phaseStart = now;
+          state = {};
+          leadInit = false;
+        }
+        const p = step.duration <= 0 ? 1 : Math.min(1, (now - phaseStart) / step.duration);
+        applyStep(editor, step, p, state);
+        const pen = penAt(editor, step, p);
+        if (pen) patchPresence(editor, { cursor: { x: pen.x, y: pen.y, type: "default", rotation: 0 } });
+        if (p < 1) break;
+        leadFrom = pen;
+        i++;
+        phase = "lead";
+        state = {};
+        const next = steps[i];
+        const gap = next && next.duration > 200 ? GAP_BIG : 0;
+        waitUntil = now + gap;
+        if (gap > 0 || !next || next.duration > 120) break;
+      }
+      revealRafRef.current = requestAnimationFrame(frame);
+    };
+    revealRafRef.current = requestAnimationFrame(frame);
+  }, [applyStep, ensurePresence, finishReveal, moveCursor, patchPresence, penAt, scheduleCursorHide]);
+
+  const enqueue = useCallback((job: RevealJob) => {
+    revealQueueRef.current.push(job);
+    if (!writingRef.current) {
+      writingRef.current = true;
+      onWritingRef.current?.(true);
+    }
+    runQueue();
+  }, [runQueue]);
+
+  const resetReveal = useCallback(() => {
+    revealQueueRef.current = [];
+    if (revealRafRef.current !== null) cancelAnimationFrame(revealRafRef.current);
+    finishReveal();
+    strokePointsRef.current.clear();
+    revealTextRef.current.clear();
+  }, [finishReveal]);
+
+  const awaitRevealIdle = useCallback((): Promise<void> => {
+    if (!revealActiveRef.current && revealQueueRef.current.length === 0) return Promise.resolve();
+    return new Promise((resolve) => revealWaitersRef.current.push(resolve));
+  }, []);
+
+  // Hide everything a tool call just created and queue it to be written.
+  const revealItem = useCallback((editor: Editor, item: BoardItem, restAt: ItemBounds | null) => {
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return;
+    const inputs: RevealInput[] = [];
+    const hide: Array<{ id: TLShapeId; type: string }> = [];
+    for (const sid of item.shapeIds) {
+      const shape = editor.getShape(sid as TLShapeId);
+      if (!shape) continue;
+      const b = editor.getShapePageBounds(shape.id);
+      const x = b?.x ?? shape.x;
+      const y = b?.y ?? shape.y;
+      const props = shape.props as Record<string, unknown>;
+      const plain = "richText" in props ? plainOf(editor, props.richText) : "";
+      if (shape.type === "draw") {
+        const pts = strokePointsRef.current.get(shape.id);
+        inputs.push({ id: shape.id, kind: "stroke", x, y, length: pts ? polylineLength(pts) : 240 });
+      } else if (shape.type === "line") {
+        const pts = strokePointsRef.current.get(shape.id);
+        inputs.push({ id: shape.id, kind: "line", x, y, length: pts ? polylineLength(pts) : 240 });
+      } else if (plain.length > 0 && (shape.type === "text" || shape.type === "note" || shape.type === "geo")) {
+        revealTextRef.current.set(shape.id, plain);
+        inputs.push({ id: shape.id, kind: "text", x, y, chars: plain.length });
+      } else if (shape.type === "geo") {
+        inputs.push({ id: shape.id, kind: "box", x, y });
+      } else {
+        inputs.push({ id: shape.id, kind: "fade", x, y });
+      }
+      hide.push({ id: shape.id, type: shape.type });
+    }
+    for (const eqId of item.eqItemIds) {
+      const eq = eqRef.current.find((e) => e.id === eqId);
+      if (eq) inputs.push({ id: eqId, kind: "eq", x: eq.x, y: eq.y, chars: eq.latex.length });
+    }
+    if (inputs.length === 0) return;
+    const steps = planReveal(inputs);
+    editor.run(() => {
+      if (hide.length > 0) editor.updateShapes(hide.map((h) => ({ id: h.id, type: h.type, opacity: 0 })) as unknown as Parameters<Editor["updateShapes"]>[0]);
+    }, { history: "ignore" });
+    for (const eqId of item.eqItemIds) setEqReveal(eqId, 0);
+    enqueue({ kind: "reveal", steps, restAt });
+  }, [enqueue, plainOf, setEqReveal]);
+
   const itemBounds = useCallback((editor: Editor, item: BoardItem): ItemBounds | null => {
     let box: ItemBounds | null = null;
     const add = (b: ItemBounds) => {
@@ -801,6 +1138,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     return () => {
       if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
       if (scribbleAnimRef.current !== null) cancelAnimationFrame(scribbleAnimRef.current);
+      if (revealRafRef.current !== null) cancelAnimationFrame(revealRafRef.current);
       if (cursorHideRef.current) clearTimeout(cursorHideRef.current);
       for (const t of timers) clearTimeout(t);
     };
@@ -811,6 +1149,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     editorRef.current = editor;
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as { __chalkEditor?: Editor }).__chalkEditor = editor;
+      (window as unknown as { __chalkBoard?: WhiteboardHandle | null }).__chalkBoard = handleRef.current;
     }
     editor.setCurrentTool("hand");
     editor.setCamera({ x: 0, y: 0, z: 1 });
@@ -1170,8 +1509,10 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       { type: "free", points: rebased },
     ]);
     const isClosed = opts.isClosed ?? false;
+    const id = createShapeId();
+    strokePointsRef.current.set(id, rebased);
     editor.createShape({
-      id: createShapeId(),
+      id,
       type: "draw",
       x: baseX,
       y: baseY,
@@ -1222,8 +1563,10 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       const id = `p${i + 1}`;
       pointMap[id] = { id, index, x: p.x, y: p.y };
     });
+    const id = createShapeId();
+    strokePointsRef.current.set(id, rebased);
     editor.createShape({
-      id: createShapeId(),
+      id,
       type: "line",
       x: baseX,
       y: baseY,
@@ -1318,6 +1661,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     clearWhiteboard() {
       const editor = editorRef.current;
       if (!editor) return;
+      resetReveal();
       const shapes = editor.getCurrentPageShapes();
       if (shapes.length > 0) editor.deleteShapes(shapes.map(s => s.id));
       pageTop.current = 0;
@@ -1334,6 +1678,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     startNewProblem(title: string) {
       const editor = editorRef.current;
       if (!editor) return;
+      resetReveal();
       const shapes = editor.getCurrentPageShapes();
       if (shapes.length > 0) editor.deleteShapes(shapes.map(s => s.id));
       pageTop.current = 0;
@@ -3195,9 +3540,8 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       } catch {
         // Tagging is a nicety; the registry is the source of truth.
       }
-      // The pointer rests just under what was written, like a pen lifting off.
-      const b = itemBounds(editor, item);
-      if (b) moveCursor(editor, b.x + Math.min(b.w, 160) * 0.6, b.y + b.h + 16, 380);
+      // Written, not pasted: hide what was just created and reveal it in order.
+      revealItem(editor, item, itemBounds(editor, item));
       return id;
     },
 
@@ -3208,12 +3552,19 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       if (!item) return null;
       const b = itemBounds(editor, item);
       if (!b) return null;
-      focusOn(editor, b.x, b.y, b.w, b.h);
-      const px = b.x + Math.min(40, b.w * 0.25);
-      const py = b.y + b.h * 0.6;
-      // Glide over, then a small dip to the right and back: a tap.
-      moveCursor(editor, px, py, 460, () => {
-        moveCursor(editor, px + 14, py + 8, 160, () => moveCursor(editor, px, py, 160));
+      enqueue({
+        kind: "action",
+        wait: 520,
+        run: () => {
+          const bb = itemBounds(editor, item) ?? b;
+          focusOn(editor, bb.x, bb.y, bb.w, bb.h);
+          const px = bb.x + Math.min(40, bb.w * 0.25);
+          const py = bb.y + bb.h * 0.6;
+          // Glide over, then a small dip to the right and back: a tap.
+          moveCursor(editor, px, py, 420, () => {
+            moveCursor(editor, px + 14, py + 8, 150, () => moveCursor(editor, px, py, 150));
+          });
+        },
       });
       return item;
     },
@@ -3228,14 +3579,22 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       focusOn(editor, b.x - 16, b.y - 16, b.w + 32, b.h + 32);
       const ring = ringPoints(b, 12);
       if (keep) {
+        // A marker ring is a real stroke: it registers as an item and is
+        // written like everything else.
         createDrawStroke(editor, undefined, undefined, ring, { color: "orange", size: "m", dash: "solid", fill: "none", isClosed: false });
-        moveCursor(editor, ring[ring.length - 1].x, ring[ring.length - 1].y, 500);
         recordDirectSemanticAction(
           { type: "highlight_step", step_label: item.label, style: "circle" },
           { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
         );
       } else {
-        tutorScribble(editor, ring, { duration: 640, hold: 3000, size: 5 });
+        enqueue({
+          kind: "action",
+          wait: 700,
+          run: () => {
+            const bb = itemBounds(editor, item) ?? b;
+            tutorScribble(editor, ringPoints(bb, 12), { duration: 640, hold: 3000, size: 5 });
+          },
+        });
       }
       return item;
     },
@@ -3274,13 +3633,80 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
     async exportImage(maxWidth = 1024) {
       const editor = editorRef.current;
       if (!editor) return null;
+      await awaitRevealIdle();
       const ids = editor.getCurrentPageShapeIds();
-      if (ids.size === 0) return null;
+      const eqs = eqRef.current;
+      if (ids.size === 0 && eqs.length === 0) return null;
       try {
-        const bounds = editor.getCurrentPageBounds();
-        const scale = bounds && bounds.w > maxWidth ? maxWidth / bounds.w : 1;
-        const out = await editor.toImageDataUrl(Array.from(ids), { format: "jpeg", quality: 0.72, scale, background: true, padding: 24 });
-        return out ? { url: out.url, width: out.width, height: out.height } : null;
+        // The typeset math is a DOM overlay, not shapes, so the export covers
+        // both and the equations are drawn onto the picture as plain text.
+        const sb = editor.getCurrentPageBounds();
+        let minX = sb ? sb.minX : Infinity;
+        let minY = sb ? sb.minY : Infinity;
+        let maxX = sb ? sb.maxX : -Infinity;
+        let maxY = sb ? sb.maxY : -Infinity;
+        const eqBoxes = eqs.map((eq) => {
+          const node = overlayRef.current?.querySelector<HTMLElement>(`[data-eq-id="${eq.id}"] > div`);
+          return { eq, w: node?.offsetWidth ?? 160, h: node?.offsetHeight ?? EQ_H };
+        });
+        for (const b of eqBoxes) {
+          minX = Math.min(minX, b.eq.x);
+          minY = Math.min(minY, b.eq.y);
+          maxX = Math.max(maxX, b.eq.x + b.w + (b.eq.annotation ? 220 : 0));
+          maxY = Math.max(maxY, b.eq.y + b.h);
+        }
+        if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
+        const PAD = 24;
+        const bounds = new Box(minX - PAD, minY - PAD, maxX - minX + PAD * 2, maxY - minY + PAD * 2);
+        const scale = bounds.w > maxWidth ? maxWidth / bounds.w : 1;
+        const out = await editor.toImageDataUrl(Array.from(ids), { format: "png", scale, pixelRatio: 1, background: true, bounds, padding: 0 });
+        if (!out) return null;
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const el = new Image();
+          el.onload = () => resolve(el);
+          el.onerror = () => reject(new Error("board image failed to load"));
+          el.src = out.url;
+        });
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(out.width));
+        canvas.height = Math.max(1, Math.round(out.height));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return { url: out.url, width: out.width, height: out.height };
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        for (const { eq, h } of eqBoxes) {
+          const fontPx = Math.max(10, Math.round(23 * scale));
+          const x = (eq.x - bounds.x) * scale + 4 * scale;
+          const base = (eq.y - bounds.y) * scale + h * 0.68 * scale;
+          const text = latexToPlain(eq.latex);
+          ctx.font = `${fontPx}px "Times New Roman", serif`;
+          ctx.fillStyle = eq.color ?? "#383838";
+          ctx.textBaseline = "alphabetic";
+          ctx.fillText(text, x, base);
+          const w = ctx.measureText(text).width;
+          if (eq.crossOut) {
+            ctx.strokeStyle = "#d63b2f";
+            ctx.lineWidth = Math.max(1, 2 * scale);
+            ctx.beginPath();
+            ctx.moveTo(x - 2, base - fontPx * 0.33);
+            ctx.lineTo(x + w + 2, base - fontPx * 0.33);
+            ctx.stroke();
+          }
+          if (eq.highlight) {
+            ctx.strokeStyle = "#1f9d55";
+            ctx.lineWidth = Math.max(1, 1.5 * scale);
+            ctx.setLineDash([4, 3]);
+            ctx.strokeRect(x - 6, base - fontPx * 1.05, w + 12, fontPx * 1.45);
+            ctx.setLineDash([]);
+          }
+          if (eq.annotation) {
+            ctx.font = `${Math.max(9, Math.round(13 * scale))}px sans-serif`;
+            ctx.fillStyle = "#7a8a99";
+            ctx.fillText(eq.annotation, x + w + 18 * scale, base);
+          }
+        }
+        return { url: canvas.toDataURL("image/jpeg", 0.72), width: canvas.width, height: canvas.height };
       } catch (err) {
         if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] exportImage", err);
         return null;
@@ -3311,6 +3737,7 @@ const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
       jobMetaRef.current = null;
     },
     };
+    handleRef.current = api;
     return api;
   });
 

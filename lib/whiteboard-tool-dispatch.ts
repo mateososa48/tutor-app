@@ -660,6 +660,12 @@ function dispatchInner(
       return ok(`Erased ${erased.length} older item${erased.length === 1 ? "" : "s"}, kept the heading and the newest ${keep ?? 3}.`);
     }
 
+    case "look_at_board": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      return ok("Looking at the board; a fresh picture of it is on its way to you");
+    }
+
     case "clear_whiteboard": {
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;
