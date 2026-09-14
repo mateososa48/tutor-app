@@ -527,6 +527,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   // Board items (b1, b2, …) and the tutor's presence (cursor + laser rings).
   const itemsRef = useRef<BoardItem[]>([]);
   const itemSeqRef = useRef(0);
+  // A mark drawn on an existing item (ring, strike) belongs to that item, so
+  // erasing the item erases its marks too.
+  const attachToItemRef = useRef<string | null>(null);
   const presenceIdRef = useRef<TLInstancePresence["id"] | null>(null);
   const cursorAnimRef = useRef<number | null>(null);
   const scribbleAnimRef = useRef<number | null>(null);
@@ -3449,6 +3452,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
         const b = item ? itemBounds(editor, item) : null;
         if (!item || !b) return false;
+        attachToItemRef.current = item.id;
         if (style === "circle") {
           createDrawStroke(editor, undefined, undefined, ringPoints(b, 10), { color: "green", size: "m", dash: "solid", fill: "none", isClosed: false });
         } else if (style === "underline") {
@@ -3482,6 +3486,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
         const b = item ? itemBounds(editor, item) : null;
         if (!item || !b) return false;
+        attachToItemRef.current = item.id;
         createLineShape(editor, undefined, undefined, [{ x: b.x - 6, y: b.y + b.h * 0.55 }, { x: b.x + b.w + 6, y: b.y + b.h * 0.45 }], { color: "red", size: "m", dash: "solid" });
         recordDirectSemanticAction(
           { type: "cross_out_step", step_label: target.step_label },
@@ -4015,6 +4020,25 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const shapeIds = diffStringSet(currentShapeIdSet(editor), token.shapes);
       const eqItemIds: string[] = [];
       if (shapeIds.length === 0) return null;
+      const attachTo = attachToItemRef.current;
+      attachToItemRef.current = null;
+      if (attachTo) {
+        const host = itemsRef.current.find((item) => item.id === attachTo);
+        if (host) {
+          host.shapeIds = [...host.shapeIds, ...shapeIds];
+          try {
+            const updates = shapeIds
+              .map((shapeId) => editor.getShape(shapeId as TLShapeId))
+              .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape))
+              .map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, itemId: host.id } }));
+            if (updates.length > 0) editor.updateShapes(updates);
+          } catch {
+            // tagging is a nicety
+          }
+          revealItem(editor, { ...host, shapeIds }, itemBounds(editor, host));
+          return host.id;
+        }
+      }
       const id = `b${++itemSeqRef.current}`;
       const item: BoardItem = {
         id,
@@ -4074,8 +4098,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       focusOn(editor, b.x - 16, b.y - 16, b.w + 32, b.h + 32);
       const ring = ringPoints(b, 12);
       if (keep) {
-        // A marker ring is a real stroke: it registers as an item and is
-        // written like everything else.
+        // A marker ring is a real stroke, written like everything else, and
+        // it belongs to the item it rings.
+        attachToItemRef.current = item.id;
         createDrawStroke(editor, undefined, undefined, ring, { color: "orange", size: "m", dash: "solid", fill: "none", isClosed: false });
         recordDirectSemanticAction(
           { type: "highlight_step", step_label: item.label, style: "circle" },
