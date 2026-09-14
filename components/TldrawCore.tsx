@@ -574,7 +574,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     },
   ): { id: TLShapeId; w: number; h: number; mathW: number } => {
     const display = opts.display ?? true;
-    const m = measureMath(opts.latex, display, opts.annotation ?? "");
+    // A line wider than its column shrinks (down to 70%) rather than spilling
+    // into the other column.
+    const MAX_W = RIGHT_X - LEFT_X - 40;
+    let scale = 1;
+    let m = measureMath(opts.latex, display, opts.annotation ?? "", scale);
+    while (m.w > MAX_W && scale > 0.6) {
+      scale = Math.max(0.6, Math.round((scale - 0.1) * 100) / 100);
+      m = measureMath(opts.latex, display, opts.annotation ?? "", scale);
+    }
     const y = opts.centerY !== undefined ? opts.centerY - m.h / 2 : (opts.y ?? 0);
     const id = createShapeId();
     editor.createShape<TLMathShape>({
@@ -594,6 +602,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         highlight: opts.highlight ?? "",
         reveal: 1,
         role: opts.role ?? "",
+        scale,
       },
       meta: opts.meta ?? currentMeta(),
     });

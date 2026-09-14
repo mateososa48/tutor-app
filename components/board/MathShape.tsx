@@ -27,6 +27,8 @@ export type TLMathShapeProps = {
   reveal: number;
   /** "label" for typeset captions on diagrams (never an equation step). */
   role: "" | "label";
+  /** Font scale, below 1 when a long line has to fit its column. */
+  scale: number;
 };
 
 // Registers "math" as a shape type across tldraw's typings.
@@ -71,7 +73,7 @@ export function renderMathHtml(latex: string, display: boolean): string {
 let measurer: HTMLDivElement | null = null;
 
 // Measure by laying the same HTML out off-screen, so the shape box fits.
-export function measureMath(latex: string, display: boolean, annotation = ""): { w: number; h: number; mathW: number } {
+export function measureMath(latex: string, display: boolean, annotation = "", scale = 1): { w: number; h: number; mathW: number } {
   if (typeof document === "undefined") return { w: 160, h: 48, mathW: 160 };
   if (!measurer || !measurer.isConnected) {
     measurer = document.createElement("div");
@@ -80,7 +82,7 @@ export function measureMath(latex: string, display: boolean, annotation = ""): {
     document.body.appendChild(measurer);
   }
   measurer.innerHTML =
-    `<span style="display:inline-block;font-size:${MATH_FONT_PX}px;padding:2px 4px;line-height:normal">${renderMathHtml(latex, display)}</span>` +
+    `<span style="display:inline-block;font-size:${MATH_FONT_PX * scale}px;padding:2px 4px;line-height:normal">${renderMathHtml(latex, display)}</span>` +
     (annotation ? `<span style="display:inline-block;margin-left:18px;font-size:13px;font-family:sans-serif;letter-spacing:0.01em;vertical-align:middle">${escapeHtml(annotation)}</span>` : "");
   const math = measurer.children[0] as HTMLElement | undefined;
   const mathRect = math?.getBoundingClientRect();
@@ -104,10 +106,11 @@ export class MathShapeUtil extends ShapeUtil<TLMathShape> {
     highlight: T.literalEnum("", "circle", "underline", "box"),
     reveal: T.number,
     role: T.literalEnum("", "label"),
+    scale: T.number,
   };
 
   getDefaultProps(): TLMathShape["props"] {
-    return { w: 160, h: 48, mathW: 160, latex: "", color: "#383838", display: true, annotation: "", crossOut: false, highlight: "", reveal: 1, role: "" };
+    return { w: 160, h: 48, mathW: 160, latex: "", color: "#383838", display: true, annotation: "", crossOut: false, highlight: "", reveal: 1, role: "", scale: 1 };
   }
 
   override canEdit() {
@@ -139,9 +142,9 @@ export class MathShapeUtil extends ShapeUtil<TLMathShape> {
 
   // Exports (and the picture the tutor sees) get the math as plain text.
   override toSvg(shape: TLMathShape) {
-    const { w, h, mathW, latex, color, annotation, crossOut, highlight } = shape.props;
+    const { w, h, mathW, latex, color, annotation, crossOut, highlight, scale } = shape.props;
     const text = latexToPlain(latex);
-    const fontPx = 23;
+    const fontPx = Math.round(23 * (scale || 1));
     const base = h * 0.68;
     // Plain text can run wider than the typeset math; keep the annotation clear of it.
     const textW = Math.max(mathW, text.length * fontPx * 0.52);
@@ -166,8 +169,9 @@ export class MathShapeUtil extends ShapeUtil<TLMathShape> {
 }
 
 function MathView({ shape }: { shape: TLMathShape }) {
-  const { w, h, mathW, latex, color, display, annotation, crossOut, highlight, reveal } = shape.props;
+  const { w, h, mathW, latex, color, display, annotation, crossOut, highlight, reveal, scale } = shape.props;
   const html = useMemo(() => renderMathHtml(latex, display), [latex, display]);
+  const fontPx = MATH_FONT_PX * (scale || 1);
   const shown = reveal >= 1;
   return (
     <HTMLContainer style={{ pointerEvents: "none", width: w, height: h }}>
@@ -183,7 +187,7 @@ function MathView({ shape }: { shape: TLMathShape }) {
       >
         <div style={{ position: "absolute", left: 0, top: 0, width: mathW, height: h }}>
           <span
-            style={{ fontSize: MATH_FONT_PX, color, display: "block", padding: "2px 4px", whiteSpace: "nowrap", lineHeight: "normal" }}
+            style={{ fontSize: fontPx, color, display: "block", padding: "2px 4px", whiteSpace: "nowrap", lineHeight: "normal" }}
             dangerouslySetInnerHTML={{ __html: html }}
           />
           {crossOut && (

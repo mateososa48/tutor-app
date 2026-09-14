@@ -67,12 +67,13 @@ export function normalizeLatex(input: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-// "a = 1 \\ b = 2" or a newline: two lines on the board, not one.
+// "a = 1 \\ b = 2", a newline, or a chain of implications: separate lines
+// on the board, one step each.
 export function splitLatexLines(input: string): string[] {
   // Inside an environment (cases, aligned, matrix) \\ is a row break, not a new line.
   if (/\\begin\{/.test(input)) return [input.replace(/\n/g, " ").trim()].filter(Boolean);
   return input
-    .split(/\\\\|\n/)
+    .split(/\\\\|\n|\\implies\b|\\Rightarrow\b|\\Longrightarrow\b|\\therefore\b|⟹|⇒/)
     .map((t) => t.trim())
     .filter(Boolean);
 }

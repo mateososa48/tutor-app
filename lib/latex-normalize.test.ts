@@ -36,5 +36,6 @@ test("line breaks split into lines", () => {
   assert.deepEqual(splitLatexLines("a = 1 \\\\ b = 2"), ["a = 1", "b = 2"]);
   assert.deepEqual(splitLatexLines("x = 4\ny = 5"), ["x = 4", "y = 5"]);
   assert.deepEqual(splitLatexLines("2x = 8"), ["2x = 8"]);
+  assert.deepEqual(splitLatexLines("5x + 2 = 3x + 10 \\implies 2x + 2 = 10 \\implies 2x = 8"), ["5x + 2 = 3x + 10", "2x + 2 = 10", "2x = 8"]);
   assert.deepEqual(splitLatexLines("\\begin{cases} x + y = 5 \\\\ x - y = 1 \\end{cases}"), ["\\begin{cases} x + y = 5 \\\\ x - y = 1 \\end{cases}"]);
 });
