@@ -52,7 +52,7 @@ void main() {
   float t = u_time;
   // Resting water line plus a slow breath, then the voice on top of it.
   float breath = 0.028 * sin(uv.x * 5.2 + t * 0.9) + 0.018 * sin(uv.x * 9.7 - t * 0.6);
-  float surface = 0.22 + breath + levelAt(uv.x) * 0.62;
+  float surface = 0.40 + breath + levelAt(uv.x) * 0.5;
   float d = uv.y - surface;                 // negative below the surface
   // Mostly dithered: solid only near the floor, sparse dots near the surface.
   float f = smoothstep(0.46, -0.02, d);

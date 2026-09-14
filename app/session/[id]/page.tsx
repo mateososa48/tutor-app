@@ -912,72 +912,63 @@ function SessionDetailPage({ id }: { id: string }) {
     );
   }
 
-  // Live: the board is the page. Title and End float over the surface; the
-  // dock sits bottom right; the tray runs along the bottom edge.
+  // Live: the board is the page. Title and End float over it; the dock sits
+  // bottom right.
   return (
     <AppShell defaultOpen={false}>
-      <main className="board-frame relative min-h-0 flex-1 overflow-hidden p-3.5 pb-[34px]" {...dropHandlers}>
-        <div className="board-surface relative h-full overflow-hidden">
-          <Whiteboard ref={whiteboardRef} />
+      <main className="relative min-h-0 flex-1 overflow-hidden bg-white" {...dropHandlers}>
+        <Whiteboard ref={whiteboardRef} />
 
-          <SessionChip
+        <SessionChip
+          liveState={liveState}
+          title={sessionTitle}
+          elapsed={formatTime(elapsedSeconds)}
+          errorMessage={errorMessage}
+          qaLabel={debugMode ? (qaTextOnly ? "QA text" : "QA mic") : null}
+        />
+        <div className="absolute top-4 right-4 z-30">
+          <EndSessionButton disabled={liveState !== "active"} onConfirm={endSession} />
+        </div>
+
+        <CaptionBar text={subtitleText} />
+        <DropOverlay show={dragging} />
+        {liveState === "error" && (
+          <ErrorNotice
+            message={errorMessage}
+            onRetry={() => {
+              isResumeRef.current = false;
+              void startSession();
+            }}
+          />
+        )}
+        <VoiceDock
+          activity={dockActivity}
+          isMuted={isMuted}
+          onMute={() => setIsMuted((v) => !v)}
+          analyser={analyser}
+          onSendText={handleSendText}
+          transcript={transcript}
+          transcriptOpen={transcriptOpen}
+          onToggleTranscript={() => setTranscriptOpen((v) => !v)}
+          files={files}
+          onAddFiles={handleAddFiles}
+          onRemoveFile={handleRemoveFile}
+          fileNotice={fileNotice}
+        />
+        {debugMode && (
+          <TutorDebugPanel
+            events={debugTrace}
             liveState={liveState}
-            title={sessionTitle}
-            elapsed={formatTime(elapsedSeconds)}
-            errorMessage={errorMessage}
-            qaLabel={debugMode ? (qaTextOnly ? "QA text" : "QA mic") : null}
+            elapsedSeconds={elapsedSeconds}
+            isTextOnly={qaTextOnly}
+            canSend={liveState === "active"}
+            transcriptCount={transcript.length}
+            fileCount={files.length}
+            onClear={clearDebugTrace}
+            onExport={exportDebugTrace}
+            onSendScenario={handleSendText}
           />
-          <div className="absolute top-4 right-4 z-30">
-            <EndSessionButton disabled={liveState !== "active"} onConfirm={endSession} />
-          </div>
-
-          <CaptionBar text={subtitleText} />
-          <DropOverlay show={dragging} />
-          {liveState === "error" && (
-            <ErrorNotice
-              message={errorMessage}
-              onRetry={() => {
-                isResumeRef.current = false;
-                void startSession();
-              }}
-            />
-          )}
-          <VoiceDock
-            activity={dockActivity}
-            isMuted={isMuted}
-            onMute={() => setIsMuted((v) => !v)}
-            analyser={analyser}
-            onSendText={handleSendText}
-            transcript={transcript}
-            transcriptOpen={transcriptOpen}
-            onToggleTranscript={() => setTranscriptOpen((v) => !v)}
-            files={files}
-            onAddFiles={handleAddFiles}
-            onRemoveFile={handleRemoveFile}
-            fileNotice={fileNotice}
-          />
-          {debugMode && (
-            <TutorDebugPanel
-              events={debugTrace}
-              liveState={liveState}
-              elapsedSeconds={elapsedSeconds}
-              isTextOnly={qaTextOnly}
-              canSend={liveState === "active"}
-              transcriptCount={transcript.length}
-              fileCount={files.length}
-              onClear={clearDebugTrace}
-              onExport={exportDebugTrace}
-              onSendScenario={handleSendText}
-            />
-          )}
-        </div>
-
-        <div className="board-tray absolute inset-x-3.5 bottom-0 h-[38px]" aria-hidden>
-          <span className="board-marker left-7" style={{ background: "linear-gradient(180deg, #5fb0ff, #3d9cff)" }} />
-          <span className="board-marker left-[92px]" style={{ background: "linear-gradient(180deg, #25b47f, #099268)" }} />
-          <span className="board-marker left-[156px]" style={{ background: "linear-gradient(180deg, #f08a3c, #e16919)" }} />
-          <span className="board-eraser left-[230px]" />
-        </div>
+        )}
       </main>
     </AppShell>
   );

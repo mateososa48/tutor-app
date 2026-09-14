@@ -35,9 +35,9 @@ type Props = {
   fileNotice?: string;
 };
 
-const WAVE_H = 132;
 const CONTROLS_H = 68;
-const DOCK_H = WAVE_H + CONTROLS_H;
+const DOCK_H = 200;
+const INSET = 12; // gap between the dock and the open sheet's edges
 const PILL =
   "h-9 rounded-full border-(--lp-line-strong) bg-white/92 px-3.5 text-[13px] font-medium text-(--lp-ink) shadow-(--lp-shadow-card) backdrop-blur-md hover:bg-white";
 
@@ -102,7 +102,7 @@ export function VoiceDock({
   const open = transcriptOpen;
   const badge = BADGE[activity];
   const spring = reduce ? { duration: 0 } : SPRING;
-  const listening = !isMuted && activity !== "connecting";
+  const wrapperH = open ? DOCK_H + INSET : DOCK_H;
 
   return (
     <div className="absolute right-4 bottom-4 z-30 w-[380px] max-w-[calc(100%-32px)]">
@@ -115,7 +115,7 @@ export function VoiceDock({
         aria-hidden={!open}
         className="absolute inset-x-0 bottom-0 overflow-hidden rounded-[20px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-window)"
       >
-        <div className="h-full" style={{ paddingBottom: DOCK_H + 8 }}>
+        <div className="h-full" style={{ paddingBottom: DOCK_H + INSET + 6 }}>
           <TranscriptPanel
             transcript={transcript}
             live={activity !== "connecting"}
@@ -127,7 +127,7 @@ export function VoiceDock({
       {/* Pills ride the top edge of whatever is open. */}
       <motion.div
         initial={false}
-        animate={{ y: open ? -(sheetH - DOCK_H) : 0 }}
+        animate={{ y: open ? -(sheetH - wrapperH) : 0 }}
         transition={spring}
         className="absolute right-0 bottom-[calc(100%+10px)] flex items-center gap-2"
       >
@@ -138,28 +138,41 @@ export function VoiceDock({
         </Button>
       </motion.div>
 
-      {/* The dock: wave, status, mic, composer. Always the same size. */}
+      {/* The dock: wave, status, mic, composer. Always the same size; it
+          steps in from the sheet's edges when the transcript is open. */}
+      <motion.div
+        initial={false}
+        animate={{ paddingLeft: open ? INSET : 0, paddingRight: open ? INSET : 0, paddingBottom: open ? INSET : 0 }}
+        transition={spring}
+        className="relative z-10"
+      >
       <div
-        className="relative z-10 flex flex-col overflow-hidden rounded-[20px] border border-(--lp-line-strong) bg-white/92 shadow-(--lp-shadow-window) backdrop-blur-xl"
+        className="relative overflow-hidden rounded-[20px] border border-(--lp-line-strong) bg-white shadow-(--lp-shadow-window)"
         style={{ height: DOCK_H }}
       >
-        <div className="relative shrink-0 overflow-hidden" style={{ height: WAVE_H }}>
+        <div className="absolute inset-0">
           <VoiceWave analyser={analyser} speaking={activity === "speaking"} />
-          <div className="absolute top-3 left-3">
-            <AnimatedBadge
-              size="sm"
-              status={badge.status}
-              icon={badge.icon}
-              showIcon={badge.status !== "neutral"}
-              contentKey={activity}
-              className="border-(--lp-line) bg-white/85 text-(--lp-ink-2) backdrop-blur-sm data-[status=info]:text-(--lp-sky-deep)"
-            >
-              {badge.label}
-            </AnimatedBadge>
-          </div>
+        </div>
+        {/* The wave fades into the controls instead of stopping at a bar. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-[128px]"
+          style={{ background: "linear-gradient(to top, rgba(255,255,255,0.98) 0%, rgba(255,255,255,0.94) 48px, rgba(255,255,255,0.55) 84px, rgba(255,255,255,0) 100%)" }}
+        />
+        <div className="absolute top-3 left-3">
+          <AnimatedBadge
+            size="sm"
+            status={badge.status}
+            icon={badge.icon}
+            showIcon={badge.status !== "neutral"}
+            contentKey={activity}
+            className="border-(--lp-line) bg-white/85 text-(--lp-ink-2) backdrop-blur-sm data-[status=info]:text-(--lp-sky-deep)"
+          >
+            {badge.label}
+          </AnimatedBadge>
         </div>
 
-        <div className="flex shrink-0 items-center justify-end px-3" style={{ height: CONTROLS_H }}>
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-end px-3" style={{ height: CONTROLS_H }}>
           <MorphSurface.Root value={composer ? "typing" : "voice"} origin="right" className="rounded-[14px]">
             {composer ? (
               <div className="flex w-[348px] items-center gap-1.5">
@@ -205,20 +218,11 @@ export function VoiceDock({
                         aria-label={isMuted ? "Unmute microphone" : "Mute microphone"}
                         className={cn(
                           "relative flex size-12 items-center justify-center rounded-full outline-none focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)",
-                          isMuted ? "btn-gloss-off" : "btn-gloss",
+                          isMuted ? "btn-gloss-light" : "btn-gloss",
                         )}
                       />
                     }
                   >
-                    {listening && !reduce && (
-                      <motion.span
-                        aria-hidden
-                        className="absolute inset-0 rounded-full bg-(--lp-sky)"
-                        initial={{ scale: 1, opacity: 0.35 }}
-                        animate={{ scale: 1.5, opacity: 0 }}
-                        transition={{ duration: 2.4, repeat: Infinity, ease: "easeOut" }}
-                      />
-                    )}
                     <span className="relative flex">
                       {isMuted ? <MicOff className="size-5" strokeWidth={2} /> : <Mic className="size-5" strokeWidth={2} />}
                     </span>
@@ -232,6 +236,7 @@ export function VoiceDock({
           </MorphSurface.Root>
         </div>
       </div>
+      </motion.div>
     </div>
   );
 }

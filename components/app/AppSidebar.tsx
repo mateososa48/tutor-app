@@ -116,7 +116,7 @@ export function AppSidebar() {
                 <SidebarMenuButton
                   tooltip="New session"
                   onClick={() => router.push("/session")}
-                  className="bg-white font-medium text-(--lp-ink) hover:bg-white/90 hover:text-(--lp-ink) active:bg-white/85 active:text-(--lp-ink)"
+                  className="btn-gloss-light font-medium hover:text-(--lp-ink) active:text-(--lp-ink)"
                 >
                   <Plus strokeWidth={2.4} />
                   <span>New session</span>
