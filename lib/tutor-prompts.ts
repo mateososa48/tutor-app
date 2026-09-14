@@ -246,6 +246,34 @@ Tool calls: add_student_attempt(text="x = 16"), then cross_out_step(step_label="
 Return: "Close, but look at that line: two x equals eight means two times x is eight. So to get one x, are we multiplying by two, or dividing by two?"`;
 }
 
+// ── 2b. Gemini Live: one model talks and draws ─────────────────────────────
+// Gemini Live has no voice/backend split, so it gets the voice persona plus
+// everything the backend prompt says from the golden rule onward.
+
+export function buildGeminiInstructions(
+  profile: StudentProfile | null,
+  notes: string[],
+): string {
+  const voice = buildVoiceInstructions(profile);
+  const personaEnd = voice.indexOf("# Backchannel policy");
+  const persona = (personaEnd >= 0 ? voice.slice(0, personaEnd) : voice)
+    .replace("your teaching brain (the backend) writes on it while you talk", "you write and draw on it with your tools while you talk")
+    .replace(/- The backend's replies are your own thoughts\.[^\n]*\n/, "");
+  const backend = buildBackendInstructions(profile, notes);
+  const sharedStart = backend.indexOf("# Golden rule");
+  const shared = sharedStart >= 0 ? backend.slice(sharedStart) : backend;
+
+  return `${persona.trim()}
+
+# Output contract
+- You speak directly to the student. One to three short sentences per turn, one idea, then a question or a clear pause so they can respond.
+- Say math in spoken words. Never say symbols, LaTeX, or markdown aloud. LaTeX belongs inside board tools only.
+- Whenever a picture would help, call a board tool in the same turn you introduce the idea, then talk about what is on the board.
+- Never give away the full answer, and never go more than one step ahead of the student.
+
+${shared}`;
+}
+
 // ── 3. Opening lines spoken by the voice model ─────────────────────────────
 // Verified against the API: the voice model does not act on
 // session.instructions.append by itself, but it speaks (a paraphrase of)

@@ -79,3 +79,18 @@ export function getTutorVoiceLabel(voiceName: TutorVoiceName): string {
   const voice = TUTOR_VOICES.find((option) => option.name === voiceName);
   return voice ? `${voice.label} · ${voice.tone}` : voiceName;
 }
+
+// Gemini Live has its own voice roster. Map each tutor voice to the closest
+// Gemini voice so the settings page works for either provider.
+const GEMINI_VOICE_BY_TUTOR_VOICE: Record<TutorVoiceName, string> = {
+  marin: "Kore",
+  cedar: "Charon",
+  sage: "Aoede",
+  coral: "Leda",
+  ballad: "Puck",
+  ash: "Orus",
+};
+
+export function geminiVoiceFor(voiceName: unknown): string {
+  return isTutorVoiceName(voiceName) ? GEMINI_VOICE_BY_TUTOR_VOICE[voiceName] : GEMINI_VOICE_BY_TUTOR_VOICE[DEFAULT_TUTOR_VOICE];
+}

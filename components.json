@@ -36,6 +36,8 @@
       "headers": {
         "Authorization": "Bearer ${REACTBITS_LICENSE_KEY}"
       }
-    }
+    },
+    "@sona-ui": "https://sonaui.com/r/{name}.json",
+    "@beui": "https://beui.dev/r/{name}.json"
   }
 }

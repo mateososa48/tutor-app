@@ -412,7 +412,7 @@ function EqBlock({ item }: { item: EqItem }) {
     } catch {
       if (ref.current) ref.current.textContent = item.latex;
     }
-  }, [item.latex]);
+  }, [item.latex, item.role]);
 
   return (
     <div style={{ position: "absolute", left: item.x, top: item.y }}>
@@ -514,22 +514,12 @@ function EqBlock({ item }: { item: EqItem }) {
 }
 
 // ── Main component ──────────────────────────────────────────────────────────
-function DotGridBackground() {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        backgroundImage:
-          "radial-gradient(circle, oklch(75% 0.008 220) 1px, transparent 1px)",
-        backgroundSize: "16px 16px",
-        backgroundColor: "#ffffff",
-      }}
-    />
-  );
+// A plain white board. The dot grid read as clutter next to real diagrams.
+function PlainBackground() {
+  return <div style={{ position: "absolute", inset: 0, backgroundColor: "#ffffff" }} />;
 }
 
-const TLDRAW_COMPONENTS: TLComponents = { Background: DotGridBackground };
+const TLDRAW_COMPONENTS: TLComponents = { Background: PlainBackground };
 
 const TldrawCore = forwardRef<WhiteboardHandle>(function TldrawCore(_, ref) {
   const editorRef = useRef<Editor | null>(null);

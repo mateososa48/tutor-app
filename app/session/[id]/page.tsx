@@ -2,15 +2,25 @@
 
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import LeftNav from "@/components/LeftNav";
+import { Play, Plus, RotateCcw, Square } from "lucide-react";
 import Whiteboard from "@/components/Whiteboard";
 import type { WhiteboardHandle, WhiteboardSnapshot } from "@/components/Whiteboard";
-import Sidebar from "@/components/Sidebar";
 import TutorDebugPanel from "@/components/TutorDebugPanel";
-import { SubtitleBar } from "@/components/SubtitleBar";
 import type { TutorDebugEvent } from "@/components/TutorDebugPanel";
+import { AppShell } from "@/components/app/AppShell";
+import { LiveDot, TopBar } from "@/components/app/TopBar";
+import { VoiceDock, type DockActivity } from "@/components/session/VoiceDock";
+import { CaptionBar } from "@/components/session/CaptionBar";
+import { DropOverlay } from "@/components/session/FilesPopover";
+import { TranscriptList } from "@/components/session/TranscriptPanel";
+import { useFileDrop, useFileIntake } from "@/components/session/useFileIntake";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { LiveTutorSession } from "@/lib/live-tutor";
 import type { LiveTutorCallbacks } from "@/lib/live-tutor";
+import { GeminiTutorSession } from "@/lib/gemini-tutor";
+import { resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
 import type { TranscriptEntry, ToolCallResult, TutorActivity } from "@/lib/live-types";
 import {
   SavedSession,
@@ -124,6 +134,8 @@ function SessionDetailPage({ id }: { id: string }) {
   const [errorMessage, setErrorMessage] = useState("");
   const [fileNotice, setFileNotice] = useState("");
   const [subtitleText, setSubtitleText] = useState("");
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const [transcriptOpen, setTranscriptOpen] = useState(true);
   const [debugTrace, setDebugTrace] = useState<TutorDebugEvent[]>([]);
   const [debugConfig] = useState(() => {
     const enabled = searchParams.get("debug") === "1" || searchParams.get("qa") === "1";
@@ -134,7 +146,9 @@ function SessionDetailPage({ id }: { id: string }) {
   });
 
   // live tutor refs
-  const sessionRef = useRef<LiveTutorSession | null>(null);
+  const sessionRef = useRef<TutorClient | null>(null);
+  // Which voice stack runs this session (env default, ?provider= override).
+  const [provider] = useState(() => resolveTutorProvider(searchParams));
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -168,6 +182,34 @@ function SessionDetailPage({ id }: { id: string }) {
 
   const debugMode = debugConfig.enabled;
   const qaTextOnly = debugConfig.textOnly;
+
+  // Dev-only design preview: `?mock=1` renders the live screen with a scripted
+  // transcript and a synthetic voice, and never opens an OpenAI session.
+  const mockPreview = process.env.NODE_ENV !== "production" && searchParams.get("mock") === "1";
+  useEffect(() => {
+    if (!mockPreview) return;
+    const boot = setTimeout(() => {
+      setMode("live");
+      liveStateRef.current = "active";
+      setLiveState("active");
+      setSessionTitle("Fractions: one half");
+      setTranscript(MOCK_TRANSCRIPT);
+      setElapsedSeconds(252);
+    }, 0);
+    let speaking = false;
+    const talk = setInterval(() => {
+      speaking = !speaking;
+      setIsTutorSpeaking(speaking);
+      setTutorActivity(speaking ? "idle" : "writing");
+      setSubtitleText(speaking ? "Look at the board: the pizza is cut into two equal pieces and one is shaded. Which piece is one half?" : "");
+    }, 4200);
+    const clock = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => {
+      clearTimeout(boot);
+      clearInterval(talk);
+      clearInterval(clock);
+    };
+  }, [mockPreview]);
 
   const recordDebug = useCallback((
     kind: string,
@@ -536,6 +578,9 @@ function SessionDetailPage({ id }: { id: string }) {
       onSpeakingChange: (speaking) => {
         setIsTutorSpeaking(speaking);
       },
+      onAudioAnalyser: (node) => {
+        setAnalyser(node);
+      },
       onActivity: (activity) => {
         setTutorActivity(activity);
       },
@@ -544,9 +589,9 @@ function SessionDetailPage({ id }: { id: string }) {
       },
     };
 
-    const live = new LiveTutorSession(callbacks);
+    const live: TutorClient = provider === "gemini" ? new GeminiTutorSession(callbacks) : new LiveTutorSession(callbacks);
     sessionRef.current = live;
-    recordDebug("connection", "live_provider_selected", { provider: "gpt-live-1" });
+    recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
 
     try {
       await live.start({
@@ -567,7 +612,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, id, pauseLiveSession, persistSnapshot, recordDebug]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, id, pauseLiveSession, persistSnapshot, provider, recordDebug]);
 
   const handleAddFiles = useCallback(
     (newFiles: UploadedFile[]) => {
@@ -677,6 +722,7 @@ function SessionDetailPage({ id }: { id: string }) {
 
   // ── Initial load ─────────────────────────────────────────────────────
   useEffect(() => {
+    if (mockPreview) return;
     let cancelled = false;
 
     // Capture isNew exactly once per mount. Cache in a ref so re-runs
@@ -749,10 +795,11 @@ function SessionDetailPage({ id }: { id: string }) {
     return () => {
       cancelled = true;
     };
-  }, [id, searchParams]);
+  }, [id, mockPreview, searchParams]);
 
   // Auto-start live mode once mounted (handles new + resume)
   useEffect(() => {
+    if (mockPreview) return;
     if (mode !== "live") return;
     if (liveStateRef.current !== "idle") return;
 
@@ -770,7 +817,7 @@ function SessionDetailPage({ id }: { id: string }) {
       startSession();
     };
     tryStart();
-  }, [mode, startSession]);
+  }, [mockPreview, mode, startSession]);
 
   // ── Resume action ────────────────────────────────────────────────────
   const beginResume = useCallback(async () => {
@@ -800,591 +847,292 @@ function SessionDetailPage({ id }: { id: string }) {
     return `${m}:${s}`;
   };
 
+  const { intake } = useFileIntake(files, handleAddFiles);
+  const { dragging, handlers: dropHandlers } = useFileDrop((list) => {
+    void intake(list);
+  });
+
+  const dockActivity: DockActivity =
+    liveState === "connecting" || liveState === "idle"
+      ? "connecting"
+      : isTutorSpeaking
+        ? "speaking"
+        : tutorActivity === "writing"
+          ? "writing"
+          : tutorActivity === "thinking"
+            ? "thinking"
+            : "listening";
+
   if (mode === "loading") {
     return (
-      <Shell>
+      <AppShell defaultOpen={false}>
+        <TopBar />
         <Centered text="Loading session…" />
-      </Shell>
+      </AppShell>
     );
   }
 
   if (mode === "notfound") {
     return (
-      <Shell>
+      <AppShell defaultOpen={false}>
+        <TopBar />
         <NotFoundState onHome={() => router.push("/")} />
-      </Shell>
+      </AppShell>
     );
   }
 
   if (mode === "lobby") {
     return (
-      <Shell>
-        <LobbyHeader session={session} onHome={() => router.push("/")} />
-        <LobbyBody
-          session={session}
-          onResume={beginResume}
-        />
-      </Shell>
+      <AppShell defaultOpen={false}>
+        <TopBar actions={<Button variant="outline" onClick={() => router.push("/")}>Home</Button>}>
+          <SessionMeta session={session} />
+        </TopBar>
+        <LobbyBody session={session} onResume={beginResume} />
+      </AppShell>
     );
   }
 
   if (mode === "review") {
     return (
-      <Shell>
-        <ReviewHeader
-          session={session}
-          onBack={() => router.push("/")}
-          onContinue={beginResume}
-          onNew={() => router.push("/session")}
-        />
+      <AppShell defaultOpen={false}>
+        <TopBar
+          actions={
+            <>
+              <Button variant="outline" onClick={() => router.push("/session")}>
+                <Plus />
+                New session
+              </Button>
+              <Button onClick={beginResume}>
+                <Play className="fill-current" />
+                Continue session
+              </Button>
+            </>
+          }
+        >
+          <SessionMeta session={session} showDuration />
+        </TopBar>
         <ReviewBody transcript={transcript} />
-      </Shell>
+      </AppShell>
     );
   }
 
-  // Live
+  // Live: the board is the page. Title and End float over it; the dock sits
+  // bottom right.
   return (
-    <div
-      className="h-screen w-screen flex overflow-hidden"
-      style={{ background: "#e2e2e2", padding: 10, gap: 10 }}
-    >
-      <LeftNav />
-      <section
-        className="flex-1 min-w-0 flex flex-col overflow-hidden"
-        style={{
-          background: "#fff",
-          borderRadius: 14,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.07), 0 4px 18px rgba(0,0,0,0.06)",
-        }}
-      >
-        <header
-          className="h-14 px-7 flex items-center justify-between flex-shrink-0"
-          style={{ borderBottom: "1px solid #d0d0d0" }}
-        >
-          <div className="flex items-center gap-3 text-[13px]">
-            {liveState === "active" && (
-              <>
-                <span className="flex items-center gap-2">
-                  <LiveDot />
-                  <span className="font-semibold" style={{ color: "#0a0a0a" }}>
-                    {sessionTitle}
-                  </span>
-                </span>
-                <span style={{ color: "#d0d0d0" }} aria-hidden="true">·</span>
-                <span style={{ color: "#5a5a5a", fontVariantNumeric: "tabular-nums" }}>
-                  {formatTime(elapsedSeconds)}
-                </span>
-                {debugMode && (
-                  <>
-                    <span style={{ color: "#d0d0d0" }} aria-hidden="true">·</span>
-                    <span
-                      style={{
-                        color: qaTextOnly ? "#2563eb" : "#7c3aed",
-                        fontSize: 11,
-                        fontWeight: 800,
-                        letterSpacing: "0.06em",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {qaTextOnly ? "QA text" : "QA mic"}
-                    </span>
-                  </>
-                )}
-              </>
-            )}
-            {liveState === "connecting" && (
-              <span className="font-medium" style={{ color: "#909090" }}>Connecting…</span>
-            )}
-            {liveState === "ending" && (
-              <span className="font-medium" style={{ color: "#909090" }}>Ending session…</span>
-            )}
-            {liveState === "error" && (
-              <span className="font-medium" style={{ color: "#b91c1c" }}>
-                {errorMessage || "Session error"}
-              </span>
-            )}
-          </div>
-        </header>
-        <main className="flex-1 relative overflow-hidden">
-          <Whiteboard ref={whiteboardRef} />
-          <SubtitleBar text={subtitleText} />
-          {debugMode && (
-            <TutorDebugPanel
-              events={debugTrace}
-              liveState={liveState}
-              elapsedSeconds={elapsedSeconds}
-              isTextOnly={qaTextOnly}
-              canSend={liveState === "active"}
-              transcriptCount={transcript.length}
-              fileCount={files.length}
-              onClear={clearDebugTrace}
-              onExport={exportDebugTrace}
-              onSendScenario={handleSendText}
-            />
-          )}
-        </main>
-      </section>
+    <AppShell defaultOpen={false}>
+      <main className="relative min-h-0 flex-1 overflow-hidden bg-white" {...dropHandlers}>
+        <Whiteboard ref={whiteboardRef} />
 
-      <Sidebar
-        sessionState={
-          liveState === "idle"
-            ? "pre"
-            : liveState === "active"
-            ? "active"
-            : liveState === "connecting"
-            ? "connecting"
-            : liveState === "ending"
-            ? "ending"
-            : liveState === "error"
-            ? "error"
-            : "pre"
-        }
-        transcript={transcript}
-        isMuted={isMuted}
-        isTutorSpeaking={isTutorSpeaking}
-        tutorActivity={tutorActivity}
-        files={files}
-        errorMessage={errorMessage}
-        fileNotice={fileNotice}
-        onStart={() => {
-          isResumeRef.current = false;
-          startSession();
-        }}
-        onMute={() => setIsMuted((v) => !v)}
-        onEnd={endSession}
-        onAddFiles={handleAddFiles}
-        onRemoveFile={handleRemoveFile}
-        onSendText={handleSendText}
-      />
-    </div>
+        <SessionChip
+          liveState={liveState}
+          title={sessionTitle}
+          elapsed={formatTime(elapsedSeconds)}
+          qaLabel={debugMode ? `${qaTextOnly ? "QA text" : "QA mic"} on ${provider}` : provider === "gemini" ? "gemini" : null}
+        />
+        <div className="absolute top-4 right-4 z-30">
+          <EndSessionButton disabled={liveState !== "active"} onConfirm={endSession} />
+        </div>
+
+        <CaptionBar text={subtitleText} />
+        <DropOverlay show={dragging} />
+        {liveState === "error" && (
+          <ErrorNotice
+            message={errorMessage}
+            onRetry={() => {
+              isResumeRef.current = false;
+              void startSession();
+            }}
+          />
+        )}
+        <VoiceDock
+          activity={dockActivity}
+          isMuted={isMuted}
+          onMute={() => setIsMuted((v) => !v)}
+          analyser={analyser}
+          onSendText={handleSendText}
+          transcript={transcript}
+          transcriptOpen={transcriptOpen}
+          onToggleTranscript={() => setTranscriptOpen((v) => !v)}
+          files={files}
+          onAddFiles={handleAddFiles}
+          onRemoveFile={handleRemoveFile}
+          fileNotice={fileNotice}
+        />
+        {debugMode && (
+          <TutorDebugPanel
+            events={debugTrace}
+            liveState={liveState}
+            elapsedSeconds={elapsedSeconds}
+            isTextOnly={qaTextOnly}
+            canSend={liveState === "active"}
+            transcriptCount={transcript.length}
+            fileCount={files.length}
+            onClear={clearDebugTrace}
+            onExport={exportDebugTrace}
+            onSendScenario={handleSendText}
+          />
+        )}
+      </main>
+    </AppShell>
   );
 }
 
-// ── Layout helpers ─────────────────────────────────────────────────────
+// ── Pieces ─────────────────────────────────────────────────────────────
 
-function Shell({ children }: { children: React.ReactNode }) {
+const MOCK_TRANSCRIPT: TranscriptEntry[] = [
+  { id: "m1", role: "student", text: "I don't get fractions at all." },
+  { id: "m2", role: "tutor", text: "Totally fair. Quick question first: if you cut a pizza into two equal pieces and take one, what fraction of the pizza do you have?" },
+  { id: "m3", role: "student", text: "um, a half?" },
+  { id: "m4", role: "tutor", text: "Yes, one half. Look at the board: the pizza is cut into two equal pieces and one is shaded. If I cut the same pizza into four equal pieces instead, how many pieces would make one half?" },
+  { id: "m5", role: "student", text: "two pieces" },
+  { id: "m6", role: "tutor", text: "Exactly. Two quarters is the same amount as one half. Let me put both next to each other." },
+];
+
+function SessionChip({
+  liveState,
+  title,
+  elapsed,
+  qaLabel,
+}: {
+  liveState: LiveState;
+  title: string;
+  elapsed: string;
+  qaLabel: string | null;
+}) {
   return (
-    <div
-      className="h-screen w-screen flex overflow-hidden"
-      style={{ background: "#e2e2e2", padding: 10, gap: 10 }}
-    >
-      <LeftNav />
-      <main
-        className="flex-1 min-w-0 flex flex-col overflow-hidden"
-        style={{
-          background: "#fff",
-          borderRadius: 14,
-          boxShadow: "0 1px 3px rgba(0,0,0,0.07), 0 4px 18px rgba(0,0,0,0.06)",
-        }}
-      >
-        {children}
-      </main>
+    <div className="absolute top-4 left-4 z-30 flex h-9 max-w-[min(60%,520px)] items-center gap-2.5 rounded-full border border-(--lp-line-strong) bg-white/92 px-3.5 text-[13px] shadow-(--lp-shadow-card) backdrop-blur-md">
+      {liveState === "active" && (
+        <>
+          <LiveDot />
+          <span className="truncate font-medium text-(--lp-ink)">{title}</span>
+          <span className="shrink-0 text-(--lp-ink-3) tabular-nums">{elapsed}</span>
+          {qaLabel && <span className="shrink-0 text-[10.5px] font-bold tracking-[0.06em] text-(--lp-sky-deep) uppercase">{qaLabel}</span>}
+        </>
+      )}
+      {(liveState === "connecting" || liveState === "idle") && <span className="text-(--lp-ink-3)">Connecting…</span>}
+      {liveState === "ending" && <span className="text-(--lp-ink-3)">Ending session…</span>}
+      {liveState === "error" && <span className="text-(--lp-ink-3)">Not connected</span>}
     </div>
   );
 }
 
 function Centered({ text }: { text: string }) {
-  return (
-    <div className="flex-1 flex items-center justify-center">
-      <span style={{ color: "#909090", fontSize: 14 }}>{text}</span>
-    </div>
-  );
+  return <div className="flex flex-1 items-center justify-center text-[14px] text-(--lp-ink-3)">{text}</div>;
 }
 
 function NotFoundState({ onHome }: { onHome: () => void }) {
   return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: 10,
-      }}
-    >
-      <p style={{ fontSize: 18, fontWeight: 500, color: "#0a0a0a", margin: 0 }}>Session not found</p>
-      <p style={{ fontSize: 14, color: "#b0b0b0", margin: 0, marginBottom: 14 }}>
-        This session may have been cleared or never existed.
-      </p>
-      <DarkButton onClick={onHome}>Go to home</DarkButton>
+    <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+      <p className="lp-display m-0 text-[22px] text-(--lp-ink)">Session not found</p>
+      <p className="m-0 mb-4 max-w-[38ch] text-[14px] leading-[1.5] text-(--lp-ink-2)">It may have been deleted, or the link is wrong.</p>
+      <Button onClick={onHome}>Go to home</Button>
     </div>
   );
 }
 
-function LobbyHeader({
-  session,
-  onHome,
-}: {
-  session: SavedSession | null;
-  onHome: () => void;
-}) {
+function SessionMeta({ session, showDuration }: { session: SavedSession | null; showDuration?: boolean }) {
+  if (!session) return null;
+  const status = session.status === "active" ? "In progress" : session.status === "paused" ? "Paused" : "Ended";
   return (
-    <header
-      className="h-14 px-7 flex items-center justify-between flex-shrink-0"
-      style={{ borderBottom: "1px solid #d0d0d0" }}
-    >
-      <div className="flex items-center gap-3 min-w-0 flex-1 mr-4" style={{ fontSize: 13 }}>
-        {session && (
-          <>
-            <span
-              style={{
-                fontSize: 14,
-                fontWeight: 600,
-                color: "#0a0a0a",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                maxWidth: 360,
-              }}
-              title={session.title}
-            >
-              {session.title}
-            </span>
-            <span style={{ color: "#d0d0d0" }} aria-hidden="true">·</span>
-            <span style={{ color: "#5a5a5a", whiteSpace: "nowrap" }}>
-              {formatRelativeDate(session.startedAt)}
-            </span>
-            <span style={{ color: "#d0d0d0" }} aria-hidden="true">·</span>
-            <StatusPill status={session.status} />
-          </>
-        )}
-      </div>
-      <GhostButton onClick={onHome}>← Home</GhostButton>
-    </header>
+    <>
+      <span className="truncate font-medium text-(--lp-ink)" title={session.title}>
+        {session.title}
+      </span>
+      <span className="shrink-0 text-(--lp-ink-3)">{formatRelativeDate(session.startedAt)}</span>
+      {showDuration && <span className="shrink-0 text-(--lp-ink-3)">{formatDuration(session.durationSec)}</span>}
+      <Badge variant="outline" className="shrink-0 rounded-full border-(--lp-line-strong) text-(--lp-ink-2)">
+        {status}
+      </Badge>
+    </>
   );
 }
 
-function LobbyBody({
-  session,
-  onResume,
-}: {
-  session: SavedSession | null;
-  onResume: () => void;
-}) {
+function LobbyBody({ session, onResume }: { session: SavedSession | null; onResume: () => void }) {
   const heading = session?.status === "active" ? "Session in progress" : "Session paused";
   return (
-    <div className="flex-1 page-in flex flex-col items-center justify-center" style={{ padding: 40 }}>
-      <p style={{ fontSize: 22, fontWeight: 600, color: "#0a0a0a", margin: 0, marginBottom: 8 }}>
-        {heading}
+    <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+      <p className="lp-display m-0 text-[26px] text-(--lp-ink)">{heading}</p>
+      <p className="m-0 mt-2 mb-7 max-w-[40ch] text-[15px] leading-[1.55] text-(--lp-ink-2)">
+        Pick up where you left off. The board and the transcript come back exactly as they were.
       </p>
-      <p style={{ fontSize: 14, color: "#5a5a5a", margin: 0, marginBottom: 24, textAlign: "center", maxWidth: 420 }}>
-        {session
-          ? "Pick up where you left off — your whiteboard and transcript will be restored."
-          : "Resume to continue."}
-      </p>
-      <DarkButton onClick={onResume}>
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path d="M3 2.5l6 3.5-6 3.5V2.5z" fill="currentColor" />
-        </svg>
+      <button type="button" onClick={onResume} className="lp-btn">
+        <Play className="size-4 fill-current" />
         Resume session
-      </DarkButton>
+      </button>
     </div>
-  );
-}
-
-function ReviewHeader({
-  session,
-  onBack,
-  onContinue,
-  onNew,
-}: {
-  session: SavedSession | null;
-  onBack: () => void;
-  onContinue: () => void;
-  onNew: () => void;
-}) {
-  return (
-    <header
-      className="h-14 px-7 flex items-center justify-between flex-shrink-0"
-      style={{ borderBottom: "1px solid #d0d0d0" }}
-    >
-      <div className="flex items-center gap-3 min-w-0 flex-1 mr-4" style={{ fontSize: 13 }}>
-        {session && (
-          <>
-            <span
-              style={{
-                fontSize: 14,
-                fontWeight: 600,
-                color: "#0a0a0a",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                maxWidth: 360,
-              }}
-              title={session.title}
-            >
-              {session.title}
-            </span>
-            <span style={{ color: "#d0d0d0" }} aria-hidden="true">·</span>
-            <span style={{ color: "#5a5a5a", whiteSpace: "nowrap" }}>
-              {formatRelativeDate(session.startedAt)}
-            </span>
-            <span style={{ color: "#d0d0d0" }} aria-hidden="true">·</span>
-            <span style={{ color: "#909090", whiteSpace: "nowrap" }}>
-              {formatDuration(session.durationSec)}
-            </span>
-          </>
-        )}
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <GhostButton onClick={onBack}>← Back</GhostButton>
-        <DarkButton onClick={onContinue}>
-          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M3 2.5l6 3.5-6 3.5V2.5z" fill="currentColor" />
-          </svg>
-          Continue session
-        </DarkButton>
-        <DarkButton onClick={onNew} variant="outline">
-          <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-            <path d="M5.5 1.5v8M1.5 5.5h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          </svg>
-          New session
-        </DarkButton>
-      </div>
-    </header>
   );
 }
 
 function ReviewBody({ transcript }: { transcript: TranscriptEntry[] }) {
   return (
-    <div className="flex-1 overflow-y-auto page-in" style={{ padding: "40px 52px 60px" }}>
-      <div style={{ maxWidth: 720, margin: "0 auto" }}>
-        <section style={{ marginBottom: 40 }}>
-          <SectionLabel>Analysis</SectionLabel>
-          <div
-            style={{
-              border: "1px dashed #d0d0d0",
-              borderRadius: 10,
-              padding: "16px 18px",
-              color: "#909090",
-              fontSize: 13,
-              lineHeight: 1.55,
-            }}
-          >
-            Session analysis coming soon — an AI summary of what was covered and what to practice next.
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-[720px] px-8 pt-10 pb-20">
+        <section className="mb-10">
+          <h2 className="lp-display m-0 mb-3 text-[18px] text-(--lp-ink)">Summary</h2>
+          <div className="rounded-[14px] border border-dashed border-(--lp-line-strong) px-5 py-4 text-[13.5px] leading-[1.55] text-(--lp-ink-3)">
+            A short summary of what was covered and what to practise next will appear here.
           </div>
         </section>
-
         <section>
-          <SectionLabel>Transcript</SectionLabel>
-          {transcript.length === 0 ? (
-            <p style={{ fontSize: 14, color: "#c0c0c0", margin: 0 }}>
-              No transcript was recorded for this session.
-            </p>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-              {transcript.map((entry) => (
-                <TranscriptTurn key={entry.id} entry={entry} />
-              ))}
-            </div>
-          )}
+          <h2 className="lp-display m-0 mb-4 text-[18px] text-(--lp-ink)">Transcript</h2>
+          <TranscriptList transcript={transcript} emptyText="No transcript was recorded for this session." />
         </section>
       </div>
     </div>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function EndSessionButton({ onConfirm, disabled }: { onConfirm: () => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
   return (
-    <h2
-      style={{
-        fontSize: 10,
-        fontWeight: 600,
-        color: "#b0b0b0",
-        textTransform: "uppercase",
-        letterSpacing: "0.1em",
-        marginBottom: 14,
-      }}
-    >
-      {children}
-    </h2>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            variant="outline"
+            disabled={disabled}
+            className="h-8 rounded-full border-(--lp-line-strong) px-3.5 text-[13px] font-medium text-(--danger) hover:bg-[#fff1f0] hover:text-(--danger)"
+          />
+        }
+      >
+        <Square className="size-3 fill-current" />
+        End session
+      </PopoverTrigger>
+      <PopoverContent align="end" sideOffset={8} className="w-[300px] rounded-[16px] p-4">
+        <p className="m-0 text-[14px] font-semibold text-(--lp-ink)">End this session?</p>
+        <p className="m-0 mt-1 mb-4 text-[13px] leading-[1.5] text-(--lp-ink-2)">
+          The board and transcript are saved. You can pick it up again from Home.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+            Keep going
+          </Button>
+          <Button
+            size="sm"
+            className="bg-(--danger) text-white hover:bg-[#b8261a]"
+            onClick={() => {
+              setOpen(false);
+              onConfirm();
+            }}
+          >
+            End session
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
-function TranscriptTurn({ entry }: { entry: TranscriptEntry }) {
-  const isTutor = entry.role === "tutor";
+function ErrorNotice({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "60px 1fr",
-        columnGap: 14,
-        alignItems: "baseline",
-      }}
-    >
-      <span
-        style={{
-          fontSize: 10,
-          fontWeight: 600,
-          textTransform: "uppercase",
-          letterSpacing: "0.08em",
-          color: isTutor ? "#0a0a0a" : "#909090",
-          paddingTop: 4,
-        }}
-      >
-        {isTutor ? "Tutor" : "You"}
+    <div className="absolute top-4 left-1/2 z-30 flex max-w-[520px] -translate-x-1/2 items-center gap-3 rounded-[14px] border border-(--lp-line-strong) bg-white px-4 py-3 shadow-(--lp-shadow-card)">
+      <span className="min-w-0 flex-1 text-[13.5px] leading-[1.45] text-(--lp-ink)">
+        {message || "The tutor connection hit an error."}
       </span>
-      <p
-        style={{
-          margin: 0,
-          fontSize: 15,
-          lineHeight: 1.6,
-          color: isTutor ? "#0a0a0a" : "#5a5a5a",
-          fontWeight: isTutor ? 500 : 400,
-        }}
-      >
-        {entry.text}
-      </p>
+      <Button size="sm" onClick={onRetry}>
+        <RotateCcw />
+        Try again
+      </Button>
     </div>
-  );
-}
-
-function StatusPill({ status }: { status: SavedSession["status"] }) {
-  const label = status === "active" ? "Active" : status === "paused" ? "Paused" : "Ended";
-  const dotColor =
-    status === "active" ? "#16a34a" : status === "paused" ? "#909090" : "#c0c0c0";
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        height: 20,
-        padding: "0 8px",
-        background: "#f5f5f5",
-        border: "1px solid #d0d0d0",
-        borderRadius: 6,
-        color: "#5a5a5a",
-        fontSize: 11,
-        fontWeight: 500,
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: "50%",
-          background: dotColor,
-        }}
-      />
-      {label}
-    </span>
-  );
-}
-
-
-function DarkButton({
-  children,
-  onClick,
-  variant = "solid",
-}: {
-  children: React.ReactNode;
-  onClick: () => void;
-  variant?: "solid" | "outline";
-}) {
-  if (variant === "outline") {
-    return (
-      <button
-        onClick={onClick}
-        style={{
-          height: 32,
-          paddingLeft: 14,
-          paddingRight: 14,
-          background: "transparent",
-          color: "#5a5a5a",
-          borderRadius: 8,
-          fontSize: 13,
-          fontWeight: 500,
-          border: "1px solid #d0d0d0",
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          transition: "background 0.12s, color 0.12s",
-        }}
-        onMouseOver={(e) => {
-          e.currentTarget.style.background = "#f0f0f0";
-          e.currentTarget.style.color = "#0a0a0a";
-        }}
-        onMouseOut={(e) => {
-          e.currentTarget.style.background = "transparent";
-          e.currentTarget.style.color = "#5a5a5a";
-        }}
-      >
-        {children}
-      </button>
-    );
-  }
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        height: 38,
-        paddingLeft: 18,
-        paddingRight: 18,
-        background: "#0a0a0a",
-        color: "#fff",
-        borderRadius: 8,
-        fontSize: 13,
-        fontWeight: 600,
-        border: "none",
-        cursor: "pointer",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        transition: "background 0.15s",
-      }}
-      onMouseOver={(e) => (e.currentTarget.style.background = "#2a2a2a")}
-      onMouseOut={(e) => (e.currentTarget.style.background = "#0a0a0a")}
-    >
-      {children}
-    </button>
-  );
-}
-
-function GhostButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        height: 32,
-        paddingLeft: 14,
-        paddingRight: 14,
-        background: "transparent",
-        color: "#5a5a5a",
-        borderRadius: 8,
-        fontSize: 13,
-        fontWeight: 500,
-        border: "1px solid #d0d0d0",
-        cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        transition: "background 0.12s, color 0.12s",
-      }}
-      onMouseOver={(e) => {
-        e.currentTarget.style.background = "#f0f0f0";
-        e.currentTarget.style.color = "#0a0a0a";
-      }}
-      onMouseOut={(e) => {
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = "#5a5a5a";
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function LiveDot() {
-  return (
-    <span
-      className="w-[7px] h-[7px] rounded-full"
-      style={{
-        background: "#16a34a",
-        animation: "live-pulse 2.2s cubic-bezier(0.22,1,0.36,1) infinite",
-      }}
-    />
   );
 }

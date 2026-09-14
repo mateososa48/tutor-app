@@ -1,6 +1,6 @@
 import { Hanken_Grotesk, Schibsted_Grotesk, Shantell_Sans } from "next/font/google";
 
-// Scoped to the landing page so the product UI keeps its system stack.
+// Loaded once in app/layout.tsx; the landing and the product UI share one brand face.
 export const display = Schibsted_Grotesk({
   subsets: ["latin"],
   weight: ["500", "600", "700"],

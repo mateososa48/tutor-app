@@ -9,6 +9,7 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 ## Stack
 - Next.js 16 App Router, React 19, TypeScript, Tailwind v4 (CSS-first, tokens in `app/globals.css`).
 - Voice: **OpenAI GPT-Live-1** over WebRTC (`gpt-live-1`). Teaching brain: a Responses model via GPT-Live "Responses delegation" (`gpt-5.6-terra` by default).
+- Voice fallback: **Gemini Live** (`gemini-3.1-flash-live-preview`, one model talks and draws) behind the same client surface; picked per session, see "Voice provider switch".
 - Board: tldraw v5 + KaTeX (`components/TldrawCore.tsx`, `lib/semantic-board.ts`).
 - Auth: next-auth v5 (JWT). DB: Neon Postgres via Drizzle (`lib/db/schema.ts`). Route protection in `proxy.ts`.
 
@@ -32,6 +33,14 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 - Backend prompt (`lib/tutor-prompts.ts`) has a board-first rule: one diagnostic question at most, then draw the picture in the same reply as the idea; never describe a picture in words or fake one with brackets; one to three board actions per reply. Examples B, B2, B3 show fractions, a sketch and the balance.
 - **Free visual QA:** `npm run dev` then open `/dev/board?demo=fractions|algebra|geometry|data|all&step=300&count=N`. It mounts the whiteboard and replays scripted tool calls with no OpenAI session (`app/dev/board/demos.ts`). The route is dev-only (404 in production, public in `proxy.ts` only in development). Screenshot it before touching a renderer.
 
+## App UI (branch `session-redesign`, Sept 2026)
+- One flat surface, no panels on a gray backdrop. `components/app/AppShell.tsx` = shadcn `SidebarProvider` + `AppSidebar` (light, square, edge to edge, `collapsible="icon"`, Cmd+B) + `SidebarInset`. `components/app/TopBar.tsx` is the 52px header every page shares (sidebar trigger, page content, actions). Home, Settings, the new-session loader and every session state use it.
+- The session screen is the board plus a **voice dock** (`components/session/VoiceDock.tsx`, bottom right, 380px): status badge (beUI `AnimatedBadge`), the tutor's voice as a dithered wave (`VoiceWave.tsx`, WebGL, driven by the remote-audio `AnalyserNode` that `LiveTutorSession` hands out through `onAudioAnalyser`), the mic button, and a keyboard button that morphs the row into a composer (Sona UI `MorphSurface`). Two pills above it: Files (`FilesPopover.tsx`, drop zone + chips; dropping anywhere on the board also works via `useFileDrop`) and Transcript (the dock grows to full height and shows `TranscriptPanel.tsx`). End session lives in the top bar behind a confirm popover. Captions are `CaptionBar.tsx`.
+- Brand tokens (`--lp-*`) are defined on `:root` as well as `.lp`, so the app and the landing share one palette and one font stack (Hanken body, Schibsted display via `lp-display`, loaded once in `app/layout.tsx`). shadcn theme variables are tuned to them (ink primary, sky ring, light sidebar). `.lp-btn` is the one pressed CTA style; use it once per screen at most.
+- **Free design preview:** sign in, then open `/session?mock=1` (dev only). It creates a session and renders the live screen with a scripted transcript and a synthetic voice, never opening an OpenAI session. `/api/dev/qa-login?to=/` signs in as the QA user and lands on any path.
+- The tldraw "made with" badge is moved to the bottom-left in `globals.css` so the dock never covers it (its license requires it to stay visible).
+- Old `LeftNav`, `Sidebar`, `SubtitleBar`, `FloatingPanel` are gone. The sign-in and onboarding pages still use the older honey tokens.
+
 ## GPT-Live protocol facts we verified (do not relearn these)
 1. The Live model's clock is driven by **inbound audio**. With no mic track nothing happens: appended context is never injected and the model never speaks. Text-only QA sessions send faint synthetic room tone (`createSyntheticMicStream`).
 2. `session.instructions.append` alone never makes the model speak. `session.commentary.append` does (a near-verbatim paraphrase within ~1 s). The greeting and the resume line are sent as commentary.
@@ -40,6 +49,14 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 5. Sessions expire after about 2 hours (`expires_at` in `session.started`). Voice and voice instructions are immutable per session; backend settings can change with `session.update`.
 6. The voice model cannot see images. Photos and PDFs go to the backend as `input_image` / `input_file` items.
 7. The SDK (`openai@7.15`) has typed Live events in `node_modules/openai/resources/live/live.d.ts` and a WebSocket client (`openai/resources/live/ws`) that is handy for Node probes.
+
+## Voice provider switch (Sept 2026)
+Two live stacks share one interface (`TutorClient` in `lib/tutor-provider.ts`: `start/end/setMuted/sendText/sendFiles` with `LiveTutorCallbacks`). The session page picks one at start:
+- `NEXT_PUBLIC_TUTOR_PROVIDER=openai|gemini` in `.env.local` (and on Vercel) sets the default; `?provider=gemini` or `?provider=openai` on a session URL overrides it for that tab. The session chip shows a small "GEMINI" tag when Gemini is active.
+- OpenAI path: `lib/live-tutor.ts` + `app/api/live-session/route.ts` (unchanged).
+- Gemini path: `lib/gemini-tutor.ts` (adapter that speaks `LiveTutorCallbacks`) → `lib/gemini-live.ts` (WebSocket BidiGenerateContent client, resumable) + `lib/audio.ts` (mic capture at 16 kHz, PCM player with an AnalyserNode for the voice wave). `app/api/live-token/route.ts` composes the Gemini prompt (`buildGeminiInstructions` in `lib/tutor-prompts.ts`: voice persona + the backend teaching rules, for one model) and the voice (`geminiVoiceFor` maps the OpenAI voice choice to a Gemini prebuilt voice); `{ configOnly: true }` returns prompt + voice, a plain POST also mints a one-use ephemeral token.
+- Ephemeral tokens only work on the `BidiGenerateContentConstrained` WebSocket method with `?access_token=`; the plain `BidiGenerateContent` method closes with 1008 "unregistered callers". Verified 2026-09-14 with a handshake probe.
+- Gemini has no Responses-delegation split, so the whiteboard tools are called by the voice model directly. Expect it to draw less carefully than the OpenAI pair.
 
 ## Landing page (branch `landing-v3`, Sept 2026)
 - Lives in `components/landing/`. `LandingPage.tsx` composes: `Header` (full-width bar that morphs into a floating glass pill on scroll, driven by one Motion spring), `Hero` (dithered-wave WebGL backdrop in `DitherWave.tsx`, no three.js), `SessionMock` (the real session screen replayed: nav rail, board, transcript), `TopicsMarquee`, `HowItWorks` (React Bits CardSwap on sm+, static column on mobile), `Bento` (four double-bordered tiles with scripted product fragments), `Founder` (React Bits ScrollReveal), `Parents` (recap card), `Faq` (shadcn Accordion), `Footer`.
@@ -55,7 +72,7 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
 - QA without a microphone: open `/api/dev/qa-login` (dev only) → lands on `/session?debug=1`, a text-only session with the QA panel. Add `&mic=1` for a real mic plus the panel. In dev, `window.__liveTutor` exposes `debugStats()` and `debugSend(event)`.
 
 ## Environment (`.env.local`)
-`OPENAI_API_KEY` (required), `DATABASE_URL`, `AUTH_SECRET`, `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`. Optional: `OPENAI_TUTOR_BACKEND_MODEL` (default `gpt-5.6-terra`; `gpt-5.6-luna` is ~10x cheaper), `OPENAI_TUTOR_REASONING_EFFORT` (default `low`). Vercel needs the same variables in BOTH the Preview and Production environments (the Preview environment was missing `DATABASE_URL`, `AUTH_SECRET`, and the tldraw key, which is why every branch deploy failed). The DB client no longer throws at build time when the variable is missing; the first query fails instead. Gemini is no longer used: remove the `GEMINI_API_KEY` / `NEXT_PUBLIC_GEMINI_API_KEY` lines and revoke the key in AI Studio.
+`OPENAI_API_KEY` (required), `DATABASE_URL`, `AUTH_SECRET`, `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`. Optional: `OPENAI_TUTOR_BACKEND_MODEL` (default `gpt-5.6-terra`; `gpt-5.6-luna` is ~10x cheaper), `OPENAI_TUTOR_REASONING_EFFORT` (default `low`). Vercel needs the same variables in BOTH the Preview and Production environments (the Preview environment was missing `DATABASE_URL`, `AUTH_SECRET`, and the tldraw key, which is why every branch deploy failed). The DB client no longer throws at build time when the variable is missing; the first query fails instead. Gemini fallback: `GEMINI_API_KEY` (server only; `NEXT_PUBLIC_GEMINI_API_KEY` is unused and should be removed) and `NEXT_PUBLIC_TUTOR_PROVIDER=gemini` to make it the default (see "Voice provider switch").
 
 ## Costs
 gpt-live-1 bills $0.05 per minute of session, plus backend tokens. Expect roughly $1.60–2.10 per 30-minute session with terra.
@@ -64,3 +81,4 @@ gpt-live-1 bills $0.05 per minute of session, plus backend tokens. Expect roughl
 - Branch order: `gpt-live` > `v2` > `main`. Never base work on `main`.
 - Background agents must not run `git checkout` / `switch` / `stash`; one did during a read-only audit and moved the working tree to `main`.
 - `.playwright-mcp/` is gitignored; Playwright MCP writes screenshots and snapshots there.
+- Turbopack sometimes keeps serving a stale `globals.css` after an edit (the class you just added is missing from the served stylesheet). Fix: stop the dev server, `rm -rf .next`, start it again.
