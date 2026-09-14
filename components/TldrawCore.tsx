@@ -1074,7 +1074,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         // and place them by the shape's alignment so rings hug the text.
         const props = shape.props as { richText?: unknown; font?: TLDefaultFontStyle; size?: TLDefaultSizeStyle; textAlign?: string; w?: number; autoSize?: boolean };
         try {
-          const plain = props.richText ? renderPlaintextFromRichText(editor, props.richText as Parameters<typeof renderPlaintextFromRichText>[1]) : "";
+          // While a line is still being written its text is partial; the
+          // reveal keeps the full text, so bounds never come out empty.
+          const plain = revealTextRef.current.get(shape.id) ?? (props.richText ? renderPlaintextFromRichText(editor, props.richText as Parameters<typeof renderPlaintextFromRichText>[1]) : "");
           if (plain && props.font && props.size && !props.autoSize) {
             const m = measureText(editor, plain, props.font, props.size, b.w);
             const w = Math.min(b.w, m.w + 8);
