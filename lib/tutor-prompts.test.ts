@@ -37,12 +37,14 @@ test("backend instructions carry the profile, memory notes, and the output contr
 
 test("backend instructions put the board first and name the picture tools", () => {
   const text = buildBackendInstructions(null, []);
-  assert.match(text, /Board-first rule/);
+  assert.match(text, /EVERY reply includes at least one board action/);
   assert.match(text, /draw_fraction/);
   assert.match(text, /draw_balance/);
   assert.match(text, /never fake a diagram with text, brackets, dashes, or ASCII/);
-  assert.match(text, /at most one diagnostic question/i);
-  assert.match(text, /one to three board actions/);
+  assert.match(text, /never a bare question with an empty board/i);
+  assert.match(text, /point_at/);
+  assert.match(text, /erase_older/);
+  assert.match(text, /one to four board actions/);
   assert.ok(text.indexOf("Example B") < text.indexOf('draw_fraction(fraction="1/2"'), "the fractions example shows the picture being drawn");
   assert.doesNotMatch(text, /Before explaining or drawing anything/);
 });
