@@ -3441,7 +3441,25 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return false;
       const lines = mathLines(editor);
       const idx = resolveEqIndex(lines, target);
-      if (idx < 0) return false;
+      if (idx < 0) {
+        // Not an equation line: ring, underline, or box any item by label
+        // (a student's attempt, a note) with a green marker.
+        const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
+        const b = item ? itemBounds(editor, item) : null;
+        if (!item || !b) return false;
+        if (style === "circle") {
+          createDrawStroke(editor, undefined, undefined, ringPoints(b, 10), { color: "green", size: "m", dash: "solid", fill: "none", isClosed: false });
+        } else if (style === "underline") {
+          createLineShape(editor, undefined, undefined, [{ x: b.x - 4, y: b.y + b.h + 6 }, { x: b.x + b.w + 4, y: b.y + b.h + 6 }], { color: "green", size: "m", dash: "solid" });
+        } else {
+          createBox(editor, b.x - 8, b.y - 6, b.w + 16, b.h + 12, "", "green", "none", { dash: "dashed" });
+        }
+        recordDirectSemanticAction(
+          { type: "highlight_step", step_label: target.step_label, style },
+          { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
+        );
+        return true;
+      }
       const line = lines[idx];
       editor.updateShapes([{ id: line.shape.id, type: "math", props: { highlight: style } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
       const b = editor.getShapePageBounds(line.shape.id);
@@ -3457,7 +3475,18 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return false;
       const lines = mathLines(editor);
       const idx = resolveEqIndex(lines, target);
-      if (idx < 0) return false;
+      if (idx < 0) {
+        // Not an equation line: strike through any item by label in red.
+        const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
+        const b = item ? itemBounds(editor, item) : null;
+        if (!item || !b) return false;
+        createLineShape(editor, undefined, undefined, [{ x: b.x - 6, y: b.y + b.h * 0.55 }, { x: b.x + b.w + 6, y: b.y + b.h * 0.45 }], { color: "red", size: "m", dash: "solid" });
+        recordDirectSemanticAction(
+          { type: "cross_out_step", step_label: target.step_label },
+          { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
+        );
+        return true;
+      }
       const line = lines[idx];
       editor.updateShapes([{ id: line.shape.id, type: "math", props: { crossOut: true } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
       const b = editor.getShapePageBounds(line.shape.id);
@@ -4071,7 +4100,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // Closing the gap: everything lower in the same column moves up by the
       // erased item's height, so the board does not keep holes.
       const reflow = (b: ItemBounds) => {
-        if (b.w > 500 || b.y < START_Y - 10) return;
+        // Headings and anything spanning both columns stay put.
+        const spansBoth = b.x < RIGHT_X - 20 && b.x + b.w > RIGHT_X + 60;
+        if (spansBoth || b.y < START_Y - 10) return;
         const col: "left" | "right" = b.x >= RIGHT_X - 20 ? "right" : "left";
         const inCol = (sx: number) => (sx >= RIGHT_X - 20) === (col === "right");
         const dy = b.h + ROW_GAP;

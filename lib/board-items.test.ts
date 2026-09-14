@@ -66,3 +66,15 @@ test("targets with separators match by tokens", async () => {
   assert.equal(resolveItemTarget(items, "70°")?.id, "b2");
   assert.equal(resolveItemTarget(items, "180"), null);
 });
+
+test("a bare number prefers an item whose label says it, else the id", async () => {
+  const { resolveItemTarget } = await import("./board-items");
+  const items = [
+    { id: "b1", tool: "start_new_problem", label: "7 apples, 3 eaten", shapeIds: [], eqItemIds: [], owner: "tutor" as const, createdAt: 0 },
+    { id: "b2", tool: "draw_icons", label: "7 apples, 3 crossed out", shapeIds: [], eqItemIds: [], owner: "tutor" as const, createdAt: 0 },
+    { id: "b3", tool: "add_student_attempt", label: "\"4\"", shapeIds: [], eqItemIds: [], owner: "student" as const, createdAt: 0 },
+  ];
+  assert.equal(resolveItemTarget(items, "4")?.id, "b3");
+  assert.equal(resolveItemTarget(items, "b2")?.id, "b2");
+  assert.equal(resolveItemTarget(items, "2")?.id, "b2");
+});

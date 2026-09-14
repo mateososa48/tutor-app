@@ -227,7 +227,7 @@ function dispatchInner(
       board.withDirectMeta({ owner: "student" }, () =>
         board.addStudentAttempt(normalizeText(text), pickColumn(column.value)),
       );
-      return ok("Student's attempt written in their hand.");
+      return ok(`Student's attempt "${normalizeText(text).replace(/\s+/g, " ").slice(0, 80)}" written in their hand.`);
     }
 
     case "highlight_step": {

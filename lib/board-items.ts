@@ -61,6 +61,7 @@ export function itemLabelFrom(message: string | null | undefined, fallback: stri
   const raw = (message ?? "").replace(/\s+/g, " ").trim().replace(/[.]+$/, "");
   const text = raw
     .replace(/^(Cleared the board and wrote the heading|Cleared the board and wrote|Wrote the line|Wrote|Drew|Student's attempt written in their hand\.?)\s*/i, "")
+    .replace(/^Student's attempt ("[^"]*") written in their hand/i, "$1")
     .replace(/\s*\(item b\d+\)$/, "")
     .trim();
   const label = text || fallback;
@@ -88,10 +89,12 @@ export function resolveItemTarget(items: BoardItem[], target: string): BoardItem
     for (let i = items.length - 1; i >= 0; i--) if (!isHeadingItem(items[i])) return items[i];
     return items[items.length - 1] ?? null;
   }
+  // "b3" / "item 3" is an id; a bare number may also be what a student wrote.
   const idMatch = t.match(/^(?:item\s*)?b?(\d+)$/);
   if (idMatch) {
-    const id = `b${idMatch[1]}`;
-    return items.find((item) => item.id === id) ?? null;
+    const byId = items.find((item) => item.id === `b${idMatch[1]}`);
+    if (byId && (t.startsWith("b") || t.startsWith("item"))) return byId;
+    if (byId && !items.some((item) => item.label.toLowerCase().includes(t))) return byId;
   }
   const squash = (v: string) => v.toLowerCase().replace(/\s+/g, "");
   const ts = squash(t);
