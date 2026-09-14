@@ -64,7 +64,7 @@ export default function HomePage() {
               {mounted ? `${greeting()}${firstName ? `, ${firstName}` : ""}.` : " "}
             </h1>
             <p className="m-0 mt-2 text-[16px] text-(--lp-ink-2)">What are you working on today?</p>
-            <button type="button" onClick={() => router.push("/session")} className="lp-btn mt-7">
+            <button type="button" onClick={() => router.push("/session")} className="lp-btn lp-btn-lift mt-7">
               <Plus className="size-4" strokeWidth={2.4} />
               Start a session
             </button>

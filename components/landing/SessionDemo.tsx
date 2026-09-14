@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import Image from "next/image";
 import useMeasure from "react-use-measure";
 import { useInView } from "motion/react";
-import { ChevronsRight, House, Plus, SlidersHorizontal, Square } from "lucide-react";
+import { House, PanelLeft, Plus, SlidersHorizontal, Square } from "lucide-react";
 import Whiteboard, { type WhiteboardHandle } from "@/components/Whiteboard";
 import { ChalkMark } from "@/components/app/ChalkMark";
 import { SessionChip } from "@/components/session/SessionChip";
@@ -31,12 +31,12 @@ function formatClock(total: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-// The collapsed sidebar, as the live screen shows it: plain black, white
-// strokes, the pressed-button vocabulary of the app's `.sb-btn` / `.sb-item`
-// (styles inlined so the replica never depends on the app's stylesheet).
-// Decoration here: the buttons go nowhere on the landing page.
+// The collapsed sidebar, as the live screen shows it. It wears the app's own
+// `.sb-btn` / `.sb-item` / `.sb-toggle` classes from globals.css, so it stays
+// in step with the real sidebar, hover included. Decoration here: the buttons
+// go nowhere on the landing page, so the cursor stays an arrow.
 const RAIL_ITEM = "flex size-8 items-center justify-center rounded-md";
-const RAIL_INK = "rgba(255,255,255,0.72)";
+const DECOR = { cursor: "default" } as const;
 
 function Rail({ scale }: { scale: number }) {
   return (
@@ -45,23 +45,20 @@ function Rail({ scale }: { scale: number }) {
         <span className="absolute top-2.5 left-2 flex h-9 items-center px-2">
           <ChalkMark size={24} />
         </span>
-        <span className={`${RAIL_ITEM} absolute top-[52px] left-2`} style={{ color: RAIL_INK }}>
-          <ChevronsRight className="size-[18px]" strokeWidth={2.5} />
+        <span className={`sb-item sb-toggle ${RAIL_ITEM} absolute top-[52px] left-2`} style={DECOR}>
+          <PanelLeft className="size-5" strokeWidth={2.5} />
         </span>
       </div>
       <div className="px-2 pt-1">
-        <span
-          className={`${RAIL_ITEM} text-white`}
-          style={{ borderRadius: 10, border: "2px solid #fff", background: "#000", boxShadow: "4px 4px 0 0 #fff" }}
-        >
+        <span className={`sb-btn ${RAIL_ITEM}`} style={DECOR}>
           <Plus className="size-4" strokeWidth={2.75} />
         </span>
       </div>
       <div className="mt-auto flex flex-col gap-1.5 px-2 pb-3">
-        <span className={RAIL_ITEM} style={{ color: RAIL_INK }}>
+        <span className={`sb-item ${RAIL_ITEM}`} style={DECOR}>
           <House className="size-4" strokeWidth={2.5} />
         </span>
-        <span className={RAIL_ITEM} style={{ color: RAIL_INK }}>
+        <span className={`sb-item ${RAIL_ITEM}`} style={DECOR}>
           <SlidersHorizontal className="size-4" strokeWidth={2.5} />
         </span>
         <span className={`${RAIL_ITEM} mt-1 bg-white text-[11.5px] font-bold text-black`}>AL</span>

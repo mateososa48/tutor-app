@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
-import { ChevronsUpDown, House, LogOut, PanelLeftClose, Plus, SlidersHorizontal } from "lucide-react";
+import { ChevronsUpDown, House, LogOut, PanelLeft, Plus, SlidersHorizontal } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -34,8 +34,12 @@ import { useClientReady } from "@/lib/client-ready";
 import { cn } from "@/lib/utils";
 import { ChalkMark } from "./ChalkMark";
 
-// Black rail. The mark opens the sidebar when it is collapsed and goes home
-// when it is open; the collapse control lives in the header, not in the page.
+// Plain black rail in the pressed-button vocabulary (`.sb-btn`, `.sb-item` in
+// globals.css): white strokes, no tinted fills. The New session button rests
+// flat and lifts on hover; the current page is a flat outlined item. The mark
+// always goes home. The sidebar toggle (a plain panel glyph, full white) sits
+// at the header's right edge while the sidebar is open and beneath the mark
+// while it is collapsed; the two fade past each other as the width animates.
 
 function initials(name?: string | null, email?: string | null): string {
   const source = (name?.trim() || email || "").trim();
@@ -45,13 +49,16 @@ function initials(name?: string | null, email?: string | null): string {
   return source.slice(0, 2).toUpperCase();
 }
 
-const ITEM = "text-white/70 hover:text-white active:text-white data-active:text-white";
+const STROKE = 2.5; // every glyph in the rail
+const ITEM = "sb-item";
+const TRIGGER = "sb-item sb-toggle absolute flex size-8 items-center justify-center rounded-md outline-none";
+const EASE = "ease-[cubic-bezier(0.16,1,0.3,1)]";
 
 export function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const mounted = useClientReady();
-  const { state, toggleSidebar } = useSidebar();
+  const { state, isMobile, toggleSidebar } = useSidebar();
   const { data: auth } = useSession();
   const [sessions, setSessions] = useState<SavedSession[] | null>(null);
 
@@ -66,59 +73,86 @@ export function AppSidebar() {
     };
   }, [mounted, pathname]);
 
-  const collapsed = state === "collapsed";
+  // On phones the sidebar is a sheet that always shows the open layout.
+  const collapsed = !isMobile && state === "collapsed";
   const name = auth?.user?.name ?? null;
   const email = auth?.user?.email ?? null;
 
   return (
-    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
-      <SidebarHeader className="h-[56px] flex-row items-center justify-between px-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+    <Sidebar collapsible="icon">
+      <SidebarHeader
+        className={cn(
+          "relative h-14 shrink-0 overflow-hidden p-0 transition-[height] duration-300 group-data-[collapsible=icon]:h-[92px]",
+          EASE,
+        )}
+      >
         <Tooltip>
           <TooltipTrigger
             render={
               <button
                 type="button"
-                onClick={() => (collapsed ? toggleSidebar() : router.push("/"))}
-                aria-label={collapsed ? "Open sidebar" : "Home"}
-                className="flex h-9 items-center gap-2 rounded-md px-1.5 text-white outline-none transition-colors hover:bg-white/8 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+                onClick={() => router.push("/")}
+                aria-label="Home"
+                className="sb-item absolute top-2.5 left-2 flex h-9 items-center gap-2 rounded-md px-2 outline-none"
               />
             }
           >
-            <ChalkMark size={collapsed ? 26 : 24} />
-            {!collapsed && <span className="lp-display text-[16.5px] tracking-[-0.02em]">chalk</span>}
+            <ChalkMark size={24} />
+            {!collapsed && <span className="lp-display animate-in fade-in text-[16.5px] tracking-[-0.02em] text-white duration-300">chalk</span>}
           </TooltipTrigger>
-          {collapsed && <TooltipContent side="right">Open sidebar</TooltipContent>}
+          {collapsed && <TooltipContent side="right">Home</TooltipContent>}
         </Tooltip>
-        {!collapsed && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  onClick={toggleSidebar}
-                  aria-label="Collapse sidebar"
-                  className="flex size-8 items-center justify-center rounded-md text-white/45 outline-none transition-colors hover:bg-white/8 hover:text-white focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-                />
-              }
-            >
-              <PanelLeftClose className="size-[17px]" strokeWidth={1.8} />
-            </TooltipTrigger>
-            <TooltipContent side="right">Collapse</TooltipContent>
-          </Tooltip>
-        )}
+
+        {/* Collapse: the header's right edge, only while open. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                aria-label="Collapse sidebar"
+                inert={collapsed}
+                className={cn(TRIGGER, "top-3 right-2 opacity-100 group-data-[collapsible=icon]:opacity-0")}
+              />
+            }
+          >
+            <PanelLeft className="size-5" strokeWidth={STROKE} />
+          </TooltipTrigger>
+          <TooltipContent side="right">Collapse</TooltipContent>
+        </Tooltip>
+
+        {/* Expand: beneath the mark, only while collapsed. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                aria-label="Open sidebar"
+                inert={!collapsed}
+                className={cn(TRIGGER, "top-[52px] left-2 opacity-0 group-data-[collapsible=icon]:opacity-100")}
+              />
+            }
+          >
+            <PanelLeft className="size-5" strokeWidth={STROKE} />
+          </TooltipTrigger>
+          <TooltipContent side="right">Open sidebar</TooltipContent>
+        </Tooltip>
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup className="pt-1">
+        {/* The button lifts 2px up and to the left on hover; the group's
+            padding leaves room for it. */}
+        <SidebarGroup className="pt-1 pb-3">
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip="New session"
                   onClick={() => router.push("/session")}
-                  className="btn-gloss-light font-medium hover:text-(--lp-ink) active:text-(--lp-ink)"
+                  className="sb-btn h-10 px-3 text-[14px] group-data-[collapsible=icon]:p-1.5!"
                 >
-                  <Plus strokeWidth={2.4} />
+                  <Plus strokeWidth={2.75} />
                   <span>New session</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -127,21 +161,21 @@ export function AppSidebar() {
         </SidebarGroup>
 
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-          <SidebarGroupLabel className="text-white/40">Recent</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-white/50">Recent</SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="gap-1.5">
               {sessions === null
                 ? [72, 56, 64].map((w) => (
                     <SidebarMenuItem key={w}>
                       <div className="flex h-8 items-center gap-2 px-2 group-data-[collapsible=icon]:hidden">
-                        <Skeleton className="size-4 rounded-md bg-white/10" />
-                        <Skeleton className="h-3.5 rounded-md bg-white/10" style={{ width: `${w}%` }} />
+                        <Skeleton className="size-4 rounded-md border border-white/30 bg-transparent" />
+                        <Skeleton className="h-3.5 rounded-md border border-white/30 bg-transparent" style={{ width: `${w}%` }} />
                       </div>
                     </SidebarMenuItem>
                   ))
                 : sessions.length === 0
                   ? (
-                    <li className="px-2 py-1.5 text-[12.5px] text-white/40 group-data-[collapsible=icon]:hidden">
+                    <li className="px-2 py-1.5 text-[12.5px] text-white/55 group-data-[collapsible=icon]:hidden">
                       Sessions you start will show up here.
                     </li>
                   )
@@ -166,34 +200,30 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="gap-0.5 pb-3">
-        <SidebarMenu>
+        <SidebarMenu className="gap-1.5">
           <SidebarMenuItem>
             <SidebarMenuButton tooltip="Home" isActive={pathname === "/"} onClick={() => router.push("/")} className={ITEM}>
-              <House strokeWidth={1.8} />
+              <House strokeWidth={STROKE} />
               <span>Home</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton tooltip="Settings" isActive={pathname === "/settings"} onClick={() => router.push("/settings")} className={ITEM}>
-              <SlidersHorizontal strokeWidth={1.8} />
+              <SlidersHorizontal strokeWidth={STROKE} />
               <span>Settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <SidebarMenuButton size="lg" tooltip={name ?? "Account"} className={cn("mt-1", ITEM, "text-white data-open:bg-sidebar-accent")} />
-                }
-              >
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/12 text-[11.5px] font-semibold text-white">
+              <DropdownMenuTrigger render={<SidebarMenuButton size="lg" tooltip={name ?? "Account"} className={cn(ITEM, "mt-1")} />}>
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white text-[11.5px] font-bold text-black">
                   {initials(name, email)}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col leading-tight">
-                  <span className="truncate text-[13px] font-medium">{name ?? "Your account"}</span>
-                  <span className="truncate text-[11.5px] text-white/45">{email ?? ""}</span>
+                  <span className="truncate text-[13px] font-medium text-white">{name ?? "Your account"}</span>
+                  <span className="truncate text-[11.5px] text-white/55">{email ?? ""}</span>
                 </span>
-                <ChevronsUpDown className="ml-auto size-4 text-white/45" />
+                <ChevronsUpDown className="ml-auto size-4 text-white/55" strokeWidth={STROKE} />
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-56">
                 <DropdownMenuGroup>
@@ -213,7 +243,7 @@ export function AppSidebar() {
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
-      <SidebarRail className="after:bg-white/10 hover:after:bg-white/25" />
+      <SidebarRail className="after:bg-transparent hover:after:bg-(--lp-sky)" />
     </Sidebar>
   );
 }

@@ -17,7 +17,7 @@
   --paper: #fbfbfc;
   --surface: #ffffff;
   --surface-2: #f7f7f9;
-  --ink: #121215;
+  --ink: #000000;
   --ink-2: #5b5b66;
   --ink-3: #9a9aa4;
   --hairline: rgba(18, 18, 21, 0.08);
@@ -104,19 +104,21 @@
 
   --radius: 0.625rem;
 
-  --sidebar: #121215;
+  /* The app sidebar is plain black with white strokes; nothing in it is tinted,
+     so the shadcn accent and border tokens are transparent on purpose. */
+  --sidebar: #000000;
 
-  --sidebar-foreground: #f4f4f6;
+  --sidebar-foreground: #ffffff;
 
   --sidebar-primary: #ffffff;
 
-  --sidebar-primary-foreground: #121215;
+  --sidebar-primary-foreground: #000000;
 
-  --sidebar-accent: rgba(255, 255, 255, 0.09);
+  --sidebar-accent: transparent;
 
   --sidebar-accent-foreground: #ffffff;
 
-  --sidebar-border: rgba(255, 255, 255, 0.08);
+  --sidebar-border: transparent;
 
   --sidebar-ring: #3d9cff;
 }
@@ -628,8 +630,82 @@ body {
 .lp-btn-quiet:hover { background: var(--lp-gray-2); }
 .lp-btn-paper { border-color: #fff; --btn-shadow: var(--lp-sky); }
 .lp-btn-sm { --press: 4px; height: 2.375rem; padding: 0 0.875rem; font-size: 0.875rem; }
+/* The app's version (home page): rests flat, lifts out on hover by a smaller
+   step, sinks back when pressed. Same direction as the sidebar's New session. */
+.lp-btn.lp-btn-lift { --press: 3px; box-shadow: 0 0 0 0 var(--btn-shadow); }
+.lp-btn.lp-btn-lift:hover {
+  transform: translate(calc(var(--press) * -1), calc(var(--press) * -1));
+  box-shadow: var(--press) var(--press) 0 0 var(--btn-shadow);
+}
+.lp-btn.lp-btn-lift:active {
+  transform: translate(0, 0);
+  box-shadow: 0 0 0 0 var(--btn-shadow);
+}
 @media (prefers-reduced-motion: reduce) {
   .lp-btn { transition: background-color 160ms ease; }
+}
+
+/* App sidebar: the pressed CTA's vocabulary on a black surface, run the other
+   way. White 2px strokes and a hard white offset stand in for the ink ones; the
+   button rests flat and lifts 2px out of its slot on hover (the offset fills the
+   spot it left), then sinks back when pressed. No fills, so no gray. */
+.sb-btn {
+  --press: 2px;
+  border-radius: 10px;
+  border: 2px solid #fff;
+  background: #000;
+  color: #fff;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  box-shadow: 0 0 0 0 #fff;
+  transform: translate(0, 0);
+  transition:
+    transform 180ms var(--lp-ease),
+    box-shadow 180ms var(--lp-ease),
+    width 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    height 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    padding 300ms cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+.sb-btn:hover {
+  transform: translate(calc(var(--press) * -1), calc(var(--press) * -1));
+  box-shadow: var(--press) var(--press) 0 0 #fff;
+}
+.sb-btn:active {
+  transform: translate(0, 0);
+  box-shadow: 0 0 0 0 #fff;
+}
+.sb-btn:focus-visible { outline: 2px solid var(--lp-sky); outline-offset: 3px; }
+
+/* Rail items: dimmed white at rest, white on hover. The current page is the
+   pressed state of the same vocabulary: flat, with a 2px white stroke. */
+.sb-item {
+  color: rgba(255, 255, 255, 0.72);
+  transition:
+    color 150ms ease,
+    box-shadow 180ms var(--lp-ease),
+    opacity 200ms ease,
+    width 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    height 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    padding 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sb-item:hover { color: #fff; }
+/* The sidebar toggle is always full white; hover outlines it. */
+.sb-item.sb-toggle { color: #fff; }
+.sb-item.sb-toggle:hover { box-shadow: inset 0 0 0 2px #fff; }
+.sb-item:focus-visible {
+  color: #fff;
+  box-shadow: inset 0 0 0 2px var(--lp-sky);
+}
+.sb-item[data-active],
+.sb-item[data-open] {
+  color: #fff;
+  box-shadow: inset 0 0 0 2px #fff;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-btn,
+  .sb-item { transition: color 150ms ease, opacity 200ms ease; }
 }
 
 .lp-window {
