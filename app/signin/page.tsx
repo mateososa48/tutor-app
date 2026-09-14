@@ -322,7 +322,7 @@ function SignIn() {
             waveColor={VOICE_BLUE.top}
             deepColor={PANEL_DEEP}
             backgroundColor={VOICE_BLUE.bg}
-            colorNum={5}
+            colorNum={7}
             pixelSize={3}
             waveAmplitude={0.45}
             waveFrequency={1.7}

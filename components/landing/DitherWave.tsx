@@ -74,6 +74,9 @@ void main() {
   vec2 p = uv * u_freq;
   float f;
   if (u_pattern == 1) {
+    // A slow pan: the whole field drifts across the panel (about a minute to
+    // cross it), so a large soft shape never parks in one corner.
+    p += vec2(t * 0.06, -t * 0.04);
     // Domain warping: the field's own noise bends where it samples next, twice,
     // and each layer drifts on its own clock, so shapes curl and stretch
     // instead of travelling as bands.
@@ -81,29 +84,19 @@ void main() {
     vec2 warpB = vec2(fbm4(p + u_amp * 4.0 * warpA + vec2(1.7, 9.2) + t * 0.15),
                       fbm4(p + u_amp * 4.0 * warpA + vec2(8.3, 2.8) - t * 0.126));
     float n = fbm4(p + u_amp * 4.0 * warpB);
-    // Ribbons: the tone follows contour bands of the warped field (a triangle
-    // wave, dark to light and back), a finer grain bends the bands and a slow
-    // drift slides them, so every part of the panel carries swirling ribbons
-    // instead of settling into one broad patch of colour. Three and a half
-    // bands with a faint grain keep it calm (four and six read as too busy;
-    // three with no grain fell back into big patches); rendered over ten
-    // minutes, the dark shades sit evenly in every corner (24-27% each,
-    // against 5-55% before).
-    const float RIBBONS = 3.5;
-    const float GRAIN = 0.15;
-    const float DRIFT = 0.03;
-    float grain = fbm4(p * 3.1 + vec2(t * 0.21, -t * 0.17));
-    float v = 1.0 - abs(1.0 - 2.0 * fract(n * RIBBONS + grain * GRAIN + t * DRIFT));
-    // v is spread roughly evenly, so each breakpoint sits near the cumulative
-    // share of the tones below it (darkest, mid, light, palest, background);
-    // corrected on the rendered field to about 10.5 / 15.3 / 22 / 28.5 / 23.8%.
-    const float K0 = 0.099;
-    const float K1 = 0.239;
-    const float K2 = 0.465;
-    const float K3 = 0.762;
-    float g = v < K1 ? 0.125 + (v - K0) * 0.25 / (K1 - K0)
-            : v < K2 ? 0.375 + (v - K1) * 0.25 / (K2 - K1)
-            : 0.625 + (v - K2) * 0.25 / (K3 - K2);
+    // Calibrated against a JS model of this field (frequency 1.7, warp 0.45):
+    // Four breakpoints, one between each pair of neighbouring tones, fitted on
+    // this field as rendered over ten minutes with the pan (frequency 1.7, warp
+    // 0.45), keeping the panel as light as Mateo's chosen mix (mean 158/255,
+    // about 19% background). The sign-in panel draws it in seven shades, so
+    // broad areas show soft gradations of blue.
+    const float K0 = 0.3458;
+    const float K1 = 0.4072;
+    const float K2 = 0.4856;
+    const float K3 = 0.5715;
+    float g = n < K1 ? 0.125 + (n - K0) * 0.25 / (K1 - K0)
+            : n < K2 ? 0.375 + (n - K1) * 0.25 / (K2 - K1)
+            : 0.625 + (n - K2) * 0.25 / (K3 - K2);
     f = clamp(g, 0.0, 1.0);
   } else {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
