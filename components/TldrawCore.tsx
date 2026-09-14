@@ -170,6 +170,9 @@ export interface WhiteboardSnapshot {
   eqItems: EqItem[];
   semanticBoard?: SemanticBoard;
   pageState: { pageIndex: number; pageTop: number; leftY: number; rightY: number };
+  /** Board items (b1, b2, …) so a resumed session keeps its ids. */
+  items?: BoardItem[];
+  itemSeq?: number;
 }
 
 export type StepTarget = { step_label?: string; step_index?: number };
@@ -3919,6 +3922,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return {
         store,
         eqItems: [],
+        items: [...itemsRef.current],
+        itemSeq: itemSeqRef.current,
         semanticBoard: semanticBoardRef.current,
         pageState: {
           pageIndex: pageIndex.current,
@@ -4150,6 +4155,38 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           meta: item.meta,
         });
       }
+      // Items: saved with the snapshot, or rebuilt from the itemId every
+      // shape carries in its meta (snapshots from before items were saved).
+      const live = new Set(editor.getCurrentPageShapes().map((shape) => shape.id as string));
+      if (Array.isArray(snap.items) && snap.items.length > 0) {
+        itemsRef.current = snap.items
+          .map((item) => ({ ...item, shapeIds: item.shapeIds.filter((id) => live.has(id)) }))
+          .filter((item) => item.shapeIds.length > 0 || item.eqItemIds.length > 0);
+      } else {
+        const byItem = new Map<string, BoardItem>();
+        for (const shape of editor.getCurrentPageShapesSorted()) {
+          const meta = shape.meta as { itemId?: unknown; tutorReferenceLabel?: unknown; owner?: unknown };
+          const itemId = typeof meta.itemId === "string" ? meta.itemId : null;
+          if (!itemId) continue;
+          const existing = byItem.get(itemId);
+          if (existing) {
+            existing.shapeIds.push(shape.id);
+            continue;
+          }
+          byItem.set(itemId, {
+            id: itemId,
+            tool: shape.type === "math" ? "draw_equation_step" : shape.type === "icon" ? "draw_icons" : "add_text_note",
+            label: typeof meta.tutorReferenceLabel === "string" ? meta.tutorReferenceLabel : shape.type,
+            shapeIds: [shape.id],
+            eqItemIds: [],
+            owner: meta.owner === "student" ? "student" : "tutor",
+            createdAt: Date.now(),
+          });
+        }
+        itemsRef.current = Array.from(byItem.values()).sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+      }
+      const maxSeq = itemsRef.current.reduce((m, item) => Math.max(m, Number(item.id.slice(1)) || 0), 0);
+      itemSeqRef.current = Math.max(snap.itemSeq ?? 0, maxSeq, itemSeqRef.current);
       semanticBoardRef.current = normalizeSemanticBoard(snap.semanticBoard);
       // Defensive: ensure post-resume direct calls go through withDirectMeta
       // cleanly. (No prior path should leak meta across resume, but a snapshot
