@@ -7,12 +7,11 @@ import {
   forwardRef,
   useImperativeHandle,
   useRef,
-  useState,
   useCallback,
   useEffect,
 } from "react";
 import { Tldraw, renderPlaintextFromRichText, type TLComponents } from "tldraw";
-import { Box, Editor, createShapeId, toRichText } from "@tldraw/editor";
+import { Editor, createShapeId, toRichText } from "@tldraw/editor";
 import { InstancePresenceRecordType, type TLInstancePresence, type TLShapeId } from "@tldraw/tlschema";
 import {
   formatBoardItems,
@@ -24,10 +23,11 @@ import {
   type ItemBounds,
 } from "@/lib/board-items";
 import { planReveal, pointsShown, polylineLength, typedPrefix, type RevealInput, type RevealStep } from "@/lib/board-reveal";
-import { latexToPlain } from "@/lib/latex-plain";
 import { TutorPenOverlayUtil } from "@/components/board/TutorPenOverlay";
+import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
 
 const OVERLAY_UTILS = [TutorPenOverlayUtil];
+const SHAPE_UTILS = [MathShapeUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -38,7 +38,6 @@ import {
   type TLLineShapePoint,
 } from "@tldraw/tlschema";
 import { getIndices, type IndexKey } from "@tldraw/utils";
-import katex from "katex";
 import { createMathEvaluator } from "@/lib/math-expression";
 import {
   angleLabelPoint,
@@ -85,7 +84,6 @@ import {
   applySemanticBoardAction,
   createEmptySemanticBoard,
   normalizeSemanticBoard,
-  summarizeSemanticBoard,
   type SemanticBoard,
   type SemanticBoardActionContext,
 } from "@/lib/semantic-board";
@@ -123,8 +121,6 @@ const MARKER_HEX: Record<string, string> = {
   red: "#e03131",
   "light-blue": "#4ba1f1",
 };
-const CORRECT_HEX = "#099268";
-const WRONG_HEX = "#e03131";
 const DIAGRAM_W = 520;
 // tldraw text metrics: theme font size 16px × size multiplier, line height 1.35.
 const FONT_PX: Record<TLDefaultSizeStyle, number> = { s: 18, m: 24, l: 36, xl: 44 };
@@ -272,8 +268,10 @@ export interface WhiteboardHandle {
 
 export type ItemToken = { tool: string; shapes: Set<string>; eqs: Set<string> };
 
-// ── Internal equation overlay item ─────────────────────────────────────────
-interface EqItem {
+// ── Legacy equation overlay item ────────────────────────────────────────────
+// Typeset math is a "math" shape in the store now (components/board/MathShape).
+// Old snapshots still carry these; loadSnapshot turns them into shapes.
+export interface EqItem {
   id: string;
   latex: string;
   annotation?: string;
@@ -339,7 +337,9 @@ function diffStringSet(after: Set<string>, before: Set<string>): string[] {
 
 // Walk eqRef newest→oldest, matching by latex substring (case-insensitive) or
 // exact tutorReferenceLabel. Falls back to numeric index. Returns -1 if no match.
-function resolveEqIndex(items: EqItem[], target: { step_label?: string; step_index?: number }): number {
+type MathLine = { id: string; latex: string; role?: "" | "label"; meta?: BoardArtifactMeta };
+
+function resolveEqIndex(items: MathLine[], target: { step_label?: string; step_index?: number }): number {
   const label = target.step_label?.trim();
   if (label && label.length > 0) {
     const needle = label.toLowerCase();
@@ -398,8 +398,6 @@ function shapeSize(shape: unknown): { w: number; h: number } {
 }
 
 // ── ID generator ────────────────────────────────────────────────────────────
-let _n = 0;
-const uid = () => String(++_n);
 
 // "(1,1):A, (3,4):B; (-2, 2)" — commas separate points as well as the two
 // coordinates, so match tuples directly instead of splitting the string.
@@ -474,125 +472,6 @@ function parseVectors(input: string): Array<{ direction: string; label: string }
 }
 
 // ── Equation block (KaTeX HTML overlay) ────────────────────────────────────
-function EqBlock({ item }: { item: EqItem }) {
-  const ref = useRef<HTMLSpanElement>(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    try {
-      // Labels render inline so they carry no display-mode margins and can be
-      // centred beside a diagram; steps keep display mode.
-      katex.render(item.latex, ref.current, { throwOnError: false, displayMode: item.role !== "label" });
-    } catch {
-      if (ref.current) ref.current.textContent = item.latex;
-    }
-  }, [item.latex, item.role]);
-
-  return (
-    <div data-eq-id={item.id} style={{ position: "absolute", left: item.x, top: item.y }}>
-      <div
-        style={{
-          position: "relative",
-          display: "inline-block",
-          opacity: item.reveal === undefined ? 1 : Math.min(1, item.reveal * 1.6),
-          clipPath: item.reveal === undefined || item.reveal >= 1 ? undefined : `inset(-10px ${(1 - item.reveal) * 100}% -10px -10px)`,
-        }}
-      >
-        <span
-          ref={ref}
-          style={{ fontSize: "1.45rem", color: item.color ?? "#383838", display: "block", padding: "2px 4px" }}
-        />
-
-        {item.annotation && (
-          <span
-            style={{
-              position: "absolute",
-              left: "calc(100% + 18px)",
-              top: "50%",
-              transform: "translateY(-50%)",
-              fontSize: 13,
-              fontStyle: "normal",
-              fontWeight: 400,
-              color: "oklch(0.55 0.005 220)",
-              whiteSpace: "nowrap",
-              letterSpacing: "0.01em",
-            }}
-          >
-            {item.annotation}
-          </span>
-        )}
-
-        {item.crossOut && (
-          <div
-            style={{
-              position: "absolute",
-              top: "calc(50% - 1px)",
-              left: -4,
-              right: -4,
-              height: 2,
-              background: WRONG_HEX,
-              opacity: 0.85,
-              transform: "rotate(-1.5deg)",
-              transformOrigin: "left center",
-              borderRadius: 1,
-            }}
-          />
-        )}
-
-        {item.highlight === "underline" && (
-          <div
-            style={{
-              position: "absolute",
-              bottom: 0,
-              left: 0,
-              right: 0,
-              height: 2,
-              background: CORRECT_HEX,
-              borderRadius: 1,
-              opacity: 0.85,
-            }}
-          />
-        )}
-
-        {item.highlight === "box" && (
-          <div
-            style={{
-              position: "absolute",
-              inset: "-6px -10px",
-              border: `1.5px dashed ${CORRECT_HEX}`,
-              borderRadius: 6,
-              opacity: 0.85,
-            }}
-          />
-        )}
-
-        {item.highlight === "circle" && (
-          <svg
-            style={{
-              position: "absolute",
-              inset: "-12px -18px",
-              width: "calc(100% + 36px)",
-              height: "calc(100% + 24px)",
-              overflow: "visible",
-            }}
-            fill="none"
-          >
-            <ellipse
-              cx="50%"
-              cy="50%"
-              rx="48%"
-              ry="45%"
-              stroke={CORRECT_HEX}
-              strokeWidth={2}
-              opacity={0.85}
-              strokeDasharray="4 1.5"
-            />
-          </svg>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── Main component ──────────────────────────────────────────────────────────
 // A plain white board. The dot grid read as clutter next to real diagrams.
 function PlainBackground() {
@@ -608,14 +487,12 @@ export type TldrawCoreProps = {
 
 const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting }, ref) {
   const editorRef = useRef<Editor | null>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const cameraSyncCleanupRef = useRef<() => void>(() => {});
   const leftY = useRef(START_Y);
   const rightY = useRef(START_Y);
   const pageTop = useRef(0);
   const pageIndex = useRef(1);
-  const [eqItems, setEqItems] = useState<EqItem[]>([]);
-  const eqRef = useRef<EqItem[]>([]);
+  // Typeset math shapes in creation order (newest last), for step lookups.
+  const mathOrderRef = useRef<string[]>([]);
   const semanticBoardRef = useRef<SemanticBoard>(createEmptySemanticBoard());
   const jobMetaRef = useRef<BoardArtifactMeta | null>(null);
   // Which marker the next diagram picks up; reset when the board is cleared.
@@ -667,6 +544,63 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const colY = (col: "left" | "right") => col === "right" ? rightY : leftY;
   const currentMeta = useCallback(() => compactArtifactMeta(jobMetaRef.current) ?? {}, []);
 
+  // A typeset line as a shape: measured first so its box fits, then created.
+  const createMath = useCallback((
+    editor: Editor,
+    opts: {
+      latex: string;
+      x: number;
+      y?: number;
+      centerY?: number;
+      annotation?: string;
+      display?: boolean;
+      role?: "" | "label";
+      color?: string;
+      crossOut?: boolean;
+      highlight?: MathHighlight;
+      meta?: BoardArtifactMeta;
+    },
+  ): { id: TLShapeId; w: number; h: number; mathW: number } => {
+    const display = opts.display ?? true;
+    const m = measureMath(opts.latex, display, opts.annotation ?? "");
+    const y = opts.centerY !== undefined ? opts.centerY - m.h / 2 : (opts.y ?? 0);
+    const id = createShapeId();
+    editor.createShape<TLMathShape>({
+      id,
+      type: "math",
+      x: opts.x,
+      y,
+      props: {
+        w: m.w,
+        h: m.h,
+        mathW: m.mathW,
+        latex: opts.latex,
+        color: opts.color ?? "#383838",
+        display,
+        annotation: opts.annotation ?? "",
+        crossOut: opts.crossOut ?? false,
+        highlight: opts.highlight ?? "",
+        reveal: 1,
+        role: opts.role ?? "",
+      },
+      meta: opts.meta ?? currentMeta(),
+    });
+    mathOrderRef.current = [...mathOrderRef.current, id];
+    return { id, w: m.w, h: m.h, mathW: m.mathW };
+  }, [currentMeta]);
+
+  // Equation lines in creation order, as light records for step lookups.
+  const mathLines = useCallback((editor: Editor): Array<MathLine & { shape: TLMathShape }> => {
+    const out: Array<MathLine & { shape: TLMathShape }> = [];
+    mathOrderRef.current = mathOrderRef.current.filter((id) => editor.getShape(id as TLShapeId));
+    for (const id of mathOrderRef.current) {
+      const shape = editor.getShape(id as TLShapeId) as TLMathShape | undefined;
+      if (!shape || shape.type !== "math") continue;
+      out.push({ id, latex: shape.props.latex, role: shape.props.role, meta: shape.meta as BoardArtifactMeta, shape });
+    }
+    return out;
+  }, []);
+
   const recordDirectSemanticAction = useCallback((
     action: BoardAgentAction,
     context?: SemanticBoardActionContext,
@@ -690,16 +624,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return fn();
     } finally {
       jobMetaRef.current = null;
-    }
-  }, []);
-
-  const syncOverlay = useCallback((editor: Editor) => {
-    const { x, y, z = 1 } = editor.getCamera();
-    if (overlayRef.current) {
-      // tldraw converts page -> viewport as: (point + camera) * zoom.
-      // Use an explicit matrix so LaTeX overlays track pan + zoom exactly.
-      overlayRef.current.style.transform =
-        `matrix(${z}, 0, 0, ${z}, ${x * z}, ${y * z})`;
     }
   }, []);
 
@@ -830,25 +754,23 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     }
   }, []);
 
-  const setEqReveal = useCallback((id: string, reveal: number | undefined) => {
-    const apply = (items: EqItem[]) => items.map((e) => (e.id === id ? { ...e, reveal } : e));
-    eqRef.current = apply(eqRef.current);
-    setEqItems((prev) => apply(prev));
-  }, []);
 
   const lineIndicesFor = (n: number): IndexKey[] => getIndices(Math.max(1, n - 1));
 
   // One frame of one step. `p` runs 0..1; the step's own state (original
   // props) is read from the shape on the first frame.
   const applyStep = useCallback((editor: Editor, step: RevealStep, p: number, state: { last?: number; fill?: string; closed?: boolean }) => {
-    if (step.kind === "eq") {
-      setEqReveal(step.id, p >= 1 ? undefined : p);
-      return;
-    }
     const shape = editor.getShape(step.id as TLShapeId);
     if (!shape) return;
     const props = shape.props as Record<string, unknown>;
     const run = (fn: () => void) => editor.run(fn, { history: "ignore" });
+    if (step.kind === "eq") {
+      const r = p >= 1 ? 1 : p;
+      if (state.last !== undefined && Math.abs(state.last - r) < 0.02 && p < 1) return;
+      state.last = r;
+      run(() => editor.updateShapes([{ id: shape.id, type: "math", opacity: 1, props: { reveal: r } }] as unknown as Parameters<Editor["updateShapes"]>[0]));
+      return;
+    }
     if (step.kind === "text") {
       const full = revealTextRef.current.get(step.id) ?? plainOf(editor, props.richText);
       const text = typedPrefix(full, p);
@@ -907,22 +829,18 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     if (state.last !== undefined && Math.abs(state.last - op) < 0.08 && p < 1) return;
     state.last = op;
     run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: op }]));
-  }, [plainOf, setEqReveal]);
+  }, [plainOf]);
 
   // Where the pen is at time `p` of a step, in page coordinates.
   const penAt = useCallback((editor: Editor, step: RevealStep, p: number): { x: number; y: number } | null => {
-    if (step.kind === "eq") {
-      const eq = eqRef.current.find((e) => e.id === step.id);
-      if (!eq) return null;
-      const node = overlayRef.current?.querySelector<HTMLElement>(`[data-eq-id="${eq.id}"] > div`);
-      const w = node?.offsetWidth ?? 120;
-      const h = node?.offsetHeight ?? EQ_H;
-      return { x: eq.x + w * p, y: eq.y + h * 0.7 };
-    }
     const shape = editor.getShape(step.id as TLShapeId);
     if (!shape) return null;
     const b = editor.getShapePageBounds(shape.id);
     if (!b) return null;
+    if (step.kind === "eq") {
+      const mw = (shape.props as { mathW?: number }).mathW ?? b.w;
+      return { x: b.x + mw * p, y: b.y + b.h * 0.7 };
+    }
     if (step.kind === "stroke" || step.kind === "line") {
       const pts = strokePointsRef.current.get(step.id);
       if (pts && pts.length > 1) {
@@ -1097,7 +1015,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const y = b?.y ?? shape.y;
       const props = shape.props as Record<string, unknown>;
       const plain = "richText" in props ? plainOf(editor, props.richText) : "";
-      if (shape.type === "draw") {
+      if (shape.type === "math") {
+        inputs.push({ id: shape.id, kind: "eq", x, y, chars: String(props.latex ?? "").length });
+      } else if (shape.type === "draw") {
         const pts = strokePointsRef.current.get(shape.id);
         inputs.push({ id: shape.id, kind: "stroke", x, y, length: pts ? polylineLength(pts) : 240 });
       } else if (shape.type === "line") {
@@ -1113,18 +1033,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       }
       hide.push({ id: shape.id, type: shape.type });
     }
-    for (const eqId of item.eqItemIds) {
-      const eq = eqRef.current.find((e) => e.id === eqId);
-      if (eq) inputs.push({ id: eqId, kind: "eq", x: eq.x, y: eq.y, chars: eq.latex.length });
-    }
     if (inputs.length === 0) return;
     const steps = planReveal(inputs);
     editor.run(() => {
       if (hide.length > 0) editor.updateShapes(hide.map((h) => ({ id: h.id, type: h.type, opacity: 0 })) as unknown as Parameters<Editor["updateShapes"]>[0]);
+      const maths = hide.filter((h) => h.type === "math");
+      if (maths.length > 0) editor.updateShapes(maths.map((h) => ({ id: h.id, type: "math", props: { reveal: 0 } })) as unknown as Parameters<Editor["updateShapes"]>[0]);
     }, { history: "ignore" });
-    for (const eqId of item.eqItemIds) setEqReveal(eqId, 0);
     enqueue({ kind: "reveal", steps, restAt });
-  }, [enqueue, plainOf, setEqReveal]);
+  }, [enqueue, plainOf]);
 
   const itemBounds = useCallback((editor: Editor, item: BoardItem): ItemBounds | null => {
     let box: ItemBounds | null = null;
@@ -1162,18 +1079,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       }
       add({ x: b.x, y: b.y, w: b.w, h: b.h });
     }
-    for (const eqId of item.eqItemIds) {
-      const eq = eqRef.current.find((e) => e.id === eqId);
-      if (!eq) continue;
-      // The typeset overlay is untransformed CSS inside the camera matrix, so
-      // its offset size is already in page units.
-      const node = overlayRef.current?.querySelector<HTMLElement>(`[data-eq-id="${eq.id}"] > div`);
-      if (node && node.offsetWidth > 0) {
-        add({ x: eq.x, y: eq.y, w: node.offsetWidth, h: node.offsetHeight });
-      } else {
-        add({ x: eq.x, y: eq.y, w: eq.role === "label" ? 80 : 360, h: EQ_H });
-      }
-    }
     return box;
   }, []);
 
@@ -1189,7 +1094,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   }, []);
 
   const handleMount = useCallback((editor: Editor) => {
-    cameraSyncCleanupRef.current();
     editorRef.current = editor;
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as { __chalkEditor?: Editor }).__chalkEditor = editor;
@@ -1197,15 +1101,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     }
     editor.setCurrentTool("hand");
     editor.setCamera({ x: 0, y: 0, z: 1 });
-    syncOverlay(editor);
-    const syncOnTick = () => syncOverlay(editor);
-    const unsubscribeStore = editor.store.listen(() => syncOverlay(editor));
-    editor.on("tick", syncOnTick);
-    cameraSyncCleanupRef.current = () => {
-      unsubscribeStore();
-      editor.off("tick", syncOnTick);
-    };
-  }, [syncOverlay]);
+  }, []);
 
   const focusOn = useCallback((editor: Editor, x: number, y: number, w = 420, h = 180) => {
     try {
@@ -1284,8 +1180,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
   useEffect(() => {
     return () => {
-      cameraSyncCleanupRef.current();
-      cameraSyncCleanupRef.current = () => {};
       cancelPendingFocus();
     };
   }, [cancelPendingFocus]);
@@ -1715,8 +1609,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       pageIndex.current = 1;
       leftY.current = START_Y;
       rightY.current = START_Y;
-      eqRef.current = [];
-      setEqItems([]);
+      mathOrderRef.current = [];
       markerRef.current = 0;
       semanticBoardRef.current = createEmptySemanticBoard();
       itemsRef.current = [];
@@ -1732,8 +1625,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       pageIndex.current = 1;
       leftY.current = START_Y;
       rightY.current = START_Y;
-      eqRef.current = [];
-      setEqItems([]);
+      mathOrderRef.current = [];
       markerRef.current = 0;
       semanticBoardRef.current = createEmptySemanticBoard(title);
       itemsRef.current = [];
@@ -1798,15 +1690,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       ensureColumnRoom(editor, col, EQ_H + EQ_ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
-      const id = uid();
-      const item: EqItem = { id, latex, annotation, x, y, meta: compactArtifactMeta(jobMetaRef.current) };
-      eqRef.current = [...eqRef.current, item];
-      setEqItems((prev) => [...prev, item]);
+      const line = createMath(editor, { latex, annotation, x, y, display: true });
       colY(col).current += EQ_H + EQ_ROW_GAP;
-      focusOn(editor, x, y, 420, EQ_H);
+      focusOn(editor, x, y, Math.max(420, line.w), EQ_H);
       recordDirectSemanticAction(
         { type: "equation_sequence", steps: latex, annotations: annotation, column: col },
-        { eqItemIds: [id], bounds: { x, y, w: 420, h: EQ_H, column: col, pageIndex: pageIndex.current } },
+        { shapeIds: [line.id], bounds: { x, y, w: Math.max(420, line.w), h: EQ_H, column: col, pageIndex: pageIndex.current } },
       );
     },
 
@@ -2491,27 +2380,16 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         y += titleHeight;
       }
 
-      const items: EqItem[] = stepList.map((latex, index) => {
-        const item: EqItem = {
-          id: uid(),
-          latex,
-          annotation: annotationList[index],
-          x,
-          y: y + index * (EQ_H + EQ_ROW_GAP),
-          meta: compactArtifactMeta(jobMetaRef.current),
-        };
-        return item;
-      });
+      const created = stepList.map((latex, index) =>
+        createMath(editor, { latex, annotation: annotationList[index], x, y: y + index * (EQ_H + EQ_ROW_GAP), display: true }),
+      );
 
-      if (items.length > 0) {
-        eqRef.current = [...eqRef.current, ...items];
-        setEqItems((prev) => [...prev, ...items]);
+      if (created.length > 0) {
+        const lastTop = y + (created.length - 1) * (EQ_H + EQ_ROW_GAP);
         if (stepList.length >= 2) {
-          const firstY = items[0].y + 12;
-          const lastY = items[items.length - 1].y + EQ_H - 12;
-          createLine(editor, x - 14, firstY, x - 14, lastY, "light-violet");
+          createLine(editor, x - 14, y + 12, x - 14, lastTop + EQ_H - 12, "light-violet");
         }
-        y = items[items.length - 1].y + EQ_H + EQ_ROW_GAP;
+        y = lastTop + EQ_H + EQ_ROW_GAP;
       }
 
       colY(col).current = y;
@@ -2519,7 +2397,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       recordDirectSemanticAction(
         { type: "equation_sequence", steps, annotations, title, column: col },
         {
-          eqItemIds: items.map((item) => item.id),
+          shapeIds: created.map((line) => line.id),
           bounds: { x, y: colY(col).current - totalHeight, w: 520, h: totalHeight, column: col, pageIndex: pageIndex.current },
         },
       );
@@ -2731,7 +2609,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       ensureColumnRoom(editor, col, h + ROW_GAP);
       const x0 = colX(col);
       const y0 = colY(col).current;
-      const items: EqItem[] = [];
+      const labelIds: string[] = [];
       const pens = takePens(opts.fractions.length);
       let cursor = x0;
       let right = x0;
@@ -2770,23 +2648,19 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         }
         void groupStart;
         // "= 3/4" beside the model, vertically centred on it.
-        items.push({
-          id: uid(),
+        const label = createMath(editor, {
           latex: `= ${fractionLatex(f)}`,
           x: cursor + 12,
-          y: y0 + modelH / 2 - (f.d === 1 ? 16 : 27),
+          centerY: y0 + modelH / 2,
           role: "label",
+          display: false,
           color: MARKER_HEX[pen],
-          meta: compactArtifactMeta(jobMetaRef.current),
         });
-        cursor += 12 + LABEL_W;
+        labelIds.push(label.id);
+        cursor += 12 + Math.max(LABEL_W, label.w);
         right = cursor;
       });
 
-      if (items.length > 0) {
-        eqRef.current = [...eqRef.current, ...items];
-        setEqItems((prev) => [...prev, ...items]);
-      }
       const w = Math.max(right - x0, 160);
       if (opts.label) {
         const captionW = Math.max(w, 360);
@@ -2796,7 +2670,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       focusOn(editor, x0, y0, w, h);
       recordDirectSemanticAction(
         { type: "fraction", text: opts.fractions.map(fractionText).join(" and "), label: opts.label, column: col },
-        { eqItemIds: items.map((item) => item.id), bounds: { x: x0, y: y0, w, h, column: col, pageIndex: pageIndex.current } },
+        { shapeIds: labelIds, bounds: { x: x0, y: y0, w, h, column: col, pageIndex: pageIndex.current } },
       );
     },
 
@@ -3490,29 +3364,33 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     //   2. Else fall back to step_index (0-based positional).
     //   3. If neither, console.warn in dev and return false.
     highlightStep(target: StepTarget, style: "circle" | "underline" | "box") {
-      const idx = resolveEqIndex(eqRef.current, target);
+      const editor = editorRef.current;
+      if (!editor) return false;
+      const lines = mathLines(editor);
+      const idx = resolveEqIndex(lines, target);
       if (idx < 0) return false;
-      const item = eqRef.current[idx];
-      const updated = { ...item, highlight: style };
-      eqRef.current = eqRef.current.map((e, i) => i === idx ? updated : e);
-      setEqItems((prev) => prev.map((e, i) => i === idx ? updated : e));
+      const line = lines[idx];
+      editor.updateShapes([{ id: line.shape.id, type: "math", props: { highlight: style } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+      const b = editor.getShapePageBounds(line.shape.id);
       recordDirectSemanticAction(
         { type: "highlight_step", step_label: target.step_label, step_index: target.step_index, style },
-        { eqItemIds: [item.id], bounds: { x: item.x, y: item.y, w: 420, h: EQ_H, pageIndex: pageIndex.current } },
+        { shapeIds: [line.id], bounds: b ? { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } : undefined },
       );
       return true;
     },
 
     crossOutStep(target: StepTarget) {
-      const idx = resolveEqIndex(eqRef.current, target);
+      const editor = editorRef.current;
+      if (!editor) return false;
+      const lines = mathLines(editor);
+      const idx = resolveEqIndex(lines, target);
       if (idx < 0) return false;
-      const item = eqRef.current[idx];
-      const updated = { ...item, crossOut: true };
-      eqRef.current = eqRef.current.map((e, i) => i === idx ? updated : e);
-      setEqItems((prev) => prev.map((e, i) => i === idx ? updated : e));
+      const line = lines[idx];
+      editor.updateShapes([{ id: line.shape.id, type: "math", props: { crossOut: true } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+      const b = editor.getShapePageBounds(line.shape.id);
       recordDirectSemanticAction(
         { type: "cross_out_step", step_label: target.step_label, step_index: target.step_index },
-        { eqItemIds: [item.id], bounds: { x: item.x, y: item.y, w: 420, h: EQ_H, pageIndex: pageIndex.current } },
+        { shapeIds: [line.id], bounds: b ? { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } : undefined },
       );
       return true;
     },
@@ -3569,7 +3447,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           tutorReferenceLabel: action.tutorReferenceLabel ?? action.label ?? action.title,
         };
         const shapeIdsBeforeAction = currentShapeIdSet(editor);
-        const eqIdsBeforeAction = new Set(eqRef.current.map((item) => item.id));
         withJobMeta(meta, () => {
           switch (action.type) {
             case "clear_board":
@@ -3912,16 +3789,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           }
         });
         const createdShapeIds = diffStringSet(currentShapeIdSet(editor), shapeIdsBeforeAction);
-        const createdEqIds = eqRef.current
-          .map((item) => item.id)
-          .filter((eqId) => !eqIdsBeforeAction.has(eqId));
         semanticBoardRef.current = applySemanticBoardAction(
           semanticBoardRef.current,
           action,
           meta,
           {
             shapeIds: createdShapeIds,
-            eqItemIds: createdEqIds,
+            eqItemIds: [],
           },
         );
       }
@@ -3974,7 +3848,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       } catch {}
       return {
         store,
-        eqItems: [...eqRef.current],
+        eqItems: [],
         semanticBoard: semanticBoardRef.current,
         pageState: {
           pageIndex: pageIndex.current,
@@ -4025,7 +3899,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return {
         tool,
         shapes: editor ? currentShapeIdSet(editor) : new Set<string>(),
-        eqs: new Set(eqRef.current.map((item) => item.id)),
+        eqs: new Set<string>(),
       };
     },
 
@@ -4033,8 +3907,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const editor = editorRef.current;
       if (!editor) return null;
       const shapeIds = diffStringSet(currentShapeIdSet(editor), token.shapes);
-      const eqItemIds = eqRef.current.map((item) => item.id).filter((id) => !token.eqs.has(id));
-      if (shapeIds.length === 0 && eqItemIds.length === 0) return null;
+      const eqItemIds: string[] = [];
+      if (shapeIds.length === 0) return null;
       const id = `b${++itemSeqRef.current}`;
       const item: BoardItem = {
         id,
@@ -4126,11 +4000,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         erased.push(item.label);
         const shapeIds = item.shapeIds.filter((id) => editor.getShape(id as TLShapeId)).map((id) => id as TLShapeId);
         if (shapeIds.length > 0) editor.deleteShapes(shapeIds);
-        if (item.eqItemIds.length > 0) {
-          const eqGone = new Set(item.eqItemIds);
-          eqRef.current = eqRef.current.filter((e) => !eqGone.has(e.id));
-          setEqItems((prev) => prev.filter((e) => !eqGone.has(e.id)));
-        }
+        mathOrderRef.current = mathOrderRef.current.filter((mid) => editor.getShape(mid as TLShapeId));
         recordDirectSemanticAction({ type: "delete_shape", target_ids: item.shapeIds });
       }
       if (goneIds.size > 0) itemsRef.current = itemsRef.current.filter((i) => !goneIds.has(i.id));
@@ -4150,78 +4020,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return null;
       await awaitRevealIdle();
       const ids = editor.getCurrentPageShapeIds();
-      const eqs = eqRef.current;
-      if (ids.size === 0 && eqs.length === 0) return null;
+      if (ids.size === 0) return null;
       try {
-        // The typeset math is a DOM overlay, not shapes, so the export covers
-        // both and the equations are drawn onto the picture as plain text.
-        const sb = editor.getCurrentPageBounds();
-        let minX = sb ? sb.minX : Infinity;
-        let minY = sb ? sb.minY : Infinity;
-        let maxX = sb ? sb.maxX : -Infinity;
-        let maxY = sb ? sb.maxY : -Infinity;
-        const eqBoxes = eqs.map((eq) => {
-          const node = overlayRef.current?.querySelector<HTMLElement>(`[data-eq-id="${eq.id}"] > div`);
-          return { eq, w: node?.offsetWidth ?? 160, h: node?.offsetHeight ?? EQ_H };
-        });
-        for (const b of eqBoxes) {
-          minX = Math.min(minX, b.eq.x);
-          minY = Math.min(minY, b.eq.y);
-          maxX = Math.max(maxX, b.eq.x + b.w + (b.eq.annotation ? 220 : 0));
-          maxY = Math.max(maxY, b.eq.y + b.h);
-        }
-        if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
-        const PAD = 24;
-        const bounds = new Box(minX - PAD, minY - PAD, maxX - minX + PAD * 2, maxY - minY + PAD * 2);
-        const scale = bounds.w > maxWidth ? maxWidth / bounds.w : 1;
-        const out = await editor.toImageDataUrl(Array.from(ids), { format: "png", scale, pixelRatio: 1, background: true, bounds, padding: 0 });
-        if (!out) return null;
-        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-          const el = new Image();
-          el.onload = () => resolve(el);
-          el.onerror = () => reject(new Error("board image failed to load"));
-          el.src = out.url;
-        });
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(out.width));
-        canvas.height = Math.max(1, Math.round(out.height));
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return { url: out.url, width: out.width, height: out.height };
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        for (const { eq, h } of eqBoxes) {
-          const fontPx = Math.max(10, Math.round(23 * scale));
-          const x = (eq.x - bounds.x) * scale + 4 * scale;
-          const base = (eq.y - bounds.y) * scale + h * 0.68 * scale;
-          const text = latexToPlain(eq.latex);
-          ctx.font = `${fontPx}px "Times New Roman", serif`;
-          ctx.fillStyle = eq.color ?? "#383838";
-          ctx.textBaseline = "alphabetic";
-          ctx.fillText(text, x, base);
-          const w = ctx.measureText(text).width;
-          if (eq.crossOut) {
-            ctx.strokeStyle = "#d63b2f";
-            ctx.lineWidth = Math.max(1, 2 * scale);
-            ctx.beginPath();
-            ctx.moveTo(x - 2, base - fontPx * 0.33);
-            ctx.lineTo(x + w + 2, base - fontPx * 0.33);
-            ctx.stroke();
-          }
-          if (eq.highlight) {
-            ctx.strokeStyle = "#1f9d55";
-            ctx.lineWidth = Math.max(1, 1.5 * scale);
-            ctx.setLineDash([4, 3]);
-            ctx.strokeRect(x - 6, base - fontPx * 1.05, w + 12, fontPx * 1.45);
-            ctx.setLineDash([]);
-          }
-          if (eq.annotation) {
-            ctx.font = `${Math.max(9, Math.round(13 * scale))}px sans-serif`;
-            ctx.fillStyle = "#7a8a99";
-            ctx.fillText(eq.annotation, x + w + 18 * scale, base);
-          }
-        }
-        return { url: canvas.toDataURL("image/jpeg", 0.72), width: canvas.width, height: canvas.height };
+        // Every shape exports itself, math included (as plain text).
+        const bounds = editor.getCurrentPageBounds();
+        const scale = bounds && bounds.w > maxWidth ? maxWidth / bounds.w : 1;
+        const out = await editor.toImageDataUrl(Array.from(ids), { format: "jpeg", quality: 0.72, scale, pixelRatio: 1, background: true, padding: 24 });
+        return out ? { url: out.url, width: out.width, height: out.height } : null;
       } catch (err) {
         if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] exportImage", err);
         return null;
@@ -4242,9 +4047,23 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       pageTop.current = snap.pageState?.pageTop ?? 0;
       leftY.current = snap.pageState?.leftY ?? START_Y;
       rightY.current = snap.pageState?.rightY ?? START_Y;
-      const items = snap.eqItems ?? [];
-      eqRef.current = items;
-      setEqItems(items);
+      // Math shapes came back with the store; old overlay items become shapes.
+      mathOrderRef.current = editor.getCurrentPageShapesSorted().filter((shape) => shape.type === "math").map((shape) => shape.id);
+      for (const item of snap.eqItems ?? []) {
+        if (!item || typeof item.latex !== "string") continue;
+        createMath(editor, {
+          latex: item.latex,
+          x: item.x,
+          y: item.y,
+          annotation: item.annotation,
+          display: item.role !== "label",
+          role: item.role === "label" ? "label" : "",
+          color: item.color,
+          crossOut: Boolean(item.crossOut),
+          highlight: (item.highlight ?? "") as MathHighlight,
+          meta: item.meta,
+        });
+      }
       semanticBoardRef.current = normalizeSemanticBoard(snap.semanticBoard);
       // Defensive: ensure post-resume direct calls go through withDirectMeta
       // cleanly. (No prior path should leak meta across resume, but a snapshot
@@ -4263,22 +4082,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         hideUi
         components={TLDRAW_COMPONENTS}
         overlayUtils={OVERLAY_UTILS}
+        shapeUtils={SHAPE_UTILS}
         licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY}
       />
-      <div
-        ref={overlayRef}
-        style={{
-          position: "absolute",
-          inset: 0,
-          pointerEvents: "none",
-          transformOrigin: "0 0",
-          willChange: "transform",
-        }}
-      >
-        {eqItems.map((item) => (
-          <EqBlock key={item.id} item={item} />
-        ))}
-      </div>
     </div>
   );
 });

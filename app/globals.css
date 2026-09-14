@@ -685,3 +685,7 @@ body {
 }
 
 .lp-hand { font-family: var(--lp-font-hand), "Shantell Sans", cursive; }
+
+/* Typeset math shapes: KaTeX display mode without its block margins, so the shape box is tight. */
+.chalk-math .katex-display { margin: 0; }
+.chalk-math .katex { line-height: 1.2; }

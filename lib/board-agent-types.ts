@@ -872,6 +872,23 @@ export function summarizeWhiteboardSnapshot(snapshot: unknown): {
     const annotation = asString(raw.annotation);
     return `Equation ${index}: ${latex}${annotation ? ` (${annotation})` : ""}`;
   });
+  // Typeset math lives in the store as "math" shapes now; legacy snapshots
+  // may still carry overlay items above.
+  {
+    const store = asRecord(snap.store);
+    const records = asRecord(store.records);
+    let index = eqItems.length;
+    for (const record of Object.values(records)) {
+      const raw = asRecord(record);
+      if (asString(raw.type) !== "math") continue;
+      const props = asRecord(raw.props);
+      if (asString(props.role) === "label") continue;
+      const latex = asString(props.latex, "(blank equation)");
+      const annotation = asString(props.annotation);
+      eqItems.push(`Equation ${index++}: ${latex}${annotation ? ` (${annotation})` : ""}`);
+      if (eqItems.length >= 24) break;
+    }
+  }
 
   const visibleShapes: string[] = [];
   const store = asRecord(snap.store);
