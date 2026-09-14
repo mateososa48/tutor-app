@@ -9,7 +9,9 @@ export function Wordmark({ size = 17, iconOnly = false, className = "" }: { size
       style={{ fontSize: size, color: "var(--lp-ink)" }}
     >
       <ChalkMark size={Math.round(size * 1.45)} />
-      {!iconOnly && "chalk"}
+      {/* "chalk" has tall letters and no descenders, so its ink rides above the
+          centre of its text box; 0.05em brings it level with the mark. */}
+      {!iconOnly && <span className="translate-y-[0.05em]">chalk</span>}
     </span>
   );
 }

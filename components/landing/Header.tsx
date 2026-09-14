@@ -111,7 +111,9 @@ export function Header() {
           className="pointer-events-none absolute inset-0 rounded-[inherit] bg-[radial-gradient(120%_160%_at_0%_0%,rgba(255,255,255,0.6),transparent_45%)]"
         />
 
-        <Link href="/" aria-label="Chalk home" className="relative justify-self-start rounded-[8px] outline-none focus-visible:ring-[3px] focus-visible:ring-(--lp-sky-glow)">
+        {/* A flex box, not a block: a block puts the inline wordmark on a text line
+            with room for descenders under it, which pushes the logo above centre. */}
+        <Link href="/" aria-label="Chalk home" className="relative flex items-center justify-self-start rounded-[8px] outline-none focus-visible:ring-[3px] focus-visible:ring-(--lp-sky-glow)">
           <Wordmark size={19} />
         </Link>
 
