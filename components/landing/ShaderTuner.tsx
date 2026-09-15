@@ -36,6 +36,9 @@ export type HeroShader = {
   fade: number;
 };
 
+// The hero's shipped look, picked by Mateo in this tuner (Sept 15): the sign-in
+// swirl's colours, shades and pixels, with a finer, more warped field, a touch
+// lighter and quicker, a 9% wash and a long fade. The sign-in panel keeps SWIRL.
 export const HERO_SHADER_DEFAULT: HeroShader = {
   pattern: SWIRL.pattern,
   waveColor: [...SWIRL.waveColor],
@@ -44,13 +47,13 @@ export const HERO_SHADER_DEFAULT: HeroShader = {
   backgroundColor: [...SWIRL.backgroundColor],
   colorNum: SWIRL.colorNum,
   pixelSize: SWIRL.pixelSize,
-  waveSpeed: SWIRL.waveSpeed,
-  waveFrequency: SWIRL.waveFrequency,
-  waveAmplitude: SWIRL.waveAmplitude,
-  lightness: 0,
+  waveSpeed: 0.055,
+  waveFrequency: 2.55,
+  waveAmplitude: 0.66,
+  lightness: 0.06,
   animate: true,
-  wash: 0,
-  fade: 288,
+  wash: 0.09,
+  fade: 416,
 };
 
 const STORE = "chalk.heroShader.v1";

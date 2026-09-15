@@ -12,8 +12,8 @@ import { HERO_SHADER_DEFAULT, ShaderTuner, loadHeroShader, saveHeroShader, type 
 import { useReduce } from "./useScript";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
-// The sign-in page's swirl (swirl.ts) at full strength across the whole hero,
-// faded into the page only at the bottom. A still frame under reduced motion.
+// The swirl across the whole hero with its own settings (HERO_SHADER_DEFAULT in
+// ShaderTuner.tsx), faded into the page at the bottom. A still frame under reduced motion.
 // Double-click the hero's background (in development, or on any build with
 // ?tune in the URL) to open ShaderTuner and change every setting live. The
 // settings live here, not in Hero, so dragging a slider never re-renders the
