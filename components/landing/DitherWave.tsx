@@ -87,13 +87,14 @@ void main() {
     // Calibrated against a JS model of this field (frequency 1.7, warp 0.45):
     // Four breakpoints, one between each pair of neighbouring tones, fitted on
     // this field as rendered over ten minutes with the pan (frequency 1.7, warp
-    // 0.45), keeping the panel as light as Mateo's chosen mix (mean 158/255,
-    // about 19% background). The sign-in panel draws it in seven shades, so
+    // 0.45). K3 sits high so only the brightest peaks turn white (about 4% of
+    // the panel, mean lightness 146/255): at 0.5715 big solid-white areas
+    // covered up to a third of it. The sign-in panel draws seven shades, so
     // broad areas show soft gradations of blue.
     const float K0 = 0.3458;
     const float K1 = 0.4072;
     const float K2 = 0.4856;
-    const float K3 = 0.5715;
+    const float K3 = 0.6300;
     float g = n < K1 ? 0.125 + (n - K0) * 0.25 / (K1 - K0)
             : n < K2 ? 0.375 + (n - K1) * 0.25 / (K2 - K1)
             : 0.625 + (n - K2) * 0.25 / (K3 - K2);
