@@ -8,11 +8,13 @@ import { VOICE_BLUE } from "@/components/session/VoiceWave";
 // calm: standing ripples sized in CSS pixels (so they never stretch with the
 // screen), a slow drift, a level that breathes like quiet speech, a lighter
 // ridge behind for depth, and a soft swell that leans toward the pointer.
-// The top of the band dithers out into the page background, so it has no edge.
+// The top of the band dithers out into the page background, so it has no edge,
+// and the band stays deep blue behind anything marked data-wave-keep.
 // Pauses off screen; one still frame under reduced motion.
 
 const PIXEL = 3;
 const BG: [number, number, number] = [0.984, 0.984, 0.988]; // #fbfbfc, the page (--lp-bg)
+const INK_BLUE: [number, number, number] = [0.114, 0.447, 0.863]; // #1d72dc, the FAQ reply blue
 
 const VERT = `#version 300 es
 in vec2 a_pos;
@@ -26,9 +28,11 @@ uniform float u_time;
 uniform float u_pixel;
 uniform float u_scale;
 uniform vec2 u_pointer;
+uniform float u_keep;
 uniform vec3 u_bg;
 uniform vec3 u_top;
 uniform vec3 u_deep;
+uniform vec3 u_ink;
 
 const mat4 bayer = mat4(
   0.0, 8.0, 2.0, 10.0,
@@ -54,15 +58,21 @@ void main() {
   float dx = (uv.x - u_pointer.x) * u_res.x / u_res.y;
   float swell = u_pointer.y * 0.12 * exp(-dx * dx * 2.5);
 
-  float front = 0.42 + 0.10 * (level - 0.5) + ripple * (0.55 + 0.6 * level) + drift + swell;
+  // Heights in CSS pixels from the bottom. The wave rests in the room above what
+  // data-wave-keep marks (the wordmark) and swings inside it, so its troughs stay
+  // clear of the wordmark and its crests (plus the soft edge) stay inside the canvas.
+  float yPx = uv.y * hCss;
+  float keepPx = u_keep;
+  float roomPx = max(hCss - keepPx - 60.0, 80.0);
+  float frontPx = keepPx + roomPx * (0.45 + 0.10 * (level - 0.5) + ripple * (0.55 + 0.6 * level) + drift + swell);
   // A lighter ridge behind, higher and out of step.
-  float back = 0.64 + 0.07 * sin(xw * 3.1 + 0.4 + t * 0.06)
+  float backPx = keepPx + roomPx * (0.66 + 0.07 * sin(xw * 3.1 + 0.4 + t * 0.06)
              + 0.05 * sin(xw * 7.0 + 1.9) * sin(t * 0.65 + 2.2)
              + 0.02 * sin(xw * 17.0 + 0.9) * sin(t * 1.3)
-             + 0.6 * swell;
+             + 0.6 * swell);
 
-  float dF = (uv.y - front) * hCss;   // CSS pixels above the front surface
-  float dB = (uv.y - back) * hCss;
+  float dF = yPx - frontPx;   // CSS pixels above the front surface
+  float dB = yPx - backPx;
   // About as soft as the dock wave: the edge dithers out over ~55px.
   float fF = smoothstep(34.0, -22.0, dF);
   float fB = smoothstep(40.0, -22.0, dB) * 0.5;
@@ -74,8 +84,11 @@ void main() {
   float qB = floor(fB * steps + th) / steps;
   float qF = floor(fF * steps + th) / steps;
 
-  float depth = smoothstep(0.0, 1.0, clamp(-dF / (hCss * 0.5), 0.0, 1.0));
+  float floorDepth = keepPx > 0.0 ? smoothstep(keepPx + 24.0, keepPx * 0.4, yPx) : 0.0;
+  float depth = smoothstep(0.0, 1.0, max(clamp(-dF / (hCss * 0.5), 0.0, 1.0), floorDepth));
   vec3 wave = mix(u_top, u_deep, depth);
+  // Behind the wordmark the blue deepens a little further, so white reads on it.
+  wave = mix(wave, u_ink, floorDepth * 0.55);
   vec3 col = mix(u_bg, u_top, clamp(qB, 0.0, 1.0));
   col = mix(col, wave, clamp(qF, 0.0, 1.0));
   outColor = vec4(col, 1.0);
@@ -127,11 +140,14 @@ export function FooterWave({ className }: { className?: string }) {
     gl.uniform3fv(u("u_bg"), BG);
     gl.uniform3fv(u("u_top"), VOICE_BLUE.top);
     gl.uniform3fv(u("u_deep"), VOICE_BLUE.deep);
+    gl.uniform3fv(u("u_ink"), INK_BLUE);
     const uRes = u("u_res");
     const uTime = u("u_time");
     const uPixel = u("u_pixel");
     const uScale = u("u_scale");
     const uPointer = u("u_pointer");
+    const uKeep = u("u_keep");
+    const keepEl = canvas.parentElement?.querySelector<HTMLElement>("[data-wave-keep]") ?? null;
 
     // The still frame for reduced motion: a moment with a gentle rise.
     const STILL_T = 9;
@@ -159,11 +175,20 @@ export function FooterWave({ className }: { className?: string }) {
       gl.uniform2f(uRes, w, h);
       gl.uniform1f(uPixel, PIXEL * dpr);
       gl.uniform1f(uScale, dpr);
+      // How far up from the bottom the wordmark reaches, plus a margin of blue above it.
+      if (keepEl) {
+        const c = canvas.getBoundingClientRect();
+        const k = keepEl.getBoundingClientRect();
+        gl.uniform1f(uKeep, Math.max(0, c.bottom - k.top + 40));
+      } else {
+        gl.uniform1f(uKeep, 0);
+      }
       // Resizing clears the canvas; a still page has to paint again.
       if (reduce) draw(STILL_T);
     };
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
+    if (keepEl) ro.observe(keepEl);
     resize();
 
     // The swell follows the pointer while it is over the footer (the band and

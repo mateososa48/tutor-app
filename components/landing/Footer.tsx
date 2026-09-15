@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { ChalkMark } from "@/components/app/ChalkMark";
 import { Separator } from "@/components/ui/separator";
 import { FooterWave } from "./FooterWave";
 import { Wordmark } from "./Wordmark";
 
-// Links and the wordmark on the page, then a sign-off line sitting in a band of
-// the tutor's voice wave (FooterWave) that rises from the bottom of the page.
+// Links and a short description on the page, then the white wordmark sitting in a
+// band of the tutor's voice wave (FooterWave) that rises from the bottom of the page.
 
 const SITE = [
   ["How it works", "#how-it-works"],
@@ -29,6 +30,9 @@ export function Footer() {
             <Wordmark size={19} />
             <p className="mt-4 max-w-[32ch] text-[14px] leading-[1.55] text-(--lp-ink-2)">
               A voice math tutor that works each step out with you, on the board.
+            </p>
+            <p className="mt-6 text-[13px] text-(--lp-ink-2)">
+              © {new Date().getFullYear()} Chalk. Built by a student, for his sister.
             </p>
           </div>
           <nav aria-label="Footer" className="grid grid-cols-2 gap-x-14 sm:gap-x-20">
@@ -60,14 +64,18 @@ export function Footer() {
         </div>
       </div>
 
-      <div className="relative mt-4 h-[clamp(260px,27vw,380px)] sm:mt-6">
+      <div className="relative mt-4 h-[clamp(290px,30vw,430px)] sm:mt-6">
         <FooterWave className="absolute inset-0" />
-        <div className="relative mx-auto flex h-full max-w-[1180px] flex-col justify-end px-5 pb-6 sm:px-8 sm:pb-8">
-          <p aria-hidden className="lp-display m-0 text-[clamp(2.75rem,7vw,5rem)] leading-[0.95] text-(--lp-ink)">
-            Talk it through.
-          </p>
-          <p className="mt-5 text-[12.5px] font-medium text-(--lp-ink)">
-            © {new Date().getFullYear()} Chalk. Built by a student, for his sister.
+        <div className="relative mx-auto flex h-full max-w-[1180px] items-end px-5 pb-8 sm:px-8 sm:pb-10">
+          {/* The sign-in panel's wordmark, large: white scribble and "chalk". FooterWave keeps the
+              band deep blue behind whatever carries data-wave-keep. */}
+          <p
+            data-wave-keep
+            aria-hidden
+            className="m-0 flex items-center gap-[0.22em] text-[clamp(3.5rem,8vw,6rem)] leading-none text-white"
+          >
+            <ChalkMark size={96} color="#ffffff" className="size-[1em] shrink-0" />
+            <span className="lp-brand translate-y-[0.05em]">chalk</span>
           </p>
         </div>
       </div>
