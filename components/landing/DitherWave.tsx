@@ -21,6 +21,12 @@ type Props = {
   pattern?: "bands" | "swirl";
   /** Optional third tone for the densest parts of the field. */
   deepColor?: [number, number, number];
+  /**
+   * Swirl only: a soft oval, in canvas pixels from the bottom-left corner,
+   * where the tone is capped (0 to 1) so the field stays blue behind a label.
+   * The field keeps moving; it just never brightens past the cap there.
+   */
+  calmSpot?: { x: number; y: number; rx: number; ry: number; cap: number };
   className?: string;
 };
 
@@ -42,6 +48,8 @@ uniform float u_amp;
 uniform vec3 u_deep;
 uniform float u_deepMix;
 uniform int u_pattern;
+uniform vec4 u_calm;
+uniform float u_calmCap;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
 float noise(vec2 p) {
@@ -99,6 +107,10 @@ void main() {
             : n < K2 ? 0.375 + (n - K1) * 0.25 / (K2 - K1)
             : 0.625 + (n - K2) * 0.25 / (K3 - K2);
     f = clamp(g, 0.0, 1.0);
+    // The calm spot: full strength inside 60% of the oval, easing out to its
+    // edge, where the tone is capped so a label on top always has blue behind it.
+    float calm = 1.0 - smoothstep(0.6, 1.0, length((px - u_calm.xy) / max(u_calm.zw, vec2(1.0))));
+    f = min(f, mix(1.0, u_calmCap, calm));
   } else {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
     float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);
@@ -132,6 +144,7 @@ export function DitherWave({
   animate = true,
   pattern = "bands",
   deepColor,
+  calmSpot,
   className = "",
 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -178,6 +191,9 @@ export function DitherWave({
     gl.uniform3fv(u("u_deep"), deepColor ?? waveColor);
     gl.uniform1f(u("u_deepMix"), deepColor ? 1 : 0);
     gl.uniform1i(u("u_pattern"), pattern === "swirl" ? 1 : 0);
+    const calm = calmSpot ?? { x: 0, y: 0, rx: 1, ry: 1, cap: 1 };
+    gl.uniform4f(u("u_calm"), calm.x, calm.y, calm.rx, calm.ry);
+    gl.uniform1f(u("u_calmCap"), calm.cap);
     const uRes = u("u_res");
     const uTime = u("u_time");
 
@@ -228,7 +244,7 @@ export function DitherWave({
       gl.deleteProgram(prog);
       gl.deleteBuffer(buf);
     };
-  }, [waveColor, backgroundColor, colorNum, pixelSize, waveSpeed, waveFrequency, waveAmplitude, animate, pattern, deepColor]);
+  }, [waveColor, backgroundColor, colorNum, pixelSize, waveSpeed, waveFrequency, waveAmplitude, animate, pattern, deepColor, calmSpot]);
 
   return <canvas ref={ref} aria-hidden className={`block h-full w-full ${className}`} />;
 }

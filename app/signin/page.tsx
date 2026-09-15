@@ -35,6 +35,11 @@ const PANEL_DEEP: [number, number, number] = [0, 1, 2].map(
   (i) => VOICE_BLUE.deep[i] + (VOICE_BLUE.top[i] - VOICE_BLUE.deep[i]) * 0.4,
 ) as [number, number, number];
 
+// The corner behind the white wordmark stays blue: a soft oval (canvas pixels
+// from the bottom-left) where the swirl's tone is capped below white. The
+// wordmark sits 24px in, 28px tall and about 107px wide.
+const CALM_SPOT = { x: 78, y: 38, rx: 125, ry: 50, cap: 0.55 };
+
 const INPUT = "h-11 sm:h-10 rounded-[10px] border-(--lp-line-strong) bg-white px-3 text-[14px] md:text-[14px]";
 
 function urlError(code: string | null): string {
@@ -327,13 +332,14 @@ function SignIn() {
             waveAmplitude={0.45}
             waveFrequency={1.7}
             waveSpeed={0.035}
+            calmSpot={CALM_SPOT}
             animate={!reduce}
             className="absolute inset-0"
           />
         )}
         <p className="absolute bottom-6 left-6 m-0 flex items-center gap-2 text-(--lp-ink)">
-          <ChalkMark size={28} color="var(--lp-ink)" />
-          <span className="lp-brand text-[28px] leading-none">chalk</span>
+          <ChalkMark size={28} color="var(--paper)" />
+          <span className="lp-brand text-[28px] leading-none text-(--paper)" >chalk</span>
         </p>
       </aside>
     </div>
