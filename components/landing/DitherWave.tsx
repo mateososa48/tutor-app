@@ -7,6 +7,8 @@ import { useEffect, useRef } from "react";
 // tones are mixed between the page background and the accent. No three.js.
 // Two patterns: "bands" (the landing hero: soft horizontal waves) and "swirl"
 // (noise warped by itself twice, so it folds into drifting eddies).
+// Every prop is read on each frame, so settings change live (the hero's tuner
+// drags them) without rebuilding the program or restarting the clock.
 
 type Props = {
   waveColor?: [number, number, number];
@@ -19,6 +21,8 @@ type Props = {
   animate?: boolean;
   /** "bands" (default, the hero) or "swirl". */
   pattern?: "bands" | "swirl";
+  /** Shifts the field lighter (positive) or darker (negative) without changing its shape. 0 keeps the calibrated look. */
+  lightness?: number;
   /** Optional third tone for the densest parts of the field. */
   deepColor?: [number, number, number];
   /**
@@ -50,6 +54,7 @@ uniform float u_deepMix;
 uniform int u_pattern;
 uniform vec4 u_calm;
 uniform float u_calmCap;
+uniform float u_bias;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
 float noise(vec2 p) {
@@ -117,6 +122,7 @@ void main() {
             : n < K2 ? 0.375 + (n - K1) * 0.25 / (K2 - K1)
             : 0.625 + (n - K2) * 0.25 / (K3 - K2);
     f = clamp(g, 0.0, 1.0);
+    f = clamp(f + u_bias, 0.0, 1.0);
     // The calm spot: full strength inside 40% of the oval, easing out slowly to
     // its edge, where the tone is capped so a label on top always has blue
     // behind it. A wide, soft falloff keeps it from reading as a shape.
@@ -126,6 +132,7 @@ void main() {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
     float ridge = 0.5 + 0.5 * sin((uv.y * 3.4 + w * u_amp * 3.0 - t * 0.5) * 3.14159);
     f = smoothstep(0.15, 0.95, ridge * w * 1.6);
+    f = clamp(f - u_bias, 0.0, 1.0);
   }
   int bx = int(mod(gl_FragCoord.x / u_pixel, 4.0));
   int by = int(mod(gl_FragCoord.y / u_pixel, 4.0));
@@ -147,6 +154,21 @@ void main() {
 // Time units per swirl loop; must match the 84.0 in the shader's swirl branch.
 const SWIRL_LOOP = 84;
 
+type Config = {
+  waveColor: [number, number, number];
+  backgroundColor: [number, number, number];
+  colorNum: number;
+  pixelSize: number;
+  waveSpeed: number;
+  waveFrequency: number;
+  waveAmplitude: number;
+  animate: boolean;
+  pattern: "bands" | "swirl";
+  lightness: number;
+  deepColor?: [number, number, number];
+  calmSpot?: { x: number; y: number; rx: number; ry: number; cap: number };
+};
+
 export function DitherWave({
   waveColor = [0.42, 0.66, 1],
   backgroundColor = [0.984, 0.984, 0.988],
@@ -157,11 +179,21 @@ export function DitherWave({
   waveAmplitude = 0.55,
   animate = true,
   pattern = "bands",
+  lightness = 0,
   deepColor,
   calmSpot,
   className = "",
 }: Props) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const cfg = useRef<Config | null>(null);
+  // Set by the render loop: repaint or resume after a prop change.
+  const kick = useRef<(() => void) | null>(null);
+
+  // Runs before the setup effect below on mount, and after every render.
+  useEffect(() => {
+    cfg.current = { waveColor, backgroundColor, colorNum, pixelSize, waveSpeed, waveFrequency, waveAmplitude, animate, pattern, lightness, deepColor, calmSpot };
+    kick.current?.();
+  });
 
   useEffect(() => {
     const canvas = ref.current;
@@ -196,24 +228,26 @@ export function DitherWave({
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
     const u = (name: string) => gl.getUniformLocation(prog, name);
-    gl.uniform3fv(u("u_wave"), waveColor);
-    gl.uniform3fv(u("u_bg"), backgroundColor);
-    gl.uniform1f(u("u_colorNum"), colorNum);
-    gl.uniform1f(u("u_pixel"), pixelSize);
-    gl.uniform1f(u("u_freq"), waveFrequency);
-    gl.uniform1f(u("u_amp"), waveAmplitude);
-    gl.uniform3fv(u("u_deep"), deepColor ?? waveColor);
-    gl.uniform1f(u("u_deepMix"), deepColor ? 1 : 0);
-    gl.uniform1i(u("u_pattern"), pattern === "swirl" ? 1 : 0);
-    const calm = calmSpot ?? { x: 0, y: 0, rx: 1, ry: 1, cap: 1 };
-    gl.uniform4f(u("u_calm"), calm.x, calm.y, calm.rx, calm.ry);
-    gl.uniform1f(u("u_calmCap"), calm.cap);
+    const uWave = u("u_wave");
+    const uBg = u("u_bg");
+    const uColorNum = u("u_colorNum");
+    const uPixel = u("u_pixel");
+    const uFreq = u("u_freq");
+    const uAmp = u("u_amp");
+    const uDeep = u("u_deep");
+    const uDeepMix = u("u_deepMix");
+    const uPattern = u("u_pattern");
+    const uCalm = u("u_calm");
+    const uCalmCap = u("u_calmCap");
+    const uBias = u("u_bias");
     const uRes = u("u_res");
     const uTime = u("u_time");
 
     let raf = 0;
     let visible = true;
-    const start = performance.now();
+    // The clock advances by speed each frame, so a speed change never jumps the field.
+    let clock = 0;
+    let last = performance.now();
 
     const resize = () => {
       const w = Math.max(1, Math.floor(canvas.clientWidth));
@@ -225,28 +259,50 @@ export function DitherWave({
       }
       gl.uniform2f(uRes, w, h);
     };
-    const draw = (now: number) => {
-      const time = ((now - start) / 1000) * waveSpeed * 10;
+    const draw = () => {
+      const c = cfg.current!;
+      gl.uniform3fv(uWave, c.waveColor);
+      gl.uniform3fv(uBg, c.backgroundColor);
+      gl.uniform1f(uColorNum, c.colorNum);
+      gl.uniform1f(uPixel, c.pixelSize);
+      gl.uniform1f(uFreq, c.waveFrequency);
+      gl.uniform1f(uAmp, c.waveAmplitude);
+      gl.uniform3fv(uDeep, c.deepColor ?? c.waveColor);
+      gl.uniform1f(uDeepMix, c.deepColor ? 1 : 0);
+      gl.uniform1i(uPattern, c.pattern === "swirl" ? 1 : 0);
+      const calm = c.calmSpot ?? { x: 0, y: 0, rx: 1, ry: 1, cap: 1 };
+      gl.uniform4f(uCalm, calm.x, calm.y, calm.rx, calm.ry);
+      gl.uniform1f(uCalmCap, calm.cap);
+      gl.uniform1f(uBias, c.lightness);
       // The swirl's motion is periodic, so its clock wraps (see the shader).
-      gl.uniform1f(uTime, pattern === "swirl" ? time % SWIRL_LOOP : time);
+      gl.uniform1f(uTime, c.pattern === "swirl" ? clock % SWIRL_LOOP : clock);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
     const frame = (now: number) => {
-      draw(now);
-      if (animate && visible) raf = requestAnimationFrame(frame);
+      const c = cfg.current!;
+      clock += Math.min(0.1, Math.max(0, (now - last) / 1000)) * c.waveSpeed * 10;
+      last = now;
+      draw();
+      raf = c.animate && visible ? requestAnimationFrame(frame) : 0;
+    };
+    const run = () => {
+      if (raf) return;
+      last = performance.now();
+      raf = requestAnimationFrame(frame);
+    };
+    kick.current = () => {
+      if (cfg.current!.animate && visible) run();
+      else draw();
     };
 
     const ro = new ResizeObserver(() => {
       resize();
-      draw(performance.now());
+      draw();
     });
     ro.observe(canvas);
     const io = new IntersectionObserver(([entry]) => {
       visible = entry.isIntersecting;
-      if (visible && animate) {
-        cancelAnimationFrame(raf);
-        raf = requestAnimationFrame(frame);
-      }
+      if (visible && cfg.current!.animate) run();
     });
     io.observe(canvas);
 
@@ -255,12 +311,13 @@ export function DitherWave({
 
     return () => {
       cancelAnimationFrame(raf);
+      kick.current = null;
       ro.disconnect();
       io.disconnect();
       gl.deleteProgram(prog);
       gl.deleteBuffer(buf);
     };
-  }, [waveColor, backgroundColor, colorNum, pixelSize, waveSpeed, waveFrequency, waveAmplitude, animate, pattern, deepColor, calmSpot]);
+  }, []);
 
   return <canvas ref={ref} aria-hidden className={`block h-full w-full ${className}`} />;
 }
