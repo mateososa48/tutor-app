@@ -7,37 +7,23 @@ import BlurText from "@/components/BlurText";
 import Magnet from "@/components/Magnet";
 import { SessionDemo } from "./SessionDemo";
 import { DitherWave } from "./DitherWave";
+import { SWIRL } from "./swirl";
 import { useReduce } from "./useScript";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
-const WAVE: [number, number, number] = [0.55, 0.74, 1];
-const BG: [number, number, number] = [0.984, 0.984, 0.988];
+// The sign-in page's swirl (swirl.ts), kept quiet behind the headline: masked
+// to the top right, washed with the page's own off-white so it reads as a tint
+// rather than a picture, and faded into the page above and below. A still frame
+// under reduced motion.
+const MASK = "radial-gradient(95% 85% at 78% 0%, #000 25%, transparent 100%)";
 
-// Dithered wave shader in the page's own white and sky. Masked so it fades
-// into the page at the edges and under the product window.
 function Backdrop() {
   const reduce = useReduce();
-  const mask = "radial-gradient(95% 85% at 78% 0%, #000 25%, transparent 100%)";
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-      <div className="absolute inset-x-0 top-0 h-[110%]" style={{ maskImage: mask, WebkitMaskImage: mask }}>
-        {reduce ? (
-          <div
-            className="h-full w-full"
-            style={{ background: "radial-gradient(70% 55% at 40% 10%, var(--lp-sky-soft), transparent 70%)" }}
-          />
-        ) : (
-          <DitherWave
-            waveColor={WAVE}
-            backgroundColor={BG}
-            colorNum={4}
-            pixelSize={3}
-            waveAmplitude={0.42}
-            waveFrequency={2.0}
-            waveSpeed={0.035}
-            className="opacity-80"
-          />
-        )}
+      <div className="absolute inset-x-0 top-0 h-[110%]" style={{ maskImage: MASK, WebkitMaskImage: MASK }}>
+        <DitherWave {...SWIRL} animate={!reduce} />
+        <div className="absolute inset-0 bg-(--lp-bg)/70" />
       </div>
       <div
         className="absolute inset-x-0 top-0 h-28"

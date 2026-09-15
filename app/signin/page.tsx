@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldSeparator } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { DitherWave } from "@/components/landing/DitherWave";
-import { VOICE_BLUE } from "@/components/session/VoiceWave";
+import { SWIRL } from "@/components/landing/swirl";
 import { ChalkMark } from "@/components/app/ChalkMark";
 import { useReduce } from "@/lib/reduced-motion";
 import { cn } from "@/lib/utils";
@@ -27,13 +27,6 @@ type Errors = Partial<Record<FieldName, string>>;
 const GOOGLE_ENABLED = process.env.NEXT_PUBLIC_GOOGLE_AUTH_ENABLED === "true";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// The panel uses the tutor's voice wave palette (VoiceWave.tsx): its light blue
-// over its near-white, with the darkest tone pulled 40% from the voice's deep
-// blue toward its light blue, so the panel reads light. Module-level, so the
-// shader is not rebuilt on every render.
-const PANEL_DEEP: [number, number, number] = [0, 1, 2].map(
-  (i) => VOICE_BLUE.deep[i] + (VOICE_BLUE.top[i] - VOICE_BLUE.deep[i]) * 0.4,
-) as [number, number, number];
 
 // The corner behind the white wordmark stays blue: a wide, soft fade anchored
 // at the bottom-left corner (canvas pixels) where the swirl's tone is capped
@@ -322,17 +315,10 @@ function SignIn() {
 
       {/* The hero's shader, in the block's image slot. Decorative. */}
       <aside aria-hidden className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-[#4696f7] lg:block">
+        {/* The shared swirl (swirl.ts), also behind the landing hero. */}
         {wide && (
           <DitherWave
-            pattern="swirl"
-            waveColor={VOICE_BLUE.top}
-            deepColor={PANEL_DEEP}
-            backgroundColor={VOICE_BLUE.bg}
-            colorNum={7}
-            pixelSize={3}
-            waveAmplitude={0.45}
-            waveFrequency={1.7}
-            waveSpeed={0.035}
+            {...SWIRL}
             calmSpot={CALM_SPOT}
             animate={!reduce}
             className="absolute inset-0"
