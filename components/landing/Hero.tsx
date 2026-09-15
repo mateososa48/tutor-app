@@ -11,24 +11,14 @@ import { SWIRL } from "./swirl";
 import { useReduce } from "./useScript";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
-// The sign-in page's swirl (swirl.ts), kept quiet behind the headline: masked
-// to the top right, washed with the page's own off-white so it reads as a tint
-// rather than a picture, and faded into the page above and below. A still frame
-// under reduced motion.
-const MASK = "radial-gradient(95% 85% at 78% 0%, #000 25%, transparent 100%)";
-
+// The sign-in page's swirl (swirl.ts) at full strength across the whole hero,
+// the same look as the sign-in panel, faded into the page only at the bottom so
+// the section never ends on a hard edge. A still frame under reduced motion.
 function Backdrop() {
   const reduce = useReduce();
   return (
     <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-      <div className="absolute inset-x-0 top-0 h-[110%]" style={{ maskImage: MASK, WebkitMaskImage: MASK }}>
-        <DitherWave {...SWIRL} animate={!reduce} />
-        <div className="absolute inset-0 bg-(--lp-bg)/70" />
-      </div>
-      <div
-        className="absolute inset-x-0 top-0 h-28"
-        style={{ background: "linear-gradient(to bottom, var(--lp-bg), transparent)" }}
-      />
+      <DitherWave {...SWIRL} animate={!reduce} />
       <div
         className="absolute inset-x-0 bottom-0 h-72"
         style={{ background: "linear-gradient(to bottom, transparent, var(--lp-bg) 70%)" }}
@@ -53,7 +43,7 @@ export function Hero() {
             initial={reduce ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.5, ease: EASE }}
-            className="mt-6 max-w-[44ch] text-[1.125rem] leading-[1.55] text-(--lp-ink-2) sm:text-[1.25rem]"
+            className="mt-6 max-w-[44ch] text-[1.125rem] leading-[1.55] text-(--lp-ink) sm:text-[1.25rem]"
           >
             Talk through homework with a tutor that draws every step on a whiteboard and never just gives the answer.
           </motion.p>

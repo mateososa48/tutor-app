@@ -35,7 +35,7 @@ function NavLink({ label, href }: { label: string; href: string }) {
   return (
     <a
       href={href}
-      className="nav-link relative block rounded-[8px] px-3 py-1.5 text-[14px] font-medium text-(--lp-ink-2) outline-none transition-colors hover:text-(--lp-ink) focus-visible:text-(--lp-ink)"
+      className="nav-link relative block rounded-[8px] px-3 py-1.5 text-[14px] font-medium text-(--lp-ink) outline-none"
     >
       {label}
       <svg
