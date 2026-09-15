@@ -35,10 +35,11 @@ const PANEL_DEEP: [number, number, number] = [0, 1, 2].map(
   (i) => VOICE_BLUE.deep[i] + (VOICE_BLUE.top[i] - VOICE_BLUE.deep[i]) * 0.4,
 ) as [number, number, number];
 
-// The corner behind the white wordmark stays blue: a soft oval (canvas pixels
-// from the bottom-left) where the swirl's tone is capped below white. The
-// wordmark sits 24px in, 28px tall and about 107px wide.
-const CALM_SPOT = { x: 78, y: 38, rx: 125, ry: 50, cap: 0.55 };
+// The corner behind the white wordmark stays blue: a wide, soft fade anchored
+// at the bottom-left corner (canvas pixels) where the swirl's tone is capped
+// below white. Full strength covers the wordmark (24px in, 28px tall, about
+// 107px wide); a smaller oval centred on it read as a floating blue pill.
+const CALM_SPOT = { x: 0, y: 0, rx: 420, ry: 230, cap: 0.55 };
 
 const INPUT = "h-11 sm:h-10 rounded-[10px] border-(--lp-line-strong) bg-white px-3 text-[14px] md:text-[14px]";
 

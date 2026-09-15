@@ -74,6 +74,10 @@ const mat4 bayer = mat4(
   3.0, 11.0, 1.0, 9.0,
   15.0, 7.0, 13.0, 5.0) / 16.0;
 
+// A circle through the origin: 0 at a = 0 and back to 0 every 2 pi, so motion
+// built from it loops seamlessly.
+vec2 circ(float a, float r, float ph) { return r * vec2(sin(a + ph) - sin(ph), cos(ph) - cos(a + ph)); }
+
 void main() {
   vec2 px = floor(gl_FragCoord.xy / u_pixel) * u_pixel;
   vec2 uv = px / u_res;
@@ -84,32 +88,39 @@ void main() {
   if (u_pattern == 1) {
     // A slow pan: the whole field drifts across the panel (about a minute to
     // cross it), so a large soft shape never parks in one corner.
-    p += vec2(t * 0.06, -t * 0.04);
+    // The swirl loops: every drift below travels a circle that comes back to its
+    // start, and the clock wraps every 84 units (four minutes at the sign-in
+    // speed), so the opening look repeats exactly and never drifts. Straight-line
+    // drifts grew without bound and, after tens of minutes, the noise lost
+    // precision on the GPU and the whole panel washed out.
+    float a = t * 6.2831853 / 84.0;
+    p += circ(a, 0.96, 0.0);
     // Domain warping: the field's own noise bends where it samples next, twice,
     // and each layer drifts on its own clock, so shapes curl and stretch
     // instead of travelling as bands.
-    vec2 warpA = vec2(fbm4(p + vec2(0.0, t * 0.12)), fbm4(p + vec2(5.2, 1.3) - t * 0.10));
-    vec2 warpB = vec2(fbm4(p + u_amp * 4.0 * warpA + vec2(1.7, 9.2) + t * 0.15),
-                      fbm4(p + u_amp * 4.0 * warpA + vec2(8.3, 2.8) - t * 0.126));
+    vec2 warpA = vec2(fbm4(p + circ(a, 1.6, 1.3)), fbm4(p + vec2(5.2, 1.3) + circ(a, 1.9, 3.7)));
+    vec2 warpB = vec2(fbm4(p + u_amp * 4.0 * warpA + vec2(1.7, 9.2) + circ(a, 2.8, 5.1)),
+                      fbm4(p + u_amp * 4.0 * warpA + vec2(8.3, 2.8) + circ(a, 2.4, 2.2)));
     float n = fbm4(p + u_amp * 4.0 * warpB);
     // Calibrated against a JS model of this field (frequency 1.7, warp 0.45):
     // Four breakpoints, one between each pair of neighbouring tones, fitted on
-    // this field as rendered over ten minutes with the pan (frequency 1.7, warp
-    // 0.45). K3 sits high so only the brightest peaks turn white (about 4% of
-    // the panel, mean lightness 146/255): at 0.5715 big solid-white areas
-    // covered up to a third of it. The sign-in panel draws seven shades, so
-    // broad areas show soft gradations of blue.
-    const float K0 = 0.3458;
-    const float K1 = 0.4072;
-    const float K2 = 0.4856;
-    const float K3 = 0.6300;
+    // this field as rendered over one full loop (frequency 1.7, warp 0.45) to
+    // the seven-shade mix of the swirl's opening minutes, so every moment of
+    // the loop looks like the start: mean lightness about 139/255, about 3%
+    // background, near-single-colour areas no worse than the opening. K3 sits
+    // high so only the brightest peaks turn white.
+    const float K0 = 0.3477;
+    const float K1 = 0.4491;
+    const float K2 = 0.5506;
+    const float K3 = 0.7175;
     float g = n < K1 ? 0.125 + (n - K0) * 0.25 / (K1 - K0)
             : n < K2 ? 0.375 + (n - K1) * 0.25 / (K2 - K1)
             : 0.625 + (n - K2) * 0.25 / (K3 - K2);
     f = clamp(g, 0.0, 1.0);
-    // The calm spot: full strength inside 60% of the oval, easing out to its
-    // edge, where the tone is capped so a label on top always has blue behind it.
-    float calm = 1.0 - smoothstep(0.6, 1.0, length((px - u_calm.xy) / max(u_calm.zw, vec2(1.0))));
+    // The calm spot: full strength inside 40% of the oval, easing out slowly to
+    // its edge, where the tone is capped so a label on top always has blue
+    // behind it. A wide, soft falloff keeps it from reading as a shape.
+    float calm = 1.0 - smoothstep(0.4, 1.0, length((px - u_calm.xy) / max(u_calm.zw, vec2(1.0))));
     f = min(f, mix(1.0, u_calmCap, calm));
   } else {
     float w = fbm(p + vec2(t * 0.35, -t * 0.2) + 1.2 * fbm(p * 0.6 - t * 0.15));
@@ -132,6 +143,9 @@ void main() {
   }
   outColor = vec4(col, 1.0);
 }`;
+
+// Time units per swirl loop; must match the 84.0 in the shader's swirl branch.
+const SWIRL_LOOP = 84;
 
 export function DitherWave({
   waveColor = [0.42, 0.66, 1],
@@ -212,7 +226,9 @@ export function DitherWave({
       gl.uniform2f(uRes, w, h);
     };
     const draw = (now: number) => {
-      gl.uniform1f(uTime, ((now - start) / 1000) * waveSpeed * 10);
+      const time = ((now - start) / 1000) * waveSpeed * 10;
+      // The swirl's motion is periodic, so its clock wraps (see the shader).
+      gl.uniform1f(uTime, pattern === "swirl" ? time % SWIRL_LOOP : time);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     };
     const frame = (now: number) => {
