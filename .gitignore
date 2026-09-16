@@ -43,3 +43,9 @@ next-env.d.ts
 # Playwright MCP screenshots/snapshots
 .playwright-mcp/
 references/
+
+# Local-only dev fixtures (e.g. the voice speed sample)
+public/dev/
+
+# Prompt dumps and scratch output, never shipped
+output/

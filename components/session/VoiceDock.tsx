@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 import { VoiceWave } from "./VoiceWave";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { FilesPopover } from "./FilesPopover";
+import { SpeedControl } from "./SpeedControl";
+import type { TutorSpeedId } from "@/lib/voice-settings";
 
 // The voice dock never changes size. The transcript is a sheet that rises
 // behind it; the dock sits on top of the sheet like a card on a page.
@@ -33,6 +35,9 @@ type Props = {
   onAddFiles: (files: UploadedFile[]) => void;
   onRemoveFile: (id: string) => void;
   fileNotice?: string;
+  /** How fast the tutor talks. The speed button shows only when both are given. */
+  speed?: TutorSpeedId;
+  onSpeedChange?: (speed: TutorSpeedId) => void;
   /** Height of the surface the dock sits in. Defaults to the window, which is
    *  right on the session page; a framed preview passes its own height. */
   frameHeight?: number;
@@ -96,6 +101,8 @@ export function VoiceDock({
   onAddFiles,
   onRemoveFile,
   fileNotice,
+  speed,
+  onSpeedChange,
   frameHeight,
 }: Props) {
   const reduce = useReducedMotion();
@@ -154,6 +161,7 @@ export function VoiceDock({
         transition={spring}
         className="absolute right-0 bottom-[calc(100%+10px)] flex items-center gap-2"
       >
+        {speed && onSpeedChange && <SpeedControl speed={speed} onChange={onSpeedChange} className={PILL} />}
         <FilesPopover files={files} onAddFiles={onAddFiles} onRemoveFile={onRemoveFile} notice={fileNotice} className={PILL} />
         <Button variant="outline" onClick={onToggleTranscript} aria-expanded={open} className={PILL}>
           {open ? <ChevronDown strokeWidth={2} /> : <MessageSquareText strokeWidth={2} />}

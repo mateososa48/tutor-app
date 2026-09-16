@@ -40,13 +40,13 @@ const DECOR = { cursor: "default" } as const;
 
 function Rail({ scale }: { scale: number }) {
   return (
-    <div aria-hidden className="hidden w-12 shrink-0 flex-col bg-black sm:flex" style={{ zoom: scale }}>
+    <div aria-hidden className="hidden w-12 shrink-0 flex-col bg-sidebar sm:flex" style={{ zoom: scale }}>
       <div className="relative h-[92px] shrink-0">
-        <span className="absolute top-2.5 left-2 flex h-9 items-center px-2">
-          <ChalkMark size={24} />
+        <span className="absolute top-2.5 left-0 flex h-9 w-12 items-center justify-center">
+          <ChalkMark size={29} />
         </span>
         <span className={`sb-item sb-toggle ${RAIL_ITEM} absolute top-[52px] left-2`} style={DECOR}>
-          <PanelLeft className="size-5" strokeWidth={2.5} />
+          <PanelLeft className="size-[18px]" strokeWidth={2.1} />
         </span>
       </div>
       <div className="px-2 pt-1">
@@ -61,7 +61,7 @@ function Rail({ scale }: { scale: number }) {
         <span className={`sb-item ${RAIL_ITEM}`} style={DECOR}>
           <SlidersHorizontal className="size-4" strokeWidth={2.5} />
         </span>
-        <span className={`${RAIL_ITEM} mt-1 bg-white text-[11.5px] font-bold text-black`}>AL</span>
+        <span className={`${RAIL_ITEM} mt-1 bg-sidebar-foreground text-[11.5px] font-bold text-sidebar`}>AL</span>
       </div>
     </div>
   );

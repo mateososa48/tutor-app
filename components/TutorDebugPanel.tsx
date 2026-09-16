@@ -103,9 +103,9 @@ export default function TutorDebugPanel({
         borderRadius: 8,
         border: "1px solid rgba(10,10,10,0.18)",
         background: "rgba(255,255,255,0.94)",
-        boxShadow: "0 12px 34px rgba(0,0,0,0.14)",
+        boxShadow: "0 12px 34px rgba(18,18,21,0.14)",
         backdropFilter: "blur(10px)",
-        color: "#0a0a0a",
+        color: "#121215",
       }}
     >
       <div style={{ minWidth: 0 }}>
@@ -204,7 +204,7 @@ export default function TutorDebugPanel({
                     gridTemplateColumns: "46px 84px 1fr",
                     gap: 8,
                     padding: "3px 0",
-                    borderBottom: "1px solid rgba(0,0,0,0.04)",
+                    borderBottom: "1px solid rgba(18,18,21,0.04)",
                   }}
                 >
                   <span style={{ color: "#909090" }}>{formatTime(event.offsetMs)}</span>
@@ -234,7 +234,7 @@ function Metric({ label, value }: { label: string; value: number }) {
       }}
     >
       <div style={{ fontSize: 10, color: "#909090", fontWeight: 700 }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 800, color: "#0a0a0a" }}>{value}</div>
+      <div style={{ fontSize: 15, fontWeight: 800, color: "#121215" }}>{value}</div>
     </div>
   );
 }
@@ -262,8 +262,8 @@ const smallButtonStyle = {
 
 const darkButtonStyle = {
   ...smallButtonStyle,
-  border: "1px solid #0a0a0a",
-  background: "#0a0a0a",
+  border: "1px solid #121215",
+  background: "#121215",
   color: "#fff",
 } satisfies CSSProperties;
 
@@ -273,7 +273,7 @@ const scenarioButtonStyle = {
   borderRadius: 6,
   border: "1px solid #d0d0d0",
   background: "#fff",
-  color: "#0a0a0a",
+  color: "#121215",
   fontSize: 11,
   fontWeight: 700,
 } satisfies CSSProperties;

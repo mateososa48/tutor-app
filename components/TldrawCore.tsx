@@ -15,20 +15,31 @@ import { Editor, createShapeId, toRichText } from "@tldraw/editor";
 import { InstancePresenceRecordType, type TLInstancePresence, type TLShapeId } from "@tldraw/tlschema";
 import {
   formatBoardItems,
+  highlightSizeFor,
   isHeadingItem,
   itemLabelFrom,
+  matchVariants,
+  mergeLineRects,
+  normalizeForMatch,
   resolveItemTarget,
   ringPoints,
+  swipePoints,
   type BoardItem,
+  type HighlightColor,
   type ItemBounds,
 } from "@/lib/board-items";
-import { planReveal, pointsShown, polylineLength, typedPrefix, type RevealInput, type RevealStep } from "@/lib/board-reveal";
+import { catchUpPace, planReveal, pointsShown, polylineLength, typedPrefix, REVEAL_CAP_MS, type RevealInput, type RevealStep } from "@/lib/board-reveal";
+import { findSpot, freeSpace, regionName, type PlaceHint, type PlaceRequest, type Rect } from "@/lib/board-layout";
+import { latexToPlain } from "@/lib/latex-plain";
 import { TutorPenOverlayUtil } from "@/components/board/TutorPenOverlay";
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
 import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
+import { GraphShapeUtil, type TLGraphShape } from "@/components/board/GraphShape";
+import { desmosAvailable, renderDesmosGraph } from "@/components/board/desmos-renderer";
+import { buildAxesGraph, buildFunctionGraph, buildPointsGraph, graphPointBox, graphSpecText, type GraphSpec } from "@/lib/desmos-graph";
 
 const OVERLAY_UTILS = [TutorPenOverlayUtil];
-const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil];
+const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -98,7 +109,6 @@ type TldrawColor = TLDefaultColorStyle;
 const LEFT_X = 60;
 const RIGHT_X = 640;
 const START_Y = 108;
-const HEADING_Y = 18;
 const ROW_GAP = 16;
 const EQ_H = 52;
 const EQ_ROW_GAP = 8;
@@ -124,6 +134,63 @@ const MARKER_HEX: Record<string, string> = {
   "light-blue": "#4ba1f1",
 };
 const DIAGRAM_W = 520;
+// Desmos graphs (Sept 15 2026): a 4:3 picture, big enough to read at a glance
+// and small enough that three sit side by side on a laptop-sized board page
+// (at 480 × 360 only two fit and a graph-heavy lesson turned a page every two).
+const GRAPH_W = 420;
+const GRAPH_H = 315;
+
+// ── Whiteboard pages (Sept 14 2026) ─────────────────────────────────────────
+// The board is a page the size of the visible board. Each tool call's drawing
+// is measured and moved into free space (lib/board-layout.ts): down the first
+// column, then the next, or beside or below an item the tutor names. A full
+// page opens the next one to the right.
+const PAGE_GAP = 240;
+// Clear of the session chip and End button above, the watermark below.
+const PAGE_INSET = { top: 68, right: 36, bottom: 56, left: 36 };
+// The voice dock and its pills cover the bottom-right corner.
+const DOCK_BLOCK = { w: 384, h: 282 };
+const PLACE_SKIP = new Set(["start_new_problem", "start_board_section", "clear_whiteboard"]);
+const AREA_RIGHT_TOOLS = new Set(["add_function_graph", "add_coordinate_axes", "plot_points", "add_vector_diagram"]);
+const EQUATION_TOOLS = new Set(["draw_equation_step", "add_equation_sequence"]);
+// Pictures sit beside the words they illustrate.
+const PICTURE_TOOLS = new Set([
+  "draw_fraction", "add_number_line", "draw_figure", "draw_angle", "draw_array", "add_area_model", "draw_balance",
+  "draw_bar_chart", "add_table", "draw_tape_diagram", "draw_grid", "draw_transversal", "draw_icons", "draw_sketch",
+  "write_vertical", "draw_long_division", "add_process_map",
+]);
+// Highlighter colours: yellow = look here, green = right, pink = the mistake, blue = the step we are on.
+const HIGHLIGHT_TL: Record<HighlightColor, TldrawColor> = { yellow: "yellow", green: "light-green", pink: "light-red", blue: "light-blue" };
+// A whole drawing gets a marker ring in the same colour family instead.
+const RING_TL: Record<HighlightColor, TldrawColor> = { yellow: "yellow", green: "green", pink: "light-red", blue: "blue" };
+type HighlightStroke = { points: Array<{ x: number; y: number }>; size: TLDefaultSizeStyle; duration: number; ring?: boolean };
+
+function pageFrame(base: { w: number; h: number }, index: number): Rect {
+  return { x: (index - 1) * (base.w + PAGE_GAP), y: 0, w: base.w, h: base.h };
+}
+
+function usableArea(frame: Rect, sectionTop = 0): Rect {
+  const top = Math.max(frame.y + PAGE_INSET.top, sectionTop);
+  return {
+    x: frame.x + PAGE_INSET.left,
+    y: top,
+    w: frame.w - PAGE_INSET.left - PAGE_INSET.right,
+    h: Math.max(0, frame.y + frame.h - PAGE_INSET.bottom - top),
+  };
+}
+
+function dockBlock(frame: Rect): Rect {
+  return { x: frame.x + frame.w - DOCK_BLOCK.w, y: frame.y + frame.h - DOCK_BLOCK.h, w: DOCK_BLOCK.w, h: DOCK_BLOCK.h };
+}
+
+function onPage(r: Rect, frame: Rect): boolean {
+  const cx = r.x + r.w / 2;
+  return cx >= frame.x - PAGE_GAP / 2 && cx <= frame.x + frame.w + PAGE_GAP / 2;
+}
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== "undefined" && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+}
 // tldraw text metrics: theme font size 16px × size multiplier, line height 1.35.
 const FONT_PX: Record<TLDefaultSizeStyle, number> = { s: 18, m: 24, l: 36, xl: 44 };
 const LINE_HEIGHT = 1.35;
@@ -169,7 +236,7 @@ export interface WhiteboardSnapshot {
   store: unknown;
   eqItems: EqItem[];
   semanticBoard?: SemanticBoard;
-  pageState: { pageIndex: number; pageTop: number; leftY: number; rightY: number };
+  pageState: { pageIndex: number; pageTop: number; leftY: number; rightY: number; frame?: Rect; sectionTop?: number };
   /** Board items (b1, b2, …) so a resumed session keeps its ids. */
   items?: BoardItem[];
   itemSeq?: number;
@@ -271,6 +338,10 @@ export interface WhiteboardHandle {
   drawIcons(opts: IconsDrawing): void;
   /** The board as a JPEG data URL with its pixel size (or null when empty). */
   exportImage(maxWidth?: number): Promise<{ url: string; width: number; height: number } | null>;
+  /** Where the next item goes; the dispatcher sets it before each tool call. Optional so fake boards compile. */
+  setPlacement?(request: PlaceRequest | null): void;
+  /** A highlighter over the words `text` in an item, or over the whole item. `part` says which it managed. */
+  highlight?(target: string, text: string | undefined, color: HighlightColor): { item: BoardItem; part: "text" | "item" } | null;
 }
 
 export type ItemToken = { tool: string; shapes: Set<string>; eqs: Set<string> };
@@ -551,6 +622,18 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   }, [onWriting]);
   const cursorHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scribbleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  // Page layout: the current page's frame in page coordinates, where the
+  // current section starts, what the next tool call asked for, and each
+  // item's rectangle as placed (a reveal changes live bounds mid-write).
+  const pageFrameRef = useRef<Rect | null>(null);
+  const sectionTopRef = useRef(0);
+  const placeRequestRef = useRef<PlaceRequest | null>(null);
+  const placedRectsRef = useRef<Map<string, Rect>>(new Map());
+  const buildingItemRef = useRef(false);
+  const pendingIsPageRef = useRef(false);
+  const highlightRafRef = useRef<number | null>(null);
+  // Desmos renders graphs asynchronously; board pictures wait for these.
+  const pendingGraphsRef = useRef<Set<Promise<void>>>(new Set());
 
   const colX = (col: "left" | "right") => col === "right" ? RIGHT_X : LEFT_X;
   const colY = (col: "left" | "right") => col === "right" ? rightY : leftY;
@@ -789,7 +872,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const r = p >= 1 ? 1 : p;
       if (state.last !== undefined && Math.abs(state.last - r) < 0.02 && p < 1) return;
       state.last = r;
-      run(() => editor.updateShapes([{ id: shape.id, type: "math", opacity: 1, props: { reveal: r } }] as unknown as Parameters<Editor["updateShapes"]>[0]));
+      run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: 1, props: { reveal: r } }] as unknown as Parameters<Editor["updateShapes"]>[0]));
       return;
     }
     if (step.kind === "text") {
@@ -931,7 +1014,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       clearTimeout(cursorHideRef.current);
       cursorHideRef.current = null;
     }
-    const GAP_BIG = 40;
+    const GAP_BIG = 140;
     let i = 0;
     let phase: "lead" | "draw" = "lead";
     let phaseStart = performance.now();
@@ -968,7 +1051,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           const from = leadFrom ?? { x: target.x + 60, y: target.y + 40 };
           if (!leadInit) {
             const dist = Math.hypot(target.x - from.x, target.y - from.y);
-            leadMs = step.duration > 200 && dist > 40 ? Math.min(130, dist * 0.6) : 0;
+            leadMs = step.duration > 200 && dist > 40 ? Math.min(280, dist) : 0;
             phaseStart = now;
             leadInit = true;
           }
@@ -991,7 +1074,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         phase = "lead";
         state = {};
         const next = steps[i];
-        const gap = next && next.duration > 200 ? GAP_BIG : 0;
+        const gap = next && next.duration > 350 ? GAP_BIG : next && next.duration > 200 ? 60 : 0;
         waitUntil = now + gap;
         if (gap > 0 || !next || next.duration > 120) break;
       }
@@ -1038,6 +1121,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const plain = "richText" in props ? plainOf(editor, props.richText) : "";
       if (shape.type === "math") {
         inputs.push({ id: shape.id, kind: "eq", x, y, chars: String(props.latex ?? "").length });
+      } else if (shape.type === "graph") {
+        inputs.push({ id: shape.id, kind: "eq", x, y, chars: 70 });
       } else if (shape.type === "draw") {
         const pts = strokePointsRef.current.get(shape.id);
         inputs.push({ id: shape.id, kind: "stroke", x, y, length: pts ? polylineLength(pts) : 240 });
@@ -1055,11 +1140,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       hide.push({ id: shape.id, type: shape.type });
     }
     if (inputs.length === 0) return;
-    const steps = planReveal(inputs);
+    // Unhurried, unless tool calls are piling up behind this one.
+    const steps = planReveal(inputs, 28, REVEAL_CAP_MS, catchUpPace(revealQueueRef.current.length));
     editor.run(() => {
       if (hide.length > 0) editor.updateShapes(hide.map((h) => ({ id: h.id, type: h.type, opacity: 0 })) as unknown as Parameters<Editor["updateShapes"]>[0]);
-      const maths = hide.filter((h) => h.type === "math");
-      if (maths.length > 0) editor.updateShapes(maths.map((h) => ({ id: h.id, type: "math", props: { reveal: 0 } })) as unknown as Parameters<Editor["updateShapes"]>[0]);
+      const maths = hide.filter((h) => h.type === "math" || h.type === "graph");
+      if (maths.length > 0) editor.updateShapes(maths.map((h) => ({ id: h.id, type: h.type, props: { reveal: 0 } })) as unknown as Parameters<Editor["updateShapes"]>[0]);
     }, { history: "ignore" });
     enqueue({ kind: "reveal", steps, restAt });
   }, [enqueue, plainOf]);
@@ -1105,9 +1191,265 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     return box;
   }, []);
 
+  // ── Page layout ─────────────────────────────────────────────────────────────
+  // The current page, measured from the visible board the first time it is needed.
+  const ensurePageFrame = useCallback((editor: Editor): Rect => {
+    if (pageFrameRef.current) return pageFrameRef.current;
+    let w = 1280;
+    let h = 760;
+    try {
+      const screen = editor.getViewportScreenBounds();
+      if (screen.w > 0 && screen.h > 0) {
+        w = screen.w;
+        h = screen.h;
+      }
+    } catch {
+      // keep the default size
+    }
+    const base = { w: Math.round(Math.min(1800, Math.max(900, w))), h: Math.round(Math.min(1100, Math.max(560, h))) };
+    pageFrameRef.current = pageFrame(base, pageIndex.current);
+    return pageFrameRef.current;
+  }, []);
+
+  const openPage = useCallback((editor: Editor): Rect => {
+    const current = ensurePageFrame(editor);
+    pageIndex.current += 1;
+    sectionTopRef.current = 0;
+    pageFrameRef.current = pageFrame(current, pageIndex.current);
+    return pageFrameRef.current;
+  }, [ensurePageFrame]);
+
+  const rectOf = useCallback(
+    (editor: Editor, item: BoardItem): Rect | null => placedRectsRef.current.get(item.id) ?? itemBounds(editor, item),
+    [itemBounds],
+  );
+
+  // Everything on this page that new work must not cover, the dock first.
+  const occupiedOn = useCallback((editor: Editor, frame: Rect, exclude?: string): Rect[] => {
+    const out: Rect[] = [dockBlock(frame)];
+    for (const item of itemsRef.current) {
+      if (item.id === exclude) continue;
+      const r = rectOf(editor, item);
+      if (r && onPage(r, frame)) out.push(r);
+    }
+    return out;
+  }, [rectOf]);
+
+  // Move a finished tool call's drawing into free space. Returns where it went.
+  const placeItem = useCallback((editor: Editor, item: BoardItem, request: PlaceRequest | null): Rect | null => {
+    const box = itemBounds(editor, item);
+    if (!box) return null;
+    let frame = ensurePageFrame(editor);
+    if (request?.kind === "new_page" && occupiedOn(editor, frame, item.id).length > 1) frame = openPage(editor);
+    const others = itemsRef.current.filter((i) => i.id !== item.id);
+    const here = (r: Rect | null): Rect | null => (r && onPage(r, frame) ? r : null);
+    // Default neighbours come from the current section only.
+    const inSection = (r: Rect | null): Rect | null => (r && onPage(r, frame) && r.y >= sectionTopRef.current - 1 ? r : null);
+    let hint: PlaceHint = { kind: "flow" };
+    if (request?.kind === "beside" || request?.kind === "below") {
+      const anchor = resolveItemTarget(others, request.target);
+      const r = anchor ? here(rectOf(editor, anchor)) : null;
+      if (r) hint = { kind: request.kind, anchor: r };
+    } else if (request?.kind === "area") {
+      hint = { kind: "area", area: request.area };
+    } else if (AREA_RIGHT_TOOLS.has(item.tool)) {
+      hint = { kind: "area", area: "right" };
+    } else if (EQUATION_TOOLS.has(item.tool)) {
+      // The next line of working goes under the last one.
+      const lastEq = [...others].reverse().find((i) => EQUATION_TOOLS.has(i.tool));
+      const r = lastEq ? inSection(rectOf(editor, lastEq)) : null;
+      if (r) hint = { kind: "below", anchor: r };
+    } else if (PICTURE_TOOLS.has(item.tool)) {
+      // A picture goes beside the words it illustrates.
+      const previous = [...others].reverse().find((i) => !isHeadingItem(i));
+      const words = previous && !PICTURE_TOOLS.has(previous.tool) && !AREA_RIGHT_TOOLS.has(previous.tool);
+      const r = words ? inSection(rectOf(editor, previous)) : null;
+      if (r) hint = { kind: "beside", anchor: r };
+    }
+    if (hint.kind === "flow") {
+      // Words continue under the last words written (or in the next column),
+      // the way a hand moves down a board; earlier gaps are not refilled.
+      const lastWords = [...others].reverse().find((i) => !isHeadingItem(i) && !PICTURE_TOOLS.has(i.tool) && !AREA_RIGHT_TOOLS.has(i.tool));
+      const r = lastWords ? inSection(rectOf(editor, lastWords)) : null;
+      if (r) hint = { kind: "flow", after: r };
+    }
+    let usable = usableArea(frame, sectionTopRef.current);
+    const size = { w: Math.min(box.w, usable.w), h: box.h };
+    let spot = size.h <= usable.h ? findSpot(size, occupiedOn(editor, frame, item.id), usable, hint) : null;
+    if (!spot) {
+      // No room left: the next page, unless this page is still empty.
+      if (occupiedOn(editor, frame, item.id).length > 1) {
+        frame = openPage(editor);
+        usable = usableArea(frame);
+        spot = findSpot(size, occupiedOn(editor, frame, item.id), usable);
+      }
+      spot = spot ?? { x: usable.x, y: usable.y };
+    }
+    const dx = spot.x - box.x;
+    const dy = spot.y - box.y;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+      const ids = item.shapeIds.filter((sid) => editor.getShape(sid as TLShapeId)).map((sid) => sid as TLShapeId);
+      if (ids.length > 0) editor.run(() => editor.nudgeShapes(ids, { x: dx, y: dy }), { history: "ignore" });
+    }
+    return { x: spot.x, y: spot.y, w: box.w, h: box.h };
+  }, [ensurePageFrame, itemBounds, occupiedOn, openPage, rectOf]);
+
+  // ── Highlighter ─────────────────────────────────────────────────────────────
+  // The plain text a shape shows, to decide whether a highlight's words are there.
+  const shapeText = useCallback((editor: Editor, shapeId: string): string => {
+    const shape = editor.getShape(shapeId as TLShapeId);
+    if (!shape) return "";
+    const props = shape.props as Record<string, unknown>;
+    if (shape.type === "math") return latexToPlain(String(props.latex ?? ""));
+    if (shape.type === "graph") {
+      try {
+        return graphSpecText(JSON.parse(String(props.spec ?? "{}")) as GraphSpec);
+      } catch {
+        return "";
+      }
+    }
+    if ("richText" in props) return revealTextRef.current.get(shape.id) ?? plainOf(editor, props.richText);
+    return "";
+  }, [plainOf]);
+
+  // Where some words (or all the text) sit inside a shape on screen, as page
+  // rectangles, one per line. Null when the shape is not laid out right now.
+  const textRectsIn = useCallback((editor: Editor, shapeId: string, variants: string[] | null): Rect[] | null => {
+    let el: Element | null = null;
+    try {
+      el = editor.getContainer().querySelector(`[data-shape-id="${CSS.escape(shapeId)}"]`);
+    } catch {
+      return null;
+    }
+    if (!el) return null;
+    const shape = editor.getShape(shapeId as TLShapeId);
+    // Typeset math: only the formula, not its annotation or KaTeX's hidden MathML.
+    const root = shape?.type === "math" ? (el.querySelector(".chalk-math > div > span") ?? el) : el;
+    const doc = root.ownerDocument;
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => (node.parentElement?.closest(".katex-mathml") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
+    let flat = "";
+    const at: Array<{ node: Text; offset: number }> = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node as Text;
+      for (let i = 0; i < text.data.length; i++) {
+        for (const ch of normalizeForMatch(text.data[i])) {
+          flat += ch;
+          at.push({ node: text, offset: i });
+        }
+      }
+    }
+    if (!flat) return [];
+    let start = 0;
+    let length = flat.length;
+    if (variants) {
+      const hit = variants.map((v) => ({ v, i: flat.indexOf(v) })).find((h) => h.i >= 0);
+      if (!hit) return [];
+      start = hit.i;
+      length = hit.v.length;
+    }
+    // One range per text node, so KaTeX's tall layout boxes never count.
+    const spans = new Map<Text, { from: number; to: number }>();
+    for (const { node, offset } of at.slice(start, start + length)) {
+      const span = spans.get(node);
+      if (span) span.to = Math.max(span.to, offset + 1);
+      else spans.set(node, { from: offset, to: offset + 1 });
+    }
+    const rects: Rect[] = [];
+    for (const [node, { from, to }] of spans) {
+      const range = doc.createRange();
+      range.setStart(node, from);
+      range.setEnd(node, Math.min(node.length, to));
+      for (const r of Array.from(range.getClientRects())) {
+        if (r.width < 0.5 || r.height < 0.5) continue;
+        const a = editor.screenToPage({ x: r.left, y: r.top });
+        const b = editor.screenToPage({ x: r.right, y: r.bottom });
+        rects.push({ x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y });
+      }
+    }
+    if (rects.length === 0) return null;
+    return mergeLineRects(rects, shape?.type === "math");
+  }, []);
+
+  // Highlighter strokes, one after another, each grown under the pen. They
+  // join the item, so erasing the item erases them too.
+  const runHighlights = useCallback((
+    editor: Editor,
+    itemId: string,
+    strokes: HighlightStroke[],
+    color: HighlightColor,
+    meta: BoardArtifactMeta | Record<string, never>,
+  ) => {
+    const reduce = prefersReducedMotion();
+    const next = (k: number) => {
+      const stroke = strokes[k];
+      const host = itemsRef.current.find((i) => i.id === itemId);
+      if (!stroke || !host) {
+        scheduleCursorHide(editor, 2400);
+        return;
+      }
+      const pts = stroke.points;
+      if (pts.length < 2) {
+        next(k + 1);
+        return;
+      }
+      const minX = Math.min(...pts.map((pt) => pt.x));
+      const minY = Math.min(...pts.map((pt) => pt.y));
+      const local = pts.map((pt) => ({ x: pt.x - minX, y: pt.y - minY, z: 0.5 }));
+      const segments = (n: number) => compressLegacySegments([{ type: "free", points: local.slice(0, Math.max(2, n)) }]);
+      const id = createShapeId();
+      editor.run(() => {
+        const common = { segments: segments(reduce ? local.length : 2), isComplete: reduce, isPen: false, scale: 1, scaleX: 1, scaleY: 1 };
+        editor.createShape({
+          id,
+          // Words get a highlighter swipe behind the ink. A drawing gets a
+          // marker ring: a highlighter ring that size smothers the drawing and
+          // runs into its neighbours, and tldraw's highlight `scale` cannot
+          // thin it (its SVG export divides positions by the scale).
+          type: stroke.ring ? "draw" : "highlight",
+          x: minX,
+          y: minY,
+          opacity: reduce ? 1 : 0,
+          props: stroke.ring
+            ? { ...common, color: RING_TL[color], size: "m", fill: "none", dash: "solid", isClosed: false }
+            : { ...common, color: HIGHLIGHT_TL[color], size: stroke.size },
+          meta: { ...meta, itemId },
+        } as Parameters<Editor["createShape"]>[0]);
+      }, { history: "ignore" });
+      host.shapeIds = [...host.shapeIds, id];
+      if (reduce) {
+        next(k + 1);
+        return;
+      }
+      moveCursor(editor, pts[0].x, pts[0].y, 240, () => {
+        const t0 = performance.now();
+        const frame = (now: number) => {
+          highlightRafRef.current = null;
+          if (!editor.getShape(id)) return;
+          const p = Math.min(1, (now - t0) / Math.max(1, stroke.duration));
+          const n = Math.max(2, Math.round(local.length * (1 - Math.pow(1 - p, 2))));
+          editor.run(() => {
+            editor.updateShapes([{ id, type: stroke.ring ? "draw" : "highlight", opacity: 1, props: { segments: segments(n), isComplete: p >= 1 } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+          }, { history: "ignore" });
+          const head = pts[n - 1];
+          patchPresence(editor, { cursor: { x: head.x, y: head.y, type: "default", rotation: 0 } });
+          if (p < 1) {
+            highlightRafRef.current = requestAnimationFrame(frame);
+            return;
+          }
+          next(k + 1);
+        };
+        highlightRafRef.current = requestAnimationFrame(frame);
+      });
+    };
+    next(0);
+  }, [moveCursor, patchPresence, scheduleCursorHide]);
+
   useEffect(() => {
     const timers = scribbleTimersRef.current;
     return () => {
+      if (highlightRafRef.current !== null) cancelAnimationFrame(highlightRafRef.current);
       if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
       if (scribbleAnimRef.current !== null) cancelAnimationFrame(scribbleAnimRef.current);
       if (revealRafRef.current !== null) cancelAnimationFrame(revealRafRef.current);
@@ -1126,58 +1468,69 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     editor.setCamera({ x: 0, y: 0, z: 1 });
   }, []);
 
-  const focusOn = useCallback((editor: Editor, x: number, y: number, w = 420, h = 180) => {
+  // Is this page rectangle on screen at a readable zoom?
+  const rectVisible = useCallback((editor: Editor, r: Rect): boolean => {
     try {
       const viewport = editor.getViewportPageBounds();
       const zoom = editor.getZoomLevel() || 1;
-      const isRightColumn = x >= RIGHT_X - 20;
-      const hasRightColumnWork = rightY.current > pageTop.current + START_Y + ROW_GAP;
-      const useTwoColumnFrame = isRightColumn || hasRightColumnWork;
-      const FOCUS_CTX = 120;
-      const focusX = useTwoColumnFrame ? LEFT_X - 16 : x;
-      const focusY = Math.max(pageTop.current, y - FOCUS_CTX);
-      // Frame the element's neighborhood. Track the actual content width instead
-      // of always spanning both full columns (the old RIGHT_X + 560 minimum is
-      // what forced the camera to zoom way out).
-      const focusW = useTwoColumnFrame
-        ? Math.max(x + w - focusX, 700)
-        : w;
-      const focusH = useTwoColumnFrame
-        ? Math.max(h + FOCUS_CTX + 96, h + 164)
-        : h + 108;
-      const pad = 72 / zoom;
-      // "Visible" also means readable: if the student zoomed far out, new
-      // content must still bring the camera back to a legible zoom.
-      const READABLE_ZOOM = 0.8;
-      const isVisible =
-        zoom >= READABLE_ZOOM &&
-        focusX - pad >= viewport.minX &&
-        focusY - pad >= viewport.minY &&
-        focusX + focusW + pad <= viewport.maxX &&
-        focusY + focusH + pad <= viewport.maxY;
+      const pad = 12 / zoom;
+      return (
+        zoom >= 0.8 &&
+        r.x - pad >= viewport.minX &&
+        r.y - pad >= viewport.minY &&
+        r.x + r.w + pad <= viewport.maxX &&
+        r.y + r.h + pad <= viewport.maxY
+      );
+    } catch {
+      return true;
+    }
+  }, []);
 
-      if (isVisible) return;
-
-      // Coalesce a burst of draws: accumulate the union of focus rects and make a
-      // single camera move on the next frame, then clamp so text stays readable.
-      const rect: FocusRect = { x: focusX, y: focusY, w: focusW, h: focusH };
-      pendingFocusRef.current = pendingFocusRef.current
-        ? unionRect(pendingFocusRef.current, rect)
-        : rect;
-      if (focusDebounceRef.current.raf !== null) {
-        cancelAnimationFrame(focusDebounceRef.current.raf);
-      }
+  // Bring new or referenced work into view. When the board page fits on
+  // screen at a readable zoom the camera frames the whole page, so the board
+  // holds still while the tutor writes around it; otherwise it frames the
+  // work itself. "Visible" also means readable: a student who zoomed far out
+  // comes back to a legible zoom.
+  const focusOn = useCallback((editor: Editor, x: number, y: number, w = 420, h = 180) => {
+    // Mid tool call the shapes are not in their final place yet; endItem focuses.
+    if (buildingItemRef.current) return;
+    try {
+      if (rectVisible(editor, { x, y, w, h })) return;
+      const frame = pageFrameRef.current;
+      const screen = editor.getViewportScreenBounds();
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const wholePage = Boolean(
+        frame &&
+          Math.min(screen.w / frame.w, screen.h / frame.h) >= 0.8 &&
+          cx >= frame.x &&
+          cx <= frame.x + frame.w &&
+          cy >= frame.y &&
+          cy <= frame.y + frame.h,
+      );
+      // Too small a screen for the page (a phone): frame the item's row from
+      // the page's left edge, so a row never loses its start off screen.
+      const rowStart = frame && cx >= frame.x && cx <= frame.x + frame.w ? Math.min(x, frame.x + PAGE_INSET.left) : x;
+      const rect: FocusRect = wholePage && frame
+        ? { ...frame }
+        : { x: rowStart - 24, y: y - 56, w: x + w - rowStart + 64, h: h + 112 };
+      // Coalesce a burst of draws into one camera move on the next frame.
+      const pending = pendingFocusRef.current;
+      pendingFocusRef.current = pending && !wholePage && !pendingIsPageRef.current ? unionRect(pending, rect) : rect;
+      pendingIsPageRef.current = wholePage;
+      if (focusDebounceRef.current.raf !== null) cancelAnimationFrame(focusDebounceRef.current.raf);
       focusDebounceRef.current.raf = requestAnimationFrame(() => {
         focusDebounceRef.current.raf = null;
         const f = pendingFocusRef.current;
+        const isPage = pendingIsPageRef.current;
         pendingFocusRef.current = null;
+        pendingIsPageRef.current = false;
         if (!f) return;
         try {
-          editor.zoomToBounds(f, { targetZoom: 1, inset: 64, animation: { duration: 260 } });
-          const MIN_ZOOM = 0.8;
-          if (editor.getZoomLevel() < MIN_ZOOM) {
+          editor.zoomToBounds(f, { targetZoom: 1, inset: isPage ? 0 : 48, animation: { duration: 320 } });
+          if (!isPage && editor.getZoomLevel() < 0.8) {
             const cam = editor.getCamera();
-            editor.setCamera({ ...cam, z: MIN_ZOOM }, { animation: { duration: 160 } });
+            editor.setCamera({ ...cam, z: 0.8 }, { animation: { duration: 160 } });
           }
         } catch {
           // Editor may be mid-teardown; a missed camera move is harmless.
@@ -1186,7 +1539,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     } catch {
       // Camera movement is a nicety; drawing should never fail because of it.
     }
-  }, []);
+  }, [rectVisible]);
 
   // Cancel any pending post-batch focus and reset both raf/timeout handles.
   const cancelPendingFocus = useCallback(() => {
@@ -1621,6 +1974,49 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   }, [createLine, createText, currentMeta]);
 
   useImperativeHandle(ref, () => {
+    // Render a graph spec into a graph shape; board pictures wait for it.
+    const renderGraphInto = (editor: Editor, id: TLShapeId, spec: GraphSpec, w: number, h: number) => {
+      const job = renderDesmosGraph(spec, w, h)
+        .then(({ svg, errors }) => {
+          if (!editor.getShape(id)) return;
+          const allFailed = spec.expressions.length > 0 && errors.length >= spec.expressions.length;
+          const issues = errors.map((e) => `${e.latex}: ${e.message}`).join(" | ");
+          editor.run(
+            () => editor.updateShapes([{ id, type: "graph", props: { svg, status: allFailed ? "error" : "ready", issues } }] as unknown as Parameters<Editor["updateShapes"]>[0]),
+            { history: "ignore" },
+          );
+        })
+        .catch((err: unknown) => {
+          if (!editor.getShape(id)) return;
+          const issues = `Desmos did not load (${err instanceof Error ? err.message : String(err)})`;
+          editor.run(
+            () => editor.updateShapes([{ id, type: "graph", props: { status: "error", issues } }] as unknown as Parameters<Editor["updateShapes"]>[0]),
+            { history: "ignore" },
+          );
+        });
+      pendingGraphsRef.current.add(job);
+      void job.finally(() => pendingGraphsRef.current.delete(job));
+    };
+
+    // A real Desmos graph on the board, with its caption; placed like any drawing.
+    const createGraph = (editor: Editor, spec: GraphSpec, label: string | undefined, col: "left" | "right") => {
+      const x = colX(col);
+      const y = colY(col).current;
+      const id = createShapeId();
+      editor.createShape<TLGraphShape>({
+        id,
+        type: "graph",
+        x,
+        y,
+        props: { w: GRAPH_W, h: GRAPH_H, spec: JSON.stringify(spec), svg: "", status: "rendering", issues: "", reveal: 1 },
+        meta: currentMeta(),
+      });
+      if (label) createText(editor, label, x, y + GRAPH_H + 20, { color: PENCIL, size: "s", font: "sans", width: GRAPH_W, align: "middle" });
+      colY(col).current += GRAPH_H + (label ? 86 : 58);
+      renderGraphInto(editor, id, spec, GRAPH_W, GRAPH_H);
+      return { x, y, w: GRAPH_W, h: GRAPH_H };
+    };
+
     const api: WhiteboardHandle = {
     clearWhiteboard() {
       const editor = editorRef.current;
@@ -1636,6 +2032,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       markerRef.current = 0;
       semanticBoardRef.current = createEmptySemanticBoard();
       itemsRef.current = [];
+      pageFrameRef.current = null;
+      sectionTopRef.current = 0;
+      placedRectsRef.current.clear();
     },
 
     startNewProblem(title: string) {
@@ -1652,57 +2051,64 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       markerRef.current = 0;
       semanticBoardRef.current = createEmptySemanticBoard(title);
       itemsRef.current = [];
+      pageFrameRef.current = null;
+      sectionTopRef.current = 0;
+      placedRectsRef.current.clear();
+      // A fresh page the size of the visible board, headed at its top left.
+      const usable = usableArea(ensurePageFrame(editor));
+      const headW = Math.min(1120, usable.w);
       // Ink heading with a thin pencil rule, the way a board title is written.
-      const measured = measureText(editor, title, "sans", "xl", 1120);
+      const measured = measureText(editor, title, "sans", "xl", headW);
       editor.createShape({
         id: createShapeId(),
         type: "text",
-        x: LEFT_X,
-        y: HEADING_Y,
+        x: usable.x,
+        y: usable.y,
         props: {
           richText: toRichText(title),
           size: "xl",
           font: "sans",
           color: INK,
           textAlign: "start",
-          w: 1120,
+          w: headW,
           autoSize: false,
           scale: 1,
         },
         meta: currentMeta(),
       });
-      const titleW = Math.min(1120, Math.max(240, measured.w + 8));
-      const ruleY = HEADING_Y + measured.h + 8;
-      createLine(editor, LEFT_X, ruleY, LEFT_X + titleW, ruleY, PENCIL);
-      leftY.current = Math.max(START_Y, ruleY + 28);
-      rightY.current = leftY.current;
-      focusOn(editor, LEFT_X, HEADING_Y, titleW, ruleY + 28 - HEADING_Y);
+      const titleW = Math.min(headW, Math.max(240, measured.w + 8));
+      const ruleY = usable.y + measured.h + 8;
+      createLine(editor, usable.x, ruleY, usable.x + titleW, ruleY, PENCIL);
       recordDirectSemanticAction(
         { type: "start_new_problem", title },
-        { bounds: { x: LEFT_X, y: HEADING_Y, w: titleW, h: 80, column: "full", pageIndex: pageIndex.current } },
+        { bounds: { x: usable.x, y: usable.y, w: titleW, h: 80, column: "full", pageIndex: pageIndex.current } },
       );
     },
 
-    startBoardSection(title: string, _freshPage?: boolean) {
+    startBoardSection(title: string, freshPage?: boolean) {
       const editor = editorRef.current;
       if (!editor) return;
-      const nextY = Math.max(leftY.current, rightY.current);
-      leftY.current = nextY;
-      rightY.current = nextY;
-      ensureColumnRoom(editor, "left", 60);
-
-      const y = Math.max(leftY.current, rightY.current) + 8;
-      const measured = measureText(editor, title, "sans", "l", 1120);
-      createText(editor, title, LEFT_X, y, { size: "l", font: "sans", color: INK, width: 1120 });
-      const sectionW = Math.min(1120, Math.max(200, measured.w + 8));
+      // A section is a row across the board under everything on this page,
+      // or the top of a fresh page when asked for or when this one is full.
+      let frame = ensurePageFrame(editor);
+      let usable = usableArea(frame);
+      const content = occupiedOn(editor, frame).slice(1);
+      let y = content.length > 0 ? Math.max(...content.map((r) => r.y + r.h)) + 36 : usable.y;
+      if (content.length > 0 && (freshPage || y + 180 > usable.y + usable.h)) {
+        frame = openPage(editor);
+        usable = usableArea(frame);
+        y = usable.y;
+      }
+      const headW = Math.min(1120, usable.w);
+      const measured = measureText(editor, title, "sans", "l", headW);
+      createText(editor, title, usable.x, y, { size: "l", font: "sans", color: INK, width: headW });
+      const sectionW = Math.min(headW, Math.max(200, measured.w + 8));
       const ruleY = y + measured.h + 6;
-      createLine(editor, LEFT_X, ruleY, LEFT_X + sectionW, ruleY, PENCIL);
-      leftY.current = ruleY + 24;
-      rightY.current = ruleY + 24;
-      focusOn(editor, LEFT_X, y, sectionW, ruleY + 24 - y);
+      createLine(editor, usable.x, ruleY, usable.x + sectionW, ruleY, PENCIL);
+      sectionTopRef.current = ruleY + 24;
       recordDirectSemanticAction(
         { type: "start_section", title },
-        { bounds: { x: LEFT_X, y, w: sectionW, h: 60, column: "full", pageIndex: pageIndex.current } },
+        { bounds: { x: usable.x, y, w: sectionW, h: 60, column: "full", pageIndex: pageIndex.current } },
       );
     },
 
@@ -1747,6 +2153,30 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right", extras?: GraphExtras) {
       const editor = editorRef.current;
       if (!editor) return;
+      if (desmosAvailable()) {
+        const col = column ?? "right";
+        const curves = 1 + (extras?.secondExpression ? 1 : 0) + (extras?.extraExpressions?.length ?? 0);
+        const pens = takePens(curves + (extras?.slopeRun ? 1 : 0));
+        const { spec } = buildFunctionGraph({
+          expression,
+          second: extras?.secondExpression,
+          extras: extras?.extraExpressions,
+          xMin,
+          xMax,
+          yMin: extras?.yMin,
+          yMax: extras?.yMax,
+          markPoints: extras?.markPoints,
+          slopeRun: extras?.slopeRun ?? null,
+          colors: pens.map((pen) => MARKER_HEX[pen] ?? MARKER_HEX.blue),
+          box: { w: GRAPH_W, h: GRAPH_H },
+        });
+        const b = createGraph(editor, spec, label, col);
+        recordDirectSemanticAction(
+          { type: "function_graph", expression, x_min: xMin, x_max: xMax, label, column: col },
+          { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
+        );
+        return;
+      }
       const col = column ?? "right";
       const W = 300;
       const H = 220;
@@ -2193,6 +2623,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     addCoordinateAxes(xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right") {
       const editor = editorRef.current;
       if (!editor) return;
+      if (desmosAvailable()) {
+        const col = column ?? "right";
+        const b = createGraph(editor, buildAxesGraph({ xMin, xMax, yMin, yMax, box: { w: GRAPH_W, h: GRAPH_H } }), label, col);
+        recordDirectSemanticAction(
+          { type: "coordinate_axes", x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax, label, column: col },
+          { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
+        );
+        return;
+      }
       const col = column ?? "right";
       const w = 300;
       const h = 220;
@@ -2211,6 +2650,25 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right", connect?: boolean) {
       const editor = editorRef.current;
       if (!editor) return;
+      if (desmosAvailable()) {
+        const col = column ?? "right";
+        const spec = buildPointsGraph({
+          points: parseCoordinatePoints(points),
+          connect: connect === true,
+          xMin,
+          xMax,
+          yMin,
+          yMax,
+          colors: takePens(1).map((pen) => MARKER_HEX[pen] ?? MARKER_HEX.blue),
+          box: { w: GRAPH_W, h: GRAPH_H },
+        });
+        const b = createGraph(editor, spec, label, col);
+        recordDirectSemanticAction(
+          { type: "plot_points", text: points, x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax, label, column: col },
+          { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
+        );
+        return;
+      }
       const col = column ?? "right";
       const w = 300;
       const h = 220;
@@ -3975,6 +4433,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           pageTop: pageTop.current,
           leftY: leftY.current,
           rightY: rightY.current,
+          frame: pageFrameRef.current ?? undefined,
+          sectionTop: sectionTopRef.current,
         },
       };
     },
@@ -4011,11 +4471,45 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     },
 
     getBoardSummary() {
-      return formatBoardItems(itemsRef.current, semanticBoardRef.current.title);
+      const editor = editorRef.current;
+      const title = semanticBoardRef.current.title;
+      const frame = pageFrameRef.current;
+      if (!editor || !frame || itemsRef.current.length === 0) return formatBoardItems(itemsRef.current, title);
+      // Where each item sits and where the page is still empty, in words.
+      const usable = usableArea(frame);
+      const places: Record<string, string> = {};
+      const here: Rect[] = [];
+      for (const item of itemsRef.current) {
+        const r = rectOf(editor, item);
+        if (!r) continue;
+        if (onPage(r, frame)) {
+          places[item.id] = regionName(r, usable);
+          here.push(r);
+        } else {
+          places[item.id] = "earlier page";
+        }
+      }
+      const issues: Record<string, string> = {};
+      for (const item of itemsRef.current) {
+        for (const sid of item.shapeIds) {
+          const shape = editor.getShape(sid as TLShapeId);
+          if (shape?.type !== "graph") continue;
+          const gp = shape.props as { status: string; issues: string };
+          if (gp.issues) issues[item.id] = gp.status === "error" ? `could not draw: ${gp.issues}` : `some lines did not draw: ${gp.issues}`;
+        }
+      }
+      return formatBoardItems(itemsRef.current, title, 10, {
+        places,
+        free: freeSpace([...here, dockBlock(frame)], usable),
+        page: pageIndex.current,
+        issues,
+      });
     },
 
     beginItem(tool: string): ItemToken {
       const editor = editorRef.current;
+      buildingItemRef.current = true;
+      placeRequestRef.current = null;
       return {
         tool,
         shapes: editor ? currentShapeIdSet(editor) : new Set<string>(),
@@ -4023,7 +4517,14 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       };
     },
 
+    setPlacement(request: PlaceRequest | null) {
+      placeRequestRef.current = request;
+    },
+
     endItem(token: ItemToken, label: string | null, owner: "tutor" | "student" = "tutor"): string | null {
+      buildingItemRef.current = false;
+      const request = placeRequestRef.current;
+      placeRequestRef.current = null;
       const editor = editorRef.current;
       if (!editor) return null;
       const shapeIds = diffStringSet(currentShapeIdSet(editor), token.shapes);
@@ -4044,7 +4545,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           } catch {
             // tagging is a nicety
           }
-          revealItem(editor, { ...host, shapeIds }, itemBounds(editor, host));
+          const hostBox = itemBounds(editor, host);
+          revealItem(editor, { ...host, shapeIds }, hostBox);
+          if (hostBox) focusOn(editor, hostBox.x, hostBox.y, hostBox.w, hostBox.h);
           return host.id;
         }
       }
@@ -4059,6 +4562,20 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         createdAt: Date.now(),
       };
       itemsRef.current = [...itemsRef.current, item].slice(-200);
+      // Into free space on the board. Headings place themselves.
+      let placed: Rect | null;
+      if (PLACE_SKIP.has(token.tool)) {
+        // A heading owns its whole row, so nothing squeezes in beside the title.
+        const b = itemBounds(editor, item);
+        const row = pageFrameRef.current ? usableArea(pageFrameRef.current) : null;
+        placed = b && row ? { x: row.x, y: b.y, w: row.w, h: b.h } : b;
+      } else {
+        placed = placeItem(editor, item, request);
+      }
+      if (placed) placedRectsRef.current.set(id, placed);
+      // Tools still draw at the old column cursors; placement moves the result.
+      leftY.current = START_Y;
+      rightY.current = START_Y;
       try {
         const updates = shapeIds
           .map((shapeId) => editor.getShape(shapeId as TLShapeId))
@@ -4069,7 +4586,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         // Tagging is a nicety; the registry is the source of truth.
       }
       // Written, not pasted: hide what was just created and reveal it in order.
-      revealItem(editor, item, itemBounds(editor, item));
+      revealItem(editor, item, placed ?? itemBounds(editor, item));
+      if (placed) focusOn(editor, placed.x, placed.y, placed.w, placed.h);
       return id;
     },
 
@@ -4128,36 +4646,102 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return item;
     },
 
+    highlight(target: string, text: string | undefined, color: HighlightColor) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const item = resolveItemTarget(itemsRef.current, target);
+      if (!item) return null;
+      const box = itemBounds(editor, item);
+      if (!box) return null;
+      const variants = text && text.trim() ? matchVariants(text) : null;
+      const own = item.shapeIds.filter((sid) => {
+        const type = editor.getShape(sid as TLShapeId)?.type;
+        return type !== undefined && type !== "highlight";
+      });
+      // Decide now whether the words are on the board, so the result can say so.
+      const holder = variants
+        ? own.find((sid) => {
+            const plain = normalizeForMatch(shapeText(editor, sid));
+            return variants.some((v) => plain.includes(v));
+          })
+        : undefined;
+      const part: "text" | "item" = holder ? "text" : "item";
+      const textual = own.every((sid) => {
+        const type = editor.getShape(sid as TLShapeId)?.type;
+        return type === "math" || type === "text";
+      });
+      const meta = currentMeta();
+      const swipes = (rects: Rect[]): HighlightStroke[] =>
+        rects.slice(0, 4).map((r) => {
+          const pen = highlightSizeFor(r.h);
+          return { points: swipePoints(r, pen.width), size: pen.size as TLDefaultSizeStyle, duration: Math.min(620, 260 + r.w * 1.4) };
+        });
+      const draw = () => {
+        const host = itemsRef.current.find((i) => i.id === item.id);
+        if (!host) return;
+        // A labelled point on a Desmos graph: a highlighter dab on the point itself.
+        const holderShape = holder ? editor.getShape(holder as TLShapeId) : undefined;
+        if (holderShape?.type === "graph" && variants) {
+          const gp = holderShape.props as { w: number; h: number; spec: string };
+          const gb = editor.getShapePageBounds(holderShape.id);
+          try {
+            const spec = JSON.parse(gp.spec) as GraphSpec;
+            const marker = spec.markers.find((m) => variants.some((v) => normalizeForMatch(m.label).includes(v)));
+            if (marker && gb) {
+              const at = graphPointBox(marker, spec.bounds, gp.w, gp.h);
+              runHighlights(editor, item.id, swipes([{ x: gb.x + at.x - 16, y: gb.y + at.y - 13, w: 32, h: 26 }]), color, meta);
+              return;
+            }
+          } catch {
+            // an unreadable spec falls through to the whole graph
+          }
+        }
+        let strokes = holder && variants ? swipes(textRectsIn(editor, holder, variants) ?? []) : [];
+        // The words could not be measured: mark the line they are in.
+        if (strokes.length === 0 && (holder || textual)) {
+          strokes = swipes((holder ? [holder] : own).flatMap((sid) => textRectsIn(editor, sid, null) ?? []));
+        }
+        // A drawing: a marker ring around it.
+        if (strokes.length === 0) {
+          const bb = itemBounds(editor, host) ?? box;
+          strokes = [{ points: ringPoints(bb, 10), size: "m", duration: 900, ring: true }];
+        }
+        runHighlights(editor, item.id, strokes, color, meta);
+      };
+      enqueue({
+        kind: "action",
+        wait: part === "text" ? 1300 : textual ? 2400 : 1500,
+        run: () => {
+          const bb = itemBounds(editor, item) ?? box;
+          const moving = !rectVisible(editor, bb);
+          focusOn(editor, bb.x, bb.y, bb.w, bb.h);
+          if (!moving) {
+            draw();
+            return;
+          }
+          // Measure once the camera has arrived and the words are on screen.
+          const t = setTimeout(draw, 420);
+          scribbleTimersRef.current.push(t);
+        },
+      });
+      return { item, part };
+    },
+
     eraseItems(targets: string[]) {
       const editor = editorRef.current;
       if (!editor) return [];
       const erased: string[] = [];
       const goneIds = new Set<string>();
-      // Closing the gap: everything lower in the same column moves up by the
-      // erased item's height, so the board does not keep holes.
-      const reflow = (b: ItemBounds) => {
-        // Headings and anything spanning both columns stay put.
-        const spansBoth = b.x < RIGHT_X - 20 && b.x + b.w > RIGHT_X + 60;
-        if (spansBoth || b.y < START_Y - 10) return;
-        const col: "left" | "right" = b.x >= RIGHT_X - 20 ? "right" : "left";
-        const inCol = (sx: number) => (sx >= RIGHT_X - 20) === (col === "right");
-        const dy = b.h + ROW_GAP;
-        const movers = editor.getCurrentPageShapes().filter((s) => inCol(s.x) && s.y > b.y + b.h - 2);
-        if (movers.length > 0) {
-          editor.run(() => editor.updateShapes(movers.map((s) => ({ id: s.id, type: s.type, y: s.y - dy })) as unknown as Parameters<Editor["updateShapes"]>[0]), { history: "ignore" });
-        }
-        const cursor = col === "right" ? rightY : leftY;
-        cursor.current = Math.max(START_Y, cursor.current - dy);
-      };
+      // Erased space stays free for the next drawing. Nothing slides up, so
+      // what the student is looking at never jumps.
       for (const target of targets) {
         const item = resolveItemTarget(itemsRef.current.filter((i) => !goneIds.has(i.id)), target);
         if (!item) continue;
         goneIds.add(item.id);
         erased.push(item.label);
-        const bounds = itemBounds(editor, item);
+        placedRectsRef.current.delete(item.id);
         const shapeIds = item.shapeIds.filter((id) => editor.getShape(id as TLShapeId)).map((id) => id as TLShapeId);
         if (shapeIds.length > 0) editor.deleteShapes(shapeIds);
-        if (bounds) reflow(bounds);
         mathOrderRef.current = mathOrderRef.current.filter((mid) => editor.getShape(mid as TLShapeId));
         recordDirectSemanticAction({ type: "delete_shape", target_ids: item.shapeIds });
       }
@@ -4177,6 +4761,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const editor = editorRef.current;
       if (!editor) return null;
       await awaitRevealIdle();
+      if (pendingGraphsRef.current.size > 0) {
+        await Promise.race([Promise.allSettled([...pendingGraphsRef.current]), new Promise((resolve) => setTimeout(resolve, 8000))]);
+      }
       const ids = editor.getCurrentPageShapeIds();
       if (ids.size === 0) return null;
       try {
@@ -4205,8 +4792,23 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       pageTop.current = snap.pageState?.pageTop ?? 0;
       leftY.current = snap.pageState?.leftY ?? START_Y;
       rightY.current = snap.pageState?.rightY ?? START_Y;
+      pageFrameRef.current = snap.pageState?.frame ?? null;
+      sectionTopRef.current = snap.pageState?.sectionTop ?? 0;
+      placedRectsRef.current.clear();
       // Math shapes came back with the store; old overlay items become shapes.
       mathOrderRef.current = editor.getCurrentPageShapesSorted().filter((shape) => shape.type === "math").map((shape) => shape.id);
+      if (desmosAvailable()) {
+        for (const shape of editor.getCurrentPageShapes()) {
+          if (shape.type !== "graph") continue;
+          const gp = shape.props as { w: number; h: number; spec: string; svg: string };
+          if (gp.svg || !gp.spec) continue;
+          try {
+            renderGraphInto(editor, shape.id, JSON.parse(gp.spec) as GraphSpec, gp.w, gp.h);
+          } catch {
+            // an unreadable spec keeps its placeholder
+          }
+        }
+      }
       for (const item of snap.eqItems ?? []) {
         if (!item || typeof item.latex !== "string") continue;
         createMath(editor, {

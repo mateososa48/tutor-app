@@ -22,6 +22,8 @@ import { LiveTutorSession } from "@/lib/live-tutor";
 import type { LiveTutorCallbacks } from "@/lib/live-tutor";
 import { GeminiTutorSession } from "@/lib/gemini-tutor";
 import { resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
+import { useTutorSpeed } from "@/components/session/SpeedControl";
+import { tutorSpeedRate } from "@/lib/voice-settings";
 import type { TranscriptEntry, ToolCallResult, TutorActivity } from "@/lib/live-types";
 import {
   SavedSession,
@@ -37,6 +39,7 @@ import {
 import type { UploadedFile } from "@/lib/file-processor";
 import { intakeOpeningMessage, intakeTitle, setActiveIntake, takeIntake } from "@/lib/session-intake";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
+import { SessionRecorder } from "@/lib/session-recorder";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
 
@@ -150,6 +153,9 @@ function SessionDetailPage({ id }: { id: string }) {
   const sessionRef = useRef<TutorClient | null>(null);
   // Which voice stack runs this session (env default, ?provider= override).
   const [provider] = useState(() => resolveTutorProvider(searchParams));
+  // How fast the tutor's voice plays. Only the Gemini client can change it.
+  const [tutorSpeed, setTutorSpeed] = useTutorSpeed();
+  const speechRateRef = useRef(tutorSpeedRate(tutorSpeed));
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const subtitleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -180,6 +186,8 @@ function SessionDetailPage({ id }: { id: string }) {
   const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const intervalSnapRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingResumeSnapshotRef = useRef<WhiteboardSnapshot | null>(null);
+  // Everything that happens, recorded for the admin replay (lib/session-recorder.ts).
+  const recorderRef = useRef<SessionRecorder | null>(null);
 
   const debugMode = debugConfig.enabled;
   const qaTextOnly = debugConfig.textOnly;
@@ -219,6 +227,7 @@ function SessionDetailPage({ id }: { id: string }) {
   ) => {
     if (!debugModeRef.current) return;
     const now = Date.now();
+    if (kind !== "transcript") recorderRef.current?.record("live.debug", kind === "tool" || kind === "pacing" ? "tutor" : "system", { kind: kind, message: label, payload: detail ?? null }, now);
     const event: TutorDebugEvent = {
       id: `dbg_${now}_${++debugEventIdRef.current}`,
       at: now,
@@ -252,6 +261,16 @@ function SessionDetailPage({ id }: { id: string }) {
   useEffect(() => { elapsedSecondsRef.current = elapsedSeconds; }, [elapsedSeconds]);
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { liveStateRef.current = liveState; }, [liveState]);
+
+  // One recorder per session page; it batches events and board pictures to the server.
+  useEffect(() => {
+    const recorder = new SessionRecorder(id, () => sessionStartedAtRef.current);
+    recorderRef.current = recorder;
+    return () => {
+      recorder.flushBeacon();
+      if (recorderRef.current === recorder) recorderRef.current = null;
+    };
+  }, [id]);
 
   // Mute: disable the mic track locally and tell the Live session.
   useEffect(() => {
@@ -333,6 +352,8 @@ function SessionDetailPage({ id }: { id: string }) {
     const img = await whiteboardRef.current?.exportImage?.(896);
     if (!img || sessionRef.current !== live) return;
     live.sendBoardFrame(img.url);
+    // The exact picture the tutor saw goes into the recording too.
+    void recorderRef.current?.recordFrame(img, "sent to tutor", true);
   }, []);
   const scheduleBoardFrame = useCallback((delayMs: number, force = false) => {
     const live = sessionRef.current;
@@ -345,24 +366,45 @@ function SessionDetailPage({ id }: { id: string }) {
     }, delayMs);
   }, [sendBoardFrame]);
 
+  // Tutors whose board pictures are not sent automatically still get pictures in the recording.
+  const recordingFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleRecordingFrame = useCallback(() => {
+    if (recordingFrameTimerRef.current) clearTimeout(recordingFrameTimerRef.current);
+    recordingFrameTimerRef.current = setTimeout(async () => {
+      recordingFrameTimerRef.current = null;
+      const img = await whiteboardRef.current?.exportImage?.(896);
+      if (img) void recorderRef.current?.recordFrame(img, "board changed", false);
+    }, 1200);
+  }, []);
+
   const handleToolCall = useCallback(
     (name: string, args: Record<string, unknown>): ToolCallResult => {
-      const result = dispatchWhiteboardTool(name, args, {
+      const startedAt = performance.now();
+      let result = dispatchWhiteboardTool(name, args, {
         whiteboard: whiteboardRef.current,
       });
       if (result.success) {
         scheduleBoardFrame(name === "look_at_board" ? 0 : 900, name === "look_at_board");
         const summary = whiteboardRef.current?.getBoardSummary?.();
         if (summary) {
-          return {
+          result = {
             success: true,
             message: `${result.message ?? "Done"}.\n[Board: ${summary}]`,
           };
         }
       }
+      if (sessionRef.current?.boardFrames !== "auto") scheduleRecordingFrame();
+      recorderRef.current?.record("tool.call", "tutor", {
+        name,
+        args,
+        success: result.success,
+        message: result.success ? result.message ?? "" : undefined,
+        error: result.success ? undefined : result.error,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
       return result;
     },
-    [scheduleBoardFrame],
+    [scheduleBoardFrame, scheduleRecordingFrame],
   );
 
   // While queued writing is still appearing, the badge says so.
@@ -436,6 +478,12 @@ function SessionDetailPage({ id }: { id: string }) {
     const endedAt = Date.now();
     const dur = elapsedSecondsRef.current;
     persistSnapshot();
+    // The last board picture reaches the recording before the session closes (never waiting long).
+    const finalImage = await Promise.race([
+      whiteboardRef.current?.exportImage?.(896) ?? Promise.resolve(null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    if (finalImage) await recorderRef.current?.recordFrame(finalImage, "session end", false, endedAt);
     const live = sessionRef.current;
     sessionRef.current = null;
     // Graceful close first so the last transcript fragments flush into state.
@@ -446,6 +494,7 @@ function SessionDetailPage({ id }: { id: string }) {
       offsetMs: Math.max(0, endedAt - sessionStartedAtRef.current),
       payload: {},
     });
+    await recorderRef.current?.flush();
     await patchSession(id, {
       status: "ended",
       endedAt,
@@ -571,6 +620,16 @@ function SessionDetailPage({ id }: { id: string }) {
         setErrorMessage("");
         recordDebug("connection", "live_session_active", { resumed, expiresAt });
         if (!isResumeRef.current) clearNewSessionUrlFlag();
+        if (!timerRef.current) {
+          recorderRef.current?.record("session.started", "system", {
+            provider,
+            resumed: isResumeRef.current,
+            speechRate: speechRateRef.current,
+            textOnly: qaTextOnlyRef.current === true,
+            viewport: `${window.innerWidth}x${window.innerHeight}`,
+            userAgent: navigator.userAgent,
+          });
+        }
         if (timerRef.current) return; // reconnect: timers already running
         // Ticker for elapsed time
         timerRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
@@ -596,6 +655,7 @@ function SessionDetailPage({ id }: { id: string }) {
           intentional: intentionalDisconnectRef.current,
           reason,
         });
+        void recorderRef.current?.flush();
         clearSubtitle();
         cleanupTimers();
         sessionRef.current = null;
@@ -612,6 +672,7 @@ function SessionDetailPage({ id }: { id: string }) {
       },
       onError: (msg) => {
         recordDebug("error", "live_session_error", { message: msg });
+        void recorderRef.current?.flush();
         pauseLiveSession();
         intentionalDisconnectRef.current = true;
         disconnectToErrorRef.current = true;
@@ -627,12 +688,14 @@ function SessionDetailPage({ id }: { id: string }) {
       },
       onSpeakingChange: (speaking) => {
         setIsTutorSpeaking(speaking);
+        recorderRef.current?.record("tutor.speaking", "tutor", { speaking });
       },
       onAudioAnalyser: (node) => {
         setAnalyser(node);
       },
       onActivity: (activity) => {
         setTutorActivity(activity);
+        recorderRef.current?.record("tutor.activity", "tutor", { activity });
       },
       onDebugEvent: (event) => {
         recordDebug(event.kind, event.message, event.payload);
@@ -641,6 +704,7 @@ function SessionDetailPage({ id }: { id: string }) {
 
     const live: TutorClient = provider === "gemini" ? new GeminiTutorSession(callbacks) : new LiveTutorSession(callbacks);
     sessionRef.current = live;
+    live.setSpeechRate?.(speechRateRef.current);
     recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
 
     try {
@@ -663,6 +727,12 @@ function SessionDetailPage({ id }: { id: string }) {
       failStart(message, null);
     }
   }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, id, pauseLiveSession, persistSnapshot, provider, recordDebug]);
+
+  useEffect(() => {
+    speechRateRef.current = tutorSpeedRate(tutorSpeed);
+    sessionRef.current?.setSpeechRate?.(speechRateRef.current);
+    if (sessionRef.current) recorderRef.current?.record("settings.speed", "student", { speed: tutorSpeed, rate: speechRateRef.current });
+  }, [tutorSpeed]);
 
   const handleAddFiles = useCallback(
     (newFiles: UploadedFile[]) => {
@@ -746,6 +816,7 @@ function SessionDetailPage({ id }: { id: string }) {
   // pagehide → pause beacon
   useEffect(() => {
     function onPageHide() {
+      recorderRef.current?.flushBeacon();
       if ((liveStateRef.current === "active" || liveStateRef.current === "connecting") && !endInFlightRef.current) {
         sendPauseBeacon(id);
       }
@@ -768,6 +839,7 @@ function SessionDetailPage({ id }: { id: string }) {
       if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
       if (subtitleTimerRef.current) clearTimeout(subtitleTimerRef.current);
       if (boardFrameTimerRef.current) clearTimeout(boardFrameTimerRef.current);
+      if (recordingFrameTimerRef.current) clearTimeout(recordingFrameTimerRef.current);
     };
   }, [cleanupTimers, id]);
 
@@ -1035,6 +1107,8 @@ function SessionDetailPage({ id }: { id: string }) {
           onAddFiles={handleAddFiles}
           onRemoveFile={handleRemoveFile}
           fileNotice={fileNotice}
+          speed={provider === "gemini" ? tutorSpeed : undefined}
+          onSpeedChange={setTutorSpeed}
         />
         {debugMode && (
           <TutorDebugPanel

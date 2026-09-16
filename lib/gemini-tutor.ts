@@ -3,6 +3,7 @@ import { AudioCapture, AudioPlayer } from "./audio";
 import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
 import type { UploadedFile } from "./file-processor";
 import { clearActiveIntake, getActiveIntake, intakeOpeningMessage } from "./session-intake";
+import { DEFAULT_TUTOR_SPEED, tutorSpeedRate } from "./voice-settings";
 
 // Gemini Live behind the same surface as the GPT-Live client, so the session
 // page does not care which one it is talking to. One model both talks and
@@ -56,6 +57,7 @@ export class GeminiTutorSession {
   private turnDone = false;
   private shownCaption = "";
   private lastAudioAt = 0;
+  private speechRate = tutorSpeedRate(DEFAULT_TUTOR_SPEED);
 
   readonly boardFrames = "auto" as const;
 
@@ -107,7 +109,7 @@ export class GeminiTutorSession {
     const config = (await res.json()) as GeminiConfig;
     if (this.ended) return;
 
-    const player = new AudioPlayer();
+    const player = new AudioPlayer({ rate: this.speechRate });
     this.player = player;
     player.resume();
     this.callbacks.onAudioAnalyser?.(player.getAnalyser());
@@ -183,10 +185,11 @@ export class GeminiTutorSession {
       const playing = player.isPlaying() || Date.now() - this.lastAudioAt < 220;
       this.setSpeaking(playing);
       // Caption follows the audio: reveal the turn's text in proportion to
-      // how much of the turn's audio has actually played. The page decides
-      // how long the finished caption lingers.
+      // how much of the turn's audio has actually played, counted in the
+      // original audio's time so a slowed voice keeps its caption in step.
+      // The page decides how long the finished caption lingers.
       if (this.turnText) {
-        const played = Math.max(0, this.turnAudioMs - player.getPendingDurationMs());
+        const played = Math.max(0, this.turnAudioMs - player.getPendingSourceMs());
         const frac = this.turnAudioMs > 0 ? Math.min(1, played / this.turnAudioMs) : 0;
         this.showCaption(revealByFraction(this.turnText, frac));
       }
@@ -215,6 +218,13 @@ export class GeminiTutorSession {
   setMuted(muted: boolean) {
     this.muted = muted;
     this.debug("audio", muted ? "mic_muted" : "mic_unmuted");
+  }
+
+  // Playback speed of the tutor's voice, pitch kept. Applies mid-sentence.
+  setSpeechRate(rate: number) {
+    this.speechRate = rate;
+    this.player?.setRate(rate);
+    this.debug("audio", "speech_rate", { rate });
   }
 
   sendText(text: string): boolean {

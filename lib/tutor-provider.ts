@@ -22,4 +22,10 @@ export type TutorClient = Pick<LiveTutorSession, "start" | "end" | "setMuted" | 
    * so only look_at_board sends one.
    */
   boardFrames?: "auto" | "on-demand";
+  /**
+   * Playback speed of the tutor's voice (0.9 = 10% slower, pitch kept).
+   * Gemini only: its audio is PCM we play ourselves. GPT-Live's arrives as a
+   * live WebRTC track, which cannot be slowed without piling up delay.
+   */
+  setSpeechRate?: (rate: number) => void;
 };

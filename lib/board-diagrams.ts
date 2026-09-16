@@ -635,6 +635,11 @@ export type GraphExtras = {
   slopeRun: { x1: number; x2: number } | null;
   /** A second curve on the same axes; where the two cross is marked. */
   secondExpression?: string;
+  /** Optional y range; the graph picks one that shows the curve when missing. */
+  yMin?: number;
+  yMax?: number;
+  /** More lines on the same axes: inequalities, circles, vertical lines, restricted pieces. */
+  extraExpressions?: string[];
 };
 
 // Numbers as a tutor would write them on a board: 2, 2.5, -0.75.

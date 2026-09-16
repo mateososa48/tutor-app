@@ -1,14 +1,15 @@
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import type { UploadedFile } from "./file-processor";
+import { TUTOR_TOOL_DECLARATIONS, runTutorTool } from "./tutor-tools";
 import {
-  createTutorState,
-  rememberNote,
-  noteStudentTurn,
-  noteDraw,
+  createPolicy,
   formatMemory,
-  formatDownshift,
-  type TutorState,
-} from "./tutor-state";
+  formatTutorState,
+  noteStudentUtterance,
+  rememberNote,
+  takeStateUpdate,
+  type TutorPolicy,
+} from "./tutor-policy";
 
 const MODEL = "gemini-3.1-flash-live-preview";
 // Ephemeral tokens are a v1alpha feature; the WS endpoint must match.
@@ -75,13 +76,15 @@ export class GeminiLiveSession {
   private systemInstruction: string;
   private voiceName: string;
   private tutorTurnText = "";
-  private tutorState: TutorState = createTutorState();
-  private lastDownshiftAt = 0;
+  // What the student said since the tutor last spoke. Transcripts arrive in
+  // fragments, so signals (frustrated, bored, unsure…) are read once the tutor answers.
+  private studentUtterance = "";
+  // Attempts, signals, and notes behind the [Tutor state] line (lib/tutor-policy.ts).
+  private policy: TutorPolicy = createPolicy(Date.now());
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
 
   private static readonly MAX_RECONNECT_ATTEMPTS = 4;
   private static readonly TURN_FINISH_DEBOUNCE_MS = 1_600;
-  private static readonly DOWNSHIFT_COOLDOWN_MS = 30_000;
 
   constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string }) {
     this.callbacks = callbacks;
@@ -189,7 +192,7 @@ export class GeminiLiveSession {
         systemInstruction: {
           parts: [{ text: this.systemInstruction }],
         },
-        tools: [{ functionDeclarations: WHITEBOARD_TOOL_DECLARATIONS }],
+        tools: [{ functionDeclarations: [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS] }],
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
@@ -207,6 +210,7 @@ export class GeminiLiveSession {
   }
 
   sendText(text: string): boolean {
+    noteStudentUtterance(this.policy, text);
     return this.sendUserTurn([{ text }]);
   }
 
@@ -230,7 +234,7 @@ export class GeminiLiveSession {
         "Session event: initial_start.\n" +
         "The live tutoring session has just started. Greet the student briefly and ask what they want help with. " +
         fileContext +
-        " Do not start teaching until the task is identified.",
+        " Do not start teaching until the task is identified. The moment they name it, your first reply about it puts it on the board.",
     });
     return this.sendUserTurn(parts);
   }
@@ -256,7 +260,7 @@ export class GeminiLiveSession {
     lines.push(
       "Resume behavior: If the recent conversation contains a specific confirmed problem, briefly orient to it and ask whether to continue. " +
       "If the context is generic, missing, or the student sounds confused, say you may have lost the thread and ask what they want help with. " +
-      "Do not invent equations, givens, previous steps, or board content. Do not use whiteboard tools until a concrete task is confirmed.",
+      "Do not invent equations, givens, previous steps, or board content: the board was restored from a snapshot, and anything not listed above is not on it. Once you and the student pick the task back up, draw it fresh rather than pointing at what you cannot see.",
     );
     parts.push({ text: lines.join("\n") });
     return this.sendUserTurn(parts);
@@ -311,14 +315,23 @@ export class GeminiLiveSession {
 
   private noteStudentTranscript(text: string) {
     this.clearTurnTimer();
-    // Updates the confusion streak and resets the per-turn draw counter.
-    noteStudentTurn(this.tutorState, text);
+    const piece = text.trim();
+    this.studentUtterance = this.studentUtterance ? `${this.studentUtterance} ${piece}` : piece;
     this.tutorTurnText = "";
+  }
+
+  // The student is done talking (the tutor answers or calls a tool): read the
+  // whole utterance for signals once.
+  private flushStudentUtterance() {
+    const text = this.studentUtterance.trim();
+    this.studentUtterance = "";
+    if (text) noteStudentUtterance(this.policy, text);
   }
 
   private noteTutorTranscript(text: string) {
     const trimmed = text.trim();
     if (!trimmed) return;
+    this.flushStudentUtterance();
     this.tutorTurnText = this.tutorTurnText
       ? `${this.tutorTurnText} ${trimmed}`
       : trimmed;
@@ -333,29 +346,16 @@ export class GeminiLiveSession {
     }, GeminiLiveSession.TURN_FINISH_DEBOUNCE_MS);
   }
 
-  // After the tutor's turn settles: if the student was confused and the tutor
-  // kept piling on (drew 2+ things), inject a downshift directive. This replaces
-  // the old "you didn't draw, draw something" nudge with its opposite.
+  // After the tutor's turn settles, log the session state for the debug panel.
+  // Guidance reaches the model inside tool results, never as an extra turn
+  // (the old downshift injection made the tutor speak again after the fact).
   private finishTutorTurn() {
     this.clearTurnTimer();
     const tutorText = this.tutorTurnText.trim();
     this.tutorTurnText = "";
     if (!tutorText) return;
-
-    const now = Date.now();
-    const shouldDownshift =
-      this.tutorState.confusionStreak >= 1 &&
-      this.tutorState.drawsSinceStudent >= 2 &&
-      now - this.lastDownshiftAt >= GeminiLiveSession.DOWNSHIFT_COOLDOWN_MS;
-
-    if (!shouldDownshift) return;
-
-    this.lastDownshiftAt = now;
-    this.debug("pacing", "downshift_injected", {
-      confusionStreak: this.tutorState.confusionStreak,
-      draws: this.tutorState.drawsSinceStudent,
-    });
-    this.sendUserTurn([{ text: formatDownshift() }]);
+    const line = formatTutorState(this.policy, Date.now());
+    if (line) this.debug("pacing", "tutor_state", { line });
   }
 
   private buildFileParts(files: UploadedFile[]): GeminiContentPart[] {
@@ -555,11 +555,16 @@ export class GeminiLiveSession {
         this.debug("tool", "tool_call_received", { id, name, args });
         let result: ToolCallResult;
         try {
-          if (name === "remember_about_student") {
+          this.flushStudentUtterance();
+          const tutorTool = runTutorTool(name, args, this.policy, Date.now());
+          if (tutorTool) {
+            // App-owned: check_answer / record_attempt, answered with the [Tutor state] line.
+            result = tutorTool;
+          } else if (name === "remember_about_student") {
             // App-owned tool: record a durable student-model fact and echo the
             // full memory back so it refreshes in the model's context.
             const note = typeof args.note === "string" ? args.note.trim() : "";
-            rememberNote(this.tutorState, note);
+            rememberNote(this.policy, note);
             if (note) {
               // Same durable memory the GPT-Live path writes.
               void fetch("/api/profile/notes", {
@@ -568,16 +573,15 @@ export class GeminiLiveSession {
                 body: JSON.stringify({ note }),
               }).catch(() => undefined);
             }
-            const mem = formatMemory(this.tutorState);
+            const mem = formatMemory(this.policy);
             result = { success: true, message: mem ? `Noted. ${mem}` : "Noted." };
           } else {
             result = this.callbacks.onToolCall(name, args);
-            // Count successful board draws and piggyback the student-model memory
-            // onto the response so it survives context compression without extra turns.
+            // Piggyback the memory and any changed [Tutor state] onto board results so
+            // they stay in context (and survive compression) without extra turns.
             if (result.success) {
-              noteDraw(this.tutorState);
-              const mem = formatMemory(this.tutorState);
-              if (mem) result = { ...result, message: `${result.message ?? "Done"} ${mem}` };
+              const extra = [formatMemory(this.policy), takeStateUpdate(this.policy, Date.now())].filter(Boolean).join(" ");
+              if (extra) result = { ...result, message: `${result.message ?? "Done"} ${extra}` };
             }
           }
         } catch (error) {

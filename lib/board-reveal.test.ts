@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { planReveal, pointsShown, polylineLength, stepDuration, typedPrefix, REVEAL_CAP_MS } from "./board-reveal";
+import { catchUpPace, planReveal, pointsShown, polylineLength, stepDuration, typedPrefix, REVEAL_CAP_MS } from "./board-reveal";
 
 test("reveal order is rows top to bottom, left to right within a row", () => {
   const steps = planReveal([
@@ -17,14 +17,29 @@ test("a busy call is squeezed under the cap", () => {
   const steps = planReveal(inputs);
   const total = steps.reduce((s, x) => s + x.duration, 0);
   assert.ok(total <= REVEAL_CAP_MS, `total ${total}`);
-  assert.ok(steps.every((s) => s.duration >= 30));
+  assert.ok(steps.every((s) => s.duration >= 40));
 });
 
 test("durations scale with content and stay bounded", () => {
-  assert.equal(stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 0 }), 80);
-  assert.equal(stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 1000 }), 1400);
-  assert.equal(stepDuration({ id: "x", kind: "stroke", x: 0, y: 0, length: 100 }), 290);
-  assert.equal(stepDuration({ id: "x", kind: "box", x: 0, y: 0 }), 170);
+  assert.equal(stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 0 }), 180);
+  assert.equal(stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 1000 }), 3600);
+  assert.equal(stepDuration({ id: "x", kind: "stroke", x: 0, y: 0, length: 100 }), 570);
+  assert.equal(stepDuration({ id: "x", kind: "box", x: 0, y: 0 }), 320);
+});
+
+test("a short line is written at a readable pace, not blinked in", () => {
+  const line = stepDuration({ id: "x", kind: "text", x: 0, y: 0, chars: 30 });
+  assert.ok(line >= 1400, `30 characters took ${line} ms`);
+  assert.ok(stepDuration({ id: "x", kind: "eq", x: 0, y: 0, chars: 9 }) >= 850);
+});
+
+test("writing speeds up only when tool calls pile up", () => {
+  assert.equal(catchUpPace(0), 1);
+  assert.ok(catchUpPace(1) < 1 && catchUpPace(3) < catchUpPace(1));
+  const inputs = [{ id: "a", kind: "text" as const, x: 0, y: 0, chars: 20 }];
+  const calm = planReveal(inputs)[0].duration;
+  const hurried = planReveal(inputs, 28, REVEAL_CAP_MS, catchUpPace(3))[0].duration;
+  assert.ok(hurried < calm * 0.6, `${hurried} vs ${calm}`);
 });
 
 test("typing and stroke progress helpers", () => {

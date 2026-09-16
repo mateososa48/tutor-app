@@ -1,14 +1,4 @@
-import {
-  pgTable,
-  text,
-  integer,
-  bigint,
-  jsonb,
-  timestamp,
-  serial,
-  index,
-  primaryKey,
-} from "drizzle-orm/pg-core";
+import { pgTable, text, integer, bigint, jsonb, timestamp, serial, index, primaryKey, uniqueIndex } from "drizzle-orm/pg-core";
 
 // ── Auth.js tables ─────────────────────────────────────────────────────────
 
@@ -105,6 +95,31 @@ export const sessionEvents = pgTable(
   (t) => [index("session_events_session_seq_idx").on(t.sessionId, t.seq)],
 );
 
+// Board pictures recorded during sessions, for the admin replay (Sept 15 2026).
+// The JPEG the tutor saw, as base64; one row per distinct picture per session.
+export const sessionFrames = pgTable(
+  "session_frames",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => tutorSessions.id, { onDelete: "cascade" }),
+    offsetMs: integer("offset_ms").notNull(),
+    hash: text("hash").notNull(),
+    mime: text("mime").notNull().default("image/jpeg"),
+    width: integer("width").notNull().default(0),
+    height: integer("height").notNull().default(0),
+    bytes: integer("bytes").notNull().default(0),
+    data: text("data").notNull(),
+    reason: text("reason").notNull().default("board"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("session_frames_session_offset_idx").on(t.sessionId, t.offsetMs),
+    uniqueIndex("session_frames_session_hash_idx").on(t.sessionId, t.hash),
+  ],
+);
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type User = typeof users.$inferSelect;
@@ -115,9 +130,17 @@ export type TutorSession = typeof tutorSessions.$inferSelect;
 export type NewTutorSession = typeof tutorSessions.$inferInsert;
 export type SessionEvent = typeof sessionEvents.$inferSelect;
 export type NewSessionEvent = typeof sessionEvents.$inferInsert;
+export type SessionFrame = typeof sessionFrames.$inferSelect;
 
 export type SessionStatus = "active" | "paused" | "ended";
 export type SessionEventKind =
+  | "session.started"
+  | "tool.call"
+  | "live.debug"
+  | "tutor.speaking"
+  | "tutor.activity"
+  | "board.frame"
+  | "settings.speed"
   | "transcript.entry"
   | "whiteboard.snapshot"
   | "board.update.ready"

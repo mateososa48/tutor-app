@@ -23,6 +23,8 @@ import type {
 } from "./live-types";
 import { BackendTurnTracker, TranscriptAssembler } from "./live-events";
 import { buildFilesItemText } from "./tutor-prompts";
+import { runTutorTool } from "./tutor-tools";
+import { createPolicy, noteStudentUtterance, takeStateUpdate } from "./tutor-policy";
 
 const DATA_CHANNEL_LABEL = "oai-events";
 const SESSION_START_TIMEOUT_MS = 15_000;
@@ -235,6 +237,8 @@ export class LiveTutorSession {
   private ending = false;
   private reconnectAttempts = 0;
   private notesList: string[] = [];
+  // Attempts and student signals behind the [Tutor state] line (lib/tutor-policy.ts).
+  private policy = createPolicy(Date.now());
   private recent: HistoryTurn[] = [];
   private idCounter = 0;
   private eventCounter = 0;
@@ -251,6 +255,7 @@ export class LiveTutorSession {
     );
     this.assembler = new TranscriptAssembler({
       onFlush: (role, text, at) => {
+        if (role === "student") noteStudentUtterance(this.policy, text);
         this.recent.push({ role, text });
         if (this.recent.length > HISTORY_TURNS * 2) this.recent.splice(0, this.recent.length - HISTORY_TURNS * 2);
         this.callbacks.onTranscript({ id: this.nextId(), role, text, at });
@@ -548,6 +553,7 @@ export class LiveTutorSession {
       },
     });
     if (!queued) return false;
+    noteStudentUtterance(this.policy, trimmed);
     return this.requestBackendTurn();
   }
 
@@ -613,6 +619,9 @@ export class LiveTutorSession {
   // ── Tools ────────────────────────────────────────────────────────────────
 
   private async executeTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
+    // App-owned: check_answer / record_attempt, answered with the [Tutor state] line.
+    const tutorTool = runTutorTool(name, args, this.policy, Date.now());
+    if (tutorTool) return tutorTool;
     if (name === "remember_about_student") {
       const note = typeof args.note === "string" ? args.note.trim() : "";
       if (!note) return { success: false, error: "Missing note." };
@@ -635,7 +644,10 @@ export class LiveTutorSession {
       }
       return { success: true, message: `Noted. [Memory: ${this.notesList.join("; ")}]` };
     }
-    return this.callbacks.onToolCall(name, args);
+    const result = this.callbacks.onToolCall(name, args);
+    // A changed [Tutor state] rides on board results, so the backend sees it this turn.
+    const update = result.success ? takeStateUpdate(this.policy, Date.now()) : "";
+    return update && result.success ? { success: true, message: `${result.message ?? "Done"} ${update}` } : result;
   }
 
   // ── Inbound ──────────────────────────────────────────────────────────────

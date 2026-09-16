@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
-import { ChevronsUpDown, House, LogOut, PanelLeft, Plus, SlidersHorizontal } from "lucide-react";
+import { isAdminEmail } from "@/lib/admin-emails";
+import { ChevronsUpDown, House, LogOut, PanelLeft, Plus, SlidersHorizontal, ShieldCheck } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -35,8 +36,9 @@ import { cn } from "@/lib/utils";
 import { ChalkMark } from "./ChalkMark";
 
 // Plain black rail in the pressed-button vocabulary (`.sb-btn`, `.sb-item` in
-// globals.css): white strokes, no tinted fills. The New session button rests
-// flat and lifts on hover; the current page is a flat outlined item. The mark
+// globals.css), near-black with off-white text: no outlines, no fills, no lifts. New session is a normal row,
+// a little brighter and bolder than the rest; the current page shows a sky
+// icon, or a sky dot before a session's title. The mark
 // always goes home. The sidebar toggle (a plain panel glyph, full white) sits
 // at the header's right edge while the sidebar is open and beneath the mark
 // while it is collapsed; the two fade past each other as the width animates.
@@ -50,6 +52,7 @@ function initials(name?: string | null, email?: string | null): string {
 }
 
 const STROKE = 2.5; // every glyph in the rail
+const TOGGLE_STROKE = 2.1; // the panel toggle is a touch lighter and smaller than the rest
 const ITEM = "sb-item";
 const TRIGGER = "sb-item sb-toggle absolute flex size-8 items-center justify-center rounded-md outline-none";
 const EASE = "ease-[cubic-bezier(0.16,1,0.3,1)]";
@@ -97,8 +100,11 @@ export function AppSidebar() {
               />
             }
           >
-            <ChalkMark size={24} />
-            {!collapsed && <span className="lp-brand animate-in fade-in text-[16.5px] text-white duration-300">chalk</span>}
+            <ChalkMark
+              size={29}
+              className="transition-[translate] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-data-[collapsible=icon]:-translate-x-[6.5px] motion-reduce:transition-none"
+            />
+            {!collapsed && <span className="lp-brand animate-in fade-in text-[20px] text-sidebar-foreground duration-300">chalk</span>}
           </TooltipTrigger>
           {collapsed && <TooltipContent side="right">Home</TooltipContent>}
         </Tooltip>
@@ -116,7 +122,7 @@ export function AppSidebar() {
               />
             }
           >
-            <PanelLeft className="size-5" strokeWidth={STROKE} />
+            <PanelLeft className="size-[18px]" strokeWidth={TOGGLE_STROKE} />
           </TooltipTrigger>
           <TooltipContent side="right">Collapse</TooltipContent>
         </Tooltip>
@@ -134,48 +140,59 @@ export function AppSidebar() {
               />
             }
           >
-            <PanelLeft className="size-5" strokeWidth={STROKE} />
+            <PanelLeft className="size-[18px]" strokeWidth={TOGGLE_STROKE} />
           </TooltipTrigger>
           <TooltipContent side="right">Open sidebar</TooltipContent>
         </Tooltip>
       </SidebarHeader>
 
       <SidebarContent>
-        {/* The button lifts 2px up and to the left on hover; the group's
-            padding leaves room for it. */}
-        <SidebarGroup className="pt-1 pb-3">
+        <SidebarGroup className="pt-1 pb-2">
           <SidebarGroupContent>
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
                   tooltip="New session"
                   onClick={() => router.push("/session")}
-                  className="sb-btn h-10 px-3 text-[14px] group-data-[collapsible=icon]:p-1.5!"
+                  className="sb-btn"
                 >
-                  <Plus strokeWidth={2.75} />
+                  <Plus strokeWidth={STROKE} />
                   <span>New session</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
+              {isAdminEmail(email) && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    tooltip="Recorded sessions"
+                    isActive={pathname.startsWith("/admin")}
+                    onClick={() => router.push("/admin")}
+                    className={ITEM}
+                  >
+                    <ShieldCheck strokeWidth={STROKE} />
+                    <span>Recorded sessions</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
 
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-          <SidebarGroupLabel className="text-white/50">Recent</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-sidebar-foreground/50">Recent</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="gap-1.5">
               {sessions === null
                 ? [72, 56, 64].map((w) => (
                     <SidebarMenuItem key={w}>
                       <div className="flex h-8 items-center gap-2 px-2 group-data-[collapsible=icon]:hidden">
-                        <Skeleton className="size-4 rounded-md border border-white/30 bg-transparent" />
-                        <Skeleton className="h-3.5 rounded-md border border-white/30 bg-transparent" style={{ width: `${w}%` }} />
+                        <Skeleton className="size-4 rounded-md border border-sidebar-foreground/25 bg-transparent" />
+                        <Skeleton className="h-3.5 rounded-md border border-sidebar-foreground/25 bg-transparent" style={{ width: `${w}%` }} />
                       </div>
                     </SidebarMenuItem>
                   ))
                 : sessions.length === 0
                   ? (
-                    <li className="px-2 py-1.5 text-[12.5px] text-white/55 group-data-[collapsible=icon]:hidden">
+                    <li className="px-2 py-1.5 text-[12.5px] text-sidebar-foreground/55 group-data-[collapsible=icon]:hidden">
                       Sessions you start will show up here.
                     </li>
                   )
@@ -187,8 +204,16 @@ export function AppSidebar() {
                           tooltip={s.title}
                           isActive={active}
                           onClick={() => router.push(`/session/${s.id}`)}
-                          className={cn(ITEM, "pl-2.5")}
+                          className={cn(ITEM, "relative pl-4")}
                         >
+                          {/* The open session: a sky dot in the gutter, no outline or fill. */}
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "absolute top-1/2 left-1.5 size-1.5 -translate-y-1/2 rounded-full bg-(--lp-sky) transition-[opacity,scale] duration-200 ease-out",
+                              active ? "scale-100 opacity-100" : "scale-50 opacity-0",
+                            )}
+                          />
                           <span>{s.title}</span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
@@ -216,14 +241,14 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <DropdownMenu>
               <DropdownMenuTrigger render={<SidebarMenuButton size="lg" tooltip={name ?? "Account"} className={cn(ITEM, "mt-1")} />}>
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white text-[11.5px] font-bold text-black">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-foreground text-[11.5px] font-bold text-sidebar">
                   {initials(name, email)}
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col leading-tight">
-                  <span className="truncate text-[13px] font-medium text-white">{name ?? "Your account"}</span>
-                  <span className="truncate text-[11.5px] text-white/55">{email ?? ""}</span>
+                  <span className="truncate text-[13px] font-medium text-sidebar-foreground">{name ?? "Your account"}</span>
+                  <span className="truncate text-[11.5px] text-sidebar-foreground/55">{email ?? ""}</span>
                 </span>
-                <ChevronsUpDown className="ml-auto size-4 text-white/55" strokeWidth={STROKE} />
+                <ChevronsUpDown className="ml-auto size-4 text-sidebar-foreground/55" strokeWidth={STROKE} />
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" sideOffset={8} className="w-56">
                 <DropdownMenuGroup>

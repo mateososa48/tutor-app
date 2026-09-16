@@ -28,34 +28,49 @@ export type RevealInput = {
   length?: number;
 };
 
-export const REVEAL_CAP_MS = 1800;
+export const REVEAL_CAP_MS = 4500;
 
-// A hand writes about 40 characters a second on a board, draws a stroke at
-// roughly a pixel per millisecond, and drops a box or an arrow in a blink.
+// An unhurried hand at a board, so a student can follow along: about 20
+// characters a second, strokes at roughly half a pixel per millisecond, and
+// boxes and arrows eased in rather than blinked in. (Sept 14 2026: the first
+// pace, 50 characters a second under a 1.8 s cap, read as rushed.)
 export function stepDuration(input: RevealInput): number {
   switch (input.kind) {
     case "text":
-      return Math.min(1400, 80 + 20 * (input.chars ?? 0));
+      return Math.min(3600, 180 + 48 * (input.chars ?? 0));
     case "eq":
-      return Math.min(900, 380 + 7 * (input.chars ?? 0));
+      return Math.min(2400, 700 + 22 * (input.chars ?? 0));
     case "stroke":
-      return Math.min(700, 200 + 0.9 * (input.length ?? 0));
+      return Math.min(1500, 380 + 1.9 * (input.length ?? 0));
     case "line":
-      return Math.min(420, 160 + 0.5 * (input.length ?? 0));
+      return Math.min(900, 300 + 1.1 * (input.length ?? 0));
     case "box":
-      return 170;
+      return 320;
     case "fade":
-      return 140;
+      return 280;
   }
 }
 
+/**
+ * How much faster to write when tool calls arrive faster than they can be
+ * written: the board should never trail the voice by much. `queued` is the
+ * number of jobs already waiting.
+ */
+export function catchUpPace(queued: number): number {
+  if (queued >= 3) return 0.45;
+  if (queued === 2) return 0.65;
+  if (queued === 1) return 0.85;
+  return 1;
+}
+
 // Reading order: top to bottom in rows of about a line height, left to right
-// inside a row. Total time is capped so a busy tool call never lags the voice.
-export function planReveal(inputs: RevealInput[], rowHeight = 28, capMs = REVEAL_CAP_MS): RevealStep[] {
+// inside a row. Total time is capped so one busy tool call stays reasonable;
+// `pace` below 1 speeds the whole call up.
+export function planReveal(inputs: RevealInput[], rowHeight = 28, capMs = REVEAL_CAP_MS, pace = 1): RevealStep[] {
   const steps: RevealStep[] = inputs.map((input) => ({
     id: input.id,
     kind: input.kind,
-    duration: stepDuration(input),
+    duration: Math.round(stepDuration(input) * pace),
     x: input.x,
     y: input.y,
     chars: input.chars,
@@ -64,13 +79,13 @@ export function planReveal(inputs: RevealInput[], rowHeight = 28, capMs = REVEAL
     const row = Math.round(a.y / rowHeight) - Math.round(b.y / rowHeight);
     return row !== 0 ? row : a.x - b.x;
   });
-  // Each piece costs a frame or two of overhead on top of its duration.
-  const overhead = 24 * steps.length;
+  // Each piece costs a pen glide or a pause on top of its duration.
+  const overhead = 90 * steps.length;
   const total = steps.reduce((sum, s) => sum + s.duration, 0);
-  const budget = Math.max(200, capMs - overhead);
+  const budget = Math.max(700 * pace, capMs * pace - overhead);
   if (total > budget && total > 0) {
     const k = budget / total;
-    for (const s of steps) s.duration = Math.max(30, Math.round(s.duration * k));
+    for (const s of steps) s.duration = Math.max(40, Math.round(s.duration * k));
   }
   return steps;
 }

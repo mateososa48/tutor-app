@@ -108,7 +108,7 @@ export default function OnboardingPage() {
           maxWidth: 480,
           background: "#fff",
           borderRadius: 18,
-          boxShadow: "0 2px 6px rgba(0,0,0,0.06), 0 8px 32px rgba(0,0,0,0.08)",
+          boxShadow: "0 2px 6px rgba(18,18,21,0.06), 0 8px 32px rgba(18,18,21,0.08)",
           overflow: "hidden",
           animation: "card-in 0.3s cubic-bezier(0.22,1,0.36,1) both",
         }}
@@ -119,7 +119,7 @@ export default function OnboardingPage() {
             style={{
               height: "100%",
               width: `${progress}%`,
-              background: "#0a0a0a",
+              background: "#121215",
               transition: "width 0.4s cubic-bezier(0.22,1,0.36,1)",
             }}
           />
@@ -202,7 +202,7 @@ export default function OnboardingPage() {
                 onMouseOver={(e) =>
                   canAdvance() && (e.currentTarget.style.background = "#2a2a2a")
                 }
-                onMouseOut={(e) => (e.currentTarget.style.background = "#0a0a0a")}
+                onMouseOut={(e) => (e.currentTarget.style.background = "#121215")}
               >
                 Continue
                 <ArrowRight />
@@ -215,7 +215,7 @@ export default function OnboardingPage() {
                 onMouseOver={(e) =>
                   !saving && (e.currentTarget.style.background = "#2a2a2a")
                 }
-                onMouseOut={(e) => (e.currentTarget.style.background = "#0a0a0a")}
+                onMouseOut={(e) => (e.currentTarget.style.background = "#121215")}
               >
                 {saving ? "Saving…" : "Start learning"}
               </button>
@@ -259,7 +259,7 @@ function StepName({ value, onChange }: { value: string; onChange: (v: string) =>
         onFocus={(e) =>
           Object.assign(e.currentTarget.style, {
             ...largeInputStyle,
-            borderColor: "#0a0a0a",
+            borderColor: "#121215",
             boxShadow: "0 0 0 3px rgba(10,10,10,0.08)",
           })
         }
@@ -284,10 +284,10 @@ function StepGrade({ value, onChange }: { value: string; onChange: (v: string) =
             style={{
               height: 48,
               padding: "0 18px",
-              border: value === g ? "1.5px solid #0a0a0a" : "1px solid #d0d0d0",
+              border: value === g ? "1.5px solid #121215" : "1px solid #d0d0d0",
               borderRadius: 10,
-              background: value === g ? "#0a0a0a" : "#fff",
-              color: value === g ? "#fff" : "#0a0a0a",
+              background: value === g ? "#121215" : "#fff",
+              color: value === g ? "#fff" : "#121215",
               fontSize: 14,
               fontWeight: value === g ? 600 : 400,
               cursor: "pointer",
@@ -369,7 +369,7 @@ function Slider({
         style={{
           fontSize: 12,
           fontWeight: 600,
-          color: "#0a0a0a",
+          color: "#121215",
           marginBottom: 10,
           letterSpacing: "0.01em",
         }}
@@ -385,9 +385,9 @@ function Slider({
             style={{
               flex: 1,
               height: 36,
-              border: value === s ? "1.5px solid #0a0a0a" : "1px solid #d8d8d8",
+              border: value === s ? "1.5px solid #121215" : "1px solid #d8d8d8",
               borderRadius: 8,
-              background: value === s ? "#0a0a0a" : "#f8f8f8",
+              background: value === s ? "#121215" : "#f8f8f8",
               cursor: "pointer",
               transition: "all 0.1s",
               display: "flex",
@@ -466,7 +466,7 @@ function StepContext({ value, onChange }: { value: string; onChange: (v: string)
             border: "1px solid #d0d0d0",
             borderRadius: 10,
             fontSize: 14,
-            color: "#0a0a0a",
+            color: "#121215",
             background: "#fff",
             resize: "none",
             outline: "none",
@@ -476,7 +476,7 @@ function StepContext({ value, onChange }: { value: string; onChange: (v: string)
             transition: "border-color 0.12s, box-shadow 0.12s",
           }}
           onFocus={(e) => {
-            e.currentTarget.style.borderColor = "#0a0a0a";
+            e.currentTarget.style.borderColor = "#121215";
             e.currentTarget.style.boxShadow = "0 0 0 3px rgba(10,10,10,0.08)";
           }}
           onBlur={(e) => {
@@ -513,9 +513,9 @@ function StepVoice({ value, onChange }: { value: string; onChange: (v: string) =
             onClick={() => onChange(v.name)}
             style={{
               padding: "14px 16px",
-              border: value === v.name ? "1.5px solid #0a0a0a" : "1px solid #d0d0d0",
+              border: value === v.name ? "1.5px solid #121215" : "1px solid #d0d0d0",
               borderRadius: 10,
-              background: value === v.name ? "#0a0a0a" : "#fff",
+              background: value === v.name ? "#121215" : "#fff",
               cursor: "pointer",
               textAlign: "left",
               transition: "all 0.12s",
@@ -526,7 +526,7 @@ function StepVoice({ value, onChange }: { value: string; onChange: (v: string) =
               style={{
                 fontSize: 14,
                 fontWeight: 600,
-                color: value === v.name ? "#fff" : "#0a0a0a",
+                color: value === v.name ? "#fff" : "#121215",
                 marginBottom: 3,
               }}
             >
@@ -552,7 +552,7 @@ function StepVoice({ value, onChange }: { value: string; onChange: (v: string) =
 const headingStyle: React.CSSProperties = {
   fontSize: 22,
   fontWeight: 600,
-  color: "#0a0a0a",
+  color: "#121215",
   letterSpacing: "-0.02em",
   marginBottom: 6,
 };
@@ -570,7 +570,7 @@ const largeInputStyle: React.CSSProperties = {
   border: "1px solid #d0d0d0",
   borderRadius: 10,
   fontSize: 16,
-  color: "#0a0a0a",
+  color: "#121215",
   background: "#fff",
   outline: "none",
   fontFamily: "inherit",
@@ -598,7 +598,7 @@ function nextBtnStyle(disabled: boolean): React.CSSProperties {
     height: 44,
     paddingLeft: 22,
     paddingRight: 22,
-    background: disabled ? "#9a9a9a" : "#0a0a0a",
+    background: disabled ? "#9a9a9a" : "#121215",
     color: "#fff",
     border: "none",
     borderRadius: 10,

@@ -126,7 +126,7 @@ export function Header() {
         <div className="relative flex items-center gap-1.5 justify-self-end">
           <Link
             href="/signin"
-            className="hidden h-9 items-center rounded-[10px] px-3 text-[14px] font-medium text-(--lp-ink) outline-none transition-colors hover:bg-black/5 focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) sm:inline-flex"
+            className="hidden h-9 items-center rounded-[10px] px-3 text-[14px] font-medium text-(--lp-ink) outline-none transition-colors hover:bg-(--lp-ink)/5 focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) sm:inline-flex"
           >
             Sign in
           </Link>

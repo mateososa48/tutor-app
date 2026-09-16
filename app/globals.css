@@ -17,7 +17,7 @@
   --paper: #fbfbfc;
   --surface: #ffffff;
   --surface-2: #f7f7f9;
-  --ink: #000000;
+  --ink: #121215;
   --ink-2: #5b5b66;
   --ink-3: #9a9aa4;
   --hairline: rgba(18, 18, 21, 0.08);
@@ -36,7 +36,7 @@
   --glass-bg: rgba(255, 255, 255, 0.62);
   --glass-edge: rgba(255, 255, 255, 0.5);
   --glass-shadow:
-    0 1px 1px rgba(0, 0, 0, 0.04),
+    0 1px 1px rgba(18, 18, 21, 0.04),
     0 8px 24px rgba(29, 29, 31, 0.08),
     0 24px 64px rgba(29, 29, 31, 0.06);
 
@@ -106,17 +106,17 @@
 
   /* The app sidebar is plain black with white strokes; nothing in it is tinted,
      so the shadcn accent and border tokens are transparent on purpose. */
-  --sidebar: #000000;
+  --sidebar: #121215;
 
-  --sidebar-foreground: #ffffff;
+  --sidebar-foreground: #ececef;
 
-  --sidebar-primary: #ffffff;
+  --sidebar-primary: #ececef;
 
-  --sidebar-primary-foreground: #000000;
+  --sidebar-primary-foreground: #121215;
 
   --sidebar-accent: transparent;
 
-  --sidebar-accent-foreground: #ffffff;
+  --sidebar-accent-foreground: #ececef;
 
   --sidebar-border: transparent;
 
@@ -307,7 +307,7 @@ body {
   color: #fff;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    inset 0 -1px 0 rgba(18, 18, 21, 0.35),
     0 1px 1px rgba(18, 18, 21, 0.18);
   transition: transform 160ms var(--lp-ease), box-shadow 160ms var(--lp-ease), background 160ms ease;
 }
@@ -318,7 +318,7 @@ body {
   transform: translateY(1px);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    inset 0 2px 6px rgba(0, 0, 0, 0.45);
+    inset 0 2px 6px rgba(18, 18, 21, 0.45);
 }
 .btn-mic-off {
   background: linear-gradient(180deg, #ffffff 0%, #eeeef2 100%);
@@ -337,7 +337,7 @@ body {
   color: #fff;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.16),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    inset 0 -1px 0 rgba(18, 18, 21, 0.35),
     0 6px 16px rgba(18, 18, 21, 0.28),
     0 1px 2px rgba(18, 18, 21, 0.3);
   transition: transform 160ms var(--lp-ease), box-shadow 160ms var(--lp-ease), filter 160ms ease;
@@ -349,7 +349,7 @@ body {
   transform: translateY(1px);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    inset 0 2px 6px rgba(0, 0, 0, 0.45),
+    inset 0 2px 6px rgba(18, 18, 21, 0.45),
     0 2px 6px rgba(18, 18, 21, 0.2);
 }
 /* The glossy button with a lift (sign-in): on hover it rises 1px, its top
@@ -360,7 +360,7 @@ body {
   background: linear-gradient(180deg, #404048 0%, #232328 100%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.24),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    inset 0 -1px 0 rgba(18, 18, 21, 0.35),
     0 10px 24px rgba(18, 18, 21, 0.3),
     0 2px 4px rgba(18, 18, 21, 0.28);
 }
@@ -369,7 +369,7 @@ body {
   background: linear-gradient(180deg, #2c2c32 0%, #19191d 100%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    inset 0 2px 6px rgba(0, 0, 0, 0.45),
+    inset 0 2px 6px rgba(18, 18, 21, 0.45),
     0 2px 6px rgba(18, 18, 21, 0.2);
 }
 @media (prefers-reduced-motion: reduce) {
@@ -699,67 +699,61 @@ body {
   .lp-btn { transition: background-color 160ms ease; }
 }
 
-/* App sidebar: the pressed CTA's vocabulary on a black surface, run the other
-   way. White 2px strokes and a hard white offset stand in for the ink ones; the
-   button rests flat and lifts 2px out of its slot on hover (the offset fills the
-   spot it left), then sinks back when pressed. No fills, so no gray. */
+/* App sidebar: near-black (the brand ink, #121215) with off-white text. It
+   reads as black without the glare of pure white on #000. Nothing in the rail
+   has an outline, a fill, or a lift (Mateo, Sept 14). New session is a normal row like the others, a little
+   brighter and bolder; it brightens on hover and presses in a touch. */
 .sb-btn {
-  --press: 2px;
-  border-radius: 10px;
-  border: 2px solid #fff;
-  background: #000;
-  color: #fff;
-  font-weight: 650;
+  color: var(--sidebar-foreground);
+  font-weight: 500;
   letter-spacing: -0.01em;
   white-space: nowrap;
-  box-shadow: 0 0 0 0 #fff;
-  transform: translate(0, 0);
   transition:
-    transform 180ms var(--lp-ease),
-    box-shadow 180ms var(--lp-ease),
+    color 150ms ease,
+    scale 150ms var(--lp-ease),
     width 300ms cubic-bezier(0.16, 1, 0.3, 1),
     height 300ms cubic-bezier(0.16, 1, 0.3, 1),
     padding 300ms cubic-bezier(0.16, 1, 0.3, 1);
   cursor: pointer;
 }
-.sb-btn:hover {
-  transform: translate(calc(var(--press) * -1), calc(var(--press) * -1));
-  box-shadow: var(--press) var(--press) 0 0 #fff;
-}
-.sb-btn:active {
-  transform: translate(0, 0);
-  box-shadow: 0 0 0 0 #fff;
-}
-.sb-btn:focus-visible { outline: 2px solid var(--lp-sky); outline-offset: 3px; }
+.sb-btn:hover { color: #fff; }
+.sb-btn:active { scale: 0.98; }
+.sb-btn:focus-visible { color: #fff; box-shadow: inset 0 0 0 2px var(--lp-sky); }
 
-/* Rail items: dimmed white at rest, white on hover. The current page is the
-   pressed state of the same vocabulary: flat, with a 2px white stroke. */
+/* Rail items: dimmed white at rest, white on hover. The current page is marked
+   in sky (its icon, or a dot before a session's title), never with an outline
+   or a fill. Keyboard focus is a sky ring. */
 .sb-item {
-  color: rgba(255, 255, 255, 0.72);
+  color: color-mix(in srgb, var(--sidebar-foreground) 60%, transparent);
   transition:
     color 150ms ease,
-    box-shadow 180ms var(--lp-ease),
+    scale 150ms var(--lp-ease),
     opacity 200ms ease,
     width 300ms cubic-bezier(0.16, 1, 0.3, 1),
     height 300ms cubic-bezier(0.16, 1, 0.3, 1),
     padding 300ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-.sb-item:hover { color: #fff; }
-/* The sidebar toggle is always full white; hover outlines it. */
-.sb-item.sb-toggle { color: #fff; }
-.sb-item.sb-toggle:hover { box-shadow: inset 0 0 0 2px #fff; }
+.sb-item:hover { color: var(--sidebar-foreground); }
+.sb-item svg { transition: color 150ms ease; }
+/* The sidebar toggle is always full white; it grows a touch under the pointer. */
+.sb-item.sb-toggle { color: var(--sidebar-foreground); }
+@media (hover: hover) and (pointer: fine) {
+  .sb-item.sb-toggle:hover { scale: 1.08; }
+}
+.sb-item.sb-toggle:active { scale: 0.94; }
 .sb-item:focus-visible {
-  color: #fff;
+  color: var(--sidebar-foreground);
   box-shadow: inset 0 0 0 2px var(--lp-sky);
 }
 .sb-item[data-active],
-.sb-item[data-open] {
-  color: #fff;
-  box-shadow: inset 0 0 0 2px #fff;
-}
+.sb-item[data-open] { color: var(--sidebar-foreground); }
+.sb-item[data-active] svg { color: var(--lp-sky); }
 @media (prefers-reduced-motion: reduce) {
   .sb-btn,
   .sb-item { transition: color 150ms ease, opacity 200ms ease; }
+  .sb-btn:active,
+  .sb-item.sb-toggle:hover,
+  .sb-item.sb-toggle:active { scale: none; }
 }
 
 .lp-window {

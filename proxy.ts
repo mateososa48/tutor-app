@@ -4,10 +4,11 @@ import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/signin", "/api/auth"];
 const DEV_PUBLIC_PATHS = process.env.NODE_ENV === "development"
-  ? ["/api/dev/qa-login", "/dev/board"]
+  ? ["/api/dev/qa-login", "/dev/board", "/dev/voice"]
   : [];
-// Files in public/ are served from the root: the landing page's board photos live under /landing.
-const STATIC_PATHS = ["/_next", "/favicon.ico", "/public", "/landing"];
+// Files in public/ are served from the root: the landing page's board photos live under /landing,
+// vendored browser modules (the voice speed engine) under /vendor.
+const STATIC_PATHS = ["/_next", "/favicon.ico", "/public", "/landing", "/vendor"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

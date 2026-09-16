@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
 import { WHITEBOARD_FUNCTION_TOOLS } from "@/lib/whiteboard-tools";
+import { TUTOR_FUNCTION_TOOLS } from "@/lib/tutor-tools";
 import {
   buildBackendInstructions,
   buildGreetingLine,
@@ -133,7 +134,7 @@ export async function POST(req: NextRequest) {
       responses: {
         model: BACKEND_MODEL,
         instructions: buildBackendInstructions(profile, notes),
-        tools: WHITEBOARD_FUNCTION_TOOLS,
+        tools: [...WHITEBOARD_FUNCTION_TOOLS, ...TUTOR_FUNCTION_TOOLS],
         tool_choice: "auto",
         parallel_tool_calls: false,
         reasoning: { effort: REASONING_EFFORT },

@@ -3,21 +3,31 @@ import { db } from "@/lib/db/client";
 import { tutorSessions, sessionEvents } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { EVENT_ACTORS, RECORDED_EVENT_KINDS } from "@/lib/session-recording";
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
-const EVENT_KINDS = new Set([
-  "transcript.entry",
-  "whiteboard.snapshot",
-  "board.update.ready",
-  "board.update.failed",
-  "session.paused",
-  "session.resumed",
-  "session.ended",
-]);
-const EVENT_ACTORS = new Set(["student", "tutor", "system"]);
+const EVENT_KINDS = new Set<string>(RECORDED_EVENT_KINDS);
+const ACTORS = new Set<string>(EVENT_ACTORS);
+const MAX_BATCH = 200;
 
-// POST /api/sessions/[id]/events — append an event
+type Incoming = { kind: string; actor: "student" | "tutor" | "system"; offsetMs: number; payload: Record<string, unknown> };
+
+function readEvent(raw: unknown): Incoming | null {
+  if (!raw || typeof raw !== "object") return null;
+  const { kind, actor, offsetMs, payload } = raw as Record<string, unknown>;
+  if (typeof kind !== "string" || !EVENT_KINDS.has(kind)) return null;
+  if (actor !== undefined && (typeof actor !== "string" || !ACTORS.has(actor))) return null;
+  return {
+    kind,
+    actor: (actor ?? "system") as Incoming["actor"],
+    offsetMs: typeof offsetMs === "number" && Number.isFinite(offsetMs) ? Math.max(0, Math.min(2_147_000_000, Math.round(offsetMs))) : 0,
+    payload: payload && typeof payload === "object" && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {},
+  };
+}
+
+// POST /api/sessions/[id]/events — append one event, or a batch: { events: [...] }
+// (the session recorder sends batches; see lib/session-recorder.ts).
 export async function POST(req: NextRequest, ctx: RouteCtx) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -30,14 +40,12 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   if (rows.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
   if (rows[0].userId !== session.user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const body = await req.json();
-  const { kind, actor, offsetMs, payload } = body;
-
-  if (typeof kind !== "string" || !EVENT_KINDS.has(kind)) {
-    return NextResponse.json({ error: "invalid kind" }, { status: 400 });
-  }
-  if (actor !== undefined && (typeof actor !== "string" || !EVENT_ACTORS.has(actor))) {
-    return NextResponse.json({ error: "invalid actor" }, { status: 400 });
+  const body: unknown = await req.json().catch(() => null);
+  const isBatch = Boolean(body && typeof body === "object" && Array.isArray((body as { events?: unknown }).events));
+  const raws: unknown[] = isBatch ? (body as { events: unknown[] }).events.slice(0, MAX_BATCH) : [body];
+  const events = raws.map(readEvent).filter((e): e is Incoming => e !== null);
+  if (events.length === 0) {
+    return NextResponse.json({ error: "invalid event" }, { status: 400 });
   }
 
   const last = await db
@@ -48,19 +56,21 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     .limit(1);
   const nextSeq = last.length ? last[0].seq + 1 : 1;
 
-  await db.insert(sessionEvents).values({
-    sessionId: id,
-    seq: nextSeq,
-    offsetMs: typeof offsetMs === "number" ? offsetMs : 0,
-    kind,
-    actor: actor ?? "system",
-    payload: payload && typeof payload === "object" ? payload : {},
-  });
+  await db.insert(sessionEvents).values(
+    events.map((e, i) => ({
+      sessionId: id,
+      seq: nextSeq + i,
+      offsetMs: e.offsetMs,
+      kind: e.kind,
+      actor: e.actor,
+      payload: e.payload,
+    })),
+  );
 
   await db
     .update(tutorSessions)
     .set({ lastActiveAt: Date.now() })
     .where(eq(tutorSessions.id, id));
 
-  return NextResponse.json({ ok: true, seq: nextSeq });
+  return NextResponse.json({ ok: true, seq: nextSeq + events.length - 1, stored: events.length, dropped: raws.length - events.length });
 }

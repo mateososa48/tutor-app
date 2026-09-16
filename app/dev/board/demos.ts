@@ -152,4 +152,57 @@ const icons2: DemoCall[] = [
   { name: "circle_item", args: { target: "40 cookies" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, icons, icons2, eqs, all };
+// Whiteboard layout (Sept 14 2026). No column arguments, so this is the
+// default placement: words down the left, pictures beside them, the next
+// column once the first is full, a section as a row under everything.
+const layout: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Adding 1/4 and 1/2" } },
+  { name: "add_text_note", args: { text: "Can we add 1/4 and 1/2 straight away?" } },
+  { name: "draw_fraction", args: { fraction: "1/4", second_fraction: "1/2", model: "bar", label: "quarters and halves are different sizes" } },
+  { name: "draw_equation_step", args: { latex: "\\frac{1}{4} + \\frac{1}{2}" } },
+  { name: "draw_equation_step", args: { latex: "= \\frac{1}{4} + \\frac{2}{4}", annotation: "cut the half into quarters" } },
+  { name: "draw_fraction", args: { fraction: "1/4", second_fraction: "2/4", model: "bar", label: "same size pieces now" } },
+  { name: "draw_equation_step", args: { latex: "= \\frac{3}{4}" } },
+  { name: "add_number_line", args: { min: 0, max: 1, step: 0.25, points: "3/4:three quarters" } },
+  { name: "add_callout", args: { text: "Make the pieces the same size first, then add.", style: "remember" } },
+  { name: "add_student_attempt", args: { text: "so 1/3 + 1/2 = 2/5?" } },
+  { name: "start_board_section", args: { title: "Your turn" } },
+  { name: "draw_equation_step", args: { latex: "\\frac{1}{3} + \\frac{1}{6}" } },
+  { name: "draw_fraction", args: { fraction: "1/3", second_fraction: "1/6", model: "bar", place: "beside b12" } },
+];
+
+// The highlighter: part of a line, a number on a number line, a student's
+// mistake, a whole line, and a ring around a drawing.
+const highlight: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Solving 2x + 3 = 11" } },
+  { name: "draw_equation_step", args: { latex: "2x + 3 = 11" } },
+  { name: "draw_balance", args: { left: "x | x | 3", right: "11", label: "2x + 3 = 11" } },
+  { name: "highlight", args: { target: "b2", text: "+ 3", color: "yellow" } },
+  { name: "draw_equation_step", args: { latex: "2x = 8", annotation: "subtract 3 from both sides" } },
+  { name: "highlight", args: { target: "b4", text: "8", color: "green" } },
+  { name: "add_student_attempt", args: { text: "so x = 16?" } },
+  { name: "highlight", args: { target: "b5", text: "16", color: "pink" } },
+  { name: "draw_equation_step", args: { latex: "x = 4", annotation: "divide both sides by 2" } },
+  { name: "highlight", args: { target: "b6", color: "blue" } },
+  { name: "add_number_line", args: { min: -2, max: 6, points: "4:x = 4" } },
+  { name: "highlight", args: { target: "b7", text: "4", color: "yellow" } },
+  { name: "highlight", args: { target: "b3", color: "yellow" } },
+  { name: "highlight", args: { target: "b2", text: "11", color: "green" } },
+];
+
+// Desmos graphs (Sept 15 2026): every graph tool, plain math converted, a
+// slope triangle, inequality + circle + vertical line, a shape from points,
+// and a highlight on a labelled point.
+const graphs: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Graphs, drawn by Desmos" } },
+  { name: "add_function_graph", args: { expression: "x^2-4x+3", x_min: -2, x_max: 6, y_min: -2, y_max: 5, mark_points: "(1,0):root, (3,0):root, (2,-1):vertex", label: "y = x² − 4x + 3" } },
+  { name: "add_function_graph", args: { expression: "2x-1", second_expression: "-x+5", x_min: -2, x_max: 6, label: "two lines crossing" } },
+  { name: "add_function_graph", args: { expression: "\\frac{1}{x}", x_min: -4, x_max: 4, label: "y = 1/x" } },
+  { name: "add_function_graph", args: { expression: "2*x+1", x_min: -1, x_max: 4, slope_run: "1..3", mark_points: "(0,1):y-intercept", label: "slope = rise / run" } },
+  { name: "add_function_graph", args: { expression: "2x-1", extra_expressions: "y>2x-1; x^2+y^2=9; x=3", x_min: -5, x_max: 5, label: "an inequality, a circle, a vertical line" } },
+  { name: "plot_points", args: { points: "(1,1):A, (4,1):B, (4,3):C", x_min: -1, x_max: 6, y_min: -1, y_max: 5, connect: true, label: "triangle ABC" } },
+  { name: "add_function_graph", args: { expression: "sqrt(x)", x_min: -1, x_max: 9, label: "sqrt(x), written plainly" } },
+  { name: "highlight", args: { target: "b2", text: "vertex", color: "yellow" } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, icons, icons2, eqs, layout, highlight, graphs, all };

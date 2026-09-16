@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBoardItems, itemLabelFrom, parseTargetList, resolveItemTarget, ringPoints, type BoardItem } from "./board-items";
+import { formatBoardItems, highlightSizeFor, itemLabelFrom, matchVariants, mergeLineRects, normalizeForMatch, swipePoints, parseTargetList, resolveItemTarget, ringPoints, type BoardItem } from "./board-items";
 
 const item = (id: string, tool: string, label: string, owner: "tutor" | "student" = "tutor"): BoardItem => ({
   id, tool, label, shapeIds: [`shape:${id}`], eqItemIds: [], owner, createdAt: 0,
@@ -77,4 +77,55 @@ test("a bare number prefers an item whose label says it, else the id", async () 
   assert.equal(resolveItemTarget(items, "4")?.id, "b3");
   assert.equal(resolveItemTarget(items, "b2")?.id, "b2");
   assert.equal(resolveItemTarget(items, "2")?.id, "b2");
+});
+
+test("the summary can say where items sit and where the board is empty", () => {
+  const s = formatBoardItems(items, "One half", 10, { places: { b2: "top left", b4: "right" }, free: "the bottom third", page: 2 });
+  assert.ok(s.includes("b2 fraction (top left): 1 circle"), s);
+  assert.ok(s.includes("b4 number line (right):"), s);
+  assert.ok(s.includes("Free space: the bottom third."), s);
+  assert.ok(s.includes("board page 2"), s);
+  assert.ok(s.includes("highlight"), s);
+});
+
+test("highlight text matches typeset forms", () => {
+  assert.equal(normalizeForMatch("2x + 3 \u2212 1"), "2x+3-1");
+  assert.equal(normalizeForMatch("3 \u22c5 4"), normalizeForMatch("3*4"));
+  assert.deepEqual(matchVariants("3/4"), ["3/4", "34", "43"]);
+  assert.equal(normalizeForMatch("1\u200b2"), "12");
+  assert.deepEqual(matchVariants(" 11 "), ["11"]);
+});
+
+test("highlighter strokes fit the words they cover", () => {
+  assert.equal(highlightSizeFor(32).size, "m");
+  assert.equal(highlightSizeFor(40).size, "l");
+  assert.equal(highlightSizeFor(20).size, "s");
+  const w = 26.88;
+  const pts = swipePoints({ x: 100, y: 50, w: 80, h: 30 }, w);
+  assert.ok(Math.abs(pts[0].x - w / 2 - 95) < 0.01, "left end just past the words");
+  assert.ok(Math.abs(pts[pts.length - 1].x + w / 2 - 185) < 0.01, "right end just past the words");
+  assert.ok(pts.every((pt) => Math.abs(pt.y - 65) <= 1));
+  // A short word gets a swipe tldraw will not collapse into a dot: the run
+  // clears the two dropped end zones (a third of the stroke size each) with
+  // 1px points between them.
+  const narrow = swipePoints({ x: 100, y: 0, w: 10, h: 30 }, w);
+  const first = narrow[0].x;
+  const last = narrow[narrow.length - 1].x;
+  const size = w + 1;
+  assert.ok(Math.abs((first + last) / 2 - 105) < 0.01, "centred on the word");
+  assert.ok(last - first >= (size * 2) / 3 + 4 - 0.01, `run ${last - first}`);
+  const inner = narrow.filter((pt) => pt.x - first > size / 3 && last - pt.x > size / 3);
+  assert.ok(inner.length >= 2, `points that survive smoothing: ${inner.length}`);
+});
+
+test("glyph rectangles merge into lines", () => {
+  const rects = [{ x: 0, y: 0, w: 10, h: 20 }, { x: 12, y: 1, w: 10, h: 20 }, { x: 0, y: 30, w: 15, h: 20 }];
+  assert.deepEqual(mergeLineRects(rects), [{ x: 0, y: 0, w: 22, h: 21 }, { x: 0, y: 30, w: 15, h: 20 }]);
+  assert.deepEqual(mergeLineRects(rects, true), [{ x: 0, y: 0, w: 22, h: 50 }]);
+  assert.deepEqual(mergeLineRects([]), []);
+});
+
+test("the summary flags a graph that did not draw", () => {
+  const s = formatBoardItems(items, "One half", 10, { issues: { b2: "could not draw: y=sin x" } });
+  assert.ok(s.includes("[could not draw: y=sin x]"), s);
 });
