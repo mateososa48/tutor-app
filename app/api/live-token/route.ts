@@ -24,16 +24,8 @@ function readIntake(value: unknown): SessionIntake | null {
     typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : null;
   const language = pick(raw.language, ["de", "en", "es", "fr", "it", "pt", "pl", "tr", "uk", "ru", "ar", "zh", "vi"] as const);
   const topic = typeof raw.topic === "string" ? raw.topic.slice(0, 600) : "";
-  const minutes = typeof raw.minutes === "number" && raw.minutes > 0 && raw.minutes <= 240 ? Math.floor(raw.minutes) : null;
   if (!language && !topic) return null;
-  return {
-    topic,
-    language: language ?? "en",
-    stage: pick(raw.stage, ["not_started", "stuck", "check"] as const),
-    goal: pick(raw.goal, ["homework", "test", "practice"] as const),
-    minutes,
-    fileNames: [],
-  };
+  return { topic, language: language ?? "en", fileNames: [] };
 }
 
 export async function POST(req: NextRequest) {

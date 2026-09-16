@@ -27,45 +27,18 @@ export const SESSION_LANGUAGES = [
 
 export type LanguageCode = (typeof SESSION_LANGUAGES)[number]["code"];
 
-/** Mateo's call (Sept 15 2026): sessions open in German unless the student picks otherwise. */
-export const DEFAULT_LANGUAGE: LanguageCode = "de";
-
-/** Where the student is with the work. It sets how much help the tutor opens with. */
-export const INTAKE_STAGES = [
-  { id: "not_started", label: "Haven't started", hint: "Start from the beginning" },
-  { id: "stuck", label: "Stuck partway", hint: "Pick up where it breaks down" },
-  { id: "check", label: "Got an answer to check", hint: "Check the work, then fix it" },
-] as const;
-
-export type IntakeStage = (typeof INTAKE_STAGES)[number]["id"];
-
-/** Why they are here. It sets the pace and what "done" means. */
-export const INTAKE_GOALS = [
-  { id: "homework", label: "Homework due" },
-  { id: "test", label: "Test coming up" },
-  { id: "practice", label: "Just practising" },
-] as const;
-
-export type IntakeGoal = (typeof INTAKE_GOALS)[number]["id"];
-
-/** Minutes the student has. It sets how many problems the tutor plans. */
-export const INTAKE_MINUTES = [15, 30, 45] as const;
+/** Sessions open in English unless the student picks otherwise (Mateo, Sept 15 2026). */
+export const DEFAULT_LANGUAGE: LanguageCode = "en";
 
 export type SessionIntake = {
   topic: string;
   language: LanguageCode;
-  stage: IntakeStage | null;
-  goal: IntakeGoal | null;
-  minutes: number | null;
   fileNames: string[];
 };
 
 export const EMPTY_INTAKE: SessionIntake = {
   topic: "",
   language: DEFAULT_LANGUAGE,
-  stage: null,
-  goal: null,
-  minutes: null,
   fileNames: [],
 };
 
@@ -149,14 +122,6 @@ export function intakeOpeningMessage(intake: SessionIntake, fileCount: number): 
   if (fileCount > 0) {
     parts.push(fileCount === 1 ? "I uploaded a picture of it." : `I uploaded ${fileCount} pictures of it.`);
   }
-  const stage = INTAKE_STAGES.find((s) => s.id === intake.stage);
-  if (stage?.id === "not_started") parts.push("I haven't started it yet.");
-  if (stage?.id === "stuck") parts.push("I got partway and I'm stuck.");
-  if (stage?.id === "check") parts.push("I have an answer, but I'm not sure it's right.");
-  if (intake.goal === "homework") parts.push("It's homework that's due.");
-  if (intake.goal === "test") parts.push("I have a test coming up on it.");
-  if (intake.goal === "practice") parts.push("I'm just practising, nothing due.");
-  if (intake.minutes) parts.push(`I have about ${intake.minutes} minutes.`);
   parts.push(`Please teach me in ${languageName(intake.language)}.`);
   return parts.join(" ");
 }
@@ -179,16 +144,8 @@ export function intakeInstructions(intake: SessionIntake, fileCount: number): st
       `They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence.`,
     );
   }
-  const stage = INTAKE_STAGES.find((s) => s.id === intake.stage);
-  if (stage?.id === "not_started") lines.push("They have not started it: begin at the first step and ask what they think comes first.");
-  if (stage?.id === "stuck") lines.push("They got partway and are stuck: find where it breaks down before explaining anything.");
-  if (stage?.id === "check") lines.push("They have an answer to check: ask for it, check it with them, and work from what it shows.");
-  if (intake.goal === "homework") lines.push("It is homework that is due, so keep it moving and finish the problem.");
-  if (intake.goal === "test") lines.push("A test is coming, so name the rule that generalises and check it on a fresh problem at the end.");
-  if (intake.goal === "practice") lines.push("Nothing is due, so take the scenic route and follow their curiosity.");
-  if (intake.minutes) lines.push(`They have about ${intake.minutes} minutes: plan the session to fit and say what you'll cover.`);
   lines.push(
-    "Do not open by asking what they want to work on, and do not greet them at length. Your first sentence starts the work on this problem.",
+    "Ask nothing about what they want to work on and do not greet them at length. Your first sentence starts the work on this problem, and one short question about where they are with it is fine once the work is on the board.",
   );
   return lines.join("\n");
 }

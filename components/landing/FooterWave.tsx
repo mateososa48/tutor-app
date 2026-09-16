@@ -107,8 +107,26 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
   return sh;
 }
 
-export function FooterWave({ className }: { className?: string }) {
+export function FooterWave({
+  className,
+  background = BG,
+  top = VOICE_BLUE.top,
+  deep = VOICE_BLUE.deep,
+  ink = INK_BLUE,
+}: {
+  className?: string;
+  /** The colour the band dithers out into; match whatever sits behind it. */
+  background?: [number, number, number];
+  top?: [number, number, number];
+  deep?: [number, number, number];
+  ink?: [number, number, number];
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const colors = useRef({ background, top, deep, ink });
+  // Runs before the setup effect on mount, and after every render.
+  useEffect(() => {
+    colors.current = { background, top, deep, ink };
+  });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -137,10 +155,10 @@ export function FooterWave({ className }: { className?: string }) {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
     const u = (name: string) => gl.getUniformLocation(program, name);
-    gl.uniform3fv(u("u_bg"), BG);
-    gl.uniform3fv(u("u_top"), VOICE_BLUE.top);
-    gl.uniform3fv(u("u_deep"), VOICE_BLUE.deep);
-    gl.uniform3fv(u("u_ink"), INK_BLUE);
+    gl.uniform3fv(u("u_bg"), colors.current.background);
+    gl.uniform3fv(u("u_top"), colors.current.top);
+    gl.uniform3fv(u("u_deep"), colors.current.deep);
+    gl.uniform3fv(u("u_ink"), colors.current.ink);
     const uRes = u("u_res");
     const uTime = u("u_time");
     const uPixel = u("u_pixel");
