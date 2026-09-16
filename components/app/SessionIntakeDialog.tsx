@@ -1,20 +1,22 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { Select } from "@base-ui/react/select";
-import { Check, ChevronDown, ImagePlus, Languages, Loader2, X } from "lucide-react";
+import { Check, ChevronDown, Languages, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { FooterWave } from "@/components/landing/FooterWave";
+import { FilesPanel } from "@/components/session/FilesPopover";
 import { useFileIntake } from "@/components/session/useFileIntake";
-import { ACCEPTED_EXTENSIONS, fileTypeLabel, type UploadedFile } from "@/lib/file-processor";
+import type { UploadedFile } from "@/lib/file-processor";
 import { EMPTY_INTAKE, SESSION_LANGUAGES, type LanguageCode, type SessionIntake } from "@/lib/session-intake";
 import { cn } from "@/lib/utils";
 
 // Two questions and nothing else: what they're stuck on, and a photo if they
-// have one. The language sits quietly in the footer, on a pale band of the
-// landing footer's voice wave. Anything more read as a form, not a tutor.
+// have one, through the session screen's own upload box (`FilesPanel`). The
+// language sits quietly in the footer, over a pale wave of the landing
+// footer's shader. Anything more read as a form, not a tutor.
 
 // The footer wave, washed out for a small strip behind the buttons.
 const WAVE_BG: [number, number, number] = [1, 1, 1];
@@ -36,10 +38,9 @@ export function SessionIntakeDialog({
   const [intake, setIntake] = useState<SessionIntake>(EMPTY_INTAKE);
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [dragging, setDragging] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const { intake: readFiles, processing, error: fileError } = useFileIntake(files, (added) =>
-    setFiles((prev) => [...prev, ...added]),
-  );
+  const addFiles = (added: UploadedFile[]) => setFiles((prev) => [...prev, ...added]);
+  // The panel has its own picker; this one is for dropping onto the window.
+  const { intake: readFiles, error: dropError } = useFileIntake(files, addFiles);
 
   const submit = () => {
     if (starting) return;
@@ -88,72 +89,35 @@ export function SessionIntakeDialog({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
               }}
-              className="mt-4 min-h-[92px] resize-none rounded-[14px] text-[15px] leading-[1.5]"
+              className="mt-4 min-h-[84px] resize-none rounded-[14px] text-[15px] leading-[1.5]"
             />
 
-            {files.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {files.map((file) => (
-                  <span key={file.id} className="relative">
-                    {file.mimeType.startsWith("image/") ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={`data:${file.mimeType};base64,${file.base64}`}
-                        alt={file.name}
-                        className="size-14 rounded-[10px] object-cover shadow-[0_0_0_1px_rgba(18,18,21,0.1)]"
-                      />
-                    ) : (
-                      <span className="flex h-14 items-center gap-1.5 rounded-[10px] px-3 text-[12.5px] text-(--lp-ink-2) shadow-[0_0_0_1px_rgba(18,18,21,0.1)]">
-                        <span className="font-medium text-(--lp-ink)">{fileTypeLabel(file.mimeType)}</span>
-                        <span className="max-w-[120px] truncate">{file.name}</span>
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      aria-label={`Remove ${file.name}`}
-                      onClick={() => setFiles((prev) => prev.filter((f) => f.id !== file.id))}
-                      className="absolute -top-1.5 -right-1.5 flex size-5 cursor-pointer items-center justify-center rounded-full bg-(--lp-ink) text-white outline-none focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
-                    >
-                      <X className="size-3" strokeWidth={2.5} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-
-            <div className="mt-3 flex min-h-8 items-center gap-2">
-              <button
-                type="button"
-                onClick={() => inputRef.current?.click()}
-                className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-(--lp-gray) px-3 py-1.5 text-[13px] text-(--lp-ink-2) transition-colors duration-150 outline-none hover:bg-(--lp-gray-2) hover:text-(--lp-ink) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
-              >
-                {processing ? <Loader2 className="size-3.5 animate-spin" /> : <ImagePlus className="size-3.5" />}
-                {files.length > 0 ? "Add another photo" : "Add a photo"}
-              </button>
-              {fileError && <span className="text-[12.5px] text-(--danger)">{fileError}</span>}
-              {error && !fileError && <span className="text-[12.5px] text-(--danger)">{error}</span>}
+            <div className="mt-4">
+              <FilesPanel
+                files={files}
+                onAddFiles={addFiles}
+                onRemoveFile={(id) => setFiles((prev) => prev.filter((f) => f.id !== id))}
+                hint="Homework photos, worksheets, notes."
+              />
             </div>
-            <input
-              ref={inputRef}
-              type="file"
-              multiple
-              accept={ACCEPTED_EXTENSIONS}
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files?.length) void readFiles(e.target.files);
-                e.target.value = "";
-              }}
-            />
+
+            {(dropError || error) && (
+              <p className="m-0 mt-2 text-[12.5px] text-(--danger)">{dropError ?? error}</p>
+            )}
           </div>
 
           <div className="relative mt-5">
             {/* The landing footer's voice wave, pale, as the floor of the window. */}
             <FooterWave
-              className="pointer-events-none absolute inset-x-0 bottom-0 h-[104px]"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-[124px]"
               background={WAVE_BG}
               top={WAVE_TOP}
               deep={WAVE_DEEP}
               ink={WAVE_INK}
+              edge={11}
+              swing={1.5}
+              reserve={16}
+              waveScale={3.2}
             />
             <div className="relative flex items-center justify-between gap-2 px-5 pt-6 pb-5">
               <LanguagePicker value={intake.language} onChange={(language) => setIntake((prev) => ({ ...prev, language }))} />

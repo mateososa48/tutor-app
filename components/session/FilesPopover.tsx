@@ -48,7 +48,11 @@ export function FilesPanel({
   onAddFiles,
   onRemoveFile,
   notice,
-}: Pick<Props, "files" | "onAddFiles" | "onRemoveFile" | "notice">) {
+  hint = "Homework photos, worksheets, notes. Or drop them anywhere on the board.",
+}: Pick<Props, "files" | "onAddFiles" | "onRemoveFile" | "notice"> & {
+  /** The line under the drop box. The session says "drop them on the board"; other screens say their own thing. */
+  hint?: string;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const { intake, processing, error } = useFileIntake(files, onAddFiles);
 
@@ -66,7 +70,7 @@ export function FilesPanel({
       <span className="text-[13px] font-medium text-(--lp-ink)">
         {processing ? "Reading file…" : "Drop a photo or PDF, or browse"}
       </span>
-      <span className="text-[11.5px] text-(--lp-ink-3)">Homework photos, worksheets, notes. Or drop them anywhere on the board.</span>
+      <span className="text-[11.5px] text-(--lp-ink-3)">{hint}</span>
     </button>
     <input
       ref={inputRef}

@@ -29,6 +29,7 @@ uniform float u_pixel;
 uniform float u_scale;
 uniform vec2 u_pointer;
 uniform float u_keep;
+uniform vec4 u_shape;   // soft edge in CSS px, swing multiplier, top reserve in CSS px, ripples per 1000px
 uniform vec3 u_bg;
 uniform vec3 u_top;
 uniform vec3 u_deep;
@@ -44,7 +45,7 @@ void main() {
   vec2 px = floor(gl_FragCoord.xy / u_pixel) * u_pixel;
   vec2 uv = px / u_res;
   float hCss = u_res.y / u_scale;
-  float xw = px.x / u_scale / 1000.0;
+  float xw = px.x / u_scale / 1000.0 * u_shape.w;
   float t = u_time;
 
   // Quiet speech: the level rises and settles over several seconds.
@@ -63,19 +64,20 @@ void main() {
   // clear of the wordmark and its crests (plus the soft edge) stay inside the canvas.
   float yPx = uv.y * hCss;
   float keepPx = u_keep;
-  float roomPx = max(hCss - keepPx - 60.0, 80.0);
-  float frontPx = keepPx + roomPx * (0.45 + 0.10 * (level - 0.5) + ripple * (0.55 + 0.6 * level) + drift + swell);
+  float roomPx = max(hCss - keepPx - u_shape.z, 60.0);
+  float swing = u_shape.y;
+  float frontPx = keepPx + roomPx * (0.45 + swing * (0.10 * (level - 0.5) + ripple * (0.55 + 0.6 * level) + drift) + swell);
   // A lighter ridge behind, higher and out of step.
-  float backPx = keepPx + roomPx * (0.66 + 0.07 * sin(xw * 3.1 + 0.4 + t * 0.06)
+  float backPx = keepPx + roomPx * (0.66 + swing * (0.07 * sin(xw * 3.1 + 0.4 + t * 0.06)
              + 0.05 * sin(xw * 7.0 + 1.9) * sin(t * 0.65 + 2.2)
-             + 0.02 * sin(xw * 17.0 + 0.9) * sin(t * 1.3)
+             + 0.02 * sin(xw * 17.0 + 0.9) * sin(t * 1.3))
              + 0.6 * swell);
 
   float dF = yPx - frontPx;   // CSS pixels above the front surface
   float dB = yPx - backPx;
   // About as soft as the dock wave: the edge dithers out over ~55px.
-  float fF = smoothstep(34.0, -22.0, dF);
-  float fB = smoothstep(40.0, -22.0, dB) * 0.5;
+  float fF = smoothstep(u_shape.x, -u_shape.x * 0.65, dF);
+  float fB = smoothstep(u_shape.x * 1.18, -u_shape.x * 0.65, dB) * 0.5;
 
   int bx = int(mod(gl_FragCoord.x / u_pixel, 4.0));
   int by = int(mod(gl_FragCoord.y / u_pixel, 4.0));
@@ -113,6 +115,10 @@ export function FooterWave({
   top = VOICE_BLUE.top,
   deep = VOICE_BLUE.deep,
   ink = INK_BLUE,
+  edge = 34,
+  swing = 1,
+  reserve = 60,
+  waveScale = 1,
 }: {
   className?: string;
   /** The colour the band dithers out into; match whatever sits behind it. */
@@ -120,12 +126,20 @@ export function FooterWave({
   top?: [number, number, number];
   deep?: [number, number, number];
   ink?: [number, number, number];
+  /** How far the crest dithers out, in CSS pixels. Smaller reads as a sharper wave. */
+  edge?: number;
+  /** Multiplies the ripples and drift. Above 1 gives a short band real crests. */
+  swing?: number;
+  /** CSS pixels kept clear above the highest crest, so the soft edge is never cut. */
+  reserve?: number;
+  /** Ripples per 1000px. Above 1 fits a full wave into a narrow band. */
+  waveScale?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const colors = useRef({ background, top, deep, ink });
+  const colors = useRef({ background, top, deep, ink, edge, swing, reserve, waveScale });
   // Runs before the setup effect on mount, and after every render.
   useEffect(() => {
-    colors.current = { background, top, deep, ink };
+    colors.current = { background, top, deep, ink, edge, swing, reserve, waveScale };
   });
 
   useEffect(() => {
@@ -159,6 +173,7 @@ export function FooterWave({
     gl.uniform3fv(u("u_top"), colors.current.top);
     gl.uniform3fv(u("u_deep"), colors.current.deep);
     gl.uniform3fv(u("u_ink"), colors.current.ink);
+    const uShape = u("u_shape");
     const uRes = u("u_res");
     const uTime = u("u_time");
     const uPixel = u("u_pixel");
@@ -176,6 +191,8 @@ export function FooterWave({
     let targetPull = 0;
 
     const draw = (time: number) => {
+      const c = colors.current;
+      gl.uniform4f(uShape, c.edge, c.swing, c.reserve, c.waveScale);
       gl.uniform1f(uTime, time);
       gl.uniform2f(uPointer, pointerX, pull);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
