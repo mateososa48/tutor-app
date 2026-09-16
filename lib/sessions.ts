@@ -36,12 +36,12 @@ export type SessionEvent = {
   createdAt: string;
 };
 
-export async function createSession(): Promise<string | null> {
+export async function createSession(title?: string): Promise<string | null> {
   try {
     const res = await fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify(title ? { title } : {}),
     });
     if (!res.ok) return null;
     const { id } = await res.json();

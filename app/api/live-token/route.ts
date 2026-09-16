@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
 import { buildGeminiInstructions, buildGreetingLine, buildResumeLine, type StudentProfile } from "@/lib/tutor-prompts";
+import { intakeInstructions, type SessionIntake } from "@/lib/session-intake";
 import { geminiVoiceFor } from "@/lib/voice-settings";
 
 // Gemini Live fallback. Returns the composed system prompt and voice for the
@@ -13,6 +14,27 @@ import { geminiVoiceFor } from "@/lib/voice-settings";
 // to get the prompt and voice without minting a token.
 
 export const dynamic = "force-dynamic";
+
+// The intake arrives from the browser, so take only the fields we know and cap
+// the free text; everything else is dropped before it can reach the prompt.
+function readIntake(value: unknown): SessionIntake | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const pick = <T extends string>(v: unknown, allowed: readonly T[]): T | null =>
+    typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : null;
+  const language = pick(raw.language, ["de", "en", "es", "fr", "it", "pt", "pl", "tr", "uk", "ru", "ar", "zh", "vi"] as const);
+  const topic = typeof raw.topic === "string" ? raw.topic.slice(0, 600) : "";
+  const minutes = typeof raw.minutes === "number" && raw.minutes > 0 && raw.minutes <= 240 ? Math.floor(raw.minutes) : null;
+  if (!language && !topic) return null;
+  return {
+    topic,
+    language: language ?? "en",
+    stage: pick(raw.stage, ["not_started", "stuck", "check"] as const),
+    goal: pick(raw.goal, ["homework", "test", "practice"] as const),
+    minutes,
+    fileNames: [],
+  };
+}
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -29,9 +51,14 @@ export async function POST(req: NextRequest) {
   }
 
   let configOnly = false;
+  // What the student answered before the session opened (lib/session-intake).
+  let intake: SessionIntake | null = null;
+  let fileCount = 0;
   try {
-    const body = (await req.json()) as { configOnly?: unknown };
+    const body = (await req.json()) as { configOnly?: unknown; intake?: unknown; fileCount?: unknown };
     configOnly = body?.configOnly === true;
+    intake = readIntake(body?.intake);
+    fileCount = typeof body?.fileCount === "number" ? Math.max(0, Math.min(20, Math.floor(body.fileCount))) : 0;
   } catch {
     // no body: the client is minting a token for a socket
   }
@@ -54,10 +81,14 @@ export async function POST(req: NextRequest) {
     ? (row!.tutorNotes as unknown[]).filter((n): n is string => typeof n === "string")
     : [];
 
+  const base = buildGeminiInstructions(profile, notes);
   const config = {
-    instructions: buildGeminiInstructions(profile, notes),
+    // With an intake, the session's own context and language go last, so they
+    // win over the general instructions, and the greeting is dropped: the
+    // student's opening message arrives instead (see app/session/[id]/page.tsx).
+    instructions: intake ? `${base}\n\n${intakeInstructions(intake, fileCount)}` : base,
     voice: geminiVoiceFor(row?.voiceName),
-    greeting: buildGreetingLine(profile, 0),
+    greeting: intake ? "" : buildGreetingLine(profile, 0),
     resume: buildResumeLine(profile),
   };
   if (configOnly) return NextResponse.json(config);

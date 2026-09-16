@@ -1,0 +1,194 @@
+import type { UploadedFile } from "./file-processor";
+
+// What the student tells us before a session starts, so the tutor can open on
+// the actual problem instead of "what are we working on today?".
+//
+// The answers travel from the intake screen (/session) to the live session in
+// two places: the text fields go through localStorage keyed by session id (they
+// survive a reload), and the files stay in memory for this tab only, because
+// base64 images are far too big for localStorage. `takeIntake` reads once and
+// clears, so a session never opens on stale context.
+
+export const SESSION_LANGUAGES = [
+  { code: "de", label: "Deutsch", english: "German" },
+  { code: "en", label: "English", english: "English" },
+  { code: "es", label: "Español", english: "Spanish" },
+  { code: "fr", label: "Français", english: "French" },
+  { code: "it", label: "Italiano", english: "Italian" },
+  { code: "pt", label: "Português", english: "Portuguese" },
+  { code: "pl", label: "Polski", english: "Polish" },
+  { code: "tr", label: "Türkçe", english: "Turkish" },
+  { code: "uk", label: "Українська", english: "Ukrainian" },
+  { code: "ru", label: "Русский", english: "Russian" },
+  { code: "ar", label: "العربية", english: "Arabic" },
+  { code: "zh", label: "中文", english: "Mandarin Chinese" },
+  { code: "vi", label: "Tiếng Việt", english: "Vietnamese" },
+] as const;
+
+export type LanguageCode = (typeof SESSION_LANGUAGES)[number]["code"];
+
+/** Mateo's call (Sept 15 2026): sessions open in German unless the student picks otherwise. */
+export const DEFAULT_LANGUAGE: LanguageCode = "de";
+
+/** Where the student is with the work. It sets how much help the tutor opens with. */
+export const INTAKE_STAGES = [
+  { id: "not_started", label: "Haven't started", hint: "Start from the beginning" },
+  { id: "stuck", label: "Stuck partway", hint: "Pick up where it breaks down" },
+  { id: "check", label: "Got an answer to check", hint: "Check the work, then fix it" },
+] as const;
+
+export type IntakeStage = (typeof INTAKE_STAGES)[number]["id"];
+
+/** Why they are here. It sets the pace and what "done" means. */
+export const INTAKE_GOALS = [
+  { id: "homework", label: "Homework due" },
+  { id: "test", label: "Test coming up" },
+  { id: "practice", label: "Just practising" },
+] as const;
+
+export type IntakeGoal = (typeof INTAKE_GOALS)[number]["id"];
+
+/** Minutes the student has. It sets how many problems the tutor plans. */
+export const INTAKE_MINUTES = [15, 30, 45] as const;
+
+export type SessionIntake = {
+  topic: string;
+  language: LanguageCode;
+  stage: IntakeStage | null;
+  goal: IntakeGoal | null;
+  minutes: number | null;
+  fileNames: string[];
+};
+
+export const EMPTY_INTAKE: SessionIntake = {
+  topic: "",
+  language: DEFAULT_LANGUAGE,
+  stage: null,
+  goal: null,
+  minutes: null,
+  fileNames: [],
+};
+
+export function languageName(code: LanguageCode): string {
+  return SESSION_LANGUAGES.find((l) => l.code === code)?.english ?? "English";
+}
+
+const key = (sessionId: string) => `chalk.intake.${sessionId}`;
+// Files are per tab: base64 images would blow past localStorage's few megabytes.
+const pendingFiles = new Map<string, UploadedFile[]>();
+
+export function storeIntake(sessionId: string, intake: SessionIntake, files: UploadedFile[]) {
+  try {
+    window.localStorage.setItem(key(sessionId), JSON.stringify({ ...intake, at: Date.now() }));
+  } catch {
+    // Storage blocked: the session still gets the intake through memory below.
+  }
+  if (files.length > 0) pendingFiles.set(sessionId, files);
+  else pendingFiles.delete(sessionId);
+}
+
+// What was already handed over, so React's double-mount in development reads
+// the same answers twice instead of losing them on the second pass.
+const taken = new Map<string, { intake: SessionIntake; files: UploadedFile[] }>();
+
+/** Reads the intake for a session and clears the store, so it is used once. */
+export function takeIntake(sessionId: string): { intake: SessionIntake; files: UploadedFile[] } | null {
+  const already = taken.get(sessionId);
+  if (already) return already;
+  let intake: SessionIntake | null = null;
+  try {
+    const raw = window.localStorage.getItem(key(sessionId));
+    if (raw) {
+      const parsed = JSON.parse(raw) as SessionIntake & { at?: number };
+      // Anything older than a day is a leftover, not this session's context.
+      if (!parsed.at || Date.now() - parsed.at < 24 * 60 * 60 * 1000) intake = { ...EMPTY_INTAKE, ...parsed };
+    }
+    window.localStorage.removeItem(key(sessionId));
+  } catch {
+    // Storage blocked: fall through to whatever is in memory.
+  }
+  const files = pendingFiles.get(sessionId) ?? [];
+  pendingFiles.delete(sessionId);
+  if (!intake && files.length === 0) return null;
+  const result = { intake: intake ?? EMPTY_INTAKE, files };
+  taken.set(sessionId, result);
+  return result;
+}
+
+// The live client fetches its prompt itself (lib/gemini-tutor.ts), so the
+// session page hands the intake over here for the moment the socket opens.
+let active: { intake: SessionIntake; fileCount: number } | null = null;
+
+export function setActiveIntake(intake: SessionIntake, fileCount: number) {
+  active = { intake, fileCount };
+}
+
+export function getActiveIntake(): { intake: SessionIntake; fileCount: number } | null {
+  return active;
+}
+
+export function clearActiveIntake() {
+  active = null;
+}
+
+/** A session title from the topic: the first line, trimmed to fit the sidebar. */
+export function intakeTitle(intake: SessionIntake): string {
+  const line = intake.topic.split("\n")[0].trim();
+  if (!line) return "Session";
+  return line.length > 60 ? `${line.slice(0, 57).trimEnd()}…` : line;
+}
+
+/**
+ * The student's opening turn, in their own voice, sent as soon as the tutor
+ * connects. The tutor answers this instead of asking what to work on.
+ */
+export function intakeOpeningMessage(intake: SessionIntake, fileCount: number): string {
+  const parts: string[] = [];
+  const topic = intake.topic.trim();
+  parts.push(topic ? `I need help with: ${topic}` : "I need help with the work I just uploaded.");
+  if (fileCount > 0) {
+    parts.push(fileCount === 1 ? "I uploaded a picture of it." : `I uploaded ${fileCount} pictures of it.`);
+  }
+  const stage = INTAKE_STAGES.find((s) => s.id === intake.stage);
+  if (stage?.id === "not_started") parts.push("I haven't started it yet.");
+  if (stage?.id === "stuck") parts.push("I got partway and I'm stuck.");
+  if (stage?.id === "check") parts.push("I have an answer, but I'm not sure it's right.");
+  if (intake.goal === "homework") parts.push("It's homework that's due.");
+  if (intake.goal === "test") parts.push("I have a test coming up on it.");
+  if (intake.goal === "practice") parts.push("I'm just practising, nothing due.");
+  if (intake.minutes) parts.push(`I have about ${intake.minutes} minutes.`);
+  parts.push(`Please teach me in ${languageName(intake.language)}.`);
+  return parts.join(" ");
+}
+
+/**
+ * The block appended to the tutor's instructions for this session: the language
+ * it runs in and the context to open on, so the first sentence is already about
+ * the student's problem.
+ */
+export function intakeInstructions(intake: SessionIntake, fileCount: number): string {
+  const lines: string[] = ["# This session"];
+  const language = languageName(intake.language);
+  lines.push(
+    `Language: speak and write on the board in ${language}. Everything you say and every label, heading and note you draw is in ${language}, whatever language the student writes in. Keep the student's own notation for numbers and symbols.`,
+  );
+  const topic = intake.topic.trim();
+  if (topic) lines.push(`The student said what they need before starting: "${topic}"`);
+  if (fileCount > 0) {
+    lines.push(
+      `They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence.`,
+    );
+  }
+  const stage = INTAKE_STAGES.find((s) => s.id === intake.stage);
+  if (stage?.id === "not_started") lines.push("They have not started it: begin at the first step and ask what they think comes first.");
+  if (stage?.id === "stuck") lines.push("They got partway and are stuck: find where it breaks down before explaining anything.");
+  if (stage?.id === "check") lines.push("They have an answer to check: ask for it, check it with them, and work from what it shows.");
+  if (intake.goal === "homework") lines.push("It is homework that is due, so keep it moving and finish the problem.");
+  if (intake.goal === "test") lines.push("A test is coming, so name the rule that generalises and check it on a fresh problem at the end.");
+  if (intake.goal === "practice") lines.push("Nothing is due, so take the scenic route and follow their curiosity.");
+  if (intake.minutes) lines.push(`They have about ${intake.minutes} minutes: plan the session to fit and say what you'll cover.`);
+  lines.push(
+    "Do not open by asking what they want to work on, and do not greet them at length. Your first sentence starts the work on this problem.",
+  );
+  return lines.join("\n");
+}

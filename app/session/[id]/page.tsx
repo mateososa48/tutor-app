@@ -35,6 +35,7 @@ import {
   formatDuration,
 } from "@/lib/sessions";
 import type { UploadedFile } from "@/lib/file-processor";
+import { intakeOpeningMessage, intakeTitle, setActiveIntake, takeIntake } from "@/lib/session-intake";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
@@ -477,14 +478,17 @@ function SessionDetailPage({ id }: { id: string }) {
     });
 
     if (!isResumeRef.current) {
-      // Fresh new session — reset transcript/elapsed/board
-      setTranscript([]);
-      transcriptRef.current = [];
+      // Fresh new session — reset transcript/elapsed/board, but keep what the
+      // student set up on the way in: their opening line and the session's name.
+      const opening = transcriptRef.current.filter((e) => e.id.startsWith("intake_"));
+      const startTitle = sessionTitleRef.current || "Session";
+      setTranscript(opening);
+      transcriptRef.current = opening;
       setElapsedSeconds(0);
       elapsedSecondsRef.current = 0;
-      setSessionTitle("Session");
-      sessionTitleRef.current = "Session";
-      void patchSession(id, { title: "Session", transcript: [] });
+      setSessionTitle(startTitle);
+      sessionTitleRef.current = startTitle;
+      void patchSession(id, { title: startTitle, transcript: opening });
       whiteboardRef.current?.clearWhiteboard();
       sessionStartedAtRef.current = Date.now();
     }
@@ -813,7 +817,34 @@ function SessionDetailPage({ id }: { id: string }) {
       transcriptRef.current = hydratedTranscript;
       pendingResumeSnapshotRef.current = latestSnap;
 
-      const initialTitle = isNew ? "Session" : data.session.title;
+      // What the student answered on the way in (lib/session-intake): it names
+      // the session, carries their photos into the first turn, and opens the
+      // conversation, so the tutor never asks what we are working on.
+      const handoff = isNew ? takeIntake(id) : null;
+      if (handoff) {
+        setActiveIntake(handoff.intake, handoff.files.length);
+        if (handoff.files.length > 0) {
+          setFiles(handoff.files);
+          filesRef.current = handoff.files;
+        }
+        const opening: TranscriptEntry = {
+          id: `intake_${Date.now()}`,
+          role: "student",
+          text: intakeOpeningMessage(handoff.intake, handoff.files.length),
+          at: Date.now(),
+        };
+        const withOpening = appendTranscriptEntry(hydratedTranscript, opening);
+        setTranscript(withOpening);
+        transcriptRef.current = withOpening;
+        void appendEvent(id, {
+          kind: "transcript.entry",
+          actor: "student",
+          offsetMs: 0,
+          payload: { text: opening.text, at: opening.at, role: "student", id: opening.id },
+        });
+      }
+
+      const initialTitle = isNew ? (handoff ? intakeTitle(handoff.intake) : "Session") : data.session.title;
       setSessionTitle(initialTitle);
       sessionTitleRef.current = initialTitle;
       sessionStartedAtRef.current = data.session.startedAt;
@@ -822,7 +853,7 @@ function SessionDetailPage({ id }: { id: string }) {
 
       if (isNew) {
         isResumeRef.current = false;
-        void patchSession(id, { title: "Session", transcript: [] });
+        void patchSession(id, { title: initialTitle, transcript: [] });
         setMode("live");
       } else if (data.session.status === "ended") {
         setMode("review");

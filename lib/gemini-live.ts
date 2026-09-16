@@ -262,6 +262,24 @@ export class GeminiLiveSession {
     return this.sendUserTurn(parts);
   }
 
+  /**
+   * The opening turn of a session the student set up beforehand: their files,
+   * then their own first message. Used instead of sendInitialGreeting, so the
+   * tutor starts on the problem rather than asking what to work on.
+   */
+  sendOpening(text: string, files: UploadedFile[]): boolean {
+    const parts = this.buildFileParts(files);
+    parts.push({
+      text:
+        "Session event: initial_start_with_context.\n" +
+        "The live tutoring session has just started. The student answered a few questions before it opened, and their " +
+        "message follows. Do not greet at length and do not ask what they want to work on: start the work. " +
+        (files.length > 0 ? "The attached files are the work they mean; read them first.\n\n" : "\n\n") +
+        `Student: ${text}`,
+    });
+    return this.sendUserTurn(parts);
+  }
+
   sendFiles(files: UploadedFile[]): boolean {
     const parts = this.buildFileParts(files);
     if (parts.length === 0) return false;

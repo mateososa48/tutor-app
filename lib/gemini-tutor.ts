@@ -2,6 +2,7 @@ import { GeminiLiveSession } from "./gemini-live";
 import { AudioCapture, AudioPlayer } from "./audio";
 import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
 import type { UploadedFile } from "./file-processor";
+import { clearActiveIntake, getActiveIntake, intakeOpeningMessage } from "./session-intake";
 
 // Gemini Live behind the same surface as the GPT-Live client, so the session
 // page does not care which one it is talking to. One model both talks and
@@ -90,10 +91,13 @@ export class GeminiTutorSession {
 
   async start(opts: LiveTutorStartOptions): Promise<void> {
     this.debug("connection", "gemini_start", { mode: opts.mode, mic: Boolean(opts.micStream) });
+    // What the student answered before the session opened (lib/session-intake):
+    // it sets the language and the opening context in the prompt.
+    const active = opts.mode === "resume" ? null : getActiveIntake();
     const res = await fetch("/api/live-token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ configOnly: true }),
+      body: JSON.stringify({ configOnly: true, intake: active?.intake, fileCount: active?.fileCount ?? opts.files.length }),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
@@ -140,8 +144,11 @@ export class GeminiTutorSession {
           this.callbacks.onConnected({ resumed: opts.mode === "resume", expiresAt: null });
           const sent = opts.mode === "resume"
             ? session.sendResumeContext(opts.sessionTitle, opts.history, opts.files)
-            : session.sendInitialGreeting(opts.files);
-          this.debug("session", "opening_turn_sent", { sent, mode: opts.mode });
+            : active
+              ? session.sendOpening(intakeOpeningMessage(active.intake, opts.files.length), opts.files)
+              : session.sendInitialGreeting(opts.files);
+          this.debug("session", "opening_turn_sent", { sent, mode: opts.mode, fromIntake: Boolean(active) });
+          if (active) clearActiveIntake();
         },
         onDisconnected: () => {
           if (!this.ended) this.callbacks.onDisconnected("socket_closed");
