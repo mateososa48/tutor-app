@@ -15,3 +15,16 @@ test("fractions, roots, and symbols read as plain text", () => {
   assert.equal(latexToPlain("\\begin{cases} x + y = 5 \\\\ x - y = 1 \\end{cases}"), "x + y = 5 ; x - y = 1");
   assert.equal(latexToPlain("24\\,\\text{cm}^{2}"), "24cm^2");
 });
+
+test("the relations and escapes real sessions produced", () => {
+  // \pmod used to come out as "±od6": \pm matched the front of the command.
+  assert.equal(latexToPlain("47 \\equiv 5 \\pmod{6}"), "47 ≡ 5 (mod 6)");
+  assert.equal(latexToPlain("125 \\equiv 8 \\pmod{9}"), "125 ≡ 8 (mod 9)");
+  assert.equal(latexToPlain("\\pm 5"), "± 5");
+  // These vanished entirely: unknown commands are stripped.
+  assert.equal(latexToPlain("6 \\quad \\nmid \\quad 45"), "6 ∤ 45");
+  assert.equal(latexToPlain("17 \\quad \\mid \\quad 68"), "17 ∣ 68");
+  // Escaped punctuation printed its backslashes.
+  assert.equal(latexToPlain("6 \\quad \\_\\_\\_ \\quad 45"), "6 ___ 45");
+  assert.equal(latexToPlain("x \\in \\{1, 2\\}"), "x ∈ {1, 2}");
+});

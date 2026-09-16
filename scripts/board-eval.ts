@@ -101,6 +101,17 @@ const ICON_SCENARIOS: Scenario[] = [
 
 const DRAW_TOOLS = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name).filter((n) =>
   !["point_at", "circle_item", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step"].includes(n)));
+
+// Tools that put a picture on the board, as opposed to words in a box.
+const PICTURE_TOOLS = new Set<string>([
+  "draw_fraction", "add_number_line", "draw_figure", "draw_angle", "draw_array", "add_area_model",
+  "draw_balance", "draw_bar_chart", "add_coordinate_axes", "plot_points", "add_function_graph",
+  "draw_tape_diagram", "draw_grid", "write_vertical", "draw_long_division", "draw_transversal",
+  "draw_icons", "draw_sketch", "add_vector_diagram", "add_process_map",
+]);
+
+/** The tutor pointing at board content in words: "on the board", "I've drawn", "look at the graph". */
+const CLAIMS_BOARD = /\b(on the board|i(?:'ve| have) drawn|i drew|look at the (?:board|picture|diagram|graph|triangle|table)|as you can see|from the picture)\b/i;
 const NON_CREATING = new Set(["point_at", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step"]);
 
 // A board that remembers items and titles but draws nothing.
@@ -167,7 +178,7 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 8): Promise<T> {
   }
 }
 
-type TurnStats = { student: string; tutor: string; tools: string[]; errors: string[]; boardUsed: boolean; pointed: boolean; erased: boolean; asked: boolean; fallback: boolean };
+type TurnStats = { student: string; tutor: string; tools: string[]; errors: string[]; boardUsed: boolean; pointed: boolean; erased: boolean; asked: boolean; fallback: boolean; drewPicture: boolean; textOnly: boolean; phantom: boolean };
 
 function arg(name: string, fallback: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -185,7 +196,7 @@ async function runScenario(ai: GoogleGenAI, model: string, scenario: Scenario, t
   for (const line of scenario.student.slice(0, turns)) {
     contents.push({ role: "user", parts: [{ text: line }] });
     await new Promise((r) => setTimeout(r, Number(arg("pace", "0"))));
-    const turn: TurnStats = { student: line, tutor: "", tools: [], errors: [], boardUsed: false, pointed: false, erased: false, asked: false, fallback: false };
+    const turn: TurnStats = { student: line, tutor: "", tools: [], errors: [], boardUsed: false, pointed: false, erased: false, asked: false, fallback: false, drewPicture: false, textOnly: false, phantom: false };
     for (let round = 0; round < 6; round++) {
       const res = await withRetry(() => ai.models.generateContent({
         model,
@@ -223,6 +234,13 @@ async function runScenario(ai: GoogleGenAI, model: string, scenario: Scenario, t
       contents.push({ role: "user", parts: responses });
     }
     turn.boardUsed = turn.tools.some((t) => DRAW_TOOLS.has(t));
+    // A picture, not another box of words: the Sept 15 sessions filled the
+    // board with prose whenever a topic had no obvious diagram.
+    turn.drewPicture = turn.tools.some((t) => PICTURE_TOOLS.has(t));
+    turn.textOnly = turn.boardUsed && !turn.drewPicture;
+    // Talking about board content that was never drawn: two recorded sessions
+    // said "on the board I've drawn a triangle" with no tool call at all.
+    turn.phantom = CLAIMS_BOARD.test(turn.tutor) && !turn.boardUsed && !turn.pointed;
     turn.pointed = turn.tools.some((t) => t === "point_at" || t === "circle_item" || t === "highlight_step");
     turn.erased = turn.tools.some((t) => t.startsWith("erase"));
     turn.asked = /\?/.test(turn.tutor);
@@ -246,7 +264,7 @@ async function main() {
   const setName = arg("set", "core");
   const set = setName === "math" ? MATH_SCENARIOS : setName === "icons" ? ICON_SCENARIOS : setName === "all" ? [...SCENARIOS, ...MATH_SCENARIOS, ...ICON_SCENARIOS] : SCENARIOS;
   const scenarios = set.filter((s) => !only || s.name === only);
-  const rows: Array<{ name: string; turns: number; board: number; pointed: number; erased: number; asked: number; askedWithBoard: number; tools: number; errors: number; fallback: number }> = [];
+  const rows: Array<{ name: string; turns: number; board: number; pictures: number; textOnly: number; phantom: number; pointed: number; erased: number; asked: number; askedWithBoard: number; tools: number; errors: number; fallback: number }> = [];
   for (const scenario of scenarios) {
     for (let r = 0; r < runs; r++) {
       if (verbose) console.log(`\n=== ${scenario.name} (${model}) run ${r + 1}`);
@@ -255,6 +273,9 @@ async function main() {
         name: scenario.name,
         turns: stats.length,
         board: stats.filter((t) => t.boardUsed).length,
+        pictures: stats.filter((t) => t.drewPicture).length,
+        textOnly: stats.filter((t) => t.textOnly).length,
+        phantom: stats.filter((t) => t.phantom).length,
         pointed: stats.filter((t) => t.pointed).length,
         erased: stats.filter((t) => t.erased).length,
         asked: stats.filter((t) => t.asked).length,
@@ -265,12 +286,13 @@ async function main() {
       });
     }
   }
-  const total = rows.reduce((a, r) => ({ turns: a.turns + r.turns, board: a.board + r.board, pointed: a.pointed + r.pointed, erased: a.erased + r.erased, asked: a.asked + r.asked, askedWithBoard: a.askedWithBoard + r.askedWithBoard, tools: a.tools + r.tools, errors: a.errors + r.errors }), { turns: 0, board: 0, pointed: 0, erased: 0, asked: 0, askedWithBoard: 0, tools: 0, errors: 0 });
+  const total = rows.reduce((a, r) => ({ turns: a.turns + r.turns, board: a.board + r.board, pictures: a.pictures + r.pictures, textOnly: a.textOnly + r.textOnly, phantom: a.phantom + r.phantom, pointed: a.pointed + r.pointed, erased: a.erased + r.erased, asked: a.asked + r.asked, askedWithBoard: a.askedWithBoard + r.askedWithBoard, tools: a.tools + r.tools, errors: a.errors + r.errors }), { turns: 0, board: 0, pictures: 0, textOnly: 0, phantom: 0, pointed: 0, erased: 0, asked: 0, askedWithBoard: 0, tools: 0, errors: 0 });
   console.log(`\nmodel ${model}`);
   console.log("scenario        turns  board  pointed  erased  asked  asked+board  tools  errors  sketch/text");
   for (const r of rows) console.log(`${r.name.padEnd(15)} ${String(r.turns).padStart(5)} ${String(r.board).padStart(6)} ${String(r.pointed).padStart(8)} ${String(r.erased).padStart(7)} ${String(r.asked).padStart(6)} ${String(r.askedWithBoard).padStart(12)} ${String(r.tools).padStart(6)} ${String(r.errors).padStart(7)} ${String(r.fallback).padStart(12)}`);
   console.log(`${"TOTAL".padEnd(15)} ${String(total.turns).padStart(5)} ${String(total.board).padStart(6)} ${String(total.pointed).padStart(8)} ${String(total.erased).padStart(7)} ${String(total.asked).padStart(6)} ${String(total.askedWithBoard).padStart(12)} ${String(total.tools).padStart(6)} ${String(total.errors).padStart(7)}`);
   console.log(`board-use rate ${(100 * total.board / Math.max(1, total.turns)).toFixed(0)}%  pointing rate ${(100 * total.pointed / Math.max(1, total.turns)).toFixed(0)}%  tools/turn ${(total.tools / Math.max(1, total.turns)).toFixed(2)}  errors ${total.errors}`);
+  console.log(`picture rate ${(100 * total.pictures / Math.max(1, total.turns)).toFixed(0)}%  text-only board turns ${total.textOnly}  phantom board claims ${total.phantom}`);
 }
 
 main().catch((err) => {

@@ -5,7 +5,17 @@ const SYMBOLS: Array<[RegExp, string]> = [
   [/\\times/g, "×"],
   [/\\cdot/g, "·"],
   [/\\div/g, "÷"],
-  [/\\pm/g, "±"],
+  [/\\pm(?![a-zA-Z])/g, "±"],
+  [/\\equiv/g, "≡"],
+  [/\\nmid/g, "∤"],
+  [/\\mid/g, "∣"],
+  [/\\cong/g, "≅"],
+  [/\\propto/g, "∝"],
+  [/\\perp/g, "⊥"],
+  [/\\parallel/g, "∥"],
+  [/\\angle/g, "∠"],
+  [/\\in(?![a-zA-Z])/g, "∈"],
+  [/\\cdots|\\ldots|\\dots/g, "…"],
   [/\\leq?\b/g, "≤"],
   [/\\geq?\b/g, "≥"],
   [/\\neq?\b/g, "≠"],
@@ -71,6 +81,17 @@ function replaceCommand(input: string, cmd: string, arity: 1 | 2, fn: (...args: 
   return out;
 }
 
+// \_ \{ \} and friends are literal characters, but they survive the command
+// strip (not letters) and then lose their braces, so park them first.
+const ESCAPES: Array<[RegExp, string, string]> = [
+  [/\\_/g, "\u0011", "_"],
+  [/\\\{/g, "\u0012", "{"],
+  [/\\\}/g, "\u0013", "}"],
+  [/\\&/g, "\u0014", "&"],
+  [/\\#/g, "\u0015", "#"],
+  [/\\\$/g, "\u0016", "$"],
+];
+
 export function latexToPlain(latex: string): string {
   let s = latex
     // environments: rows become "; ", alignment marks vanish
@@ -78,6 +99,10 @@ export function latexToPlain(latex: string): string {
     .replace(/\\\\/g, "; ")
     .replace(/&/g, "")
     .replace(/\\left|\\right|\\,|\\;|\\!|\\quad|\\qquad/g, (m) => (m === "\\quad" || m === "\\qquad" ? " " : ""));
+  for (const [re, hold] of ESCAPES) s = s.replace(re, hold);
+  // Before the symbol table, so \pm never matches the front of \pmod.
+  s = replaceCommand(s, "pmod", 1, (a) => `(mod ${a})`);
+  s = s.replace(/\\bmod\b/g, "mod");
   s = replaceCommand(s, "dfrac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);
   s = replaceCommand(s, "tfrac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);
   s = replaceCommand(s, "frac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);
@@ -91,6 +116,7 @@ export function latexToPlain(latex: string): string {
   // superscripts and subscripts keep their caret/underscore, braces dropped
   s = s.replace(/\^\{([^{}]*)\}/g, "^$1").replace(/_\{([^{}]*)\}/g, "_$1");
   s = s.replace(/\\[a-zA-Z]+/g, "").replace(/[{}]/g, "");
+  for (const [, hold, literal] of ESCAPES) s = s.split(hold).join(literal);
   return s.replace(/\s+/g, " ").trim();
 }
 

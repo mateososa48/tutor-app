@@ -38,6 +38,7 @@ export type WhiteboardToolName =
   | "circle_item"
   | "erase_items"
   | "erase_older"
+  | "highlight"
   | "look_at_board"
   | "clear_whiteboard";
 
@@ -46,7 +47,12 @@ export type CalloutStyle = "hint" | "correct" | "wrong" | "warning" | "important
 const COLUMN = {
   type: "string",
   enum: ["left", "right"],
-  description: "Which column of the board. Default 'left'. Use 'right' to sit a picture beside the equations.",
+  description: "Older way to pick a side of the board. Prefer place.",
+} as const;
+
+const PLACE = {
+  type: "string",
+  description: "Where it goes: 'beside b3' (to the right of item b3), 'below b3', 'left', 'right', or 'new page'. Leave it out and it takes the next free space; the board uses its whole width and height.",
 } as const;
 
 export const WHITEBOARD_TOOL_DECLARATIONS = [
@@ -93,6 +99,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         unknowns: { type: "string", description: "Optional comma-separated unknowns. 320 chars max." },
         plan: { type: "string", description: "Optional one-line strategy. 600 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["goal"],
     },
@@ -112,6 +119,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
           description: "Optional 2-6 word note beside the line, e.g. 'subtract 3 from both sides'. 160 chars max.",
         },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["latex"],
     },
@@ -133,6 +141,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         },
         title: { type: "string", description: "Optional short title above the block. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["steps"],
     },
@@ -146,6 +155,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
       properties: {
         text: { type: "string", description: "The attempt, verbatim or lightly paraphrased. 1200 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["text"],
     },
@@ -153,7 +163,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "highlight_step",
     description:
-      "Ring, underline, or box an equation line that is already on the board. Sparingly: 'this is the key line', 'notice this cancels'.",
+      "Ring, underline, or box a whole equation line that is already on the board. To mark part of a line (one term, one number), use highlight.",
     parameters: {
       type: "object",
       properties: {
@@ -195,6 +205,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         common_denominator: { type: "number", description: "Optional: cut every model into this many equal pieces instead, so 1/2 and 1/3 with common_denominator 6 are drawn as 3/6 and 2/6. THE picture for adding, subtracting, or comparing fractions with unlike denominators. Must be a multiple of each denominator, 24 or less." },
         label: { type: "string", description: "Optional caption under the picture, e.g. 'one half of the pizza'. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["fraction"],
     },
@@ -227,6 +238,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         },
         label: { type: "string", description: "Optional caption under the line. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["min", "max"],
     },
@@ -255,6 +267,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         height_label: { type: "string", description: "Triangle, parallelogram, trapezoid: draws the dashed height (altitude) from the top down to the base with a right-angle mark and this label, e.g. 'h = 5'. THE way to show area = base × height. 80 chars max." },
         label: { type: "string", description: "Optional caption under the figure. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["figure"],
     },
@@ -272,6 +285,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         label: { type: "string", description: "Optional label on the arc, e.g. '37°', 'x', 'θ'. Defaults to the degree measure. 40 chars max." },
         caption: { type: "string", description: "Optional caption under the drawing. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["degrees"],
     },
@@ -290,6 +304,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         shaded: { type: "number", description: "Optional: fill only the first N dots (reading order) and leave the rest hollow. For a fraction of a set: 12 dots with 3 shaded is one quarter." },
         label: { type: "string", description: "Optional caption, e.g. '3 × 7'. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["rows", "columns"],
     },
@@ -309,6 +324,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
           description: "Cell values, rows separated by ';' or newlines, cells by '|'. Leave a cell empty for the student to fill: 'x^2 | 2x; 3x | '. 800 chars max.",
         },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["title", "row_labels", "column_labels", "cells"],
     },
@@ -325,6 +341,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         tilt: { type: "string", enum: ["level", "left", "right"], description: "'level' (default) when both sides are equal; 'left' or 'right' to show the heavier side dipping." },
         label: { type: "string", description: "Optional caption, e.g. '2x + 3 = 11'. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["left", "right"],
     },
@@ -341,6 +358,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         unit: { type: "string", description: "Optional unit for the value axis, e.g. 'hours'. 40 chars max." },
         label: { type: "string", description: "Optional caption above the chart. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["categories", "values"],
     },
@@ -358,6 +376,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         rows: { type: "string", description: "Rows separated by newlines or ';', cells by '|'. E.g. '-2 | -1 | 4; -1 | 0 | 1'. 1600 chars max." },
         title: { type: "string", description: "Optional caption. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["columns", "rows"],
     },
@@ -375,6 +394,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         y_max: { type: "number", description: "Maximum y." },
         label: { type: "string", description: "Optional caption. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["x_min", "x_max", "y_min", "y_max"],
     },
@@ -393,27 +413,32 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         label: { type: "string", description: "Optional caption. 160 chars max." },
         connect: { type: "boolean", description: "Join the points in order and close the shape. Default false." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["points", "x_min", "x_max", "y_min", "y_max"],
     },
   },
   {
     name: "add_function_graph",
-    description: "Plot a continuous y = f(x) curve on a grid: lines, parabolas, trig, exponentials, absolute value. Can mark points and draw a slope (rise/run) triangle.",
+    description: "A real graph (drawn by Desmos) of y = f(x): lines, parabolas, trig, exponentials, absolute value, rational functions with their asymptotes. Can mark points, draw a slope (rise/run) triangle, add a second curve with the crossing marked, and add more lines on the same axes: shaded inequalities, circles, vertical lines, restricted pieces.",
     parameters: {
       type: "object",
       properties: {
         expression: {
           type: "string",
-          description: "Expression in x, e.g. 'x^2 - 4*x - 5', 'sin(x)', '2*x + 3', 'abs(x - 2)'. Operators + - * / ^, sqrt(), sin(), cos(), tan(), abs(), log(). 200 chars max.",
+          description: "The function of x, in LaTeX or plain math: 'x^2-4x-5', '\\frac{1}{x}', '\\sqrt{x}', '\\left|x-2\\right|', '\\sin(x)', 'e^{-x}'. 'y =' is optional. 200 chars max.",
         },
         x_min: { type: "number", description: "Minimum x." },
         x_max: { type: "number", description: "Maximum x." },
         mark_points: { type: "string", description: "Optional points to mark on the graph: '(1,2):A, (3,6)'. Use for intercepts, a vertex, or the two points of a slope. 300 chars max." },
         slope_run: { type: "string", description: "Optional 'x1..x2': draws the rise/run triangle between those two x-values on the curve, labelled with the rise and the run. THE picture for slope. E.g. '1..3'." },
         second_expression: { type: "string", description: "Optional second curve on the same axes, in a second colour; where the two cross is marked with its coordinates. THE picture for a system of two equations. 200 chars max." },
+        y_min: { type: "number", description: "Optional lowest y shown. Leave out and the graph picks a range that shows the curve." },
+        y_max: { type: "number", description: "Optional highest y shown." },
+        extra_expressions: { type: "string", description: "Optional more lines on the same axes, separated by ';': a shaded inequality 'y>2x-1', a circle 'x^2+y^2=9', a vertical line 'x=3', a restricted piece 'y=2x+1\\left\\{0<x<3\\right\\}'. Up to 6." },
         label: { type: "string", description: "Optional caption, e.g. 'y = x² - 4x - 5'. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["expression", "x_min", "x_max"],
     },
@@ -423,13 +448,14 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "add_text_note",
     description:
-      "Handwritten words on the board: a definition, a rule in words, a one-line takeaway, a label. Keep it to a line or two. Never use text to describe a picture or to fake a diagram with brackets and dashes; use a picture tool instead.",
+      "One short line on the board: a rule, a label, a definition in a few words. 160 characters, hard limit, and longer calls are refused. An explanation belongs in speech, not on the board. Never use text to describe a picture or to fake a diagram; draw it.",
     parameters: {
       type: "object",
       properties: {
-        text: { type: "string", description: "The words, 1200 chars max." },
+        text: { type: "string", description: "The words. 160 chars max: one line, not a paragraph." },
         size: { type: "string", enum: ["heading", "body"], description: "'heading' for a bold title, 'body' (default) for a note." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["text"],
     },
@@ -444,19 +470,21 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         text: { type: "string", description: "Sticky-note text, 400 chars max." },
         style: { type: "string", enum: ["hint", "correct", "wrong", "warning", "important", "remember"], description: "Semantic style; the colour follows." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["text", "style"],
     },
   },
   {
     name: "add_worked_example_box",
-    description: "A boxed 'key idea' or worked example with a title and a short body. Use to crystallise a takeaway, or to show a model problem before the student tries a similar one.",
+    description: "A boxed key idea or worked example: a title and up to 3 short lines. For a rule worth keeping or a model problem, never for a paragraph of explanation. Say the explanation out loud instead.",
     parameters: {
       type: "object",
       properties: {
         title: { type: "string", description: "Short title, 160 chars max." },
-        body: { type: "string", description: "The example or key idea, 1600 chars max." },
+        body: { type: "string", description: "Up to 3 short lines, 140 chars max. Longer calls are refused: shorten it, or draw the idea instead." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["title", "body"],
     },
@@ -473,6 +501,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         right_title: { type: "string", description: "Right header, e.g. 'Correct'. 80 chars max." },
         right_body: { type: "string", description: "Right content. 800 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["title", "left_title", "left_body", "right_title", "right_body"],
     },
@@ -490,6 +519,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
           description: "Semicolon-separated 'direction:label'. Directions: up, down, left, right, up-left, up-right, down-left, down-right. E.g. 'up:Normal N; down:Weight mg; right:Push F; left:Friction f'. 800 chars max.",
         },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["title", "center_label", "vectors"],
     },
@@ -504,6 +534,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         nodes: { type: "string", description: "Pipe-separated box labels in order, 8 max. 800 chars max." },
         connectors: { type: "string", description: "Optional pipe-separated arrow labels, one fewer than nodes. 400 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["title", "nodes"],
     },
@@ -523,6 +554,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         total_label: { type: "string", description: "Optional label on a bracket spanning all rows, e.g. '20 marbles'. 80 chars max." },
         label: { type: "string", description: "Optional caption, e.g. '2 : 3'. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["rows"],
     },
@@ -541,6 +573,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         shade_columns: { type: "number", description: "Optional: hatch the first M columns. THE picture for multiplying fractions when used with shade_rows." },
         label: { type: "string", description: "Optional caption, e.g. '25 out of 100 = 25%'. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["rows", "columns"],
     },
@@ -559,6 +592,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         partial_products: { type: "string", description: "Multiplication only: optional pipe-separated partial products between the rule and the answer, e.g. '92 | 230'." },
         label: { type: "string", description: "Optional caption. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["operands", "operation"],
     },
@@ -576,6 +610,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         steps: { type: "string", description: "Optional pipe-separated lines under the dividend, e.g. '-12 | 36 | -36 | 0'. Leading spaces line digits up. 8 lines max." },
         label: { type: "string", description: "Optional caption. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["dividend", "divisor"],
     },
@@ -591,6 +626,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         mark_angles: { type: "string", description: "Optional angle numbers to mark with a coloured arc, e.g. '1 | 5' for a pair of corresponding angles." },
         label: { type: "string", description: "Optional caption, e.g. 'corresponding angles are equal'. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["angle_labels"],
     },
@@ -610,6 +646,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         second_count: { type: "number", description: "How many in the second row, 1 to 40." },
         label: { type: "string", description: "Optional caption, e.g. '12 cookies, 4 friends'. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["icon", "count"],
     },
@@ -617,7 +654,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "draw_sketch",
     description:
-      "Freehand sketch for anything the other picture tools do not cover: a garden plot with a path, a ladder against a wall, a shape made of two rectangles, a simple map. Strokes are polylines in a 0-100 box (x right, y down). Keep it to a few strokes and label the parts. Prefer draw_fraction, draw_figure, add_number_line and the other picture tools when they fit.",
+      "The fallback picture, for any topic the other tools do not cover: a clock face, a garden plot with a path, a ladder against a wall, a shape made of two rectangles, a simple map. Reach for this rather than writing a paragraph: a topic with no picture tool of its own is still a topic to draw. Strokes are polylines in a 0-100 box (x right, y down). Keep it to a few strokes and label the parts. Use a dedicated tool (draw_fraction, draw_figure, add_number_line) when one fits.",
     parameters: {
       type: "object",
       properties: {
@@ -630,6 +667,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         height: { type: "number", description: "Optional height, 120-420. Default 220." },
         label: { type: "string", description: "Optional caption under the sketch. 160 chars max." },
         column: COLUMN,
+        place: PLACE,
       },
       required: ["strokes"],
     },
@@ -646,6 +684,20 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
           type: "string",
           description: "An item id from the [Board: …] list (e.g. 'b3'), or a few words from its label ('shaded pizza'), or 'last' for the newest item.",
         },
+      },
+      required: ["target"],
+    },
+  },
+  {
+    name: "highlight",
+    description:
+      "Run a highlighter over something on the board while you talk about it: one term in an equation, a number in a table, a label on a number line or figure, or a whole item. Use it often, whenever you say 'this', 'notice', or 'look at'. Colours mean something: yellow = look here, green = right or what works, pink = the mistake or the tricky part, blue = the step we are on. Highlights stay until erased.",
+    parameters: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "Item id ('b3'), label words, or 'last'." },
+        text: { type: "string", description: "The exact part to highlight as it reads on the board, e.g. '2x', '3/4', '11'. Leave it out to highlight the whole item." },
+        color: { type: "string", enum: ["yellow", "green", "pink", "blue"], description: "Default yellow." },
       },
       required: ["target"],
     },

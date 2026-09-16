@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   buildBackendInstructions,
   buildFilesItemText,
+  buildGeminiInstructions,
   buildGreetingLine,
   buildResumeLine,
   buildVoiceInstructions,
+  profileLines,
   registerForGrade,
 } from "./tutor-prompts";
 
@@ -16,12 +18,15 @@ const profile = {
   extraContext: "Struggles with fractions.",
 };
 
-test("voice instructions stay short and mention the student by first name", () => {
+test("voice instructions stay short, name the student, and keep turn-taking rules", () => {
   const text = buildVoiceInstructions(profile);
   assert.ok(text.length < 5000, `voice prompt too long: ${text.length}`);
   assert.match(text, /named Sofia/);
   assert.match(text, /Delegate when:/);
   assert.match(text, /Do not delegate when:/);
+  assert.match(text, /still mid-thought/);
+  assert.match(text, /# Backchannel policy/);
+  assert.match(text, /# Interruption policy/);
   assert.doesNotMatch(text, /Sofia Ramirez/);
 });
 
@@ -32,27 +37,79 @@ test("backend instructions carry the profile, memory notes, and the output contr
   assert.match(text, /- confuses kinetic with momentum/);
   assert.match(text, /Output contract/);
   assert.match(text, /\[Board: …\]/);
-  assert.ok(text.length < 18000, `backend prompt too long: ${text.length}`);
+  // The teaching sections (Sept 2026) added ~1.5k chars on purpose; keep a ceiling.
+  // Raised to 19.2k on Sept 15 for the three board rules (draw the topic, never
+  // mention undrawn board content, words are labels), which cost 268 chars net
+  // after trimming the lines they replaced. Raise it again only for a rule that
+  // earns it, never to make room for prose.
+  assert.ok(text.length < 19200, `backend prompt too long: ${text.length}`);
 });
 
-test("backend instructions put the board first and name the picture tools", () => {
+test("backend instructions teach before they draw", () => {
   const text = buildBackendInstructions(null, []);
-  assert.match(text, /EVERY reply includes at least one board action/);
+  for (const heading of ["# How every turn works", "# Reading the student's answer", "# How much help", "# Feedback and praise", "# Adapting up and down", "# The session", "# When they want the answer"]) {
+    assert.ok(text.includes(heading), `missing ${heading}`);
+  }
+  assert.ok(text.indexOf("# Reading the student's answer") < text.indexOf("# The whiteboard"), "teaching comes before the board section");
+  assert.match(text, /H5 Worked example/);
+  assert.match(text, /Never call a wrong answer right/);
+  assert.doesNotMatch(text, /EVERY reply includes at least one board action/);
+  assert.doesNotMatch(text, /Start as high on the ladder as you can/);
+});
+
+test("backend instructions still name the picture tools and board rules", () => {
+  const text = buildBackendInstructions(null, []);
   assert.match(text, /draw_fraction/);
   assert.match(text, /draw_balance/);
   assert.match(text, /never fake a diagram with text, brackets, dashes, or ASCII/);
   assert.match(text, /never a bare question with an empty board/i);
   assert.match(text, /point_at/);
   assert.match(text, /erase_older/);
-  assert.match(text, /one to four board actions/);
-  assert.ok(text.indexOf("Example B") < text.indexOf('draw_fraction(fraction="1/2"'), "the fractions example shows the picture being drawn");
-  assert.doesNotMatch(text, /Before explaining or drawing anything/);
+  assert.match(text, /never more than four/);
+  assert.ok(text.indexOf("Example 1") < text.indexOf('draw_fraction(fraction="1/2"'), "the first example shows the picture being drawn");
+});
+
+test("examples vary their openers so the model does not copy one", () => {
+  const text = buildBackendInstructions(null, []);
+  const returns = [...text.matchAll(/^Return: "([^"]+)"/gm)].map((m) => m[1].split(/[\s,.:]/)[0].toLowerCase());
+  assert.ok(returns.length >= 8, `expected at least 8 example replies, got ${returns.length}`);
+  assert.equal(new Set(returns).size, returns.length, `repeated openers: ${returns.join(", ")}`);
+  assert.doesNotMatch(text, /Totally fair/);
+});
+
+test("gemini instructions keep the conversation rules and the teaching rules", () => {
+  const text = buildGeminiInstructions(profile, ["mixes up numerator and denominator"]);
+  assert.match(text, /named Sofia/);
+  assert.match(text, /# Backchannel policy/);
+  assert.match(text, /# Interruption policy/);
+  assert.match(text, /# Boundaries/);
+  assert.match(text, /# How much help/);
+  assert.match(text, /# The whiteboard/);
+  assert.match(text, /- mixes up numerator and denominator/);
+  assert.match(text, /write and draw on it with your tools/);
+  assert.doesNotMatch(text, /# Delegation policy/);
+  assert.doesNotMatch(text, /The backend's replies are your own thoughts/);
+  assert.doesNotMatch(text, /teaching brain \(the backend\) writes/);
+});
+
+test("answers are checked by a tool and attempts recorded", () => {
+  const text = buildBackendInstructions(null, []);
+  assert.match(text, /call check_answer before you call it right or wrong/);
+  assert.match(text, /record_attempt/);
+  assert.match(text, /\[Tutor state\] line in tool results/);
+  assert.match(text, /check_answer\(problem="1\/2 \+ 1\/3", student_answer="2\/5"\)/);
 });
 
 test("backend instructions handle a missing profile and empty memory", () => {
   const text = buildBackendInstructions(null, []);
   assert.match(text, /No profile yet/);
   assert.match(text, /nothing yet/);
+});
+
+test("stated preferences are soft and only listed when set", () => {
+  assert.match(profileLines(profile).join("\n"), /Stated preferences \(a soft default/);
+  const neutral = profileLines({ displayName: "Ana", learningPrefs: { hintVsAnswer: 0, pace: 0 } }).join("\n");
+  assert.doesNotMatch(neutral, /Stated preferences/);
 });
 
 test("opening lines are short, speakable, and name the student", () => {

@@ -24,7 +24,9 @@ import {
   isSolidFigure,
   FIGURE_KINDS,
 } from "@/lib/board-diagrams";
-import { parseTargetList } from "@/lib/board-items";
+import { HIGHLIGHT_COLORS, parseTargetList, type HighlightColor } from "@/lib/board-items";
+import { parsePlace, type PlaceRequest } from "@/lib/board-layout";
+import { ensureRelation, graphLatexProblem, toDesmosLatex } from "@/lib/desmos-graph";
 import { latexToPlain } from "@/lib/latex-plain";
 import { BOARD_ICON_NAMES } from "@/lib/board-icon-names.generated";
 import { resolveIconName } from "@/lib/board-icons";
@@ -55,6 +57,25 @@ function ensureBoard(ctx: DispatchCtx): WhiteboardHandle | ToolCallResult {
 function pickColumn(value: string | undefined): BoardColumn | undefined {
   if (value === "left" || value === "right") return value;
   return undefined;
+}
+
+function columnPlacement(value: unknown): PlaceRequest | null {
+  return value === "left" || value === "right" ? { kind: "area", area: value } : null;
+}
+
+// The board is for short things. Long prose belongs in speech: the model
+// reached for text boxes whenever a topic had no obvious picture, and the
+// board filled with paragraphs (Sept 15 sessions).
+const NOTE_MAX = 160;
+const BOX_BODY_MAX = 140;
+const BOX_BODY_LINES = 3;
+
+function countLines(body: string): number {
+  return body.split(/\n|\s\|\s/).map((l) => l.trim()).filter(Boolean).length;
+}
+
+function pickHighlightColor(value: string | undefined): HighlightColor | undefined {
+  return HIGHLIGHT_COLORS.find((c) => c === value);
 }
 
 function pickSize(value: string | undefined): "heading" | "body" | undefined {
@@ -90,6 +111,8 @@ export function dispatchWhiteboardTool(
 ): ToolCallResult {
   const board = ctx.whiteboard;
   const token = board ? board.beginItem(name) : null;
+  // Where the new item goes: the tutor's `place`, else its older `column`.
+  if (board?.setPlacement) board.setPlacement(parsePlace(args.place) ?? columnPlacement(args.column));
   const result = dispatchInner(name, args, ctx);
   if (!board || !token) return result;
   const itemId = board.endItem(token, result.success ? result.message ?? null : null);
@@ -190,6 +213,10 @@ function dispatchInner(
       if (isToolError(board)) return board;
       const text = requiredString(args, "text");
       if (isToolError(text)) return text;
+      const note = normalizeText(text);
+      if (note.length > NOTE_MAX) {
+        return fail(`That note is ${note.length} characters. A board note is one short line (${NOTE_MAX} max): say the explanation out loud, or draw the idea instead.`);
+      }
       const size = opt(args, "size"); if (size.error) return size.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor" }, () =>
@@ -594,13 +621,32 @@ function dispatchInner(
       const slopeRun = parseSlopeRun(runRaw.value);
       const second = opt(args, "second_expression"); if (second.error) return second.error;
       if (runRaw.value && !slopeRun) return fail('"slope_run" must look like "1..3" (two different x-values).');
+      const yLow = typeof args.y_min === "number" && Number.isFinite(args.y_min) ? args.y_min : undefined;
+      const yHigh = typeof args.y_max === "number" && Number.isFinite(args.y_max) ? args.y_max : undefined;
+      if (yLow !== undefined && yHigh !== undefined && !(yHigh > yLow)) return fail('"y_max" must be greater than "y_min".');
+      const extraRaw = opt(args, "extra_expressions"); if (extraRaw.error) return extraRaw.error;
+      const extraExpressions = (extraRaw.value ?? "").split(/;|\n/).map((part) => part.trim()).filter(Boolean).slice(0, 6);
+      // A broken expression is refused now, so the tutor can fix it in the same turn.
+      for (const raw of [expression, second.value?.trim(), ...extraExpressions]) {
+        if (!raw) continue;
+        const problem = graphLatexProblem(ensureRelation(toDesmosLatex(raw)));
+        if (problem) return fail(`Could not read "${raw}": ${problem}. Write it in LaTeX, e.g. "\\frac{1}{x}", "\\sqrt{x}", "\\left|x-2\\right|".`);
+      }
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? expression }, () =>
-        board.addFunctionGraph(expression, xMin, xMax, label.value, pickColumn(column.value) ?? "right", { markPoints, slopeRun, secondExpression: second.value?.trim() || undefined }),
+        board.addFunctionGraph(expression, xMin, xMax, label.value, pickColumn(column.value) ?? "right", {
+          markPoints,
+          slopeRun,
+          secondExpression: second.value?.trim() || undefined,
+          yMin: yLow,
+          yMax: yHigh,
+          extraExpressions,
+        }),
       );
       const extra = [
         markPoints.length ? `marked ${markPoints.map((p) => `(${p.x}, ${p.y})${p.label ? ` ${p.label}` : ""}`).join(", ")}` : "",
         slopeRun ? `slope triangle from x = ${slopeRun.x1} to x = ${slopeRun.x2}` : "",
         second.value ? `second line y = ${second.value.trim()} with the crossing point marked` : "",
+        extraExpressions.length ? `also ${extraExpressions.join("; ")}` : "",
       ].filter(Boolean).join("; ");
       return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}${extra ? `; ${extra}` : ""}.`);
     }
@@ -614,6 +660,11 @@ function dispatchInner(
       if (isToolError(title)) return title;
       const body = requiredString(args, "body");
       if (isToolError(body)) return body;
+      const boxBody = normalizeText(body);
+      if (boxBody.length > BOX_BODY_MAX || countLines(boxBody) > BOX_BODY_LINES) {
+        const lines = countLines(boxBody);
+        return fail(`That box is ${boxBody.length} characters over ${lines} ${lines === 1 ? "line" : "lines"}. A box holds ${BOX_BODY_LINES} short lines (${BOX_BODY_MAX} chars max): keep the rule, say the rest out loud, or draw it.`);
+      }
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
         board.addWorkedExampleBox(title, normalizeText(body), pickColumn(column.value)),
@@ -807,6 +858,25 @@ function dispatchInner(
       const item = board.withDirectMeta({ owner: "tutor" }, () => board.pointAt(target));
       if (!item) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
       return ok(`Pointing at ${item.id} (${item.label}).`);
+    }
+
+    case "highlight": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const target = requiredString(args, "target");
+      if (isToolError(target)) return target;
+      const text = opt(args, "text");
+      if (text.error) return text.error;
+      const colorArg = opt(args, "color");
+      if (colorArg.error) return colorArg.error;
+      const color = pickHighlightColor(colorArg.value) ?? "yellow";
+      if (!board.highlight) return fail("Highlighting is not available on this board.");
+      const res = board.withDirectMeta({ owner: "tutor" }, () => board.highlight!(target, text.value, color));
+      if (!res) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
+      if (text.value && res.part === "item") {
+        return ok(`Couldn't find "${text.value}" written in ${res.item.id}, so the whole item (${res.item.label}) is highlighted in ${color}`);
+      }
+      return ok(text.value ? `Highlighted "${text.value}" in ${res.item.id} (${res.item.label}) in ${color}` : `Highlighted ${res.item.id} (${res.item.label}) in ${color}`);
     }
 
     case "circle_item": {
