@@ -7,6 +7,7 @@ export type LearningStatus = "building" | "supported" | "independent_recent" | "
 
 export type LearningAttemptEvidence = {
   id: string;
+  callId?: string;
   skillKey: string | null;
   rawSkill: string;
   problem: string;

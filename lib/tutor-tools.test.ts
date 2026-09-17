@@ -13,6 +13,18 @@ test("tutor tools do not collide with whiteboard tools and convert for Responses
   assert.ok(TUTOR_FUNCTION_TOOLS.every((t) => t.type === "function" && t.strict === false));
 });
 
+test("learning tools require an honest help level and a structured teaching move", () => {
+  const check = TUTOR_TOOL_DECLARATIONS.find((tool) => tool.name === "check_answer");
+  assert.ok(check);
+  assert.ok(check.parameters.required.includes("help_level"));
+  const move = TUTOR_TOOL_DECLARATIONS.find((tool) => tool.name === "record_teaching_move");
+  assert.ok(move);
+  assert.deepEqual(move.parameters.required, ["skill", "help_level", "move"]);
+  assert.deepEqual(move.parameters.properties.help_level.enum, ["H0", "H1", "H2", "H3", "H4", "H5"]);
+  assert.ok(move.parameters.properties.move.enum.includes("worked_example"));
+  assert.ok(move.parameters.properties.strategy.enum.includes("counterexample"));
+});
+
 test("check_answer returns a verdict and validates its arguments", () => {
   const p = createPolicy(0);
   const r = runTutorTool("check_answer", { problem: "1/2 + 1/3", student_answer: "2/5" }, p, 0);

@@ -25,6 +25,27 @@ import {
 const KINDS = ["slip", "misconception", "guess"] as const;
 type WrongKind = (typeof KINDS)[number];
 
+export const TEACHING_MOVE_TYPES = [
+  "focusing_question",
+  "point",
+  "strategy_hint",
+  "shown_step",
+  "worked_example",
+  "counterexample",
+  "independent_check",
+] as const;
+
+export const REMEDIATION_STRATEGIES = [
+  "counterexample",
+  "visual_model",
+  "simpler_case",
+  "contrast_cases",
+  "rebuild_prerequisite",
+  "worked_example",
+  "self_explanation",
+  "verification",
+] as const;
+
 export const TUTOR_TOOL_DECLARATIONS = [
   {
     name: "check_answer",
@@ -48,7 +69,7 @@ export const TUTOR_TOOL_DECLARATIONS = [
         help_level: {
           type: "string",
           enum: ["H0", "H1", "H2", "H3", "H4", "H5"],
-          description: "Optional: help they had before answering: H0 none, H1 a nudge, H2 pointing, H3 a strategy hint, H4 a shown step, H5 a worked example.",
+          description: "Required: the most help they had before answering: H0 none, H1 a nudge, H2 pointing, H3 a strategy hint, H4 a shown step, H5 a worked example. Never call helped work H0.",
         },
         kind: {
           type: "string",
@@ -56,7 +77,45 @@ export const TUTOR_TOOL_DECLARATIONS = [
           description: "Optional, when you can tell a wrong answer's kind: slip (right method, arithmetic or copying error), misconception (a wrong idea), guess.",
         },
       },
-      required: ["problem", "student_answer", "skill"],
+      required: ["problem", "student_answer", "skill", "help_level"],
+    },
+  },
+  {
+    name: "record_teaching_move",
+    description:
+      "Record meaningful help before you check the student's next answer. Use it when you give a focusing question, point to something, give a strategy hint, show a step or example, set up a counterexample, or explicitly ask for an independent check. This keeps supported work from being mislabeled as independent. Do not narrate the tool call.",
+    parameters: {
+      type: "object",
+      properties: {
+        skill: {
+          type: "string",
+          description: "The same concise skill label you will pass to check_answer.",
+        },
+        help_level: {
+          type: "string",
+          enum: ["H0", "H1", "H2", "H3", "H4", "H5"],
+          description: "H0 independent check, H1 nudge, H2 pointing, H3 strategy hint, H4 shown step, H5 worked example.",
+        },
+        move: {
+          type: "string",
+          enum: [...TEACHING_MOVE_TYPES],
+          description: "The teaching move that just happened.",
+        },
+        diagnosis: {
+          type: "string",
+          description: "Optional short description of the student's wrong idea. Record an observation, not an ability label.",
+        },
+        strategy: {
+          type: "string",
+          enum: [...REMEDIATION_STRATEGIES],
+          description: "Optional remediation strategy chosen for a misconception or repeated miss.",
+        },
+        intent: {
+          type: "string",
+          description: "Optional short reason for this move, such as 'see whether they can choose the inverse operation'.",
+        },
+      },
+      required: ["skill", "help_level", "move"],
     },
   },
 ];
