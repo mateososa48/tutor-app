@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
-import { tutorSessions } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { sessionFrames, tutorSessions } from "@/lib/db/schema";
+import { eq, desc, inArray } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 
 // GET /api/sessions?limit=20
@@ -20,7 +20,15 @@ export async function GET(req: NextRequest) {
     .orderBy(desc(tutorSessions.startedAt))
     .limit(limit);
 
-  return NextResponse.json(rows);
+  // Which of these sessions have a board picture, so the home page only asks
+  // for thumbnails that exist (GET /api/sessions/[id]/frames).
+  const ids = rows.map((r) => r.id);
+  const pictured = ids.length
+    ? await db.selectDistinct({ sessionId: sessionFrames.sessionId }).from(sessionFrames).where(inArray(sessionFrames.sessionId, ids))
+    : [];
+  const hasPicture = new Set(pictured.map((p) => p.sessionId));
+
+  return NextResponse.json(rows.map((r) => ({ ...r, hasPicture: hasPicture.has(r.id) })));
 }
 
 // POST /api/sessions — create a new session

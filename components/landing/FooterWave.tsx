@@ -119,6 +119,7 @@ export function FooterWave({
   swing = 1,
   reserve = 60,
   waveScale = 1,
+  speed = 1,
 }: {
   className?: string;
   /** The colour the band dithers out into; match whatever sits behind it. */
@@ -134,12 +135,14 @@ export function FooterWave({
   reserve?: number;
   /** Ripples per 1000px. Above 1 fits a full wave into a narrow band. */
   waveScale?: number;
+  /** Time multiplier: below 1 moves slower. */
+  speed?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const colors = useRef({ background, top, deep, ink, edge, swing, reserve, waveScale });
+  const colors = useRef({ background, top, deep, ink, edge, swing, reserve, waveScale, speed });
   // Runs before the setup effect on mount, and after every render.
   useEffect(() => {
-    colors.current = { background, top, deep, ink, edge, swing, reserve, waveScale };
+    colors.current = { background, top, deep, ink, edge, swing, reserve, waveScale, speed };
   });
 
   useEffect(() => {
@@ -249,7 +252,7 @@ export function FooterWave({
       if (!visible) return;
       pointerX += (targetX - pointerX) * 0.04;
       pull += (targetPull - pull) * 0.03;
-      draw((now - start) / 1000);
+      draw(((now - start) / 1000) * colors.current.speed);
     };
 
     if (reduce) draw(STILL_T);

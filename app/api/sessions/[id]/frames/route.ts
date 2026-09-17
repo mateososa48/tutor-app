@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { sessionFrames, tutorSessions } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
@@ -62,4 +62,30 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     .where(and(eq(sessionFrames.sessionId, id), eq(sessionFrames.hash, hash)))
     .limit(1);
   return raced.length ? NextResponse.json({ frameId: raced[0].id }) : NextResponse.json({ error: "not stored" }, { status: 500 });
+}
+
+// GET /api/sessions/[id]/frames — the newest board picture of the student's own
+// session, as an image, for the thumbnails on the home page. 404 when the
+// session has no picture yet (older sessions), so the page shows a placeholder.
+export async function GET(_req: NextRequest, ctx: RouteCtx) {
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { id } = await ctx.params;
+  const rows = await db.select({ userId: tutorSessions.userId }).from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
+  if (rows.length === 0 || rows[0].userId !== session.user.id) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  const [frame] = await db
+    .select({ data: sessionFrames.data, mime: sessionFrames.mime })
+    .from(sessionFrames)
+    .where(eq(sessionFrames.sessionId, id))
+    .orderBy(desc(sessionFrames.offsetMs))
+    .limit(1);
+  if (!frame) return NextResponse.json({ error: "no picture" }, { status: 404 });
+
+  return new NextResponse(new Uint8Array(Buffer.from(frame.data, "base64")), {
+    headers: { "Content-Type": frame.mime, "Cache-Control": "private, max-age=300" },
+  });
 }

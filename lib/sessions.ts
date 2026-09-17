@@ -16,6 +16,8 @@ export type SavedSession = {
   pausedAt: number | null;
   transcript: TranscriptEntry[];
   createdAt: string;
+  /** Set by the list endpoint: the session has at least one board picture. */
+  hasPicture?: boolean;
 };
 
 export type SessionEvent = {
