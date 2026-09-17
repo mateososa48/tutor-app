@@ -29,7 +29,10 @@ if (!key) throw new Error("no Gemini key in .env.local");
 const MODELS = process.argv.slice(2).length ? process.argv.slice(2) : ["gemini-3.1-flash-live-preview", "gemini-3.8-live", "gemini-3.8-live-extended-thinking"];
 const STUDENT = "hey i need help with adding fractions. like 1/2 plus 1/3. i dont get it";
 const instructions = buildGeminiInstructions({ displayName: "Sam", gradeLevel: "Middle school (6–8)", learningPrefs: {} } as never, []);
-const tools = [{ functionDeclarations: [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS] }];
+const ASYNC = Boolean(process.env.ASYNC);
+const declarations = [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS];
+// NON_BLOCKING lets the model keep talking while a tool runs (3.8 and later).
+const tools = [{ functionDeclarations: ASYNC ? declarations.map((d) => ({ ...d, behavior: "NON_BLOCKING" })) : declarations }];
 
 type LivePart = { text?: string; thought?: boolean; inlineData?: { data?: string } };
 type LiveMessage = {
@@ -80,7 +83,11 @@ function probe(model: string, thinkingConfig: Record<string, unknown> | null): P
             responseModalities: ["AUDIO"],
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } },
             ...(thinkingConfig ? { thinkingConfig } : {}),
+            ...(process.env.MEDIARES ? { mediaResolution: `MEDIA_RESOLUTION_${process.env.MEDIARES}` } : {}),
+            ...(process.env.AFFECT === "gen" ? { enableAffectiveDialog: true } : {}),
           },
+          ...(process.env.AFFECT === "setup" ? { enableAffectiveDialog: true } : {}),
+          ...(process.env.PROACTIVE ? { proactivity: { proactiveAudio: true } } : {}),
           systemInstruction: { parts: [{ text: process.env.SHORTPROMPT ? "You are a friendly math tutor for a 12-year-old. Keep replies short." : instructions }] },
           ...(process.env.NOTOOLS ? {} : { tools }),
           ...(process.env.MINIMAL ? { outputAudioTranscription: {} } : {
@@ -98,7 +105,13 @@ function probe(model: string, thinkingConfig: Record<string, unknown> | null): P
       const ms = Date.now() - t0;
       if (msg.setupComplete) {
         r.setupMs = ms;
-        ws.send(JSON.stringify({ clientContent: { turns: [{ role: "user", parts: [{ text: STUDENT }] }], turnComplete: true } }));
+        // A board picture first, the way the session page sends one.
+        if (process.env.IMAGE) {
+          const b64 = fs.readFileSync(process.env.IMAGE, "utf8").trim();
+          ws.send(JSON.stringify({ realtimeInput: { video: { data: b64, mimeType: "image/jpeg" } } }));
+        }
+        const line = process.env.ASK ?? STUDENT;
+        setTimeout(() => ws.send(JSON.stringify({ clientContent: { turns: [{ role: "user", parts: [{ text: line }] }], turnComplete: true } })), process.env.IMAGE ? 1200 : 0);
         return;
       }
       if (msg.toolCall?.functionCalls) {
@@ -106,7 +119,13 @@ function probe(model: string, thinkingConfig: Record<string, unknown> | null): P
         for (const c of msg.toolCall.functionCalls) {
           r.toolCalls.push(c.name);
           r.toolAtMs.push(ms);
-          ws.send(JSON.stringify({ toolResponse: { functionResponses: [{ id: c.id, name: c.name, response: { output: `Done (item b${r.toolCalls.length}).` } }] } }));
+          const response: Record<string, unknown> = { output: `Done (item b${r.toolCalls.length}).` };
+          if (ASYNC) response.scheduling = process.env.SCHEDULING ?? "WHEN_IDLE";
+          // A real board takes a moment; with NON_BLOCKING the model should keep talking meanwhile.
+          const delay = ASYNC ? Number(process.env.TOOLDELAY ?? 2500) : 0;
+          setTimeout(() => {
+            try { ws.send(JSON.stringify({ toolResponse: { functionResponses: [{ id: c.id, name: c.name, response }] } })); } catch { /* closed */ }
+          }, delay);
         }
         return;
       }
