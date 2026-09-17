@@ -240,8 +240,10 @@ export function buildFreeGraph(input: FreeInput): FreeGraph | { error: string } 
   if ("error" in sliderList) return sliderList;
   const settingsIn = parseFreeSettings(input.settings);
   if ("error" in settingsIn) return settingsIn;
-  if (items.length === 0 && pointsIn.length === 0 && !table) {
-    return { error: 'Give draw_desmos something to draw: expressions ("y=2x+1; y>x"), points, or a table.' };
+  // An empty grid is just a view.
+  const emptyGrid = input.xMin !== undefined && input.xMax !== undefined;
+  if (items.length === 0 && pointsIn.length === 0 && !table && !emptyGrid) {
+    return { error: 'Give draw_desmos something to draw: expressions ("y=2x+1; y>x"), points, a table, or for an empty grid x_min and x_max.' };
   }
   if (items.length > FREE_MAX_ITEMS) return { error: `At most ${FREE_MAX_ITEMS} expressions; split the rest into a second graph.` };
 
@@ -383,6 +385,7 @@ export function buildFreeGraph(input: FreeInput): FreeGraph | { error: string } 
     dataPoints.push({ x: p.x, y: p.y });
   });
   if (pointsIn.length) described.push(`${pointsIn.length} point${pointsIn.length === 1 ? "" : "s"}`);
+  if (described.length === 0) described.push("an empty grid");
 
   // The view: what was asked, else the data, else the curves over −10..10.
   const bounds = view(input, dataPoints, curveSources, settingsIn.square);

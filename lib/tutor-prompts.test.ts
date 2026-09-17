@@ -42,7 +42,44 @@ test("backend instructions carry the profile, memory notes, and the output contr
   // mention undrawn board content, words are labels), which cost 268 chars net
   // after trimming the lines they replaced. Raise it again only for a rule that
   // earns it, never to make room for prose.
-  assert.ok(text.length < 19200, `backend prompt too long: ${text.length}`);
+  // Raised to 19.6k on Sept 17 (18,810 → 19,543) for what recorded sessions
+  // showed missing: rule 4 (what you work out goes on the board, a right
+  // answer is ringed), "what?" and "I don't know" never answered by the tutor
+  // itself, looking at the worksheet before copying from it, one sky pen,
+  // Desmos routing and a "what?" example; paid down by trimming the board
+  // intro, concrete-to-abstract, the [Board] rule and a fallback line.
+  assert.ok(text.length < 19600, `backend prompt too long: ${text.length}`);
+  // Gemini gets the conversation sections too (20,641 on Sept 17).
+  const gemini = buildGeminiInstructions(profile, ["mixes up numerator and denominator"]);
+  assert.ok(gemini.length < 20800, `gemini prompt too long: ${gemini.length}`);
+});
+
+test("what recorded sessions got wrong is now a rule", () => {
+  const text = buildBackendInstructions(null, []);
+  assert.match(text, /4\. What you work out goes on the board in the same reply/);
+  assert.match(text, /their right answer ringed \(circle_item keep=true\)/);
+  assert.match(text, /never answer your own question/);
+  assert.match(text, /"What\?" usually means they lost the question/);
+  assert.match(text, /Never end on "I don't know"/);
+  assert.match(text, /look_at_worksheet first, then copy the problem exactly as printed/);
+  assert.match(text, /add_student_attempt with their exact words \(not "I don't know"\)/);
+  assert.match(text, /every mark is your one sky pen/);
+  assert.match(text, /praise and chat are said, not written/);
+  assert.match(text, /Example 9 — "what\?"/);
+});
+
+test("routing sends anything on axes to Desmos only where Desmos can draw", () => {
+  const withDesmos = buildGeminiInstructions(null, [], { desmos: true });
+  assert.match(withDesmos, /Anything on a coordinate plane is drawn by Desmos/);
+  assert.match(withDesmos, /draw_desmos \(expressions, points, polygons; sliders/);
+  assert.match(withDesmos, /Data: draw_data_plot/);
+  assert.match(withDesmos, /grid=true to count squares/);
+  assert.match(withDesmos, /draw_desmos\(expressions="y=2x\+1; y=-x\+7"/);
+  for (const text of [buildGeminiInstructions(null, [], { desmos: false }), buildBackendInstructions(null, [], { desmos: false })]) {
+    assert.doesNotMatch(text, /draw_desmos|draw_data_plot|grid=true/);
+    assert.match(text, /add_function_graph \(slope_run, mark_points, second_expression, extra_expressions\)/);
+    assert.match(text, /draw_equation_step\(latex="5x \+ 2 = 3x \+ 10"\)/);
+  }
 });
 
 test("backend instructions teach before they draw", () => {

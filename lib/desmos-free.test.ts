@@ -101,6 +101,8 @@ test("tables fit, points label, and bad items are refused with a fix", () => {
   assert.match((build({ expressions: "y=\\frac{1}{x" }) as { error: string }).error, /never closed/);
   assert.match((build({ expressions: "3+4" }) as { error: string }).error, /nothing to draw/);
   assert.match((build({}) as { error: string }).error, /something to draw/);
+  const empty = build({ xMin: -5, xMax: 5, yMin: -5, yMax: 5 });
+  assert.ok(!("error" in empty) && empty.described[0] === "an empty grid" && empty.spec.expressions.length === 0);
   assert.match((build({ expressions: "y=x", xMin: 5, xMax: 1 }) as { error: string }).error, /x_max/);
   assert.match((build({ expressions: Array.from({ length: 9 }, (_, i) => `y=${i}x`).join(";") }) as { error: string }).error, /At most 8/);
 });

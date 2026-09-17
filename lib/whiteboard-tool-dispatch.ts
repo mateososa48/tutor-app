@@ -35,6 +35,7 @@ import {
   pictureContent,
   splitSlots,
   splitSteps,
+  withoutPraise,
 } from "@/lib/board-content-rules";
 import { parsePlace, type PlaceRequest } from "@/lib/board-layout";
 import { ensureRelation, graphLatexProblem, toDesmosLatex } from "@/lib/desmos-graph";
@@ -297,7 +298,9 @@ function dispatchInner(
       const text = requiredString(args, "text");
       if (isToolError(text)) return text;
       // One sky tag (Sept 16 2026): an old `style` argument is ignored.
-      const tag = boardLines(text).replace(/\n+/g, " ");
+      const asked = boardLines(text).replace(/\n+/g, " ");
+      const question = withoutPraise(asked);
+      const tag = question ?? asked;
       const problem = calloutProblem(tag);
       if (problem) return fail(problem);
       if (tag.length > CALLOUT_MAX) {
@@ -305,7 +308,7 @@ function dispatchInner(
       }
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor" }, () => board.addCallout(tag, pickColumn(column.value)));
-      return ok(`Tagged "${tag.slice(0, 90)}".`);
+      return ok(`Tagged "${tag.slice(0, 90)}".${question ? " The praise before it was left out: say it instead." : ""}`);
     }
 
     case "add_student_attempt": {

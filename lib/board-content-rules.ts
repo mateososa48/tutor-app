@@ -113,6 +113,19 @@ const HAS_MATH = /\d|[=+×÷^<>≤≥√π%/]|\\[a-z]+|(^|[^a-z'’])[b-hj-z]($|
 const PRAISE = /^(great|good|nice|awesome|perfect|excellent|well done|good job|great job|amazing|fantastic|brilliant|super|wonderful|correct|yes|yay|exactly|nailed it|you got it|way to go|keep it up|keep going|bravo|genial|parfait|perfecto|muy bien|très bien|sehr gut|toll)\b/i;
 const CHAT = /\b(let'?s|lets|ready|wrap(ping)? up|we learned|we'?ll|we will|i'?ll|shall we|time to|next up|coming up|good work|great work|you'?re doing|proud of you|fun|challenge)\b/i;
 
+/**
+ * "Exactly. What is 11 minus 3?" → "What is 11 minus 3?": a question behind a
+ * praise sentence is still worth writing (an eval turn lost its board move to
+ * the refusal, Sept 17). Null when there is no praise opener or no question.
+ */
+export function withoutPraise(text: string): string | null {
+  const t = text.trim();
+  const m = /^[^.!?]*[.!]+\s+(.+\?)$/.exec(t);
+  if (!m || !PRAISE.test(t)) return null;
+  const rest = m[1].trim();
+  return PRAISE.test(rest) ? null : rest;
+}
+
 /** Why a callout should not go on the board, or null. Praise and chat are said out loud. */
 export function calloutProblem(text: string): string | null {
   const t = text.trim();

@@ -10,6 +10,7 @@ import {
   pictureContent,
   splitSlots,
   splitSteps,
+  withoutPraise,
 } from "./board-content-rules";
 
 test("pipes and literal newlines become line breaks", () => {
@@ -61,6 +62,12 @@ test("callouts carry math, rules and questions, not praise or chat", () => {
   assert.equal(calloutProblem("Which side is heavier?"), null);
   assert.equal(calloutProblem("Let's check: 3(6) + 7 = 25"), null);
   assert.match(calloutProblem("Great job!") ?? "", /Praise/);
+  // A question behind the praise is kept.
+  assert.equal(withoutPraise("Exactly. What is the difference between 11 and 3?"), "What is the difference between 11 and 3?");
+  assert.equal(withoutPraise("Nice work! Which bar is taller?"), "Which bar is taller?");
+  assert.equal(withoutPraise("Perfect slope calculation for these points. slope=3."), null, "no question: still refused");
+  assert.equal(withoutPraise("Great job! Great job?"), null);
+  assert.equal(withoutPraise("What is 11 minus 3?"), null, "no praise, nothing to strip");
 });
 
 test("the same content twice points at what is already there", () => {
