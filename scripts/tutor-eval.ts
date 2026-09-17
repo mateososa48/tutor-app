@@ -330,7 +330,7 @@ async function main() {
 
   const rows: Row[] = [];
   const log: unknown[] = [];
-  const toolUse = { turns: 0, check: 0, record: 0 };
+  const toolUse = { turns: 0, check: 0, worksheet: 0 };
   for (const p of personas) {
     for (let r = 0; r < runs; r++) {
       console.log(`\n=== ${p.id} (${p.grade}) run ${r + 1}/${runs}`);
@@ -362,14 +362,15 @@ async function main() {
       rows.push(score(p.id, turns, verdict));
       toolUse.turns += turns.length;
       toolUse.check += turns.filter((t) => t.tools.some((x) => x.name === "check_answer")).length;
-      toolUse.record += turns.filter((t) => t.tools.some((x) => x.name === "record_attempt")).length;
+      toolUse.worksheet += turns.filter((t) => t.tools.some((x) => x.name === "look_at_worksheet")).length;
       log.push({ persona: p.id, run: r + 1, turns, verdict });
     }
   }
 
   console.log(`\n${label}: prompt ${promptName} · tutor ${tutorModel} · student ${studentModel} · judge ${judgeModel} · ${turnsPer} turns`);
   printTable(rows);
-  console.log(`check_answer in ${toolUse.check} of ${toolUse.turns} tutor turns · record_attempt in ${toolUse.record}`);
+  // check_answer records the attempt too (record_attempt was merged into it on Sept 16 2026).
+  console.log(`check_answer in ${toolUse.check} of ${toolUse.turns} tutor turns · look_at_worksheet in ${toolUse.worksheet}`);
   console.log(`model calls ${usage.calls} · tokens in ${usage.prompt.toLocaleString()} · out ${usage.output.toLocaleString()} · thinking ${usage.thoughts.toLocaleString()}`);
 
   const out = arg("out", "");

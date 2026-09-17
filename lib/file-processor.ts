@@ -8,12 +8,24 @@ export const ACCEPTED_MIME_TYPES = [
 export const ACCEPTED_EXTENSIONS = ".jpg,.jpeg,.png,.pdf,.txt";
 export const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB — sent inline to the Responses backend
 
+/** One page of a PDF as a picture (lib/worksheet-pages.ts). */
+export interface FilePage {
+  base64: string; // JPEG, no data-URL prefix
+  mimeType: "image/jpeg";
+  width: number;
+  height: number;
+}
+
 export interface UploadedFile {
   id: string;
   label: string;  // "File 1", "File 2" — stable, never reassigned
   name: string;   // original filename
   mimeType: string;
   base64: string; // raw base64, no data-URL prefix
+  /** PDFs: the first pages as pictures, for tutors that read images but not PDFs. */
+  pages?: FilePage[];
+  /** PDFs: how many pages the document has (only the first few become pictures). */
+  pageCount?: number;
 }
 
 export function validateFile(file: File): string | null {

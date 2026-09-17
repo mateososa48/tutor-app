@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLARATIONS, TUTOR_TOOL_NAMES, runTutorTool } from "./tutor-tools";
+import { TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLARATIONS, TUTOR_TOOL_NAMES, attemptFromVerdict, runTutorTool } from "./tutor-tools";
+import { SESSION_TOOL_NAMES } from "./session-tools";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { buildBackendInstructions, buildGeminiInstructions } from "./tutor-prompts";
 import { createPolicy } from "./tutor-policy";
@@ -21,19 +22,34 @@ test("check_answer returns a verdict and validates its arguments", () => {
   assert.ok(bad && !bad.success);
 });
 
-test("record_attempt updates the policy and answers with the state line", () => {
+test("check_answer records the attempt and answers with the state line", () => {
   const p = createPolicy(0);
-  const r = runTutorTool("record_attempt", { skill: "adding fractions", result: "misconception", help_level: "H1" }, p, 0);
+  const r = runTutorTool("check_answer", { problem: "1/2 + 1/3", student_answer: "2/5", skill: "adding fractions", help_level: "H1", kind: "misconception" }, p, 0, "call-1");
   assert.ok(r && r.success);
   assert.match(r.message ?? "", /\[Tutor state: skill "adding fractions": 0 of 1 right/);
-  assert.equal(p.attempts.length, 1);
-  const bad = runTutorTool("record_attempt", { skill: "x", result: "wrong", help_level: "H9" }, p, 0);
-  assert.ok(bad && !bad.success);
+  assert.deepEqual(p.attempts.map((a) => [a.result, a.help, a.callId]), [["misconception", 1, "call-1"]]);
+  // A right answer asks for the ring, and for equations the check.
+  const right = runTutorTool("check_answer", { problem: "2x + 3 = 11", student_answer: "x = 4", skill: "two-step equations" }, p, 0);
+  assert.match(right && right.success ? right.message ?? "" : "", /Verdict: correct\..*circle_item.*keep=true.*putting the value back in/);
+  // What the checker cannot judge counts neither way.
+  const misses = p.missesInRow;
+  runTutorTool("check_answer", { problem: "x + y = 5", student_answer: "3", skill: "two-step equations" }, p, 0);
+  assert.equal(p.attempts.at(-1)?.result, "unchecked");
+  assert.equal(p.missesInRow, misses);
+  assert.equal(runTutorTool("record_attempt", { skill: "x", result: "correct", help_level: "H1" }, p, 0), null, "record_attempt is gone");
   assert.equal(runTutorTool("draw_fraction", {}, p, 0), null);
 });
 
+test("wrong answers keep the kind the tutor saw", () => {
+  assert.equal(attemptFromVerdict("incorrect"), "incorrect");
+  assert.equal(attemptFromVerdict("incorrect", "slip"), "slip");
+  assert.equal(attemptFromVerdict("incorrect", "nonsense"), "incorrect");
+  assert.equal(attemptFromVerdict("correct", "slip"), "correct");
+  assert.equal(attemptFromVerdict("cannot_check"), "unchecked");
+});
+
 test("every tool named in the prompt examples is declared", () => {
-  const declared = new Set([...WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name), ...TUTOR_TOOL_NAMES]);
+  const declared = new Set([...WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name), ...TUTOR_TOOL_NAMES, ...SESSION_TOOL_NAMES]);
   for (const text of [buildBackendInstructions(null, []), buildGeminiInstructions(null, [])]) {
     const lines = text.split("\n").filter((l) => l.startsWith("Tool calls:"));
     assert.ok(lines.length >= 8, `expected example tool-call lines, got ${lines.length}`);

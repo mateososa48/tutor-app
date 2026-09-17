@@ -1,19 +1,30 @@
 // Session-level tutor policy, shared by both voice stacks (Gemini Live and
 // GPT-Live). It keeps the facts a model loses track of over a long voice
-// session: every attempt the tutor records with record_attempt, what the
-// student just said (frustrated, confused, "I don't know", bored, unsure), and
-// durable notes. From those it builds one [Tutor state] line that rides on tool
+// session: every attempt check_answer records, what the student just said
+// (frustrated, confused, "I don't know", bored, unsure, leaving), and durable
+// notes. From those it builds one [Tutor state] line that rides on tool
 // results: how this skill is going, misses in a row, a suggested help level
 // (H0 wait … H5 worked example), and cues to go down or up. Code supplies the
 // facts; the prompt ("How much help", "Adapting up and down") supplies the
 // judgment. Pure and unit-tested; each live client owns one instance.
-// Replaces lib/tutor-state.ts (a confusion regex and a downshift injection).
+//
+// Nudges (Sept 16 2026). Recorded sessions judged 20+ answers without
+// check_answer, did arithmetic out loud that never reached the board, saved
+// no memory, and forgot an uploaded worksheet. Each of those now leaves a
+// one-line note that the next board result carries once (boardResultExtras).
 
-export type AttemptResult = "correct" | "slip" | "misconception" | "partial" | "guess" | "stuck";
-export const ATTEMPT_RESULTS: AttemptResult[] = ["correct", "slip", "misconception", "partial", "guess", "stuck"];
+import { isNonAnswer } from "./board-content-rules";
 
-export type Attempt = { skill: string; result: AttemptResult; help: number; at: number; note?: string };
-export type StudentSignal = "frustrated" | "confused" | "idk" | "bored" | "unsure";
+// "incorrect": wrong, kind not given. "unchecked": the checker could not
+// judge it, so it counts neither way.
+export type AttemptResult = "correct" | "slip" | "misconception" | "partial" | "guess" | "stuck" | "incorrect" | "unchecked";
+export const ATTEMPT_RESULTS: AttemptResult[] = ["correct", "slip", "misconception", "partial", "guess", "stuck", "incorrect", "unchecked"];
+
+/** `callId`: the tool call that recorded it, so a cancelled call can take it back. `auto`: recorded by the app ("I don't know"). */
+export type Attempt = { skill: string; result: AttemptResult; help: number; at: number; note?: string; callId?: string; auto?: boolean };
+export type StudentSignal = "frustrated" | "confused" | "idk" | "bored" | "unsure" | "closing";
+
+export type SessionFile = { label: string; name: string; pages: number };
 
 export type TutorPolicy = {
   startedAt: number;
@@ -27,6 +38,18 @@ export type TutorPolicy = {
   signalQuote: Partial<Record<StudentSignal, string>>;
   notes: string[];
   lastLineKey: string;
+  /** A student line that looks like an answer and has not been checked yet. */
+  pendingAnswer: string | null;
+  answerNudged: boolean;
+  /** Arithmetic the tutor said aloud in a turn that wrote nothing. */
+  unwrittenMath: string | null;
+  /** Why remembering something is due now, or null. */
+  memoryDue: string | null;
+  memoryNudges: number;
+  notesSaved: number;
+  files: SessionFile[];
+  filesRemindedAt: number;
+  resultsSinceFilesReminder: number;
 };
 
 const MAX_ATTEMPTS = 80;
@@ -46,6 +69,15 @@ export function createPolicy(now: number): TutorPolicy {
     signalQuote: {},
     notes: [],
     lastLineKey: "",
+    pendingAnswer: null,
+    answerNudged: false,
+    unwrittenMath: null,
+    memoryDue: null,
+    memoryNudges: 0,
+    notesSaved: 0,
+    files: [],
+    filesRemindedAt: now,
+    resultsSinceFilesReminder: 0,
   };
 }
 
@@ -76,6 +108,7 @@ const SIGNAL_PATTERNS: Record<StudentSignal, RegExp[]> = {
   idk: [/\bi (don'?t|do not|dunno) know\b/i, /\bidk\b/i, /\bno idea\b/i, /\bdunno\b/i],
   bored: [/(^|[^t] )(too |so |super )?easy\b/i, /\bboring\b/i, /\bcan we (be done|stop|finish)\b/i, /\bi already (know|did) (this|these|that)\b/i, /^\s*whatever\b/i],
   unsure: [/\bi think\b\W*$/i, /\bmaybe\b/i, /\bnot sure\b/i, /\bprobably (wrong|not)\b/i, /\bis (it|that) right\b/i, /^[^?]{0,24}\d[^?]{0,12}\?\s*$/],
+  closing: [/\b(bye|goodbye|see you|gotta go|got to go|have to go|i'?m done for today|that'?s all for today|that'?s it for today|let'?s stop here)\b/i],
 };
 
 export function detectSignals(text: string): StudentSignal[] {
@@ -145,14 +178,26 @@ export function spokenMath(text: string): string | null {
   return null;
 }
 
-export function noteStudentUtterance(p: TutorPolicy, text: string): void {
+export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.now()): void {
   const t = text.trim();
   if (!t) return;
   p.studentTurns += 1;
-  for (const s of detectSignals(t)) {
+  const signals = detectSignals(t);
+  for (const s of signals) {
     p.signalTurn[s] = p.studentTurns;
     p.signalQuote[s] = t.length > 48 ? `${t.slice(0, 45)}…` : t;
   }
+  if (looksLikeAnswer(t)) {
+    p.pendingAnswer = t.length > 80 ? `${t.slice(0, 77)}…` : t;
+    p.answerNudged = false;
+  }
+  // "I don't know" while working a skill is a stuck attempt, whether or not
+  // the tutor records it (recorded sessions never did).
+  if (p.currentSkill && signals.includes("idk") && isNonAnswer(t)) {
+    const last = p.attempts.at(-1);
+    recordAttempt(p, { skill: p.currentSkill, result: "stuck", help: last?.help ?? 1, auto: true }, now);
+  }
+  if (signals.includes("closing") && p.notesSaved === 0) p.memoryDue = "they are leaving and nothing was saved this session";
 }
 
 // A signal counts for the utterance it came from and the one after it.
@@ -178,20 +223,36 @@ export function parseHelpLevel(value: unknown): number | null {
 
 export function recordAttempt(
   p: TutorPolicy,
-  input: { skill: string; result: AttemptResult; help: number; note?: string },
+  input: { skill: string; result: AttemptResult; help: number; note?: string; callId?: string; auto?: boolean },
   now: number,
 ): void {
   const skill = normalizeSkill(input.skill) || p.currentSkill || "unnamed skill";
-  if (p.currentSkill !== null && skill !== p.currentSkill) {
+  p.attempts.push({
+    skill,
+    result: input.result,
+    help: input.help,
+    at: now,
+    note: input.note?.trim() || undefined,
+    ...(input.callId ? { callId: input.callId } : {}),
+    ...(input.auto ? { auto: true } : {}),
+  });
+  if (p.attempts.length > MAX_ATTEMPTS) p.attempts.shift();
+  applyAttempt(p, p.attempts[p.attempts.length - 1]);
+  if (input.result === "misconception" && !p.attempts.slice(0, -1).some((a) => a.skill === skill && a.result === "misconception")) {
+    p.memoryDue = `a wrong idea came up${input.note ? ` (${input.note.trim()})` : ` in ${skill}`}`;
+  }
+}
+
+function applyAttempt(p: TutorPolicy, a: Attempt): void {
+  if (p.currentSkill !== null && a.skill !== p.currentSkill) {
     p.missesInRow = 0;
     p.solvedSinceSwitch = 0;
   }
-  p.currentSkill = skill;
-  p.attempts.push({ skill, result: input.result, help: input.help, at: now, note: input.note?.trim() || undefined });
-  if (p.attempts.length > MAX_ATTEMPTS) p.attempts.shift();
-  if (input.result === "correct") {
+  p.currentSkill = a.skill;
+  if (a.result === "unchecked") return;
+  if (a.result === "correct") {
     p.missesInRow = 0;
-    p.quickCorrect = input.help <= 1 ? p.quickCorrect + 1 : 0;
+    p.quickCorrect = a.help <= 1 ? p.quickCorrect + 1 : 0;
     p.solvedSinceSwitch += 1;
   } else {
     p.missesInRow += 1;
@@ -199,8 +260,24 @@ export function recordAttempt(
   }
 }
 
+/** Take back what a cancelled tool call recorded. True when something was removed. */
+export function cancelAttempt(p: TutorPolicy, callId: string): boolean {
+  const kept = p.attempts.filter((a) => a.callId !== callId);
+  if (kept.length === p.attempts.length) return false;
+  p.attempts = [];
+  p.currentSkill = null;
+  p.missesInRow = 0;
+  p.quickCorrect = 0;
+  p.solvedSinceSwitch = 0;
+  for (const a of kept) {
+    p.attempts.push(a);
+    applyAttempt(p, a);
+  }
+  return true;
+}
+
 export function suggestHelp(p: TutorPolicy): { level: number; why: string } | null {
-  const last = p.attempts.at(-1);
+  const last = [...p.attempts].reverse().find((a) => a.result !== "unchecked");
   if (!last || last.skill !== p.currentSkill) return null;
   if (p.missesInRow >= 3) return { level: Math.min(5, Math.max(4, last.help + 1)), why: `${p.missesInRow} misses in a row` };
   if (p.missesInRow === 2) return { level: Math.min(5, last.help + 1), why: "2 misses in a row" };
@@ -253,7 +330,7 @@ export function takeStateUpdate(p: TutorPolicy, now: number): string {
   return line;
 }
 
-// The state line regardless, marked as seen (for check_answer / record_attempt results).
+// The state line regardless, marked as seen (for check_answer results).
 export function currentState(p: TutorPolicy, now: number): string {
   const line = formatTutorState(p, now);
   p.lastLineKey = line.replace(/ · \d+ min in\..*$/, "");
@@ -264,7 +341,10 @@ export function currentState(p: TutorPolicy, now: number): string {
 
 export function rememberNote(p: TutorPolicy, note: string): void {
   const trimmed = note.trim();
-  if (!trimmed || p.notes.includes(trimmed)) return;
+  if (!trimmed) return;
+  p.notesSaved += 1;
+  p.memoryDue = null;
+  if (p.notes.includes(trimmed)) return;
   p.notes.push(trimmed);
   if (p.notes.length > MAX_NOTES) p.notes.shift();
 }
@@ -272,4 +352,73 @@ export function rememberNote(p: TutorPolicy, note: string): void {
 // Compact memory line appended to tool responses so it survives context compression.
 export function formatMemory(p: TutorPolicy): string {
   return p.notes.length === 0 ? "" : `[Memory: ${p.notes.join("; ")}]`;
+}
+
+// ── Nudges (Sept 16 2026) ─────────────────────────────────────────────────
+
+/** check_answer ran: the pending answer is dealt with. */
+export function noteAnswerChecked(p: TutorPolicy): void {
+  p.pendingAnswer = null;
+  p.answerNudged = false;
+}
+
+/** A tutor turn ended. Arithmetic said aloud in a turn that drew nothing is due on the board. */
+export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean): void {
+  if (drew) {
+    p.unwrittenMath = null;
+    return;
+  }
+  const said = spokenMath(text);
+  if (said) p.unwrittenMath = said;
+}
+
+/** Something was written on the board: an earlier reminder is answered. */
+export function noteBoardWrite(p: TutorPolicy): void {
+  p.unwrittenMath = null;
+}
+
+export function setSessionFiles(p: TutorPolicy, files: SessionFile[], now: number): void {
+  p.files = files;
+  p.filesRemindedAt = now;
+  p.resultsSinceFilesReminder = 0;
+}
+
+const FILES_EVERY_RESULTS = 6;
+const FILES_EVERY_MS = 3 * 60_000;
+
+function describeFiles(files: SessionFile[]): string {
+  return files.map((f) => `${f.label} "${f.name}"${f.pages > 1 ? ` (${f.pages} pages)` : ""}`).join(", ");
+}
+
+/**
+ * The notes due on this board result, each once: a changed [Tutor state], the
+ * memory, an unchecked answer, arithmetic said but not written, a memory
+ * reminder, and (every few results) the uploaded files.
+ */
+export function boardResultExtras(p: TutorPolicy, now: number): string {
+  const out: string[] = [];
+  const memory = formatMemory(p);
+  if (memory) out.push(memory);
+  const state = takeStateUpdate(p, now);
+  if (state) out.push(state);
+  if (p.pendingAnswer && !p.answerNudged) {
+    p.answerNudged = true;
+    out.push(`[Unchecked answer: the student said "${p.pendingAnswer}". Call check_answer before you say whether it is right.]`);
+  }
+  if (p.unwrittenMath) {
+    out.push(`[Said, not written: you said "${p.unwrittenMath}" out loud. Put it on the board so the student can follow it.]`);
+    p.unwrittenMath = null;
+  }
+  if (p.memoryDue && p.memoryNudges < 3) {
+    p.memoryNudges += 1;
+    out.push(`[Memory: ${p.memoryDue}. If it will matter next session, call remember_about_student.]`);
+    p.memoryDue = null;
+  }
+  p.resultsSinceFilesReminder += 1;
+  if (p.files.length > 0 && (p.resultsSinceFilesReminder >= FILES_EVERY_RESULTS || now - p.filesRemindedAt >= FILES_EVERY_MS)) {
+    p.resultsSinceFilesReminder = 0;
+    p.filesRemindedAt = now;
+    out.push(`[Files: ${describeFiles(p.files)}. When the student names a problem or a part, call look_at_worksheet first and copy it exactly.]`);
+  }
+  return out.join(" ");
 }

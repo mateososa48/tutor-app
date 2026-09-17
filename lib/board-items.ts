@@ -12,6 +12,8 @@ export type BoardItem = {
   createdAt: number;
   /** What the call wrote or drew, fingerprinted (board-content-rules), so it is not written twice. */
   content?: string;
+  /** The live tool call that made it. */
+  callId?: string;
 };
 
 export type ItemBounds = { x: number; y: number; w: number; h: number };

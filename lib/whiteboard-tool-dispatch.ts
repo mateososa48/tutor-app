@@ -56,6 +56,8 @@ type Args = Record<string, unknown>;
 
 type DispatchCtx = {
   whiteboard: WhiteboardHandle | null;
+  /** The live tool call's id, so a cancelled call can be taken back (TldrawCore.undoCall). */
+  callId?: string;
 };
 
 function ensureBoard(ctx: DispatchCtx): WhiteboardHandle | ToolCallResult {
@@ -147,7 +149,7 @@ export function dispatchWhiteboardTool(
   ctx: DispatchCtx,
 ): ToolCallResult {
   const board = ctx.whiteboard;
-  const token = board ? board.beginItem(name) : null;
+  const token = board ? board.beginItem(name, ctx.callId) : null;
   // Where the new item goes: the tutor's `place`, else its older `column`.
   if (board?.setPlacement) board.setPlacement(parsePlace(args.place) ?? columnPlacement(args.column));
   // Already up? Point at it rather than write it a second time (a recorded
@@ -165,13 +167,14 @@ export function dispatchWhiteboardTool(
   }
   const result = dispatchInner(name, args, ctx);
   if (!board || !token) return result;
-  const itemId = board.endItem(token, result.success ? result.message ?? null : null);
+  // A follow-up ("Next, write the problem…") comes after the item id, and is
+  // never part of the item's label.
+  const [said, next] = (result.success ? result.message ?? "Done" : "").split(NEXT);
+  const itemId = board.endItem(token, result.success ? said : null);
   // What placement or a mark noticed: "stayed on this page: there was room",
   // "b2 is on page 1, so the board turns there to show it".
   const notes = board.takeNotes?.() ?? [];
   if (!result.success) return result;
-  // A follow-up ("Next, write the problem…") comes after the item id.
-  const [said, next] = (result.message ?? "Done").split(NEXT);
   if (!itemId && notes.length === 0 && !next) return result;
   let message = said.replace(/[.]\s*$/, "");
   if (itemId) message += ` (item ${itemId})`;

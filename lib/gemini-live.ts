@@ -1,14 +1,20 @@
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import type { UploadedFile } from "./file-processor";
 import { TUTOR_TOOL_DECLARATIONS, runTutorTool } from "./tutor-tools";
+import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
+import { toolRole } from "./board-items";
 import { hasBoundarySpace, joinTranscript } from "./live-events";
 import {
+  boardResultExtras,
+  cancelAttempt,
   createPolicy,
   formatMemory,
   formatTutorState,
+  noteBoardWrite,
   noteStudentUtterance,
+  noteTutorTurn,
   rememberNote,
-  takeStateUpdate,
+  setSessionFiles,
   type TutorPolicy,
 } from "./tutor-policy";
 
@@ -37,7 +43,10 @@ export type TranscriptEntry = {
 export type SessionCallbacks = {
   onAudio: (base64: string) => void;
   onTranscript: (entry: TranscriptEntry) => void;
-  onToolCall: (name: string, args: Record<string, unknown>) => ToolCallResult;
+  /** A tool call the app answers. It may be async (looking at the board sends the picture first). */
+  onToolCall: (name: string, args: Record<string, unknown>, callId: string) => ToolCallResult | Promise<ToolCallResult>;
+  /** The model cancelled tool calls (the student spoke over them): undo what they did. */
+  onToolCancelled?: (callIds: string[]) => void;
   onConnected: () => void;
   onDisconnected: () => void;
   onError: (msg: string) => void;
@@ -88,9 +97,19 @@ export class GeminiLiveSession {
   // Set once a transcript fragment arrives with its own leading or trailing
   // space: from then on fragments are joined exactly as sent.
   private spacedTranscripts = false;
+  // Tool calls run one after another, apart from the message queue, so audio
+  // keeps flowing while one waits (looking at the board exports a picture).
+  private toolChain: Promise<void> = Promise.resolve();
+  private cancelledCalls = new Set<string>();
+  // Whether the tutor wrote on the board this turn (arithmetic said without
+  // writing it leaves a reminder), and every file the session has seen.
+  private turnDrew = false;
+  private knownFiles: UploadedFile[] = [];
 
   private static readonly MAX_RECONNECT_ATTEMPTS = 4;
   private static readonly TURN_FINISH_DEBOUNCE_MS = 1_600;
+  // Every tool blocks the model until it answers; nothing may hold it longer.
+  private static readonly TOOL_TIMEOUT_MS = 3_000;
 
   constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string }) {
     this.callbacks = callbacks;
@@ -210,7 +229,7 @@ export class GeminiLiveSession {
         systemInstruction: {
           parts: [{ text: this.systemInstruction }],
         },
-        tools: [{ functionDeclarations: [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS] }],
+        tools: [{ functionDeclarations: [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS] }],
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
@@ -230,6 +249,15 @@ export class GeminiLiveSession {
   sendText(text: string): boolean {
     noteStudentUtterance(this.policy, text);
     return this.sendUserTurn([{ text }]);
+  }
+
+  /**
+   * Something the student did that is not speech (moved a slider in a graph
+   * they are exploring). It is a user turn, so the tutor answers it: send it
+   * only while nobody is talking.
+   */
+  sendEvent(text: string): boolean {
+    return this.sendUserTurn([{ text: `Session event: ${text}` }]);
   }
 
   // A picture of the board, sent the way a screen share sends frames: it
@@ -335,6 +363,7 @@ export class GeminiLiveSession {
     this.clearTurnTimer();
     this.studentUtterance = joinTranscript(this.studentUtterance, text, this.spacedTranscripts);
     this.tutorTurnText = "";
+    this.turnDrew = false;
   }
 
   /** A transcript fragment as it arrived, with its own spacing; null when it is only whitespace. */
@@ -375,12 +404,28 @@ export class GeminiLiveSession {
     const tutorText = this.tutorTurnText.trim();
     this.tutorTurnText = "";
     if (!tutorText) return;
+    noteTutorTurn(this.policy, tutorText, this.turnDrew);
+    this.turnDrew = false;
     const line = formatTutorState(this.policy, Date.now());
     if (line) this.debug("pacing", "tutor_state", { line });
   }
 
+  // The session's files, for the worksheet reminder in tool results.
+  private rememberFiles(files: UploadedFile[]) {
+    if (files.length === 0) return;
+    const byId = new Map(this.knownFiles.map((f) => [f.id, f]));
+    for (const f of files) byId.set(f.id, f);
+    this.knownFiles = [...byId.values()];
+    setSessionFiles(
+      this.policy,
+      this.knownFiles.map((f) => ({ label: f.label, name: f.name, pages: f.pageCount ?? f.pages?.length ?? 1 })),
+      Date.now(),
+    );
+  }
+
   private buildFileParts(files: UploadedFile[]): GeminiContentPart[] {
     if (files.length === 0) return [];
+    this.rememberFiles(files);
     const parts: GeminiContentPart[] = [
       {
         text:
@@ -401,6 +446,23 @@ export class GeminiLiveSession {
 
       if (f.mimeType === "image/jpeg" || f.mimeType === "image/png") {
         parts.push({ inlineData: { mimeType: f.mimeType, data: f.base64 } });
+        continue;
+      }
+
+      // Gemini Live reads pictures, not PDFs: the page pictures stand in
+      // (lib/worksheet-pages.ts). Until Sept 16 2026 PDFs were skipped.
+      if (f.mimeType === "application/pdf") {
+        const pages = f.pages ?? [];
+        if (pages.length === 0) {
+          parts.push({ text: "(This PDF could not be read. Ask the student for a photo of the page.)" });
+          continue;
+        }
+        const total = f.pageCount ?? pages.length;
+        pages.forEach((page, i) => {
+          parts.push({ text: `Page ${i + 1} of ${total}:` });
+          parts.push({ inlineData: { mimeType: page.mimeType, data: page.base64 } });
+        });
+        if (total > pages.length) parts.push({ text: `(Pages ${pages.length + 1} to ${total} are not shown.)` });
         continue;
       }
 
@@ -550,7 +612,7 @@ export class GeminiLiveSession {
       this.callbacks.onTranscript(topEntry);
     }
 
-    // Whiteboard tool calls
+    // Tool calls, in order, on their own queue.
     const toolCall = msg.toolCall as Record<string, unknown> | undefined;
     if (toolCall) {
       const calls = (toolCall.functionCalls as Array<Record<string, unknown>> | undefined) ?? [];
@@ -559,59 +621,99 @@ export class GeminiLiveSession {
         const name = call.name as string;
         const args = (call.args as Record<string, unknown>) ?? {};
         if (!id || !name) continue;
-
-        const startedAt = performance.now();
-        this.debug("tool", "tool_call_received", { id, name, args });
-        let result: ToolCallResult;
-        try {
-          this.flushStudentUtterance();
-          const tutorTool = runTutorTool(name, args, this.policy, Date.now());
-          if (tutorTool) {
-            // App-owned: check_answer / record_attempt, answered with the [Tutor state] line.
-            result = tutorTool;
-          } else if (name === "remember_about_student") {
-            // App-owned tool: record a durable student-model fact and echo the
-            // full memory back so it refreshes in the model's context.
-            const note = typeof args.note === "string" ? args.note.trim() : "";
-            rememberNote(this.policy, note);
-            if (note) {
-              // Same durable memory the GPT-Live path writes.
-              void fetch("/api/profile/notes", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ note }),
-              }).catch(() => undefined);
-            }
-            const mem = formatMemory(this.policy);
-            result = { success: true, message: mem ? `Noted. ${mem}` : "Noted." };
-          } else {
-            result = this.callbacks.onToolCall(name, args);
-            // Piggyback the memory and any changed [Tutor state] onto board results so
-            // they stay in context (and survive compression) without extra turns.
-            if (result.success) {
-              const extra = [formatMemory(this.policy), takeStateUpdate(this.policy, Date.now())].filter(Boolean).join(" ");
-              if (extra) result = { ...result, message: `${result.message ?? "Done"} ${extra}` };
-            }
-          }
-        } catch (error) {
-          result = {
-            success: false,
-            error: error instanceof Error ? error.message : "Tool call failed.",
-          };
-        }
-
-        this.debug("tool", "tool_response_sent", {
-          id,
-          name,
-          args,
-          success: result.success,
-          message: result.success ? result.message ?? "" : undefined,
-          error: result.success ? undefined : result.error,
-          durationMs: Math.round(performance.now() - startedAt),
-        });
-        this.sendToolResponse(id, name, result);
+        this.toolChain = this.toolChain
+          .then(() => this.runToolCall(id, name, args))
+          .catch((err) => this.debug("error", "tool_chain_failed", { id, name, message: err instanceof Error ? err.message : String(err) }));
       }
     }
+
+    // The model gave up on calls (the student spoke over them): take them back.
+    const cancellation = msg.toolCallCancellation as Record<string, unknown> | undefined;
+    const cancelledIds = Array.isArray(cancellation?.ids) ? (cancellation.ids as unknown[]).filter((v): v is string => typeof v === "string") : [];
+    if (cancelledIds.length > 0) this.cancelToolCalls(cancelledIds);
+  }
+
+  private cancelToolCalls(ids: string[]) {
+    for (const id of ids) {
+      this.cancelledCalls.add(id);
+      const attemptRemoved = cancelAttempt(this.policy, id);
+      this.debug("tool", "tool_call_cancelled", { id, attemptRemoved });
+    }
+    this.callbacks.onToolCancelled?.(ids);
+  }
+
+  private async runToolCall(id: string, name: string, args: Record<string, unknown>) {
+    if (this.cancelledCalls.has(id)) {
+      this.debug("tool", "tool_call_skipped_cancelled", { id, name });
+      return;
+    }
+    const startedAt = performance.now();
+    this.debug("tool", "tool_call_received", { id, name, args });
+    let result: ToolCallResult;
+    try {
+      this.flushStudentUtterance();
+      const tutorTool = runTutorTool(name, args, this.policy, Date.now(), id);
+      if (tutorTool) {
+        // App-owned: check_answer, answered with the [Tutor state] line.
+        result = tutorTool;
+      } else if (name === "remember_about_student") {
+        // App-owned tool: record a durable student-model fact and echo the
+        // full memory back so it refreshes in the model's context.
+        const note = typeof args.note === "string" ? args.note.trim() : "";
+        rememberNote(this.policy, note);
+        if (note) {
+          // Same durable memory the GPT-Live path writes.
+          void fetch("/api/profile/notes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ note }),
+          }).catch(() => undefined);
+        }
+        const mem = formatMemory(this.policy);
+        result = { success: true, message: mem ? `Noted. ${mem}` : "Noted." };
+      } else {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const timeout = new Promise<ToolCallResult>((resolve) => {
+          timer = setTimeout(
+            () => resolve({ success: false, error: "That took too long to finish; carry on and try it again later if you still need it." }),
+            GeminiLiveSession.TOOL_TIMEOUT_MS,
+          );
+        });
+        result = await Promise.race([Promise.resolve(this.callbacks.onToolCall(name, args, id)), timeout]);
+        if (timer) clearTimeout(timer);
+        // Piggyback the memory, a changed [Tutor state] and any nudges onto
+        // board results, so they stay in context without extra turns.
+        if (result.success) {
+          if (toolRole(name) === "draw") {
+            this.turnDrew = true;
+            noteBoardWrite(this.policy);
+          }
+          const extra = boardResultExtras(this.policy, Date.now());
+          if (extra) result = { ...result, message: `${result.message ?? "Done"} ${extra}` };
+        }
+      }
+    } catch (error) {
+      result = {
+        success: false,
+        error: error instanceof Error ? error.message : "Tool call failed.",
+      };
+    }
+
+    if (this.cancelledCalls.has(id)) {
+      // Cancelled while it ran: the model is no longer waiting for it.
+      this.debug("tool", "tool_response_dropped_cancelled", { id, name });
+      return;
+    }
+    this.debug("tool", "tool_response_sent", {
+      id,
+      name,
+      args,
+      success: result.success,
+      message: result.success ? result.message ?? "" : undefined,
+      error: result.success ? undefined : result.error,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    this.sendToolResponse(id, name, result);
   }
 
   private send(obj: unknown): boolean {

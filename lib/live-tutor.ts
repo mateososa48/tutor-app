@@ -24,7 +24,16 @@ import type {
 import { BackendTurnTracker, TranscriptAssembler } from "./live-events";
 import { buildFilesItemText } from "./tutor-prompts";
 import { runTutorTool } from "./tutor-tools";
-import { createPolicy, noteStudentUtterance, takeStateUpdate } from "./tutor-policy";
+import { toolRole } from "./board-items";
+import {
+  boardResultExtras,
+  createPolicy,
+  noteBoardWrite,
+  noteStudentUtterance,
+  noteTutorTurn,
+  rememberNote,
+  setSessionFiles,
+} from "./tutor-policy";
 
 const DATA_CHANNEL_LABEL = "oai-events";
 const SESSION_START_TIMEOUT_MS = 15_000;
@@ -38,7 +47,10 @@ export type LiveTutorCallbacks = {
   onTranscript: (entry: TranscriptEntry) => void;
   /** Live, growing text of the tutor's current utterance (for captions). */
   onCaption: (text: string) => void;
-  onToolCall: (name: string, args: Record<string, unknown>) => ToolCallResult;
+  /** A tool call the app answers; it may be async (looking at the board sends the picture first). */
+  onToolCall: (name: string, args: Record<string, unknown>, callId?: string) => ToolCallResult | Promise<ToolCallResult>;
+  /** Tool calls the model cancelled: undo what they did. */
+  onToolCancelled?: (callIds: string[]) => void;
   onConnected: (info: { resumed: boolean; expiresAt: number | null }) => void;
   onReconnecting: (attempt: number) => void;
   /** The session is over and will not reconnect. */
@@ -237,6 +249,7 @@ export class LiveTutorSession {
   private ending = false;
   private reconnectAttempts = 0;
   private notesList: string[] = [];
+  private turnDrew = false;
   // Attempts and student signals behind the [Tutor state] line (lib/tutor-policy.ts).
   private policy = createPolicy(Date.now());
   private recent: HistoryTurn[] = [];
@@ -255,7 +268,14 @@ export class LiveTutorSession {
     );
     this.assembler = new TranscriptAssembler({
       onFlush: (role, text, at) => {
-        if (role === "student") noteStudentUtterance(this.policy, text);
+        if (role === "student") {
+          noteStudentUtterance(this.policy, text);
+          this.turnDrew = false;
+        } else {
+          // Arithmetic said in a turn that wrote nothing is due on the board.
+          noteTutorTurn(this.policy, text, this.turnDrew);
+          this.turnDrew = false;
+        }
         this.recent.push({ role, text });
         if (this.recent.length > HISTORY_TURNS * 2) this.recent.splice(0, this.recent.length - HISTORY_TURNS * 2);
         this.callbacks.onTranscript({ id: this.nextId(), role, text, at });
@@ -265,7 +285,7 @@ export class LiveTutorSession {
       },
     });
     this.turns = new BackendTurnTracker({
-      execute: (name, args) => this.executeTool(name, args),
+      execute: (name, args, callId) => this.executeTool(name, args, callId),
       send: (event) => this.send(event as Record<string, unknown>),
       onActivity: (activity) => this.callbacks.onActivity(activity),
       onBackendText: (text) => this.debug("backend", "backend_text", { text }),
@@ -557,6 +577,41 @@ export class LiveTutorSession {
     return this.requestBackendTurn();
   }
 
+  /**
+   * Something the student did that is not speech (moved a slider in a graph
+   * they are exploring). It asks for a backend turn, so send it only while
+   * nobody is talking.
+   */
+  sendStudentEvent(text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed || !this.started) return false;
+    const queued = this.send({
+      type: "response.item.create",
+      event_id: `event_${++this.eventCounter}`,
+      item: { type: "message", role: "user", content: [{ type: "input_text", text: `Session event: ${trimmed}` }] },
+    });
+    return queued && this.requestBackendTurn();
+  }
+
+  /** A picture for the backend (a worksheet page): added without starting a turn. */
+  sendImageFrame(dataUrl: string, caption = "[A picture the tutor asked to see.]"): boolean {
+    if (!this.started || !dataUrl.startsWith("data:image/")) return false;
+    const ok = this.send({
+      type: "response.item.create",
+      event_id: `image_${++this.eventCounter}`,
+      item: {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: caption },
+          { type: "input_image", detail: "high", image_url: dataUrl },
+        ],
+      },
+    });
+    this.debug("board", "image_frame_pushed", { bytes: dataUrl.length, delivered: ok });
+    return ok;
+  }
+
   // Files are delivered to the backend as an attachment message, then a backend
   // turn is requested so the tutor acknowledges what it can see.
   sendFiles(files: UploadedFile[]): boolean {
@@ -594,7 +649,15 @@ export class LiveTutorSession {
     return this.send({ type: "response.create", event_id: `turn_${++this.eventCounter}` });
   }
 
+  private sessionFiles = new Map<string, UploadedFile>();
+
   private pushFilesToBackend(files: UploadedFile[]): boolean {
+    for (const f of files) this.sessionFiles.set(f.id, f);
+    setSessionFiles(
+      this.policy,
+      [...this.sessionFiles.values()].map((f) => ({ label: f.label, name: f.name, pages: f.pageCount ?? f.pages?.length ?? 1 })),
+      Date.now(),
+    );
     const content: Record<string, unknown>[] = [
       { type: "input_text", text: buildFilesItemText(files.map((f) => `${f.label} (${f.name})`)) },
     ];
@@ -618,13 +681,14 @@ export class LiveTutorSession {
 
   // ── Tools ────────────────────────────────────────────────────────────────
 
-  private async executeTool(name: string, args: Record<string, unknown>): Promise<ToolCallResult> {
-    // App-owned: check_answer / record_attempt, answered with the [Tutor state] line.
-    const tutorTool = runTutorTool(name, args, this.policy, Date.now());
+  private async executeTool(name: string, args: Record<string, unknown>, callId?: string): Promise<ToolCallResult> {
+    // App-owned: check_answer, answered with the [Tutor state] line.
+    const tutorTool = runTutorTool(name, args, this.policy, Date.now(), callId);
     if (tutorTool) return tutorTool;
     if (name === "remember_about_student") {
       const note = typeof args.note === "string" ? args.note.trim() : "";
       if (!note) return { success: false, error: "Missing note." };
+      rememberNote(this.policy, note);
       if (!this.notesList.includes(note)) {
         this.notesList.push(note);
         if (this.notesList.length > MAX_NOTES) this.notesList.shift();
@@ -644,10 +708,15 @@ export class LiveTutorSession {
       }
       return { success: true, message: `Noted. [Memory: ${this.notesList.join("; ")}]` };
     }
-    const result = this.callbacks.onToolCall(name, args);
-    // A changed [Tutor state] rides on board results, so the backend sees it this turn.
-    const update = result.success ? takeStateUpdate(this.policy, Date.now()) : "";
-    return update && result.success ? { success: true, message: `${result.message ?? "Done"} ${update}` } : result;
+    const result = await this.callbacks.onToolCall(name, args, callId);
+    if (!result.success) return result;
+    if (toolRole(name) === "draw") {
+      this.turnDrew = true;
+      noteBoardWrite(this.policy);
+    }
+    // A changed [Tutor state] and any nudges ride on board results, so the backend sees them this turn.
+    const extra = boardResultExtras(this.policy, Date.now());
+    return extra ? { success: true, message: `${result.message ?? "Done"} ${extra}` } : result;
   }
 
   // ── Inbound ──────────────────────────────────────────────────────────────

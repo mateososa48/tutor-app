@@ -125,7 +125,7 @@ export type BackendClientEvent =
   | { type: "response.create"; event_id?: string };
 
 export type BackendTurnHandlers = {
-  execute: (name: string, args: Record<string, unknown>) => Promise<ToolCallResult> | ToolCallResult;
+  execute: (name: string, args: Record<string, unknown>, callId: string) => Promise<ToolCallResult> | ToolCallResult;
   send: (event: BackendClientEvent) => boolean;
   onActivity: (activity: TutorActivity) => void;
   onBackendText?: (text: string) => void;
@@ -226,7 +226,7 @@ export class BackendTurnTracker {
         args = parsed as Record<string, unknown>;
       }
       this.h.debug?.("tool", "tool_call_received", { callId, name, args });
-      result = await this.h.execute(name, args);
+      result = await this.h.execute(name, args, callId);
     } catch (error) {
       result = {
         success: false,

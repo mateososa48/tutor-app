@@ -63,6 +63,8 @@ export type BoardArtifactOwner = "tutor" | "student" | "board-agent";
 
 export type BoardArtifactMeta = {
   jobId: string;
+  /** The live tool call that drew it, so a cancelled call can be taken back. */
+  callId?: string;
   role?: string;
   concept?: string;
   summary?: string;

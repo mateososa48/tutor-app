@@ -39,6 +39,8 @@ import {
 import type { UploadedFile } from "@/lib/file-processor";
 import { intakeOpeningMessage, intakeTitle, setActiveIntake, takeIntake } from "@/lib/session-intake";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
+import { resolveWorksheet, worksheetShown, type WorksheetLook } from "@/lib/session-tools";
+import { withPdfPages } from "@/lib/worksheet-pages";
 import { SessionRecorder } from "@/lib/session-recorder";
 import { compareEvents } from "@/lib/session-recording";
 import { joinTranscript } from "@/lib/live-events";
@@ -356,22 +358,30 @@ function SessionDetailPage({ id }: { id: string }) {
   // Every successful board action returns the semantic board summary, so the
   // teaching backend always knows what the student is actually looking at.
   // The tutor sees the board: after it draws, a picture of the finished board
-  // goes to the model (clients with vision only). look_at_board asks for one
-  // right away; other tool calls are debounced so a burst sends one frame.
+  // goes to the model (clients with vision only). look_at_board sends one
+  // before it answers; other tool calls are debounced so a burst sends one.
   const boardFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const sendBoardFrame = useCallback(async () => {
+  // Gemini takes about one video frame a second: pictures are spaced out.
+  const lastFrameAtRef = useRef(0);
+  const frameGap = useCallback(async () => {
+    const wait = lastFrameAtRef.current + 1000 - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastFrameAtRef.current = Date.now();
+  }, []);
+  const sendBoardFrame = useCallback(async (): Promise<boolean> => {
     const live = sessionRef.current;
-    if (!live?.sendBoardFrame) return;
+    if (!live?.sendBoardFrame) return false;
     const img = await whiteboardRef.current?.exportImage?.(896);
-    if (!img || sessionRef.current !== live) return;
-    live.sendBoardFrame(img.url);
+    if (!img || sessionRef.current !== live) return false;
+    await frameGap();
+    const sent = live.sendBoardFrame(img.url);
     // The exact picture the tutor saw goes into the recording too.
     void recorderRef.current?.recordFrame(img, "sent to tutor", true);
-  }, []);
-  const scheduleBoardFrame = useCallback((delayMs: number, force = false) => {
+    return sent;
+  }, [frameGap]);
+  const scheduleBoardFrame = useCallback((delayMs: number) => {
     const live = sessionRef.current;
-    if (!live?.sendBoardFrame) return;
-    if (!force && live.boardFrames !== "auto") return;
+    if (!live?.sendBoardFrame || live.boardFrames !== "auto") return;
     if (boardFrameTimerRef.current) clearTimeout(boardFrameTimerRef.current);
     boardFrameTimerRef.current = setTimeout(() => {
       boardFrameTimerRef.current = null;
@@ -390,14 +400,76 @@ function SessionDetailPage({ id }: { id: string }) {
     }, 1200);
   }, []);
 
+  const recordToolCall = useCallback((name: string, args: Record<string, unknown>, result: ToolCallResult, startedAt: number, callId?: string) => {
+    recorderRef.current?.record("tool.call", "tutor", {
+      name,
+      args,
+      callId,
+      success: result.success,
+      message: result.success ? result.message ?? "" : undefined,
+      error: result.success ? undefined : result.error,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  }, []);
+
+  // look_at_board: the picture reaches the tutor before the answer does (it
+  // used to be sent after, so the tutor answered from an older picture).
+  const lookAtBoard = useCallback(async (): Promise<ToolCallResult> => {
+    const summary = whiteboardRef.current?.getBoardSummary?.() ?? "";
+    if (!summary || /The board is empty\.$/.test(summary)) return { success: true, message: `The board is empty.${summary ? `\n[Board: ${summary}]` : ""}` };
+    if (boardFrameTimerRef.current) {
+      clearTimeout(boardFrameTimerRef.current);
+      boardFrameTimerRef.current = null;
+    }
+    const sent = await Promise.race([sendBoardFrame(), new Promise<false>((resolve) => setTimeout(() => resolve(false), 2500))]);
+    const lead = sent
+      ? "Here is the board: a fresh picture of it arrived just before this"
+      : sessionRef.current?.sendBoardFrame
+        ? "The board is still being written; its picture follows in a moment"
+        : "Here is the list of what is on the board";
+    return { success: true, message: `${lead}.\n[Board: ${summary}]` };
+  }, [sendBoardFrame]);
+
+  // look_at_worksheet: one page of an upload, shown again.
+  const lastWorksheetLookRef = useRef<WorksheetLook | null>(null);
+  const lookAtWorksheet = useCallback(async (args: Record<string, unknown>): Promise<ToolCallResult> => {
+    const list = filesRef.current;
+    const choice = resolveWorksheet(
+      list.map((f) => ({ id: f.id, label: f.label, name: f.name, mimeType: f.mimeType, pages: f.mimeType === "application/pdf" ? f.pages?.length ?? 0 : 1 })),
+      args,
+      lastWorksheetLookRef.current,
+    );
+    if ("error" in choice) return { success: false, error: choice.error };
+    const file = list.find((f) => f.id === choice.file.id);
+    const live = sessionRef.current;
+    if (!file || !live?.sendImageFrame) return { success: false, error: "Pictures cannot be shown in this session." };
+    const picture = file.mimeType === "application/pdf" ? file.pages?.[choice.page - 1] : { base64: file.base64, mimeType: file.mimeType };
+    if (!picture) return { success: false, error: `${file.label} page ${choice.page} could not be read.` };
+    const url = `data:${picture.mimeType};base64,${picture.base64}`;
+    await frameGap();
+    if (!live.sendImageFrame(url, `[${file.label} "${file.name}", page ${choice.page}: the picture you asked to see.]`)) {
+      return { success: false, error: "The picture could not be sent right now. Try again in a moment." };
+    }
+    lastWorksheetLookRef.current = { fileId: file.id, page: choice.page };
+    return { success: true, message: worksheetShown(choice.file, choice.page) };
+  }, [frameGap]);
+
   const handleToolCall = useCallback(
-    (name: string, args: Record<string, unknown>): ToolCallResult => {
+    (name: string, args: Record<string, unknown>, callId?: string): ToolCallResult | Promise<ToolCallResult> => {
       const startedAt = performance.now();
+      if (name === "look_at_board" || name === "look_at_worksheet") {
+        const job = name === "look_at_board" ? lookAtBoard() : lookAtWorksheet(args);
+        return job.then((result) => {
+          recordToolCall(name, args, result, startedAt, callId);
+          return result;
+        });
+      }
       let result = dispatchWhiteboardTool(name, args, {
         whiteboard: whiteboardRef.current,
+        callId,
       });
       if (result.success) {
-        scheduleBoardFrame(name === "look_at_board" ? 0 : 900, name === "look_at_board");
+        scheduleBoardFrame(900);
         const summary = whiteboardRef.current?.getBoardSummary?.();
         if (summary) {
           result = {
@@ -407,18 +479,38 @@ function SessionDetailPage({ id }: { id: string }) {
         }
       }
       if (sessionRef.current?.boardFrames !== "auto") scheduleRecordingFrame();
-      recorderRef.current?.record("tool.call", "tutor", {
-        name,
-        args,
-        success: result.success,
-        message: result.success ? result.message ?? "" : undefined,
-        error: result.success ? undefined : result.error,
-        durationMs: Math.round(performance.now() - startedAt),
-      });
+      recordToolCall(name, args, result, startedAt, callId);
       return result;
     },
-    [scheduleBoardFrame, scheduleRecordingFrame],
+    [lookAtBoard, lookAtWorksheet, recordToolCall, scheduleBoardFrame, scheduleRecordingFrame],
   );
+
+  // The model cancelled calls (the student spoke over them): take them off the board.
+  const handleToolCancelled = useCallback((callIds: string[]) => {
+    for (const callId of callIds) {
+      const undone = whiteboardRef.current?.undoCall?.(callId) ?? "";
+      recorderRef.current?.record("tool.cancelled", "tutor", { callId, undone });
+    }
+    scheduleBoardFrame(900);
+  }, [scheduleBoardFrame]);
+
+  // PDFs become page pictures before any tutor sees them, and every upload
+  // goes into the recording, so the review shows the worksheet too.
+  const prepareFiles = useCallback(async (list: UploadedFile[]): Promise<UploadedFile[]> => {
+    const ready = await withPdfPages(list);
+    for (const f of ready) {
+      const before = list.find((x) => x.id === f.id);
+      if (f.mimeType === "application/pdf") {
+        if (before?.pages) continue;
+        (f.pages ?? []).forEach((page, i) => {
+          void recorderRef.current?.recordFrame({ url: `data:${page.mimeType};base64,${page.base64}`, width: page.width, height: page.height }, `upload: ${f.label}, page ${i + 1}`, false);
+        });
+      } else if (f.mimeType === "image/jpeg" || f.mimeType === "image/png") {
+        void recorderRef.current?.recordFrame({ url: `data:${f.mimeType};base64,${f.base64}`, width: 0, height: 0 }, `upload: ${f.label}`, false);
+      }
+    }
+    return ready;
+  }, []);
 
   // While queued writing is still appearing, the badge says so.
   const handleBoardWriting = useCallback((busy: boolean) => {
@@ -626,6 +718,7 @@ function SessionDetailPage({ id }: { id: string }) {
         setSubtitleText(text);
       },
       onToolCall: handleToolCall,
+      onToolCancelled: handleToolCancelled,
       onConnected: ({ resumed, expiresAt }) => {
         startInFlightRef.current = false;
         liveStateRef.current = "active";
@@ -721,6 +814,11 @@ function SessionDetailPage({ id }: { id: string }) {
     recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
 
     try {
+      if (filesRef.current.some((f) => f.mimeType === "application/pdf" && !f.pages)) {
+        const ready = await prepareFiles(filesRef.current);
+        filesRef.current = ready;
+        setFiles(ready);
+      }
       await live.start({
         mode: isResumeRef.current ? "resume" : "new",
         micStream,
@@ -739,7 +837,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, id, pauseLiveSession, persistSnapshot, provider, recordDebug]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);
@@ -748,11 +846,12 @@ function SessionDetailPage({ id }: { id: string }) {
   }, [tutorSpeed]);
 
   const handleAddFiles = useCallback(
-    (newFiles: UploadedFile[]) => {
+    async (added: UploadedFile[]) => {
       recordDebug("file", "files_added", {
-        files: debugFileSummary(newFiles),
+        files: debugFileSummary(added),
         liveState: liveStateRef.current,
       });
+      const newFiles = await prepareFiles(added);
       setFiles((prev) => {
         const updated = [...prev, ...newFiles];
         filesRef.current = updated;
@@ -775,7 +874,7 @@ function SessionDetailPage({ id }: { id: string }) {
         `${newFiles.length} file${newFiles.length === 1 ? "" : "s"} ready for the next session.`,
       );
     },
-    [recordDebug, setTemporaryFileNotice],
+    [prepareFiles, recordDebug, setTemporaryFileNotice],
   );
 
   const handleRemoveFile = useCallback((fileId: string) => {

@@ -68,7 +68,7 @@ export function createFakeBoard(): FakeBoard {
     // `undefined`, which the dispatcher reads as "Desmos is unavailable".
     canUseDesmos: () => true,
     itemsSnapshot: () => items,
-    undoCall: () => undefined,
+    undoCall: () => "",
     takeNotes: () => [],
   };
   const handle = new Proxy(base as unknown as WhiteboardHandle, {

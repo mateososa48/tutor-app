@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "tsx --test lib/*.test.ts",
-    "vendor:stretch": "node scripts/vendor-stretch.mjs"
+    "vendor:stretch": "node scripts/vendor-stretch.mjs",
+    "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",
@@ -31,6 +32,7 @@
     "next": "16.2.6",
     "next-auth": "^5.0.0-beta.31",
     "openai": "^7.15.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-use-measure": "^2.1.7",

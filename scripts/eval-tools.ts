@@ -7,10 +7,12 @@ import type { FunctionDeclaration } from "@google/genai";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "../lib/whiteboard-tools";
 import { dispatchWhiteboardTool } from "../lib/whiteboard-tool-dispatch";
 import { TUTOR_TOOL_DECLARATIONS, runTutorTool } from "../lib/tutor-tools";
-import { formatMemory, rememberNote, takeStateUpdate, type TutorPolicy } from "../lib/tutor-policy";
+import { SESSION_TOOL_DECLARATIONS } from "../lib/session-tools";
+import { toolRole } from "../lib/board-items";
+import { boardResultExtras, formatMemory, noteBoardWrite, rememberNote, type TutorPolicy } from "../lib/tutor-policy";
 import type { FakeBoard } from "./eval-board";
 
-export const EVAL_TOOL_DECLARATIONS = [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS] as unknown as FunctionDeclaration[];
+export const EVAL_TOOL_DECLARATIONS = [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS] as unknown as FunctionDeclaration[];
 
 export type EvalToolResult = { ok: boolean; message: string; verdict?: string };
 
@@ -35,8 +37,10 @@ export function runEvalTool(name: string, args: Record<string, unknown>, ctx: Ev
   }
   const result = dispatchWhiteboardTool(name, args, { whiteboard: ctx.board.handle });
   if (!result.success) return { ok: false, message: `Error: ${result.error}` };
-  const update = takeStateUpdate(ctx.policy, now);
-  return { ok: true, message: `${result.message ?? "Done"}.\n[Board: ${ctx.board.handle.getBoardSummary()}]${update ? `\n${update}` : ""}` };
+  if (toolRole(name) === "draw") noteBoardWrite(ctx.policy);
+  // The same notes the live clients add: a changed [Tutor state] and any nudges.
+  const extra = boardResultExtras(ctx.policy, now);
+  return { ok: true, message: `${result.message ?? "Done"}.\n[Board: ${ctx.board.handle.getBoardSummary()}]${extra ? `\n${extra}` : ""}` };
 }
 
 export function readGeminiKey(): string {

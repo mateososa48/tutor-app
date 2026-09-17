@@ -135,14 +135,15 @@ export class GeminiTutorSession {
           }
           this.callbacks.onTranscript(entry);
         },
-        onToolCall: (name, args) => {
+        onToolCall: (name, args, callId) => {
           this.callbacks.onActivity("writing");
-          const result = this.callbacks.onToolCall(name, args);
+          const result = this.callbacks.onToolCall(name, args, callId);
           setTimeout(() => {
             if (!this.ended && !this.speaking) this.callbacks.onActivity("idle");
           }, 1200);
           return result;
         },
+        onToolCancelled: (callIds) => this.callbacks.onToolCancelled?.(callIds),
         onConnected: () => {
           this.callbacks.onConnected({ resumed: opts.mode === "resume", expiresAt: null });
           const sent = opts.mode === "resume"
@@ -234,6 +235,20 @@ export class GeminiTutorSession {
 
   sendFiles(files: UploadedFile[]): boolean {
     return this.session?.sendFiles(files) ?? false;
+  }
+
+  // A picture the tutor asked for (a worksheet page), sent like a board frame.
+  sendImageFrame(dataUrl: string): boolean {
+    const comma = dataUrl.indexOf(",");
+    if (comma < 0 || !this.session) return false;
+    const mime = /^data:([^;]+)/.exec(dataUrl)?.[1] ?? "image/jpeg";
+    const sent = this.session.sendVideoFrame(dataUrl.slice(comma + 1), mime);
+    this.debug("board", "image_frame_sent", { bytes: dataUrl.length - comma - 1, sent });
+    return sent;
+  }
+
+  sendStudentEvent(text: string): boolean {
+    return this.session?.sendEvent(text) ?? false;
   }
 
   sendBoardFrame(dataUrl: string): boolean {

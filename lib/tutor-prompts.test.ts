@@ -92,12 +92,13 @@ test("gemini instructions keep the conversation rules and the teaching rules", (
   assert.doesNotMatch(text, /teaching brain \(the backend\) writes/);
 });
 
-test("answers are checked by a tool and attempts recorded", () => {
+test("answers are checked by a tool, which records the attempt", () => {
   const text = buildBackendInstructions(null, []);
   assert.match(text, /call check_answer before you call it right or wrong/);
-  assert.match(text, /record_attempt/);
+  assert.match(text, /it records the attempt/);
+  assert.doesNotMatch(text, /record_attempt/);
   assert.match(text, /\[Tutor state\] line in tool results/);
-  assert.match(text, /check_answer\(problem="1\/2 \+ 1\/3", student_answer="2\/5"\)/);
+  assert.match(text, /check_answer\(problem="1\/2 \+ 1\/3", student_answer="2\/5", skill="adding fractions", kind="misconception"\)/);
 });
 
 test("backend instructions handle a missing profile and empty memory", () => {

@@ -15,6 +15,11 @@ import {
   spokenMath,
   suggestHelp,
   takeStateUpdate,
+  boardResultExtras,
+  cancelAttempt,
+  noteAnswerChecked,
+  noteTutorTurn,
+  setSessionFiles,
 } from "./tutor-policy";
 
 const T0 = 1_000_000;
@@ -161,4 +166,61 @@ test("durable notes are deduplicated, capped, and formatted", () => {
   for (let i = 0; i < 15; i++) rememberNote(p, `note ${i}`);
   assert.equal(p.notes.length, 12);
   assert.match(formatMemory(p), /^\[Memory: note 3; /);
+});
+
+test("'I don't know' on a skill counts as stuck without any tool call", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "i dont know", 0);
+  assert.equal(p.attempts.length, 0, "no skill yet, nothing to record");
+  recordAttempt(p, { skill: "slope", result: "partial", help: 2 }, 0);
+  noteStudentUtterance(p, "idk", 1000);
+  assert.deepEqual(p.attempts.map((a) => [a.result, a.help, a.auto]), [["partial", 2, undefined], ["stuck", 2, true]]);
+  noteStudentUtterance(p, "I don't know if it's 4", 2000);
+  assert.equal(p.attempts.length, 2, "an answer with doubt is not stuck");
+});
+
+test("a cancelled tool call takes its attempt back", () => {
+  const p = createPolicy(0);
+  recordAttempt(p, { skill: "slope", result: "correct", help: 1, callId: "a" }, 0);
+  recordAttempt(p, { skill: "slope", result: "slip", help: 1, callId: "b" }, 0);
+  assert.equal(p.missesInRow, 1);
+  assert.equal(cancelAttempt(p, "b"), true);
+  assert.equal(p.missesInRow, 0);
+  assert.equal(p.quickCorrect, 1);
+  assert.deepEqual(p.attempts.map((a) => a.callId), ["a"]);
+  assert.equal(cancelAttempt(p, "zzz"), false);
+});
+
+test("each nudge rides on one board result", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "x = 16", 0);
+  const first = boardResultExtras(p, 0);
+  assert.match(first, /\[Unchecked answer: the student said "x = 16"\. Call check_answer/);
+  assert.doesNotMatch(boardResultExtras(p, 0), /Unchecked answer/, "once");
+  noteStudentUtterance(p, "so 4?", 0);
+  noteAnswerChecked(p);
+  assert.doesNotMatch(boardResultExtras(p, 0), /Unchecked answer/, "checked answers are not nudged");
+
+  noteTutorTurn(p, "Six squared is thirty six, and eight squared is sixty four.", false);
+  assert.match(boardResultExtras(p, 0), /\[Said, not written: you said "Six squared is thirty six/);
+  assert.doesNotMatch(boardResultExtras(p, 0), /Said, not written/);
+  noteTutorTurn(p, "Six squared is thirty six.", true);
+  assert.doesNotMatch(boardResultExtras(p, 0), /Said, not written/, "a turn that drew is fine");
+
+  recordAttempt(p, { skill: "adding fractions", result: "misconception", help: 1, note: "adds tops and bottoms" }, 0);
+  assert.match(boardResultExtras(p, 0), /\[Memory: a wrong idea came up \(adds tops and bottoms\)\. .*remember_about_student/);
+  noteStudentUtterance(p, "ok bye, gotta go", 0);
+  assert.match(boardResultExtras(p, 0), /\[Memory: they are leaving and nothing was saved/);
+  rememberNote(p, "adds tops and bottoms");
+  noteStudentUtterance(p, "bye", 0);
+  assert.doesNotMatch(boardResultExtras(p, 0), /\[Memory: they are leaving/, "a saved note answers it");
+});
+
+test("uploaded files are brought up every few results", () => {
+  const p = createPolicy(0);
+  setSessionFiles(p, [{ label: "File 1", name: "sheet.pdf", pages: 3 }], 0);
+  const lines = Array.from({ length: 6 }, () => boardResultExtras(p, 1000));
+  assert.equal(lines.filter((l) => l.includes("[Files:")).length, 1);
+  assert.match(lines[5], /File 1 "sheet\.pdf" \(3 pages\)\. When the student names a problem or a part, call look_at_worksheet/);
+  assert.match(boardResultExtras(p, 1000 + 3 * 60_000), /\[Files:/, "or every three minutes");
 });

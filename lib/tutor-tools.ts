@@ -1,23 +1,35 @@
 // The tutor's own tools. They draw nothing; they give the model facts.
-//   check_answer   — the deterministic checker (lib/answer-check.ts), so the
-//                    tutor never calls a wrong answer right.
-//   record_attempt — logs the attempt into the session policy
-//                    (lib/tutor-policy.ts), which counts misses and suggests
-//                    a help level.
-// Both answer with the [Tutor state] line, so the model reads fresh facts in
-// the same turn. Declared apart from lib/whiteboard-tools.ts; the live clients
-// and the GPT-Live session route add them next to the whiteboard tools.
+//   check_answer — the deterministic checker (lib/answer-check.ts), so the
+//                  tutor never calls a wrong answer right. It also records the
+//                  attempt in the session policy (lib/tutor-policy.ts), which
+//                  counts misses and suggests a help level. Until Sept 16 2026
+//                  that was a second tool, record_attempt, which no recorded
+//                  session ever called.
+// It answers with the [Tutor state] line, so the model reads fresh facts in the
+// same turn. Declared apart from lib/whiteboard-tools.ts; the live clients and
+// the GPT-Live session route add it next to the whiteboard tools.
 
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer } from "./answer-check";
-import { ATTEMPT_RESULTS, currentState, parseHelpLevel, recordAttempt, type AttemptResult, type TutorPolicy } from "./tutor-policy";
+import { checkAnswer, type CheckVerdict } from "./answer-check";
+import {
+  currentState,
+  noteAnswerChecked,
+  parseHelpLevel,
+  recordAttempt,
+  suggestHelp,
+  type AttemptResult,
+  type TutorPolicy,
+} from "./tutor-policy";
+
+const KINDS = ["slip", "misconception", "guess"] as const;
+type WrongKind = (typeof KINDS)[number];
 
 export const TUTOR_TOOL_DECLARATIONS = [
   {
     name: "check_answer",
     description:
-      "Check the student's answer before you call it right or wrong. It evaluates the math exactly, so trust its verdict over your own arithmetic. Works for arithmetic and fractions ('1/2 + 1/3'), percent ('25% of 80'), equations to solve ('2x + 3 = 11' with answer '4', or 'x = 3 or x = -3'), and expressions to simplify or expand ('3(x + 4)' with answer '3x + 12'). Returns correct, partial, incorrect, or cannot_check (then work it out yourself). The result may give the correct value for you only: never say it.",
+      "Check the student's answer before you call it right or wrong; it also records the attempt for the session. It evaluates the math exactly, so trust its verdict over your own arithmetic. Works for arithmetic and fractions ('1/2 + 1/3'), percent ('25% of 80'), equations ('2x + 3 = 11' with answer '4', or 'x = 3 or x = -3'), and expressions to simplify or expand ('3(x + 4)' with answer '3x + 12'). Returns correct, partial, incorrect, or cannot_check (then work it out yourself). The result may give the correct value for you only: never say it.",
     parameters: {
       type: "object",
       properties: {
@@ -27,36 +39,24 @@ export const TUTOR_TOOL_DECLARATIONS = [
         },
         student_answer: {
           type: "string",
-          description: "The student's answer in digits and symbols, as they meant it: '5/6', 'x = 4', '3x + 12', '2 1/2', '0.75'. Several solutions: 'x = 3 or x = -3'. 200 chars max.",
+          description: "Their answer in digits and symbols, as they meant it: '5/6', 'x = 4', '3x + 12', '2 1/2'. Several solutions: 'x = 3 or x = -3'. 200 chars max.",
         },
-      },
-      required: ["problem", "student_answer"],
-    },
-  },
-  {
-    name: "record_attempt",
-    description:
-      "Log the student's attempt right after you judge it, so the session can count misses and suggest how much help to give next. Draws nothing. Returns the [Tutor state] line.",
-    parameters: {
-      type: "object",
-      properties: {
         skill: {
           type: "string",
-          description: "The skill in a few words, worded the same way each time: 'adding fractions', 'two-step equations', 'slope from two points'.",
-        },
-        result: {
-          type: "string",
-          enum: ATTEMPT_RESULTS,
-          description: "correct; slip (right method, arithmetic or copying error); misconception (a wrong idea); partial (right idea, incomplete); guess; stuck (no real attempt, 'I don't know').",
+          description: "The skill in a few words, worded the same way each time: 'adding fractions', 'two-step equations'.",
         },
         help_level: {
           type: "string",
           enum: ["H0", "H1", "H2", "H3", "H4", "H5"],
-          description: "How much help they had before this attempt: H0 none, H1 a nudge, H2 pointing, H3 a strategy hint, H4 a shown step, H5 a worked example.",
+          description: "Optional: help they had before answering: H0 none, H1 a nudge, H2 pointing, H3 a strategy hint, H4 a shown step, H5 a worked example.",
         },
-        note: { type: "string", description: "Optional: the wrong idea or slip in a few words, e.g. 'added the denominators'. 160 chars max." },
+        kind: {
+          type: "string",
+          enum: [...KINDS],
+          description: "Optional, when you can tell a wrong answer's kind: slip (right method, arithmetic or copying error), misconception (a wrong idea), guess.",
+        },
       },
-      required: ["skill", "result", "help_level"],
+      required: ["problem", "student_answer", "skill"],
     },
   },
 ];
@@ -72,26 +72,39 @@ export const TUTOR_FUNCTION_TOOLS: OpenAIFunctionTool[] = TUTOR_TOOL_DECLARATION
   strict: false,
 }));
 
+/** What the checker's verdict means for the session's record. */
+export function attemptFromVerdict(verdict: CheckVerdict, kind?: string): AttemptResult {
+  if (verdict === "correct") return "correct";
+  if (verdict === "partial") return "partial";
+  if (verdict === "cannot_check") return "unchecked";
+  return (KINDS as readonly string[]).includes(kind ?? "") ? (kind as WrongKind) : "incorrect";
+}
+
+// An equation's answer is worth checking on the board: put the value back in.
+const IS_EQUATION = /=/;
+
 // Runs a tutor tool against the session policy. Null when `name` is not one of them.
-export function runTutorTool(name: string, args: Record<string, unknown>, policy: TutorPolicy, now: number): ToolCallResult | null {
-  if (name === "check_answer") {
-    const problem = typeof args.problem === "string" ? args.problem.slice(0, 300) : "";
-    const answer = typeof args.student_answer === "string" ? args.student_answer.slice(0, 200) : "";
-    if (!problem.trim() || !answer.trim()) return { success: false, error: "check_answer needs problem and student_answer, both as strings." };
-    const check = checkAnswer(problem, answer);
-    const state = currentState(policy, now);
-    return { success: true, message: `Verdict: ${check.verdict}. ${check.message}${state ? ` ${state}` : ""}` };
-  }
-  if (name === "record_attempt") {
-    const skill = typeof args.skill === "string" ? args.skill : "";
-    const result = typeof args.result === "string" && (ATTEMPT_RESULTS as string[]).includes(args.result) ? (args.result as AttemptResult) : null;
-    const help = parseHelpLevel(args.help_level);
-    if (!skill.trim() || !result || help === null) {
-      return { success: false, error: "record_attempt needs skill, result (correct, slip, misconception, partial, guess, or stuck), and help_level (H0 to H5)." };
-    }
-    const note = typeof args.note === "string" ? args.note.slice(0, 160) : undefined;
-    recordAttempt(policy, { skill, result, help, note }, now);
-    return { success: true, message: `Recorded. ${currentState(policy, now)}` };
-  }
-  return null;
+export function runTutorTool(
+  name: string,
+  args: Record<string, unknown>,
+  policy: TutorPolicy,
+  now: number,
+  callId?: string,
+): ToolCallResult | null {
+  if (name !== "check_answer") return null;
+  const problem = typeof args.problem === "string" ? args.problem.slice(0, 300) : "";
+  const answer = typeof args.student_answer === "string" ? args.student_answer.slice(0, 200) : "";
+  if (!problem.trim() || !answer.trim()) return { success: false, error: "check_answer needs problem and student_answer, both as strings." };
+  const check = checkAnswer(problem, answer);
+  const skill = typeof args.skill === "string" && args.skill.trim() ? args.skill : policy.currentSkill ?? "unnamed skill";
+  const help = parseHelpLevel(args.help_level) ?? suggestHelp(policy)?.level ?? 1;
+  const result = attemptFromVerdict(check.verdict, typeof args.kind === "string" ? args.kind : undefined);
+  recordAttempt(policy, { skill, result, help, callId }, now);
+  noteAnswerChecked(policy);
+  const next =
+    check.verdict === "correct"
+      ? ` Mark it: circle_item on their answer with keep=true${IS_EQUATION.test(problem) ? ", and have them check it by putting the value back in" : ""}.`
+      : "";
+  const state = currentState(policy, now);
+  return { success: true, message: `Verdict: ${check.verdict}. ${check.message}${next}${state ? ` ${state}` : ""}` };
 }

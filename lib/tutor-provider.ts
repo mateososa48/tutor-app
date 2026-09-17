@@ -28,4 +28,8 @@ export type TutorClient = Pick<LiveTutorSession, "start" | "end" | "setMuted" | 
    * live WebRTC track, which cannot be slowed without piling up delay.
    */
   setSpeechRate?: (rate: number) => void;
+  /** Show the model a picture it asked for (a worksheet page), as a data URL. */
+  sendImageFrame?: (dataUrl: string, caption?: string) => boolean;
+  /** Something the student did that is not speech; it gets an answer, so send it when nobody is talking. */
+  sendStudentEvent?: (text: string) => boolean;
 };

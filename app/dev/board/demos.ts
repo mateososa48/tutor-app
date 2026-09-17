@@ -197,6 +197,23 @@ const content: DemoCall[] = [
   { name: "circle_item", args: { target: "last", keep: true } },
 ];
 
+// Cancelled calls (Sept 16 2026). Calls are c0, c1, … by position; "__undo"
+// takes one back the way a live call the model cancelled is taken back: a
+// drawing, a highlight, a strike, and a new problem (the old board returns).
+const cancel: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Taking back cancelled calls" } },
+  { name: "draw_equation_step", args: { latex: "2x + 3 = 11" } },
+  { name: "draw_fraction", args: { fraction: "3/4" } },
+  { name: "__undo", args: { call: "c2" } },
+  { name: "draw_equation_step", args: { latex: "2x = 8", annotation: "subtract 3 from both sides" } },
+  { name: "highlight", args: { target: "last", text: "8" } },
+  { name: "cross_out_step", args: { step_label: "2x + 3" } },
+  { name: "__undo", args: { call: "c5" } },
+  { name: "__undo", args: { call: "c6" } },
+  { name: "start_new_problem", args: { title: "A new problem, cancelled" } },
+  { name: "__undo", args: { call: "c9" } },
+];
+
 // Sections and pages (Sept 16 2026). A section opens as a panel beside the
 // work while there is width, then as a band under it; "new page" on a board
 // with room stays put; a free area named in [Board: …] is a valid place; a
@@ -275,4 +292,4 @@ const rings: DemoCall[] = [
   { name: "highlight_step", args: { step_label: "long line", style: "underline" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, highlight, graphs, all };
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, all };

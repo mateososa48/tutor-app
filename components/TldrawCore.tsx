@@ -329,7 +329,7 @@ export interface WhiteboardHandle {
   loadSnapshot(snap: WhiteboardSnapshot): void;
   getBoardSummary(): string;
   /** Item bookkeeping around one tool call: everything created between begin and end becomes one board item. */
-  beginItem(tool: string): ItemToken;
+  beginItem(tool: string, callId?: string): ItemToken;
   endItem(token: ItemToken, label: string | null, owner?: "tutor" | "student"): string | null;
   /** The tutor's pointer glides to an item and rests there. Returns the item or null. */
   pointAt(target: string): BoardItem | null;
@@ -357,6 +357,8 @@ export interface WhiteboardHandle {
   highlight?(target: string, text: string | undefined): { item: BoardItem; part: "text" | "item" } | null;
   /** The board's items as they are now (the dispatcher looks for duplicates in them). */
   itemsSnapshot?(): BoardItem[];
+  /** Take back what a cancelled tool call did. Returns what was undone, in words ("" for nothing). */
+  undoCall?(callId: string): string;
 }
 
 /** `content`: what the call writes or draws, fingerprinted, so a later call can tell it is already up. */
@@ -385,6 +387,7 @@ export interface EqItem {
 function compactArtifactMeta(meta: BoardArtifactMeta | null): BoardArtifactMeta | undefined {
   if (!meta) return undefined;
   const compact: BoardArtifactMeta = { jobId: meta.jobId };
+  if (meta.callId) compact.callId = meta.callId;
   if (meta.role) compact.role = meta.role;
   if (meta.concept) compact.concept = meta.concept;
   if (meta.summary) compact.summary = meta.summary;
@@ -580,9 +583,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const cursorAnimRef = useRef<number | null>(null);
   const scribbleAnimRef = useRef<number | null>(null);
   // The reveal queue: tool calls appear one after another, written not pasted.
-  type RevealJob =
+  type RevealJob = (
     | { kind: "reveal"; steps: RevealStep[]; restAt: ItemBounds | null }
-    | { kind: "action"; run: () => void; wait: number };
+    | { kind: "action"; run: () => void; wait: number }
+  ) & { callId?: string };
   const revealQueueRef = useRef<RevealJob[]>([]);
   const revealActiveRef = useRef(false);
   const revealRafRef = useRef<number | null>(null);
@@ -608,6 +612,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const rowTopRef = useRef<number | null>(null);
   // The newest section: its title, the row it was planned in, and its heading's item id.
   const currentSectionRef = useRef<{ title: string; rowTop: number | null; headingId: string | null } | null>(null);
+  // The live tool call being drawn now, what calls changed on typeset lines,
+  // and the boards new problems cleared: what undoCall needs.
+  const currentCallIdRef = useRef<string | null>(null);
+  const mathChangesRef = useRef<Array<{ callId: string; id: string; prop: "highlight" | "crossOut"; prev: unknown }>>([]);
+  const clearedBoardsRef = useRef<Map<string, WhiteboardSnapshot>>(new Map());
   const notesRef = useRef<string[]>([]);
   const placeRequestRef = useRef<PlaceRequest | null>(null);
   const placedRectsRef = useRef<Map<string, Rect>>(new Map());
@@ -1069,7 +1078,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   // space), and camera moves are skipped while a call is building.
   const queueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enqueue = useCallback((job: RevealJob) => {
-    revealQueueRef.current.push(job);
+    revealQueueRef.current.push(currentCallIdRef.current && !job.callId ? { ...job, callId: currentCallIdRef.current } : job);
     if (!writingRef.current) {
       writingRef.current = true;
       onWritingRef.current?.(true);
@@ -2141,6 +2150,14 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     startNewProblem(title: string) {
       const editor = editorRef.current;
       if (!editor) return;
+      const callId = currentCallIdRef.current;
+      if (callId && itemsRef.current.length > 0) {
+        const before = api.getSnapshot();
+        if (before) {
+          clearedBoardsRef.current.set(callId, before);
+          while (clearedBoardsRef.current.size > 3) clearedBoardsRef.current.delete(clearedBoardsRef.current.keys().next().value as string);
+        }
+      }
       resetReveal();
       const shapes = editor.getCurrentPageShapes();
       if (shapes.length > 0) editor.deleteShapes(shapes.map(s => s.id));
@@ -3890,13 +3907,16 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         return true;
       }
       const line = lines[idx];
+      const lineCallId = currentCallIdRef.current;
       enqueue({
         kind: "action",
         wait: 500,
         run: () => {
-          if (!editor.getShape(line.shape.id)) return;
+          const shape = editor.getShape(line.shape.id) as TLMathShape | undefined;
+          if (!shape) return;
           const bb = editor.getShapePageBounds(line.shape.id);
           if (bb) focusOn(editor, bb.x, bb.y, bb.w, bb.h);
+          if (lineCallId) mathChangesRef.current = [...mathChangesRef.current, { callId: lineCallId, id: shape.id, prop: "highlight" as const, prev: shape.props.highlight }].slice(-200);
           editor.updateShapes([{ id: line.shape.id, type: "math", props: { highlight: style } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
         },
       });
@@ -3943,13 +3963,16 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         return true;
       }
       const line = lines[idx];
+      const lineCallId = currentCallIdRef.current;
       enqueue({
         kind: "action",
         wait: 500,
         run: () => {
-          if (!editor.getShape(line.shape.id)) return;
+          const shape = editor.getShape(line.shape.id) as TLMathShape | undefined;
+          if (!shape) return;
           const bb = editor.getShapePageBounds(line.shape.id);
           if (bb) focusOn(editor, bb.x, bb.y, bb.w, bb.h);
+          if (lineCallId) mathChangesRef.current = [...mathChangesRef.current, { callId: lineCallId, id: shape.id, prop: "crossOut" as const, prev: shape.props.crossOut }].slice(-200);
           editor.updateShapes([{ id: line.shape.id, type: "math", props: { crossOut: true } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
         },
       });
@@ -3967,6 +3990,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           jobId: "direct",
           owner: meta.owner ?? "tutor",
           tutorReferenceLabel: meta.tutorReferenceLabel,
+          ...(currentCallIdRef.current ? { callId: currentCallIdRef.current } : {}),
         },
         fn,
       );
@@ -4037,11 +4061,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       });
     },
 
-    beginItem(tool: string): ItemToken {
+    beginItem(tool: string, callId?: string): ItemToken {
       const editor = editorRef.current;
       buildingItemRef.current = true;
       placeRequestRef.current = null;
       notesRef.current = [];
+      currentCallIdRef.current = callId ?? null;
       return {
         tool,
         shapes: editor ? currentShapeIdSet(editor) : new Set<string>(),
@@ -4063,8 +4088,52 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return itemsRef.current.map((item) => ({ ...item }));
     },
 
+    // A tool call the model cancelled (the student spoke over it) should leave
+    // no trace: a recorded session kept drawings for calls that never finished.
+    undoCall(callId: string) {
+      const editor = editorRef.current;
+      if (!editor || !callId) return "";
+      const cleared = clearedBoardsRef.current.get(callId);
+      if (cleared) {
+        clearedBoardsRef.current.delete(callId);
+        resetReveal();
+        api.loadSnapshot(cleared);
+        return "put back the board the new problem had cleared";
+      }
+      const said: string[] = [];
+      const queued = revealQueueRef.current.length;
+      revealQueueRef.current = revealQueueRef.current.filter((job) => job.callId !== callId);
+      if (revealQueueRef.current.length < queued) said.push(`dropped ${queued - revealQueueRef.current.length} queued step${queued - revealQueueRef.current.length === 1 ? "" : "s"}`);
+      const shapes = editor.getCurrentPageShapes().filter((shape) => (shape.meta as { callId?: unknown }).callId === callId);
+      if (shapes.length > 0) {
+        editor.run(() => editor.deleteShapes(shapes.map((shape) => shape.id)), { history: "ignore" });
+        said.push(`erased ${shapes.length} shape${shapes.length === 1 ? "" : "s"}`);
+      }
+      const gone = new Set<string>(shapes.map((shape) => shape.id));
+      const removed = itemsRef.current.filter((item) => item.callId === callId);
+      itemsRef.current = itemsRef.current
+        .filter((item) => item.callId !== callId)
+        .map((item) => (item.shapeIds.some((sid) => gone.has(sid)) ? { ...item, shapeIds: item.shapeIds.filter((sid) => !gone.has(sid)) } : item));
+      for (const item of removed) placedRectsRef.current.delete(item.id);
+      if (removed.length > 0) said.push(`removed ${removed.map((item) => item.id).join(", ")}`);
+      const changes = mathChangesRef.current.filter((c) => c.callId === callId);
+      for (const change of changes.reverse()) {
+        if (!editor.getShape(change.id as TLShapeId)) continue;
+        editor.updateShapes([{ id: change.id, type: "math", props: { [change.prop]: change.prev } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+      }
+      if (changes.length > 0) said.push("took back a line mark");
+      mathChangesRef.current = mathChangesRef.current.filter((c) => c.callId !== callId);
+      return said.join(", ");
+    },
+
     endItem(token: ItemToken, label: string | null, owner: "tutor" | "student" = "tutor"): string | null {
       buildingItemRef.current = false;
+      // Marks queue their work during the call; the call id stays on those
+      // jobs, and is cleared once this call's own work is placed.
+      const callId = currentCallIdRef.current;
+      queueMicrotask(() => {
+        if (currentCallIdRef.current === callId) currentCallIdRef.current = null;
+      });
       const request = placeRequestRef.current;
       placeRequestRef.current = null;
       const editor = editorRef.current;
@@ -4088,6 +4157,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         owner: token.tool === "add_student_attempt" ? "student" : owner,
         createdAt: Date.now(),
         ...(token.content ? { content: token.content } : {}),
+        ...(currentCallIdRef.current ? { callId: currentCallIdRef.current } : {}),
       };
       itemsRef.current = [...itemsRef.current, item].slice(-200);
       // Into free space on the board. Headings place themselves.
@@ -4124,6 +4194,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // Written, not pasted: hide what was just created and reveal it in order.
       revealItem(editor, item, placed ?? itemBounds(editor, item));
       if (placed) focusOn(editor, placed.x, placed.y, placed.w, placed.h);
+      currentCallIdRef.current = null;
       return id;
     },
 

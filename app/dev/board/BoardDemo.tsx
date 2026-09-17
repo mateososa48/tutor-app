@@ -30,9 +30,10 @@ export default function BoardDemo() {
   // can also call the dispatcher directly: window.__chalkDispatch(name, args).
   useEffect(() => {
     if (!ready) return;
-    const w = window as unknown as { __chalkDispatch?: (name: string, args: Record<string, unknown>) => unknown };
-    w.__chalkDispatch = (name, args) => {
-      const result = dispatchWhiteboardTool(name, args, { whiteboard: ref.current });
+    const w = window as unknown as { __chalkDispatch?: (name: string, args: Record<string, unknown>, callId?: string) => unknown };
+    let seq = 0;
+    w.__chalkDispatch = (name, args, callId) => {
+      const result = dispatchWhiteboardTool(name, args, { whiteboard: ref.current, callId: callId ?? `d${seq++}` });
       const line = result.success ? result.message ?? "ok" : `ERROR ${result.error}`;
       setLog((prev) => [...prev, `${name}: ${line}`]);
       return result;
@@ -58,10 +59,17 @@ export default function BoardDemo() {
     }
     const demo = (scripted ?? BOARD_DEMOS[demoKey] ?? BOARD_DEMOS.fractions).slice(0, count);
     let cancelled = false;
+    // Each call has an id (c0, c1, …); "__undo" with { call: "c2" } takes one
+    // back the way a cancelled live tool call is taken back.
     const timers = demo.map((call, i) =>
       setTimeout(() => {
         if (cancelled) return;
-        const result = dispatchWhiteboardTool(call.name, call.args, { whiteboard: ref.current });
+        if (call.name === "__undo") {
+          const undone = ref.current?.undoCall?.(String(call.args.call ?? "")) ?? "";
+          setLog((prev) => [...prev, `undo ${String(call.args.call)}: ${undone || "nothing to undo"}`]);
+          return;
+        }
+        const result = dispatchWhiteboardTool(call.name, call.args, { whiteboard: ref.current, callId: `c${i}` });
         const line = result.success ? result.message ?? "ok" : `ERROR ${result.error}`;
         setLog((prev) => [...prev, `${call.name}: ${line}`]);
       }, 200 + i * stepMs),
