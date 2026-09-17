@@ -43,6 +43,8 @@ const KIND_BY_TOOL: Record<string, string> = {
   plot_points: "points",
   add_worked_example_box: "worked example",
   add_function_graph: "graph",
+  draw_desmos: "graph",
+  draw_data_plot: "data plot",
   add_two_column_comparison: "comparison",
   add_vector_diagram: "vector diagram",
   add_process_map: "process map",

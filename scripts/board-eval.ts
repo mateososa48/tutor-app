@@ -12,6 +12,7 @@
 
 import fs from "node:fs";
 import { GoogleGenAI, type Content, type Part } from "@google/genai";
+import { desmosPictureTools } from "../lib/desmos-config";
 import { buildGeminiInstructions, type StudentProfile } from "../lib/tutor-prompts";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "../lib/whiteboard-tools";
 import { createPolicy, looksLikeAnswer, noteStudentUtterance, spokenMath } from "../lib/tutor-policy";
@@ -100,8 +101,9 @@ const PICTURE_TOOLS = new Set<string>([
   "draw_tape_diagram", "draw_grid", "write_vertical", "draw_long_division", "draw_transversal",
   "draw_icons", "draw_sketch", "add_table", "draw_desmos", "draw_data_plot",
 ]);
-// Pictures Desmos draws. Grows when number lines, bar charts and flat figures move to Desmos.
-const DESMOS_TOOLS = new Set<string>(["add_function_graph", "plot_points", "add_coordinate_axes", "draw_desmos", "draw_data_plot"]);
+// Pictures Desmos draws: graphs always, number lines, bar charts and flat
+// figures when NEXT_PUBLIC_DESMOS_TOOLS switches them on (all, outside production).
+const DESMOS_TOOLS = new Set<string>(["add_function_graph", "plot_points", "add_coordinate_axes", "draw_desmos", "draw_data_plot", ...desmosPictureTools()]);
 const TEXT_TOOLS = new Set(["add_text_note", "add_callout", "add_worked_example_box", "add_student_attempt", "add_problem_setup"]);
 
 /** The tutor pointing at board content in words: "on the board", "I've drawn", "look at the graph". */

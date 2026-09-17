@@ -1,3 +1,5 @@
+import { DESMOS_ONLY_TOOLS, desmosConfigured } from "./desmos-config";
+
 
 export type WhiteboardToolName =
   | "start_new_problem"
@@ -21,6 +23,8 @@ export type WhiteboardToolName =
   | "plot_points"
   | "add_worked_example_box"
   | "add_function_graph"
+  | "draw_desmos"
+  | "draw_data_plot"
   | "draw_sketch"
   | "draw_tape_diagram"
   | "draw_grid"
@@ -40,7 +44,7 @@ const PLACE = {
   description: "Optional: 'beside b3', 'below b3', or a free area named in [Board: …] ('the right third', 'bottom left'). Usually leave it out: work flows on through the current section.",
 } as const;
 
-export const WHITEBOARD_TOOL_DECLARATIONS = [
+const ALL_TOOL_DECLARATIONS = [
   // ── Structure ─────────────────────────────────────────────────────────────
   {
     name: "start_new_problem",
@@ -227,6 +231,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         radius_label: { type: "string", description: "Circle only: draws the radius and labels it, e.g. 'r = 5 cm'. 80 chars max." },
         diameter_label: { type: "string", description: "Circle only: draws the diameter and labels it, e.g. 'd = 10'. 80 chars max." },
         height_label: { type: "string", description: "Triangle, parallelogram, trapezoid: draws the dashed height (altitude) from the top down to the base with a right-angle mark and this label, e.g. 'h = 5'. THE way to show area = base × height. 80 chars max." },
+        grid: { type: "boolean", description: "Optional: on a unit grid, to scale, for area by counting squares." },
         label: { type: "string", description: "Optional caption under the figure. 160 chars max." },
         place: PLACE,
       },
@@ -376,6 +381,52 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
         place: PLACE,
       },
       required: ["expression", "x_min", "x_max"],
+    },
+  },
+
+  {
+    name: "draw_desmos",
+    description:
+      "A Desmos graph of anything on a coordinate plane: lines and curves, shaded inequalities, systems, circles, parametric curves, point lists and polygons (shapes, transformations), a table with a best-fit regression, and sliders the student can drag in Explore. A letter with no value becomes a slider. Prefer it for anything on axes.",
+    parameters: {
+      type: "object",
+      properties: {
+        expressions: {
+          type: "string",
+          description: "Up to 8, separated by ';', in LaTeX or plain math: 'y=mx+b', 'y>2x-1', 'x^2+y^2=9', 'polygon((0,0),(4,0),(4,3))', '[(1,2),(3,4)]', '(\\cos t,\\sin t)', 'y~mx+b' (fits the table).",
+        },
+        points: { type: "string", description: "Optional labelled points: '(1,2):A, (3,4)'. 400 chars max." },
+        table: { type: "string", description: "Optional two columns, header row first: 'hours | dollars; 1 | 12; 2 | 19'." },
+        sliders: { type: "string", description: "Optional, separated by ';': 'm=2:-5..5; b=1' (value, then range)." },
+        x_min: { type: "number", description: "Optional view; left out, it fits what is drawn." },
+        x_max: { type: "number" },
+        y_min: { type: "number" },
+        y_max: { type: "number" },
+        settings: { type: "string", description: "Optional, separated by '|': 'no grid', 'square', 'x step=2', 'x label=time (s)', 'y label=cost', 'arrows', 'degrees', 'log y'." },
+        label: { type: "string", description: "Optional caption. 160 chars max." },
+        place: PLACE,
+      },
+      required: [],
+    },
+  },
+  {
+    name: "draw_data_plot",
+    description:
+      "A data display from numbers: a dot plot, a histogram, a box plot (its five numbers written), or a scatter plot with a line or exponential curve of best fit. The result gives the mean and median, the quartiles, or the fit's equation and r.",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["dot_plot", "histogram", "box_plot", "scatter"], description: "Which display." },
+        values: { type: "string", description: "The data for a dot plot, histogram or box plot: '3 | 5 | 5 | 8'. 600 chars max." },
+        points: { type: "string", description: "Scatter only: '(1,2.1), (2,3.9)'. 800 chars max." },
+        fit: { type: "string", enum: ["none", "linear", "exponential"], description: "Scatter only. Default none." },
+        bin_width: { type: "number", description: "Histogram only; chosen when left out." },
+        x_label: { type: "string", description: "Optional word for the numbers, e.g. 'hours'. 40 chars max." },
+        y_label: { type: "string", description: "Optional, scatter and histogram. 40 chars max." },
+        label: { type: "string", description: "Optional caption. 160 chars max." },
+        place: PLACE,
+      },
+      required: ["kind"],
     },
   },
 
@@ -637,6 +688,9 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
     },
   },
 ];
+
+/** The tools this build offers: Desmos-only ones need Desmos (lib/desmos-config.ts). */
+export const WHITEBOARD_TOOL_DECLARATIONS = ALL_TOOL_DECLARATIONS.filter((decl) => desmosConfigured() || !DESMOS_ONLY_TOOLS.has(decl.name));
 
 // ── OpenAI Responses function-tool format ──────────────────────────────────
 // The declarations above are the single source of truth. GPT-Live's Responses

@@ -307,15 +307,15 @@ export type VectorExtra = {
 const REL_SPLIT_RE = /(\\le(?![a-z])|\\ge(?![a-z])|<|>|=)/;
 const NUMBER_RE = /^-?\d+(?:\.\d+)?$/;
 
-/** (lhs) − (rhs) as a function of x and y, or null. */
-function relationFunction(lhs: string, rhs: string): ((x: number, y: number) => number) | null {
+/** A LaTeX expression as a function of named variables (NaN where it is undefined), or null. */
+export function compileLatex(latex: string): ((scope: Record<string, number>) => number) | null {
   try {
-    const result = compile(engine().parse(`\\left(${lhs}\\right)-\\left(${rhs}\\right)`)) as unknown as { success?: boolean; run?: (scope: Record<string, number>) => unknown };
+    const result = compile(engine().parse(latex)) as unknown as { success?: boolean; run?: (scope: Record<string, number>) => unknown };
     if (!result?.success || typeof result.run !== "function") return null;
     const run = result.run.bind(result);
-    return (x: number, y: number) => {
+    return (scope: Record<string, number>) => {
       try {
-        const v = Number(run({ x, y }));
+        const v = Number(run(scope));
         return Number.isFinite(v) ? v : NaN;
       } catch {
         return NaN;
@@ -324,6 +324,12 @@ function relationFunction(lhs: string, rhs: string): ((x: number, y: number) => 
   } catch {
     return null;
   }
+}
+
+/** (lhs) − (rhs) as a function of x and y, or null. */
+function relationFunction(lhs: string, rhs: string): ((x: number, y: number) => number) | null {
+  const f = compileLatex(`\\left(${lhs}\\right)-\\left(${rhs}\\right)`);
+  return f ? (x: number, y: number) => f({ x, y }) : null;
 }
 
 /** "\\left\\{1\\le x\\le 3\\right\\}" → the variable and its range; null when it is not that simple. */

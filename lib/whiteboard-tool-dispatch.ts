@@ -11,6 +11,7 @@ import {
   parseLineIntervals,
   parseLineJumps,
   parseLineMarks,
+  parseNumber,
   parsePipeNumbers,
   parseSketchLabels,
   parseSketchStrokes,
@@ -37,6 +38,10 @@ import {
 } from "@/lib/board-content-rules";
 import { parsePlace, type PlaceRequest } from "@/lib/board-layout";
 import { ensureRelation, graphLatexProblem, toDesmosLatex } from "@/lib/desmos-graph";
+import { buildDataPlot, type DataKind, type FitKind } from "@/lib/desmos-data";
+import { figureModel } from "@/lib/desmos-figure";
+import { buildFreeGraph, FREE_MAX_ITEMS } from "@/lib/desmos-free";
+import { DEFAULT_GRAPH_SIZE, isGraphTable } from "@/lib/desmos-spec";
 import { latexToPlain } from "@/lib/latex-plain";
 import { resolveIconName, suggestIcons } from "@/lib/board-icons";
 import { normalizeLatex, splitLatexLines } from "@/lib/latex-normalize";
@@ -449,6 +454,8 @@ function dispatchInner(
       const markRaw = optionalBoolean(args, "mark_right_angle");
       if (isToolError(markRaw)) return markRaw;
       const markRightAngle = markRaw ?? figure === "right_triangle";
+      const gridRaw = optionalBoolean(args, "grid");
+      if (isToolError(gridRaw)) return gridRaw;
       // Positional: "12 | | 6" means base 12, right side blank, top 6.
       const positional = (value: string | undefined) => {
         const parts = (value ?? "").split("|").map((t) => t.trim());
@@ -468,10 +475,18 @@ function dispatchInner(
           radiusLabel: radius.value,
           diameterLabel: diameter.value,
           heightLabel: height.value,
+          grid: gridRaw === true,
           label: label.value,
           column: pickColumn(column.value),
         }),
       );
+      // Drawn on Desmos, a figure is to scale when its numbers say how big;
+      // numbers that cannot make the shape are worth hearing either way.
+      const model = figureModel({ figure, sideLabels, vertexLabels, angleLabels, markRightAngle, radiusLabel: radius.value, diameterLabel: diameter.value, heightLabel: height.value });
+      const onDesmos = board.desmosFor?.("draw_figure", figure) ?? false;
+      const scale = onDesmos ? (model.toScale ? ", drawn to scale" : ", not to scale (no lengths to go by)") : "";
+      const gridNote = gridRaw && !onDesmos ? " The grid needs Desmos, which is not drawing here, so there is no grid." : "";
+      const warning = model.warning ? ` Careful: ${model.warning}.` : "";
       const detail = [
         figureSideLabels(figure, sideLabels).description,
         height.value ? `height ${height.value}` : "",
@@ -480,7 +495,7 @@ function dispatchInner(
         radius.value ? `radius ${radius.value}` : "",
         diameter.value ? `diameter ${diameter.value}` : "",
       ].filter(Boolean).join("; ");
-      return ok(`Drew a ${figure.replace("_", " ")}${detail ? ` with ${detail}` : ""}.`);
+      return ok(`Drew a ${figure.replace("_", " ")}${detail ? ` with ${detail}` : ""}${scale}.${warning}${gridNote}`);
     }
 
     case "draw_angle": {
@@ -714,6 +729,94 @@ function dispatchInner(
         extraExpressions.length ? `also ${extraExpressions.join("; ")}` : "",
       ].filter(Boolean).join("; ");
       return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}${extra ? `; ${extra}` : ""}.`);
+    }
+
+    case "draw_desmos": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      if (board.canUseDesmos?.() === false || !board.drawGraph) {
+        return fail("Desmos is not available in this session. Use add_function_graph for curves and inequalities, plot_points for points and shapes, or draw_figure for a figure.");
+      }
+      const text: Record<string, string | undefined> = {};
+      for (const key of ["expressions", "points", "table", "sliders", "settings", "label", "column"]) {
+        const v = opt(args, key);
+        if (v.error) return v.error;
+        text[key] = v.value;
+      }
+      const view: Record<string, number | undefined> = {};
+      for (const key of ["x_min", "x_max", "y_min", "y_max"]) {
+        const v = optionalNumber(args, key);
+        if (isToolError(v)) return v;
+        view[key] = v;
+      }
+      const input = {
+        expressions: text.expressions,
+        points: text.points,
+        table: text.table,
+        sliders: text.sliders,
+        settings: text.settings,
+        xMin: view.x_min,
+        xMax: view.x_max,
+        yMin: view.y_min,
+        yMax: view.y_max,
+        box: DEFAULT_GRAPH_SIZE,
+      };
+      const check = buildFreeGraph({ ...input, colors: [] });
+      if ("error" in check) return fail(check.error);
+      const pens = Math.min(FREE_MAX_ITEMS + 2, check.spec.expressions.filter((e) => isGraphTable(e) || Boolean(e.color)).length);
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: text.label ?? "graph" }, () =>
+        board.drawGraph?.((colors) => {
+          const graph = buildFreeGraph({ ...input, colors });
+          return "error" in graph ? check.spec : graph.spec;
+        }, { pens, label: text.label, column: pickColumn(text.column) ?? "right", summary: check.described.join("; ") }),
+      );
+      return ok(`Drew a Desmos graph: ${check.described.join("; ")}.`);
+    }
+
+    case "draw_data_plot": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const kindRaw = requiredString(args, "kind");
+      if (isToolError(kindRaw)) return kindRaw;
+      const kind = kindRaw.toLowerCase().replace(/[\s-]+/g, "_") as DataKind;
+      if (!["dot_plot", "histogram", "box_plot", "scatter"].includes(kind)) return fail('"kind" must be dot_plot, histogram, box_plot or scatter.');
+      const text: Record<string, string | undefined> = {};
+      for (const key of ["values", "points", "fit", "x_label", "y_label", "label", "column"]) {
+        const v = opt(args, key);
+        if (v.error) return v.error;
+        text[key] = v.value;
+      }
+      const fit = (text.fit ?? "none").toLowerCase() as FitKind;
+      if (!["none", "linear", "exponential"].includes(fit)) return fail('"fit" must be none, linear or exponential.');
+      const binWidth = optionalNumber(args, "bin_width");
+      if (isToolError(binWidth)) return binWidth;
+      if (binWidth !== undefined && !(binWidth > 0)) return fail('"bin_width" must be a positive number.');
+      const values = (text.values ?? "").split(/[|,;\s]+/).map((v) => parseNumber(v)).filter((v): v is number => v !== null && Number.isFinite(v));
+      if (values.length > 200) return fail("At most 200 values.");
+      const input = { kind, values, points: parseXYPoints(text.points), fit, binWidth, xLabel: text.x_label, yLabel: text.y_label };
+      const check = buildDataPlot({ ...input, colors: [] });
+      if ("error" in check) return fail(check.error);
+      const meta = { owner: "tutor" as const, tutorReferenceLabel: text.label ?? kind.replace("_", " ") };
+      const col = pickColumn(text.column);
+      if (board.canUseDesmos?.() !== false && board.drawGraph) {
+        board.withDirectMeta(meta, () =>
+          board.drawGraph?.((colors) => {
+            const plot = buildDataPlot({ ...input, colors });
+            return "error" in plot ? check.spec : plot.spec;
+          }, { pens: 2, label: text.label, column: col, summary: check.summary }),
+        );
+        return ok(`Drew ${check.summary}.`);
+      }
+      // Without Desmos, the vector picture of the same data.
+      const fallback = check.fallback;
+      if (!fallback) return fail("A box plot needs Desmos, which is not available in this session. Draw a dot plot (kind dot_plot) and say the five numbers instead.");
+      board.withDirectMeta(meta, () => {
+        if (fallback.tool === "number_line") board.addNumberLine({ ...fallback.drawing, label: text.label ?? fallback.drawing.label, column: col });
+        else if (fallback.tool === "bar_chart") board.drawBarChart({ ...fallback.drawing, label: text.label ?? fallback.drawing.label, column: col });
+        else if (fallback.tool === "function") board.addFunctionGraph(fallback.expression, fallback.xMin, fallback.xMax, text.label, col ?? "right", { markPoints: fallback.points, slopeRun: null });
+        else board.plotPoints(fallback.points.map((p) => `(${p.x},${p.y})${p.label ? `:${p.label}` : ""}`).join(", "), fallback.xMin, fallback.xMax, fallback.yMin, fallback.yMax, text.label, col ?? "right", false);
+      });
+      return ok(`Drew ${check.summary}, without Desmos.`);
     }
 
     // ── Notes ──────────────────────────────────────────────────────────────

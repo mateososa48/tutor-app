@@ -298,4 +298,59 @@ const rings: DemoCall[] = [
   { name: "highlight_step", args: { step_label: "long line", style: "underline" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, all };
+// Pictures rebuilt on Desmos (Sept 17 2026). Compare each with its vector
+// version: &desmostools=none keeps graphs on Desmos and draws these the old
+// way; &nodesmos=1 turns Desmos off altogether.
+const numberlines: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Number lines" } },
+  { name: "add_number_line", args: { min: 0, max: 12, step: 2, points: "3:P1, 11:P2", label: "dots between the ticks say their value" } },
+  { name: "add_number_line", args: { min: 0, max: 2, step: 0.25, points: "3/4:three quarters", label: "quarters" } },
+  { name: "add_number_line", args: { min: -5, max: 5, step: 1, intervals: "(2..inf:x > 2; -inf..-1]:x ≤ -1", label: "two inequalities" } },
+  { name: "add_number_line", args: { min: -1, max: 8, step: 1, jumps: "0>3:+3; 3>5:+2; 5>1:-4", label: "hops" } },
+  { name: "add_number_line", args: { min: 0, max: 100, step: 25, second_min: 0, second_max: 80, second_label: "marbles", points: "75:75%", label: "75% of 80 marbles" } },
+  { name: "add_number_line", args: { min: 0, max: 6, step: 1, points: "2, 2, 2, 3, 5, 5, 1", label: "a dot plot" } },
+  { name: "highlight", args: { target: "b2", text: "11" } },
+];
+
+const bars: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Bar charts" } },
+  { name: "draw_bar_chart", args: { categories: "Mon | Tue | Wed | Thu | Fri", values: "3 | 5 | 2 | 6 | 4", unit: "hours", label: "hours of practice" } },
+  { name: "draw_bar_chart", args: { categories: "January | February | March | April | May | June", values: "12 | 15 | 9 | 22 | 30 | 28", label: "rainy days" } },
+  { name: "draw_bar_chart", args: { categories: "Mon | Tue | Wed", values: "4 | -3 | 2.5", unit: "°C", label: "morning temperature" } },
+  { name: "highlight", args: { target: "b2", text: "Thu" } },
+];
+
+const figures: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Figures to scale" } },
+  { name: "draw_figure", args: { figure: "right_triangle", side_labels: "6 | 8 | x", vertex_labels: "A | B | C", label: "legs 6 and 8" } },
+  { name: "draw_figure", args: { figure: "triangle", side_labels: "8 cm", height_label: "h = 5 cm", label: "area = ½ × 8 × 5" } },
+  { name: "draw_figure", args: { figure: "circle", radius_label: "r = 5 cm", diameter_label: "d = 10 cm", label: "radius and diameter" } },
+  { name: "draw_figure", args: { figure: "trapezoid", side_labels: "10 | | 6", height_label: "h = 4", label: "a trapezoid" } },
+  { name: "draw_figure", args: { figure: "rectangle", side_labels: "5 | 3", grid: true, label: "5 × 3 = 15 squares" } },
+  { name: "draw_figure", args: { figure: "triangle", side_labels: "7 | 5 | 6", angle_labels: "? | 44° | 78°", vertex_labels: "A | B | C", label: "three sides" } },
+  { name: "draw_figure", args: { figure: "cube", side_labels: "3 | 3 | 3", label: "solids stay drawn by hand" } },
+  { name: "highlight", args: { target: "b2", text: "x" } },
+];
+
+const plots: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Data plots" } },
+  { name: "draw_data_plot", args: { kind: "dot_plot", values: "2 | 3 | 3 | 4 | 4 | 4 | 5 | 7", x_label: "goals", label: "goals per game" } },
+  { name: "draw_data_plot", args: { kind: "box_plot", values: "2 | 4 | 4 | 5 | 6 | 7 | 8 | 9 | 12", x_label: "hours", label: "hours of sleep" } },
+  { name: "draw_data_plot", args: { kind: "histogram", values: "12, 15, 17, 21, 22, 22, 25, 28, 31, 33, 35, 38", bin_width: 10, x_label: "minutes", label: "time to get to school" } },
+  { name: "draw_data_plot", args: { kind: "scatter", points: "(1,2.1), (2,3.9), (3,6.2), (4,7.8), (5,10.1), (6,12.2)", fit: "linear", x_label: "hours", y_label: "dollars", label: "pay by hours" } },
+  { name: "highlight", args: { target: "b3", text: "median" } },
+];
+
+const desmos: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Anything on axes" } },
+  { name: "draw_desmos", args: { expressions: "y=mx+b", sliders: "m=2:-5..5; b=1:-5..5", label: "a line you can change" } },
+  { name: "draw_desmos", args: { expressions: "y<2x+1; y>=-x+2", x_min: -5, x_max: 5, label: "a system of inequalities" } },
+  { name: "draw_desmos", args: { table: "hours | dollars; 1 | 12; 2 | 19; 3 | 31; 4 | 38; 5 | 52", expressions: "y~mx+b", settings: "x label=hours | y label=dollars", label: "a best-fit line" } },
+  { name: "draw_desmos", args: { expressions: "polygon((1,1),(4,1),(4,3)); polygon((-1,1),(-4,1),(-4,3)); x=0", settings: "square | x step=1 | y step=1", label: "a reflection in the y-axis" } },
+  { name: "draw_desmos", args: { expressions: "x^2+y^2=9; (2\\cos t,\\sin t) t=0..2\\pi", settings: "square", label: "a circle and an ellipse" } },
+  { name: "draw_desmos", args: { expressions: "y=a(x-h)^2+k", label: "a parabola with sliders" } },
+  { name: "draw_desmos", args: { expressions: "y=\\frac{1}{x" } },
+  { name: "draw_desmos", args: { expressions: "y=x", settings: "blue" } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, all };

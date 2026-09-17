@@ -67,6 +67,8 @@ export function createFakeBoard(): FakeBoard {
     // Later-phase handle methods. Without these the Proxy below would answer
     // `undefined`, which the dispatcher reads as "Desmos is unavailable".
     canUseDesmos: () => true,
+    desmosFor: () => true,
+    drawGraph: () => undefined,
     itemsSnapshot: () => items,
     undoCall: () => "",
     takeNotes: () => [],

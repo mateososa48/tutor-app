@@ -15,7 +15,7 @@
 // parseGraphSpec upgrades a version 1 spec when it reads one. Pure; tested in
 // desmos-spec.test.ts.
 
-import type { GraphExtras, XYPoint } from "./board-diagrams";
+import type { BarChartDrawing, FigureDrawing, GraphExtras, NumberLineDrawing, XYPoint } from "./board-diagrams";
 
 export type GraphBounds = { left: number; right: number; bottom: number; top: number };
 export type GraphSize = { w: number; h: number };
@@ -103,6 +103,9 @@ export type GraphMarker = {
   label: string;
   kind?: "point" | "label";
   orientation?: LabelOrientation;
+  /** The words' size in picture pixels when it is not one plain line (a stacked fraction). */
+  w?: number;
+  h?: number;
 };
 
 export type AxisArrowMode = "NONE" | "POSITIVE" | "BOTH";
@@ -154,7 +157,11 @@ export const DEFAULT_GRAPH_SETTINGS: GraphSettings = {
 export type GraphKind = "function" | "points" | "axes" | "free" | "number_line" | "bar_chart" | "figure" | "data";
 const KINDS = new Set<string>(["function", "points", "axes", "free", "number_line", "bar_chart", "figure", "data"]);
 
-/** What the tutor asked for, in the terms the vector renderer draws from. */
+/**
+ * What the tutor asked for, in the terms the vector renderer draws from.
+ * Pictures keep their tool's own drawing (JSON: an endless ray is saved as
+ * ±1e308, which the vector number line reads as past its end).
+ */
 export type GraphSource =
   | {
       kind: "function";
@@ -164,7 +171,11 @@ export type GraphSource =
       extras?: Partial<GraphExtras>;
     }
   | { kind: "points"; points: XYPoint[]; connect: boolean; xMin: number; xMax: number; yMin: number; yMax: number }
-  | { kind: "axes"; xMin: number; xMax: number; yMin: number; yMax: number };
+  | { kind: "axes"; xMin: number; xMax: number; yMin: number; yMax: number }
+  | { kind: "free"; expressions: string[]; points: XYPoint[]; xMin: number; xMax: number; yMin: number; yMax: number }
+  | { kind: "number_line"; drawing: NumberLineDrawing }
+  | { kind: "bar_chart"; drawing: BarChartDrawing }
+  | { kind: "figure"; drawing: FigureDrawing };
 
 /** A variable the student can drag in Explore. */
 export type GraphSlider = { name: string; value: number; min: number; max: number; step?: number };
@@ -230,12 +241,13 @@ export function markerBox(marker: GraphMarker, bounds: GraphBounds, size: GraphS
   if (marker.kind !== "label") {
     box = { x: at.x - 16, y: at.y - 13, w: 32, h: 26 };
   } else {
-    const textW = Math.max(8, marker.label.length * LABEL_CHAR_PX);
+    const textW = marker.w ?? Math.max(8, marker.label.length * LABEL_CHAR_PX);
+    const textH = marker.h ?? LABEL_H;
     const w = textW + 2 * PAD_X;
-    const h = LABEL_H + 2 * PAD_Y;
+    const h = textH + 2 * PAD_Y;
     const o = marker.orientation ?? "default";
     const left = o.endsWith("left") ? at.x - LABEL_GAP - textW - PAD_X : o.endsWith("right") ? at.x + LABEL_GAP - PAD_X : at.x - w / 2;
-    const top = o.startsWith("above") ? at.y - LABEL_GAP - LABEL_H - PAD_Y : o.startsWith("below") ? at.y + LABEL_GAP - PAD_Y : at.y - h / 2;
+    const top = o.startsWith("above") ? at.y - LABEL_GAP - textH - PAD_Y : o.startsWith("below") ? at.y + LABEL_GAP - PAD_Y : at.y - h / 2;
     box = { x: left, y: top, w, h };
   }
   const x = Math.min(Math.max(0, box.x), Math.max(0, size.w - box.w));
@@ -372,6 +384,8 @@ function readMarker(v: unknown): GraphMarker[] {
   const marker: GraphMarker = { x: v.x, y: v.y, label: typeof v.label === "string" ? v.label : "" };
   if (v.kind === "label" || v.kind === "point") marker.kind = v.kind;
   if (typeof v.orientation === "string") marker.orientation = v.orientation as LabelOrientation;
+  if (finite(v.w) && v.w > 0) marker.w = v.w;
+  if (finite(v.h) && v.h > 0) marker.h = v.h;
   return [marker];
 }
 
@@ -400,6 +414,8 @@ function readSource(v: unknown): GraphSource | undefined {
   if (v.kind === "function" && typeof v.expression === "string" && finite(v.xMin) && finite(v.xMax)) return v as GraphSource;
   if (v.kind === "points" && Array.isArray(v.points) && finite(v.xMin) && finite(v.xMax) && finite(v.yMin) && finite(v.yMax)) return v as GraphSource;
   if (v.kind === "axes" && finite(v.xMin) && finite(v.xMax) && finite(v.yMin) && finite(v.yMax)) return v as GraphSource;
+  if (v.kind === "free" && Array.isArray(v.expressions) && Array.isArray(v.points) && finite(v.xMin) && finite(v.xMax) && finite(v.yMin) && finite(v.yMax)) return v as GraphSource;
+  if ((v.kind === "number_line" || v.kind === "bar_chart" || v.kind === "figure") && record(v.drawing)) return v as GraphSource;
   return undefined;
 }
 

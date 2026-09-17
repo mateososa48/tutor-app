@@ -13,10 +13,11 @@
 // Hardened Sept 17 2026: every render sends every setting (one graph used to
 // inherit the last one's), gets ids no earlier render used, and gives up on a
 // screenshot after 6 s (the calculator is then rebuilt). A failed load is
-// final for the page: graphs already on the board are redrawn as vectors by
-// TldrawCore (onDesmosStatus), and new ones are drawn that way from the start.
+// final for the page: TldrawCore redraws the graphs waiting on it as vectors,
+// and draws new ones that way from the start.
 // Dev switches: ?nodesmos=1 behaves as if there were no key, ?desmosfail=1
-// fails the load after a moment.
+// fails the load after a moment, ?desmosbreak=1 fails every drawing after a
+// good load, ?desmostools=none keeps number lines, charts and figures vector.
 
 import { DEFAULT_GRAPH_SETTINGS, isGraphTable, prefixIds, type GraphBounds, type GraphSize, type GraphSpec } from "@/lib/desmos-spec";
 
@@ -43,9 +44,14 @@ type DesmosApi = { GraphingCalculator(el: HTMLElement, options: Record<string, u
 
 export type DesmosStatus = "idle" | "loading" | "ready" | "failed" | "unavailable";
 
+/** A development-only URL parameter (?nodesmos=1, ?desmosfail=1, ?desmostools=none). */
+export function devParam(name: string): string | null {
+  if (process.env.NODE_ENV === "production" || typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get(name);
+}
+
 function devSwitch(name: string): boolean {
-  if (process.env.NODE_ENV === "production" || typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get(name) === "1";
+  return devParam(name) === "1";
 }
 
 export function desmosApiKey(): string | null {
@@ -70,6 +76,20 @@ function setStatus(next: DesmosStatus) {
       // a listener's problem is its own
     }
   }
+}
+
+/** Once Desmos has loaded, or for good failed or turned out not to be here. */
+export function whenDesmosSettled(): Promise<DesmosStatus> {
+  const settled = (s: DesmosStatus) => s === "ready" || s === "failed" || s === "unavailable";
+  const now = desmosStatus();
+  if (settled(now)) return Promise.resolve(now);
+  return new Promise((resolve) => {
+    const stop = onDesmosStatus((s) => {
+      if (!settled(s)) return;
+      stop();
+      resolve(s);
+    });
+  });
 }
 
 /** Where loading stands: idle until the first graph (or a preload) asks for Desmos. */
@@ -233,6 +253,7 @@ function analysisFor(calc: DesmosCalculator, ids: string[]): Promise<Analysis> {
 export function renderDesmosGraph(spec: GraphSpec, size: GraphSize = spec.size): Promise<DesmosRender> {
   const job = queue.then(async () => {
     const Desmos = await loadDesmos();
+    if (devSwitch("desmosbreak")) throw new Error("Desmos could not draw it (?desmosbreak=1)");
     const { calc, el } = hiddenCalculator(Desmos);
     el.style.width = `${size.w}px`;
     el.style.height = `${size.h}px`;

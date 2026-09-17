@@ -593,6 +593,8 @@ export type FigureDrawing = {
   diameterLabel?: string;
   /** Dashed altitude from the top down to the base, labelled (triangle, parallelogram, trapezoid). */
   heightLabel?: string;
+  /** On a unit grid (area by counting squares); Desmos draws it. */
+  grid?: boolean;
   label?: string;
   column?: BoardColumn;
 };

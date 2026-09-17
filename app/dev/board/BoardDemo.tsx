@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Whiteboard, { type WhiteboardHandle } from "@/components/Whiteboard";
+import { preloadDesmos, whenDesmosSettled } from "@/components/board/desmos-renderer";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
 import { BOARD_DEMOS } from "./demos";
 
@@ -15,15 +16,22 @@ export default function BoardDemo() {
   const [ready, setReady] = useState(false);
   const [log, setLog] = useState<string[]>([]);
 
-  // The board mounts through a dynamic import, so wait for the handle.
+  // The board mounts through a dynamic import, so wait for the handle, and for
+  // Desmos, as a session does, so pictures draw the same way on every run.
   useEffect(() => {
+    let live = true;
+    preloadDesmos();
     const timer = setInterval(() => {
-      if (ref.current) {
-        setReady(true);
-        clearInterval(timer);
-      }
+      if (!ref.current) return;
+      clearInterval(timer);
+      void whenDesmosSettled().then(() => {
+        if (live) setReady(true);
+      });
     }, 100);
-    return () => clearInterval(timer);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
   }, []);
 
   // A whole recorded session is too long for a URL, so scripts (Playwright)

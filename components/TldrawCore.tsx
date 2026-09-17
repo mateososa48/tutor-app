@@ -36,7 +36,11 @@ import { TutorPenOverlayUtil, TutorScribbleOverlayUtil } from "@/components/boar
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
 import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
 import { GraphShapeUtil, type TLGraphShape, type TLGraphShapeProps } from "@/components/board/GraphShape";
-import { desmosAvailable, desmosFailure, renderDesmosGraph } from "@/components/board/desmos-renderer";
+import { desmosAvailable, desmosFailure, desmosStatus, devParam, renderDesmosGraph } from "@/components/board/desmos-renderer";
+import { buildBarChartGraph } from "@/lib/desmos-bar-chart";
+import { desmosPictureTools } from "@/lib/desmos-config";
+import { buildFigureGraph, DESMOS_FIGURES } from "@/lib/desmos-figure";
+import { buildNumberLineGraph } from "@/lib/desmos-number-line";
 import { autoYRange, buildAxesGraph, buildFunctionGraph, buildPointsGraph, curveCrossings, ensureRelation, graphFunction, toDesmosLatex, vectorExtra } from "@/lib/desmos-graph";
 import {
   DEFAULT_GRAPH_SIZE,
@@ -174,13 +178,13 @@ const PAGE_INSET = { top: 68, right: 36, bottom: 56, left: 36 };
 // The voice dock and its pills cover the bottom-right corner.
 const DOCK_BLOCK = { w: 384, h: 282 };
 const PLACE_SKIP = new Set(["start_new_problem", "start_board_section", "clear_whiteboard"]);
-const AREA_RIGHT_TOOLS = new Set(["add_function_graph", "add_coordinate_axes", "plot_points"]);
+const AREA_RIGHT_TOOLS = new Set(["add_function_graph", "add_coordinate_axes", "plot_points", "draw_desmos"]);
 const EQUATION_TOOLS = new Set(["draw_equation_step", "add_equation_sequence"]);
 // Pictures sit beside the words they illustrate.
 const PICTURE_TOOLS = new Set([
   "draw_fraction", "add_number_line", "draw_figure", "draw_angle", "draw_array", "add_area_model", "draw_balance",
   "draw_bar_chart", "add_table", "draw_tape_diagram", "draw_grid", "draw_transversal", "draw_icons", "draw_sketch",
-  "write_vertical", "draw_long_division",
+  "write_vertical", "draw_long_division", "draw_data_plot",
 ]);
 // Marks measure the marked words or drawing, without decorations beside them.
 const MARK_BOUNDS = { decor: false } as const;
@@ -376,6 +380,10 @@ export interface WhiteboardHandle {
   undoCall?(callId: string): string;
   /** Whether graphs are drawn by Desmos here (a key, a browser, no failed load). */
   canUseDesmos?(): boolean;
+  /** Whether this picture tool draws on Desmos right now (loaded, and switched on for it). */
+  desmosFor?(tool: string, figure?: string): boolean;
+  /** A Desmos picture from a spec the caller builds with the pens it is handed (draw_desmos, draw_data_plot). */
+  drawGraph?(build: (colors: string[]) => GraphSpec, opts: { pens: number; label?: string; column?: "left" | "right"; summary?: string }): void;
 }
 
 /** `content`: what the call writes or draws, fingerprinted, so a later call can tell it is already up. */
@@ -657,9 +665,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const placedRectsRef = useRef<Map<string, Rect>>(new Map());
   const buildingItemRef = useRef(false);
   const pendingIsPageRef = useRef(false);
+  // A lone item too wide for a phone at the readable zoom: framed tight, a little further out.
+  const pendingTightRef = useRef<number | null>(null);
   const highlightRafRef = useRef<number | null>(null);
   // Desmos renders graphs asynchronously; board pictures wait for these.
   const pendingGraphsRef = useRef<Set<Promise<void>>>(new Set());
+  // Set while a picture Desmos could not draw is drawn again as vectors.
+  const vectorOnlyRef = useRef(false);
 
   const colX = (col: "left" | "right") => col === "right" ? RIGHT_X : LEFT_X;
   const colY = (col: "left" | "right") => col === "right" ? rightY : leftY;
@@ -1665,18 +1677,28 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // right-hand panel is framed on its own).
       const pageLeft = frame && cx >= frame.x && cx <= frame.x + frame.w ? Math.min(x, frame.x + PAGE_INSET.left) : x;
       const rowStart = (x + w - pageLeft + 64) * 0.8 <= screen.w ? pageLeft : x;
+      // A number line or chart wider than a phone at 0.8 is shown whole, a
+      // little further out (never below 0.55), rather than cut at the right.
+      const tight = !wholePage && rowStart === x && (w + 64) * 0.8 > screen.w;
+      const tightZoom = tight ? Math.min(0.8, Math.max(0.55, (screen.w - 16) / (w + 16))) : null;
       const rect: FocusRect = wholePage && frame
         ? { ...frame }
-        : { x: rowStart - 24, y: y - 56, w: x + w - rowStart + 64, h: h + 112 };
+        : tight
+          ? { x: x - 8, y: y - 56, w: w + 16, h: h + 112 }
+          : { x: rowStart - 24, y: y - 56, w: x + w - rowStart + 64, h: h + 112 };
       // Coalesce a burst of draws into one camera move on the next frame.
       const pending = pendingFocusRef.current;
-      pendingFocusRef.current = pending && !wholePage && !pendingIsPageRef.current ? unionRect(pending, rect) : rect;
+      const merge = pending && !wholePage && !pendingIsPageRef.current;
+      pendingFocusRef.current = merge ? unionRect(pending, rect) : rect;
       pendingIsPageRef.current = wholePage;
+      pendingTightRef.current = merge && pendingTightRef.current !== null ? Math.min(pendingTightRef.current, tightZoom ?? 0.8) : tightZoom;
       if (focusDebounceRef.current.raf !== null) cancelAnimationFrame(focusDebounceRef.current.raf);
       focusDebounceRef.current.raf = requestAnimationFrame(() => {
         focusDebounceRef.current.raf = null;
         const f = pendingFocusRef.current;
         const isPage = pendingIsPageRef.current;
+        const tightZoom = pendingTightRef.current;
+        pendingTightRef.current = null;
         pendingFocusRef.current = null;
         pendingIsPageRef.current = false;
         if (!f) return;
@@ -1684,7 +1706,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           // One planned move. Animating zoomToBounds and then clamping the zoom
           // stopped the first move, so the camera zoomed in place instead.
           const screen = editor.getViewportScreenBounds();
-          const camera = planCamera(f, { w: screen.w, h: screen.h }, { inset: isPage ? 0 : 48, maxZoom: 1, minZoom: isPage ? 0.1 : 0.8 });
+          const camera = planCamera(f, { w: screen.w, h: screen.h }, { inset: isPage || tightZoom !== null ? 0 : 48, maxZoom: 1, minZoom: isPage ? 0.1 : (tightZoom ?? 0.8) });
           editor.setCamera(camera, { animation: { duration: 320 } });
         } catch {
           // Editor may be mid-teardown; a missed camera move is harmless.
@@ -2076,9 +2098,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return;
     }
 
-    // A function: Compute Engine reads LaTeX and plain math; the old parser is the backup.
+    // Pictures (number lines, bar charts, figures) are redrawn by their own tools.
+    if (source.kind === "number_line" || source.kind === "bar_chart" || source.kind === "figure") return;
+    // A function, or free lines and points (draw_desmos): Compute Engine reads
+    // LaTeX and plain math; the old parser is the backup.
     const { xMin, xMax } = source;
-    const extras = source.extras ?? {};
+    const extras: Partial<GraphExtras> = source.kind === "free"
+      ? { extraExpressions: source.expressions, markPoints: source.points, yMin: source.yMin, yMax: source.yMax, slopeRun: null }
+      : (source.extras ?? {});
+    const expression = source.kind === "free" ? "" : source.expression;
     const evaluate = (expr: string): ((v: number) => number) | null => {
       const read = graphFunction(ensureRelation(toDesmosLatex(expr)));
       if (read) return read;
@@ -2092,7 +2120,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         }
       };
     };
-    const fn = evaluate(source.expression);
+    const fn = expression ? evaluate(expression) : null;
     const fn2 = extras.secondExpression ? evaluate(extras.secondExpression) : null;
     const curves = [fn, fn2].filter((f): f is (v: number) => number => Boolean(f));
     // Extra lines: what vectors can draw of them (curves, pieces, vertical lines, circles, shading).
@@ -2209,7 +2237,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         createLineShape(editor, undefined, undefined, ringOf(line), { color, size: "m", dash, spline: "line" });
       }
     };
-    const extraPen = 1 + (extras.secondExpression ? 1 : 0);
+    const extraPen = (expression ? 1 : 0) + (extras.secondExpression ? 1 : 0);
     more.forEach((extra, k) => {
       if (extra) shadeRegion(extra, pen(extraPen + k));
     });
@@ -2219,7 +2247,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     });
     if (fn) drawCurve(fn, pen(0));
     if (fn2) drawCurve(fn2, pen(1));
-    if (!fn) {
+    if (expression && !fn) {
       createText(editor, "Could not read that expression", area.x, area.y + area.h / 2 - 12, { color: "red", size: "s", font: "sans", width: area.w, align: "middle" });
     }
     // Where the two curves cross, then the marked points, in ink.
@@ -2253,6 +2281,34 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   }, [createDrawStroke, createFreeformGeo, createLineShape, createText, drawAxes]);
 
   useImperativeHandle(ref, () => {
+    // Pictures with both versions draw on Desmos once it has loaded (never
+    // waiting on the 4.3 MB script for a number line) and when switched on.
+    const desmosPictureFor = (tool: string, figure?: string): boolean => {
+      if (vectorOnlyRef.current || desmosStatus() !== "ready") return false;
+      if (tool === "draw_figure" && !(figure && DESMOS_FIGURES.has(figure as FigureKind))) return false;
+      return desmosPictureTools(undefined, devParam("desmostools")).has(tool);
+    };
+    const hexPens = (n: number) => takePens(n).map((pen) => MARKER_HEX[pen] ?? MARKER_HEX.blue);
+
+    // A picture's vector version, drawn where the Desmos one stood: drawn in
+    // its column as usual, then moved (its caption is already there).
+    const drawVectorPictureAt = (editor: Editor, source: GraphSource, at: { x: number; y: number }) => {
+      const y0 = leftY.current;
+      const building = buildingItemRef.current;
+      vectorOnlyRef.current = true;
+      buildingItemRef.current = true;
+      try {
+        if (source.kind === "number_line") api.addNumberLine({ ...source.drawing, label: undefined, column: "left" });
+        else if (source.kind === "bar_chart") api.drawBarChart({ ...source.drawing, label: undefined, column: "left" });
+        else if (source.kind === "figure") api.drawFigure({ ...source.drawing, label: undefined, column: "left" });
+      } finally {
+        vectorOnlyRef.current = false;
+        buildingItemRef.current = building;
+        leftY.current = y0;
+      }
+      return { dx: at.x - LEFT_X, dy: at.y - y0 };
+    };
+
     // A graph's pens as tldraw colours, read back from its Desmos colours:
     // the curves in order, then the slope triangle (or the joined points).
     const graphPens = (spec: GraphSpec): TldrawColor[] => {
@@ -2269,25 +2325,30 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     // Desmos is gone (it failed to load, or never will here): the graph is
     // redrawn as vectors in its own box, under the same item and tool call,
     // and written in again.
-    const swapGraphToVector = (editor: Editor, id: TLShapeId, animate = true) => {
+    const swapGraphToVector = (editor: Editor, id: TLShapeId, animate = true, reason = "") => {
       const shape = editor.getShape(id);
       if (!shape || shape.type !== "graph") return;
       const gp = shape.props as TLGraphShapeProps;
       const spec = parseGraphSpec(gp.spec, { w: gp.w, h: gp.h });
       if (!spec?.source) {
-        const issues = `Desmos did not load${desmosFailure() ? ` (${desmosFailure()})` : ""}`;
+        // Nothing to draw it with instead (a box plot): it stays a placeholder and the summary says why.
+        const issues = reason || `Desmos did not load${desmosFailure() ? ` (${desmosFailure()})` : ""}`;
         editor.run(() => editor.updateShapes([{ id, type: "graph", props: { status: "error", issues } }] as unknown as Parameters<Editor["updateShapes"]>[0]), { history: "ignore" });
         return;
       }
       const source = spec.source;
       const before = currentShapeIdSet(editor);
-      editor.run(() => drawVectorGraph(editor, source, { x: shape.x, y: shape.y, w: gp.w, h: gp.h }, graphPens(spec)), { history: "ignore" });
+      let shift = { dx: 0, dy: 0 };
+      editor.run(() => {
+        if (source.kind === "number_line" || source.kind === "bar_chart" || source.kind === "figure") shift = drawVectorPictureAt(editor, source, shape);
+        else drawVectorGraph(editor, source, { x: shape.x, y: shape.y, w: gp.w, h: gp.h }, graphPens(spec));
+      }, { history: "ignore" });
       const created = diffStringSet(currentShapeIdSet(editor), before);
       editor.run(() => {
         const updates = created
           .map((sid) => editor.getShape(sid as TLShapeId))
           .filter((s): s is NonNullable<typeof s> => Boolean(s))
-          .map((s) => ({ id: s.id, type: s.type, meta: { ...s.meta, ...shape.meta } }));
+          .map((s) => ({ id: s.id, type: s.type, x: s.x + shift.dx, y: s.y + shift.dy, meta: { ...s.meta, ...shape.meta } }));
         if (updates.length > 0) editor.updateShapes(updates);
         editor.deleteShapes([id]);
       }, { history: "ignore" });
@@ -2321,8 +2382,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
             renderGraphInto(editor, id, spec, true);
             return;
           }
-          if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] graph redrawn without Desmos:", err instanceof Error ? err.message : err);
-          swapGraphToVector(editor, id);
+          const message = err instanceof Error ? err.message : String(err);
+          if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] graph redrawn without Desmos:", message);
+          swapGraphToVector(editor, id, true, desmosAvailable() ? message : "");
         });
       pendingGraphsRef.current.add(job);
       void job.finally(() => pendingGraphsRef.current.delete(job));
@@ -2671,6 +2733,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const editor = editorRef.current;
       if (!editor) return;
       const col = opts.column ?? "left";
+      if (desmosPictureFor("add_number_line")) {
+        const spec = buildNumberLineGraph({ ...opts, colors: hexPens(opts.intervals.length + opts.marks.length + opts.jumps.length) });
+        const b = createGraph(editor, spec, opts.label, col);
+        recordDirectSemanticAction(
+          { type: "number_line", min: opts.min, max: opts.max, text: opts.marks.map((m) => (m.label ? `${m.value}:${m.label}` : `${m.value}`)).join(", "), label: opts.label, column: col },
+          { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
+        );
+        return;
+      }
       const { min, max } = opts;
       const step = opts.step ?? niceStep(min, max);
       const w = DIAGRAM_W;
@@ -3174,6 +3245,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const editor = editorRef.current;
       if (!editor) return;
       const col = opts.column ?? "left";
+      if (desmosPictureFor("draw_figure", opts.figure)) {
+        const pens = opts.sideLabels.length + opts.angleLabels.length + (opts.radiusLabel ? 1 : 0) + (opts.diameterLabel ? 1 : 0) + (opts.heightLabel ? 1 : 0) + 1;
+        const { spec } = buildFigureGraph({ ...opts, colors: hexPens(pens) });
+        const b = createGraph(editor, spec, opts.label, col);
+        recordDirectSemanticAction({ type: "figure", text: opts.figure, label: opts.label, column: col }, { bounds: { ...b, column: col, pageIndex: pageIndex.current } });
+        return;
+      }
       const PAD = 48;
       const SIZE: Record<FigureKind, [number, number]> = {
         rectangle: [260, 150], square: [200, 200], circle: [180, 180], triangle: [230, 170], right_triangle: [230, 170],
@@ -3902,6 +3980,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const editor = editorRef.current;
       if (!editor) return;
       const col = opts.column ?? "left";
+      if (desmosPictureFor("draw_bar_chart")) {
+        const spec = buildBarChartGraph({ ...opts, colors: hexPens(opts.categories.length) });
+        const b = createGraph(editor, spec, opts.label, col);
+        recordDirectSemanticAction(
+          { type: "bar_chart", text: opts.categories.map((c, i) => `${c}=${opts.values[i]}`).join(", "), label: opts.label, column: col },
+          { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
+        );
+        return;
+      }
       const w = 440;
       const CHART_H = 200;
       const PAD_L = 64;
@@ -4185,6 +4272,22 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
     canUseDesmos() {
       return desmosAvailable();
+    },
+
+    desmosFor(tool: string, figure?: string) {
+      return desmosPictureFor(tool, figure);
+    },
+
+    drawGraph(build: (colors: string[]) => GraphSpec, opts: { pens: number; label?: string; column?: "left" | "right"; summary?: string }) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const col = opts.column ?? "right";
+      const spec = build(hexPens(Math.max(1, opts.pens)));
+      const b = createGraph(editor, spec, opts.label, col);
+      recordDirectSemanticAction(
+        { type: "bar_chart", text: opts.summary ?? spec.kind, label: opts.label, column: col },
+        { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
+      );
     },
 
     takeNotes() {
