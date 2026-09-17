@@ -160,7 +160,7 @@ const icons2: DemoCall[] = [
 
 // Whiteboard layout (Sept 14 2026). No column arguments, so this is the
 // default placement: words down the left, pictures beside them, the next
-// column once the first is full, a section as a row under everything.
+// column once the first is full, then a section as the next panel.
 const layout: DemoCall[] = [
   { name: "start_new_problem", args: { title: "Adding 1/4 and 1/2" } },
   { name: "add_text_note", args: { text: "Can we add 1/4 and 1/2 straight away?" } },
@@ -175,6 +175,30 @@ const layout: DemoCall[] = [
   { name: "start_board_section", args: { title: "Your turn" } },
   { name: "draw_equation_step", args: { latex: "\\frac{1}{3} + \\frac{1}{6}" } },
   { name: "draw_fraction", args: { fraction: "1/3", second_fraction: "1/6", model: "bar", place: "beside b12" } },
+];
+
+// Sections and pages (Sept 16 2026). A section opens as a panel beside the
+// work while there is width, then as a band under it; "new page" on a board
+// with room stays put; a free area named in [Board: …] is a valid place; a
+// page opens only when nothing fits, and pointing back turns the board.
+const sections: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Solve 3x + 7 = 25" } },
+  { name: "draw_equation_step", args: { latex: "3x + 7 = 25" } },
+  { name: "draw_balance", args: { left: "x | x | x | 7", right: "25", label: "3x + 7 = 25" } },
+  { name: "draw_equation_step", args: { latex: "3x = 18", annotation: "subtract 7 from both sides" } },
+  { name: "draw_equation_step", args: { latex: "x = 6", annotation: "divide both sides by 3" } },
+  { name: "start_board_section", args: { title: "Check it" } },
+  { name: "draw_equation_step", args: { latex: "3(6) + 7 = 25" } },
+  { name: "draw_equation_step", args: { latex: "25 = 25", place: "new page" } },
+  { name: "circle_item", args: { target: "last", keep: true } },
+  { name: "start_board_section", args: { title: "Your turn: 5(x - 2) = 3x + 8" } },
+  { name: "draw_equation_step", args: { latex: "5(x - 2) = 3x + 8" } },
+  { name: "add_text_note", args: { text: "Share the 5 first", place: "bottom left" } },
+  { name: "start_board_section", args: { title: "One more" } },
+  { name: "draw_figure", args: { figure: "rectangle", side_labels: "8 cm | 3 cm" } },
+  { name: "start_board_section", args: { title: "Last one" } },
+  { name: "draw_equation_step", args: { latex: "2x + 1 = 9" } },
+  { name: "point_at", args: { target: "b2" } },
 ];
 
 // The highlighter: part of a line, a number on a number line, a student's
@@ -231,4 +255,4 @@ const rings: DemoCall[] = [
   { name: "highlight_step", args: { step_label: "long line", style: "underline" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, highlight, graphs, all };
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, highlight, graphs, all };

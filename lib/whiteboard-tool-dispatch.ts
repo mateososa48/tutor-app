@@ -122,10 +122,14 @@ export function dispatchWhiteboardTool(
   const result = dispatchInner(name, args, ctx);
   if (!board || !token) return result;
   const itemId = board.endItem(token, result.success ? result.message ?? null : null);
-  if (result.success && itemId) {
-    return { success: true, message: `${(result.message ?? "Done").replace(/[.]\s*$/, "")} (item ${itemId})` };
-  }
-  return result;
+  // What placement or a mark noticed: "stayed on this page: there was room",
+  // "b2 is on page 1, so the board turns there to show it".
+  const notes = board.takeNotes?.() ?? [];
+  if (!result.success || (!itemId && notes.length === 0)) return result;
+  let message = (result.message ?? "Done").replace(/[.]\s*$/, "");
+  if (itemId) message += ` (item ${itemId})`;
+  if (notes.length > 0) message += `; ${notes.join("; ")}`;
+  return { success: true, message };
 }
 
 function dispatchInner(

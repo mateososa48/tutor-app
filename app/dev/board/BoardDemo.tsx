@@ -26,6 +26,22 @@ export default function BoardDemo() {
     return () => clearInterval(timer);
   }, []);
 
+  // A whole recorded session is too long for a URL, so scripts (Playwright)
+  // can also call the dispatcher directly: window.__chalkDispatch(name, args).
+  useEffect(() => {
+    if (!ready) return;
+    const w = window as unknown as { __chalkDispatch?: (name: string, args: Record<string, unknown>) => unknown };
+    w.__chalkDispatch = (name, args) => {
+      const result = dispatchWhiteboardTool(name, args, { whiteboard: ref.current });
+      const line = result.success ? result.message ?? "ok" : `ERROR ${result.error}`;
+      setLog((prev) => [...prev, `${name}: ${line}`]);
+      return result;
+    };
+    return () => {
+      delete w.__chalkDispatch;
+    };
+  }, [ready]);
+
   // ?script=<URL-encoded JSON [{name,args}, …]> replays arbitrary calls, e.g.
   // the tool calls a model made in an eval transcript.
   const scriptParam = params.get("script");

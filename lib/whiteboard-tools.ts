@@ -51,7 +51,7 @@ const COLUMN = {
 
 const PLACE = {
   type: "string",
-  description: "Where it goes: 'beside b3' (to the right of item b3), 'below b3', 'left', 'right', or 'new page'. Leave it out and it takes the next free space; the board uses its whole width and height.",
+  description: "Optional: 'beside b3', 'below b3', or a free area named in [Board: …] ('the right third', 'bottom left'). Usually leave it out: work flows on through the current section.",
 } as const;
 
 export const WHITEBOARD_TOOL_DECLARATIONS = [
@@ -74,7 +74,7 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "start_board_section",
     description:
-      "Write a subheading further down the same board, without clearing. Use when the same problem moves to a new phase ('Check the answer', 'Your turn'). The canvas is infinite; never clear to make room.",
+      "Open the next panel of the board under a subheading, without clearing: beside the work while there is width, else under it. Use when the same problem moves to a new phase ('Check the answer', 'Your turn'). Never clear to make room.",
     parameters: {
       type: "object",
       properties: {

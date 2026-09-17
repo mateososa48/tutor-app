@@ -137,8 +137,10 @@ export type BoardSummaryExtras = {
   places?: Record<string, string>;
   /** the empty parts of the current board page, in words */
   free?: string;
-  /** board page number when the board has moved past its first page */
+  /** the board page new work goes on */
   page?: number;
+  /** the board page the student is looking at, when known */
+  seen?: number;
   /** item id -> what went wrong drawing it (a graph line Desmos could not read) */
   issues?: Record<string, string>;
 };
@@ -155,7 +157,15 @@ export function formatBoardItems(items: BoardItem[], title?: string, limit = 10,
     })
     .join("; ");
   const free = extras?.free ? ` Free space: ${extras.free}.` : "";
-  const page = extras?.page && extras.page > 1 ? ` This is board page ${extras.page}; earlier pages are to the left.` : "";
+  // Items on another page read "(page 1)": the student cannot see them until
+  // the tutor points at one, which turns the board there.
+  const elsewhere = shown.some((item) => /^page \d+$/.test(extras?.places?.[item.id] ?? ""));
+  let page = "";
+  if (extras?.page && (extras.page > 1 || elsewhere)) {
+    const seen = extras.seen && extras.seen !== extras.page ? `; the student is looking at page ${extras.seen}` : "";
+    page = ` New work goes on board page ${extras.page}${seen}.`;
+    if (elsewhere) page += " Items on another page are out of sight until you point at them.";
+  }
   return `${title ? `"${title}". ` : ""}${items.length} item${items.length === 1 ? "" : "s"}${hidden > 0 ? ` (oldest ${hidden} not listed)` : ""}: ${list}.${free}${page} Refer to items by id (point_at, highlight, circle_item, erase_items).`;
 }
 

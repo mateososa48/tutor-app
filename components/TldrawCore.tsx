@@ -30,7 +30,7 @@ import {
 import { planCamera } from "@/lib/board-camera";
 import { BOARD_THEMES, SKY } from "@/components/board/board-theme";
 import { catchUpPace, planReveal, pointsShown, polylineLength, typedPrefix, REVEAL_CAP_MS, type RevealInput, type RevealStep } from "@/lib/board-reveal";
-import { findSpot, freeSpace, regionName, type PlaceHint, type PlaceRequest, type Rect } from "@/lib/board-layout";
+import { findSpot, freeSpace, inArea, intersect, LAYOUT_GAP, PANEL_MIN_W, pageAt, planSection, regionName, shouldOpenPage, usedCells, type PlaceHint, type PlaceRequest, type Rect, type Size } from "@/lib/board-layout";
 import { latexToPlain } from "@/lib/latex-plain";
 import { TutorPenOverlayUtil, TutorScribbleOverlayUtil } from "@/components/board/TutorPenOverlay";
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
@@ -175,14 +175,38 @@ function pageFrame(base: { w: number; h: number }, index: number): Rect {
   return { x: (index - 1) * (base.w + PAGE_GAP), y: 0, w: base.w, h: base.h };
 }
 
-function usableArea(frame: Rect, sectionTop = 0): Rect {
-  const top = Math.max(frame.y + PAGE_INSET.top, sectionTop);
+function usableArea(frame: Rect): Rect {
+  const top = frame.y + PAGE_INSET.top;
   return {
     x: frame.x + PAGE_INSET.left,
     y: top,
     w: frame.w - PAGE_INSET.left - PAGE_INSET.right,
     h: Math.max(0, frame.y + frame.h - PAGE_INSET.bottom - top),
   };
+}
+
+// Where work flows by default: the current section's region, or the whole page.
+function placementArea(frame: Rect, section: Rect | null): Rect {
+  const page = usableArea(frame);
+  return (section && intersect(section, page)) || page;
+}
+
+// Snapshots before Sept 16 kept only where the section started: everything below it.
+function legacySection(frame: Rect | null, sectionTop?: number): Rect | null {
+  if (!frame || !sectionTop) return null;
+  const page = usableArea(frame);
+  const top = Math.max(page.y, sectionTop);
+  return { x: page.x, y: top, w: page.w, h: Math.max(0, page.y + page.h - top) };
+}
+
+// The page the camera is showing.
+function visiblePage(editor: Editor, frame: Rect, fallback: number): number {
+  try {
+    const view = editor.getViewportPageBounds();
+    return pageAt(view.x + view.w / 2, frame.w, PAGE_GAP);
+  } catch {
+    return fallback;
+  }
 }
 
 function dockBlock(frame: Rect): Rect {
@@ -242,7 +266,8 @@ export interface WhiteboardSnapshot {
   store: unknown;
   eqItems: EqItem[];
   semanticBoard?: SemanticBoard;
-  pageState: { pageIndex: number; pageTop: number; leftY: number; rightY: number; frame?: Rect; sectionTop?: number };
+  /** `section`: the current section's writing area; `rowTop`: where its row of sections starts. `sectionTop`: snapshots before Sept 16 2026. */
+  pageState: { pageIndex: number; pageTop: number; leftY: number; rightY: number; frame?: Rect; section?: Rect | null; rowTop?: number | null; sectionTop?: number };
   /** Board items (b1, b2, …) so a resumed session keeps its ids. */
   items?: BoardItem[];
   itemSeq?: number;
@@ -346,6 +371,8 @@ export interface WhiteboardHandle {
   exportImage(maxWidth?: number): Promise<{ url: string; width: number; height: number } | null>;
   /** Where the next item goes; the dispatcher sets it before each tool call. Optional so fake boards compile. */
   setPlacement?(request: PlaceRequest | null): void;
+  /** What placement or a mark wants the tool result to say ("stayed on this page: there was room"); clears them. */
+  takeNotes?(): string[];
   /** A highlighter over the words `text` in an item, or over the whole item. `part` says which it managed. */
   highlight?(target: string, text: string | undefined): { item: BoardItem; part: "text" | "item" } | null;
 }
@@ -625,11 +652,18 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   }, [onWriting]);
   const cursorHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scribbleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
-  // Page layout: the current page's frame in page coordinates, where the
-  // current section starts, what the next tool call asked for, and each
+  // Page layout: the current page's frame in page coordinates, the current
+  // section's writing area (null: the whole page) and the row its heading
+  // owns, what the next tool call asked for, notes for its result, and each
   // item's rectangle as placed (a reveal changes live bounds mid-write).
   const pageFrameRef = useRef<Rect | null>(null);
-  const sectionTopRef = useRef(0);
+  const sectionRegionRef = useRef<Rect | null>(null);
+  const headingRowRef = useRef<{ x: number; w: number } | null>(null);
+  // Where the current row of sections starts (null: under the page heading).
+  const rowTopRef = useRef<number | null>(null);
+  // The newest section: its title, the row it was planned in, and its heading's item id.
+  const currentSectionRef = useRef<{ title: string; rowTop: number | null; headingId: string | null } | null>(null);
+  const notesRef = useRef<string[]>([]);
   const placeRequestRef = useRef<PlaceRequest | null>(null);
   const placedRectsRef = useRef<Map<string, Rect>>(new Map());
   const buildingItemRef = useRef(false);
@@ -1234,7 +1268,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const openPage = useCallback((editor: Editor): Rect => {
     const current = ensurePageFrame(editor);
     pageIndex.current += 1;
-    sectionTopRef.current = 0;
+    sectionRegionRef.current = null;
+    rowTopRef.current = null;
     pageFrameRef.current = pageFrame(current, pageIndex.current);
     return pageFrameRef.current;
   }, [ensurePageFrame]);
@@ -1255,23 +1290,82 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     return out;
   }, [rectOf]);
 
+  // How many of a page's nine cells hold work: headings count by their words
+  // (their rows are kept clear, not written on) and the dock not at all.
+  const usedCellsOn = useCallback((editor: Editor, frame: Rect, exclude?: string): number => {
+    const work: Rect[] = [];
+    for (const item of itemsRef.current) {
+      if (item.id === exclude) continue;
+      const r = isHeadingItem(item) ? itemBounds(editor, item) : rectOf(editor, item);
+      if (r && onPage(r, frame)) work.push(r);
+    }
+    return usedCells(work, usableArea(frame));
+  }, [itemBounds, rectOf]);
+
+  // A mark on another page turns the board there; the tool result says so.
+  const notePage = useCallback((editor: Editor, item: BoardItem) => {
+    const frame = pageFrameRef.current;
+    const r = rectOf(editor, item);
+    if (!frame || !r) return;
+    const page = pageAt(r.x + r.w / 2, frame.w, PAGE_GAP);
+    if (page !== visiblePage(editor, frame, pageIndex.current)) {
+      notesRef.current.push(`${item.id} is on page ${page}, so the board turns there to show it`);
+    }
+  }, [rectOf]);
+
   // Move a finished tool call's drawing into free space. Returns where it went.
-  const placeItem = useCallback((editor: Editor, item: BoardItem, request: PlaceRequest | null): Rect | null => {
+  const placeItem = useCallback((
+    editor: Editor,
+    item: BoardItem,
+    request: PlaceRequest | null,
+    rehome?: (size: Size) => boolean,
+  ): Rect | null => {
     const box = itemBounds(editor, item);
     if (!box) return null;
     let frame = ensurePageFrame(editor);
-    if (request?.kind === "new_page" && occupiedOn(editor, frame, item.id).length > 1) frame = openPage(editor);
+    let page = usableArea(frame);
     const others = itemsRef.current.filter((i) => i.id !== item.id);
+    if (request?.kind === "new_page" && occupiedOn(editor, frame, item.id).length > 1) {
+      // A new page hides everything on this one. It opens only when this one
+      // is mostly used, and only where a section starts, taking the heading
+      // along: a page break inside a section splits the work being read.
+      const previous = others[others.length - 1];
+      const heading = previous?.tool === "start_board_section" ? previous : null;
+      const mostlyUsed = shouldOpenPage({ fits: true, askedForNewPage: true, usedCells: usedCellsOn(editor, frame, item.id) });
+      const at = heading ? rectOf(editor, heading) : null;
+      if (mostlyUsed && heading && at) {
+        const bodyOffset = sectionRegionRef.current ? sectionRegionRef.current.y - at.y : at.h;
+        frame = openPage(editor);
+        page = usableArea(frame);
+        const ids = heading.shapeIds.filter((sid) => editor.getShape(sid as TLShapeId)).map((sid) => sid as TLShapeId);
+        if (ids.length > 0) editor.run(() => editor.nudgeShapes(ids, { x: page.x - at.x, y: page.y - at.y }), { history: "ignore" });
+        placedRectsRef.current.set(heading.id, { x: page.x, y: page.y, w: page.w, h: at.h });
+        const bodyTop = page.y + Math.max(at.h, bodyOffset);
+        sectionRegionRef.current = { x: page.x, y: bodyTop, w: page.w, h: Math.max(0, page.y + page.h - bodyTop) };
+        headingRowRef.current = { x: page.x, w: page.w };
+        rowTopRef.current = page.y;
+      } else {
+        notesRef.current.push(mostlyUsed ? "stayed on this page, so this section stays together" : "stayed on this page: there was room");
+      }
+    }
+    const section = sectionRegionRef.current;
     const here = (r: Rect | null): Rect | null => (r && onPage(r, frame) ? r : null);
     // Default neighbours come from the current section only.
-    const inSection = (r: Rect | null): Rect | null => (r && onPage(r, frame) && r.y >= sectionTopRef.current - 1 ? r : null);
+    const inSection = (r: Rect | null): Rect | null => (r && onPage(r, frame) && (!section || intersect(r, section)) ? r : null);
     let hint: PlaceHint = { kind: "flow" };
+    // A place the tutor named is looked for on the whole page (the words in
+    // [Board: …] describe the page); other work flows in the current section.
+    let named = false;
     if (request?.kind === "beside" || request?.kind === "below") {
       const anchor = resolveItemTarget(others, request.target);
       const r = anchor ? here(rectOf(editor, anchor)) : null;
-      if (r) hint = { kind: request.kind, anchor: r };
+      if (r) {
+        hint = { kind: request.kind, anchor: r };
+        named = true;
+      }
     } else if (request?.kind === "area") {
       hint = { kind: "area", area: request.area };
+      named = true;
     } else if (AREA_RIGHT_TOOLS.has(item.tool)) {
       hint = { kind: "area", area: "right" };
     } else if (EQUATION_TOOLS.has(item.tool)) {
@@ -1293,17 +1387,32 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const r = lastWords ? inSection(rectOf(editor, lastWords)) : null;
       if (r) hint = { kind: "flow", after: r };
     }
-    let usable = usableArea(frame, sectionTopRef.current);
-    const size = { w: Math.min(box.w, usable.w), h: box.h };
-    let spot = size.h <= usable.h ? findSpot(size, occupiedOn(editor, frame, item.id), usable, hint) : null;
+    let area = named ? page : placementArea(frame, section);
+    const size = { w: Math.min(box.w, page.w), h: box.h };
+    const fitIn = (a: Rect) => (size.h <= a.h + 0.5 ? findSpot(size, occupiedOn(editor, frame, item.id), a, hint) : null);
+    let spot = fitIn(area);
+    // A section's first item that does not fit under its heading takes the
+    // heading along to room that holds both (endItem supplies the move).
+    if (!spot && !named && section && rehome?.(size)) {
+      frame = ensurePageFrame(editor);
+      page = usableArea(frame);
+      area = placementArea(frame, sectionRegionRef.current);
+      spot = fitIn(area);
+    }
+    // A full section spills onto the rest of this page before a page opens.
+    if (!spot && area !== page) spot = fitIn(page);
     if (!spot) {
-      // No room left: the next page, unless this page is still empty.
+      // Nothing fits on this page: the next one, unless this page is still empty.
       if (occupiedOn(editor, frame, item.id).length > 1) {
         frame = openPage(editor);
-        usable = usableArea(frame);
-        spot = findSpot(size, occupiedOn(editor, frame, item.id), usable);
+        page = usableArea(frame);
+        spot = findSpot(size, occupiedOn(editor, frame, item.id), page);
       }
-      spot = spot ?? { x: usable.x, y: usable.y };
+      spot = spot ?? { x: page.x, y: page.y };
+    }
+    const placed = { x: spot.x, y: spot.y, w: box.w, h: box.h };
+    if (request?.kind === "area" && !inArea(placed, request.area, page)) {
+      notesRef.current.push(`no room at "${request.area}", so it is at the ${regionName(placed, page)}`);
     }
     const dx = spot.x - box.x;
     const dy = spot.y - box.y;
@@ -1311,8 +1420,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const ids = item.shapeIds.filter((sid) => editor.getShape(sid as TLShapeId)).map((sid) => sid as TLShapeId);
       if (ids.length > 0) editor.run(() => editor.nudgeShapes(ids, { x: dx, y: dy }), { history: "ignore" });
     }
-    return { x: spot.x, y: spot.y, w: box.w, h: box.h };
-  }, [ensurePageFrame, itemBounds, occupiedOn, openPage, rectOf]);
+    return placed;
+  }, [ensurePageFrame, itemBounds, occupiedOn, openPage, rectOf, usedCellsOn]);
 
   // ── Highlighter ─────────────────────────────────────────────────────────────
   // The plain text a shape shows, to decide whether a highlight's words are there.
@@ -1546,7 +1655,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     if (buildingItemRef.current) return;
     try {
       if (rectVisible(editor, { x, y, w, h })) return;
-      const frame = pageFrameRef.current;
+      // The page that holds it: a mark can point back at an earlier page.
+      const current = pageFrameRef.current;
+      const frame = current ? pageFrame(current, pageAt(x + w / 2, current.w, PAGE_GAP)) : null;
       const screen = editor.getViewportScreenBounds();
       const cx = x + w / 2;
       const cy = y + h / 2;
@@ -1559,8 +1670,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           cy <= frame.y + frame.h,
       );
       // Too small a screen for the page (a phone): frame the item's row from
-      // the page's left edge, so a row never loses its start off screen.
-      const rowStart = frame && cx >= frame.x && cx <= frame.x + frame.w ? Math.min(x, frame.x + PAGE_INSET.left) : x;
+      // the page's left edge, so a row never loses its start off screen, as
+      // long as the item itself still fits at the readable zoom (an item in a
+      // right-hand panel is framed on its own).
+      const pageLeft = frame && cx >= frame.x && cx <= frame.x + frame.w ? Math.min(x, frame.x + PAGE_INSET.left) : x;
+      const rowStart = (x + w - pageLeft + 64) * 0.8 <= screen.w ? pageLeft : x;
       const rect: FocusRect = wholePage && frame
         ? { ...frame }
         : { x: rowStart - 24, y: y - 56, w: x + w - rowStart + 64, h: h + 112 };
@@ -2067,6 +2181,85 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return { x, y, w: GRAPH_W, h: GRAPH_H };
     };
 
+    // A section heading: its words in sans and a pencil rule at a region's
+    // top left. Returns where the section's work starts.
+    const writeSectionHeading = (editor: Editor, title: string, region: Rect): number => {
+      const headW = Math.min(1120, region.w);
+      const measured = measureText(editor, title, "sans", "l", headW);
+      createText(editor, title, region.x, region.y, { size: "l", font: "sans", color: INK, width: headW });
+      const sectionW = Math.min(headW, Math.max(200, measured.w + 8));
+      const ruleY = region.y + measured.h + 6;
+      createLine(editor, region.x, ruleY, region.x + sectionW, ruleY, PENCIL);
+      return ruleY + 24;
+    };
+
+    // What a new section has to fit around on a page: the work under the page
+    // heading (a section heading counts as its words, not its row) and the dock.
+    const sectionInputs = (editor: Editor, frame: Rect, exclude?: string) => {
+      const page = usableArea(frame);
+      const content: Rect[] = [];
+      let headBottom = page.y;
+      for (const item of itemsRef.current) {
+        if (item.id === exclude) continue;
+        const r = rectOf(editor, item);
+        if (!r || !onPage(r, frame)) continue;
+        if (item.tool === "start_new_problem") headBottom = Math.max(headBottom, r.y + r.h + LAYOUT_GAP);
+        else if (item.tool === "start_board_section") content.push(itemBounds(editor, item) ?? r);
+        else content.push(r);
+      }
+      const below = { x: page.x, y: headBottom, w: page.w, h: Math.max(0, page.y + page.h - headBottom) };
+      return { page, content, below, dock: dockBlock(frame) };
+    };
+
+    const enterSection = (region: Rect, bodyTop: number) => {
+      sectionRegionRef.current = { x: region.x, y: bodyTop, w: region.w, h: Math.max(0, region.y + region.h - bodyTop) };
+      headingRowRef.current = { x: region.x, w: region.w };
+      rowTopRef.current = region.y;
+    };
+
+    // Rewrite the newest section heading where there is room for it and for
+    // an item of `size` under it: on this page if anywhere, else on a fresh
+    // one. False when there is nowhere better.
+    const rehomeSection = (editor: Editor, heading: BoardItem, size: Size): boolean => {
+      const current = currentSectionRef.current;
+      const region = sectionRegionRef.current;
+      const at = placedRectsRef.current.get(heading.id);
+      if (!current || current.headingId !== heading.id || !region || !at) return false;
+      const headSpace = region.y - at.y;
+      let frame = ensurePageFrame(editor);
+      const inputs = sectionInputs(editor, frame, heading.id);
+      if (inputs.content.length === 0) return false;
+      let plan = planSection(inputs.content, inputs.below, [inputs.dock], {
+        rowTop: current.rowTop ?? undefined,
+        minW: Math.max(PANEL_MIN_W, size.w + 8),
+        minH: headSpace + size.h + LAYOUT_GAP,
+      });
+      if (plan && Math.abs(plan.region.x - at.x) < 1 && Math.abs(plan.region.y - at.y) < 1) return false;
+      if (!plan) {
+        // Only worth a page if the item fits on an empty one.
+        if (size.w > inputs.page.w || headSpace + size.h > inputs.page.h) return false;
+        frame = openPage(editor);
+        plan = { region: usableArea(frame), kind: "page" };
+        current.rowTop = null;
+      }
+      const old = heading.shapeIds.filter((sid) => editor.getShape(sid as TLShapeId)).map((sid) => sid as TLShapeId);
+      if (old.length > 0) editor.deleteShapes(old);
+      const before = currentShapeIdSet(editor);
+      const bodyTop = writeSectionHeading(editor, current.title, plan.region);
+      const ids = diffStringSet(currentShapeIdSet(editor), before);
+      const tagged = ids
+        .map((sid) => editor.getShape(sid as TLShapeId))
+        .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape))
+        .map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, itemId: heading.id } }));
+      if (tagged.length > 0) editor.updateShapes(tagged);
+      heading.shapeIds = ids;
+      const placed = { x: plan.region.x, y: plan.region.y, w: plan.region.w, h: Math.max(1, bodyTop - 24 - plan.region.y) };
+      placedRectsRef.current.set(heading.id, placed);
+      enterSection(plan.region, bodyTop);
+      revealItem(editor, heading, placed);
+      return true;
+    };
+
     const api: WhiteboardHandle = {
     clearWhiteboard() {
       const editor = editorRef.current;
@@ -2083,7 +2276,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       semanticBoardRef.current = createEmptySemanticBoard();
       itemsRef.current = [];
       pageFrameRef.current = null;
-      sectionTopRef.current = 0;
+      sectionRegionRef.current = null;
+      headingRowRef.current = null;
+      rowTopRef.current = null;
+      currentSectionRef.current = null;
       placedRectsRef.current.clear();
     },
 
@@ -2102,7 +2298,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       semanticBoardRef.current = createEmptySemanticBoard(title);
       itemsRef.current = [];
       pageFrameRef.current = null;
-      sectionTopRef.current = 0;
+      sectionRegionRef.current = null;
+      headingRowRef.current = null;
+      rowTopRef.current = null;
+      currentSectionRef.current = null;
       placedRectsRef.current.clear();
       // A fresh page the size of the visible board, headed at its top left.
       const usable = usableArea(ensurePageFrame(editor));
@@ -2138,27 +2337,28 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     startBoardSection(title: string, freshPage?: boolean) {
       const editor = editorRef.current;
       if (!editor) return;
-      // A section is a row across the board under everything on this page,
-      // or the top of a fresh page when asked for or when this one is full.
+      // A section is the next panel of the board: beside the work while there
+      // is width, then under it, and a fresh page only when neither fits.
       let frame = ensurePageFrame(editor);
-      let usable = usableArea(frame);
-      const content = occupiedOn(editor, frame).slice(1);
-      let y = content.length > 0 ? Math.max(...content.map((r) => r.y + r.h)) + 36 : usable.y;
-      if (content.length > 0 && (freshPage || y + 180 > usable.y + usable.h)) {
-        frame = openPage(editor);
-        usable = usableArea(frame);
-        y = usable.y;
+      const { content, below, dock } = sectionInputs(editor, frame);
+      let rowTop = rowTopRef.current;
+      let plan = planSection(content, below, [dock], { rowTop: rowTop ?? undefined });
+      if (plan && freshPage && content.length > 0) {
+        if (shouldOpenPage({ fits: true, askedForNewPage: true, usedCells: usedCellsOn(editor, frame) })) plan = null;
+        else notesRef.current.push("stayed on this page: there was room");
       }
-      const headW = Math.min(1120, usable.w);
-      const measured = measureText(editor, title, "sans", "l", headW);
-      createText(editor, title, usable.x, y, { size: "l", font: "sans", color: INK, width: headW });
-      const sectionW = Math.min(headW, Math.max(200, measured.w + 8));
-      const ruleY = y + measured.h + 6;
-      createLine(editor, usable.x, ruleY, usable.x + sectionW, ruleY, PENCIL);
-      sectionTopRef.current = ruleY + 24;
+      if (!plan) {
+        frame = openPage(editor);
+        plan = { region: usableArea(frame), kind: "page" };
+        rowTop = null;
+      }
+      const region = plan.region;
+      const bodyTop = writeSectionHeading(editor, title, region);
+      enterSection(region, bodyTop);
+      currentSectionRef.current = { title, rowTop, headingId: null };
       recordDirectSemanticAction(
         { type: "start_section", title },
-        { bounds: { x: usable.x, y, w: sectionW, h: 60, column: "full", pageIndex: pageIndex.current } },
+        { bounds: { x: region.x, y: region.y, w: Math.min(1120, region.w), h: 60, column: "full", pageIndex: pageIndex.current } },
       );
     },
 
@@ -4053,6 +4253,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
         const b = item ? itemBounds(editor, item) : null;
         if (!item || !b) return false;
+        notePage(editor, item);
         enqueue({
           kind: "action",
           wait: style === "circle" ? 1100 : 600,
@@ -4113,6 +4314,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
         const b = item ? itemBounds(editor, item) : null;
         if (!item || !b) return false;
+        notePage(editor, item);
         enqueue({
           kind: "action",
           wait: 600,
@@ -4617,7 +4819,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           leftY: leftY.current,
           rightY: rightY.current,
           frame: pageFrameRef.current ?? undefined,
-          sectionTop: sectionTopRef.current,
+          section: sectionRegionRef.current,
+          rowTop: rowTopRef.current,
         },
       };
     },
@@ -4658,18 +4861,21 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const title = semanticBoardRef.current.title;
       const frame = pageFrameRef.current;
       if (!editor || !frame || itemsRef.current.length === 0) return formatBoardItems(itemsRef.current, title);
-      // Where each item sits and where the page is still empty, in words.
+      // Where each item sits and where the page is still empty, in words, on
+      // the page area a named `place` resolves against. Work on another page
+      // says which page it is on.
       const usable = usableArea(frame);
       const places: Record<string, string> = {};
       const here: Rect[] = [];
       for (const item of itemsRef.current) {
         const r = rectOf(editor, item);
         if (!r) continue;
-        if (onPage(r, frame)) {
+        const onThis = pageAt(r.x + r.w / 2, frame.w, PAGE_GAP);
+        if (onThis === pageIndex.current) {
           places[item.id] = regionName(r, usable);
           here.push(r);
         } else {
-          places[item.id] = "earlier page";
+          places[item.id] = `page ${onThis}`;
         }
       }
       const issues: Record<string, string> = {};
@@ -4685,6 +4891,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         places,
         free: freeSpace([...here, dockBlock(frame)], usable),
         page: pageIndex.current,
+        seen: visiblePage(editor, frame, pageIndex.current),
         issues,
       });
     },
@@ -4693,6 +4900,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const editor = editorRef.current;
       buildingItemRef.current = true;
       placeRequestRef.current = null;
+      notesRef.current = [];
       return {
         tool,
         shapes: editor ? currentShapeIdSet(editor) : new Set<string>(),
@@ -4702,6 +4910,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
     setPlacement(request: PlaceRequest | null) {
       placeRequestRef.current = request;
+    },
+
+    takeNotes() {
+      const notes = notesRef.current;
+      notesRef.current = [];
+      return notes;
     },
 
     endItem(token: ItemToken, label: string | null, owner: "tutor" | "student" = "tutor"): string | null {
@@ -4733,12 +4947,20 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // Into free space on the board. Headings place themselves.
       let placed: Rect | null;
       if (PLACE_SKIP.has(token.tool)) {
-        // A heading owns its whole row, so nothing squeezes in beside the title.
+        // A heading owns its row (a section heading, its panel's width), so
+        // nothing squeezes in beside it.
         const b = itemBounds(editor, item);
-        const row = pageFrameRef.current ? usableArea(pageFrameRef.current) : null;
+        const pageRow = pageFrameRef.current ? usableArea(pageFrameRef.current) : null;
+        const row = token.tool === "start_board_section" && headingRowRef.current ? headingRowRef.current : pageRow;
         placed = b && row ? { x: row.x, y: b.y, w: row.w, h: b.h } : b;
+        if (token.tool === "start_board_section" && currentSectionRef.current && !currentSectionRef.current.headingId) {
+          currentSectionRef.current.headingId = id;
+        }
       } else {
-        placed = placeItem(editor, item, request);
+        // The first thing under a section heading may move the heading with it.
+        const previous = itemsRef.current[itemsRef.current.length - 2];
+        const heading = previous && previous.id === currentSectionRef.current?.headingId ? previous : null;
+        placed = placeItem(editor, item, request, heading ? (size) => rehomeSection(editor, heading, size) : undefined);
       }
       if (placed) placedRectsRef.current.set(id, placed);
       // Tools still draw at the old column cursors; placement moves the result.
@@ -4766,6 +4988,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!item) return null;
       const b = itemBounds(editor, item);
       if (!b) return null;
+      notePage(editor, item);
       enqueue({
         kind: "action",
         wait: 520,
@@ -4790,6 +5013,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!item) return null;
       const b = itemBounds(editor, item);
       if (!b) return null;
+      notePage(editor, item);
       const meta = currentMeta();
       if (keep) {
         recordDirectSemanticAction(
@@ -4821,6 +5045,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!item) return null;
       const box = itemBounds(editor, item);
       if (!box) return null;
+      notePage(editor, item);
       const variants = text && text.trim() ? matchVariants(text) : null;
       const isMark = (sid: string) => {
         const shape = editor.getShape(sid as TLShapeId);
@@ -4963,7 +5188,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       leftY.current = snap.pageState?.leftY ?? START_Y;
       rightY.current = snap.pageState?.rightY ?? START_Y;
       pageFrameRef.current = snap.pageState?.frame ?? null;
-      sectionTopRef.current = snap.pageState?.sectionTop ?? 0;
+      sectionRegionRef.current = snap.pageState?.section ?? legacySection(pageFrameRef.current, snap.pageState?.sectionTop);
+      headingRowRef.current = null;
+      rowTopRef.current = snap.pageState?.rowTop ?? null;
+      currentSectionRef.current = null;
       placedRectsRef.current.clear();
       // Math shapes came back with the store; old overlay items become shapes.
       mathOrderRef.current = editor.getCurrentPageShapesSorted().filter((shape) => shape.type === "math").map((shape) => shape.id);

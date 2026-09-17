@@ -130,6 +130,15 @@ test("the summary can say where items sit and where the board is empty", () => {
   assert.ok(s.includes("highlight"), s);
 });
 
+test("the summary names the page of work the student cannot see", () => {
+  const s = formatBoardItems(items, "One half", 10, { places: { b2: "page 1", b4: "top left" }, page: 2, seen: 1 });
+  assert.ok(s.includes("b2 fraction (page 1)"), s);
+  assert.ok(s.includes("New work goes on board page 2; the student is looking at page 1."), s);
+  assert.ok(s.includes("out of sight until you point at them"), s);
+  const one = formatBoardItems(items, "One half", 10, { places: { b2: "top left" }, page: 1, seen: 1 });
+  assert.ok(!one.includes("page"), one);
+});
+
 test("highlight text matches typeset forms", () => {
   assert.equal(normalizeForMatch("2x + 3 \u2212 1"), "2x+3-1");
   assert.equal(normalizeForMatch("3 \u22c5 4"), normalizeForMatch("3*4"));
