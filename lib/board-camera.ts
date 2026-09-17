@@ -11,9 +11,9 @@ export type Camera = { x: number; y: number; z: number };
 
 /**
  * The camera that shows `rect` in a viewport of `view` screen pixels: as close
- * to `maxZoom` as fits, never below `minZoom`. What fits is centred; a rect too
- * big for the view keeps its left and top edges on screen (a row never loses
- * its start). tldraw draws a page point at (point + camera) × zoom.
+ * to `maxZoom` as fits, never below `minZoom`. What fits is centred (with less
+ * padding if need be); a rect too big for the view keeps its left and top
+ * edges on screen (a row never loses its start). tldraw draws a page point at (point + camera) × zoom.
  */
 export function planCamera(
   rect: Rect,
@@ -28,8 +28,10 @@ export function planCamera(
   const seenW = view.w / z;
   const seenH = view.h / z;
   const pad = inset / z;
-  const left = rect.w + 2 * pad <= seenW ? rect.x + rect.w / 2 - seenW / 2 : rect.x - pad;
-  const top = rect.h + 2 * pad <= seenH ? rect.y + rect.h / 2 - seenH / 2 : rect.y - pad;
+  // Centred while the rect itself fits (the padding shrinks first: on a phone
+  // a graph kept its left padding and lost its right edge); else its start.
+  const left = rect.w <= seenW ? rect.x + rect.w / 2 - seenW / 2 : rect.x - pad;
+  const top = rect.h <= seenH ? rect.y + rect.h / 2 - seenH / 2 : rect.y - pad;
   return { x: -left, y: -top, z };
 }
 

@@ -41,6 +41,7 @@ import { intakeOpeningMessage, intakeTitle, setActiveIntake, takeIntake } from "
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
 import { resolveWorksheet, worksheetShown, type WorksheetLook } from "@/lib/session-tools";
 import { withPdfPages } from "@/lib/worksheet-pages";
+import { desmosFailure, onDesmosStatus, preloadDesmos } from "@/components/board/desmos-renderer";
 import { SessionRecorder } from "@/lib/session-recorder";
 import { compareEvents } from "@/lib/session-recording";
 import { joinTranscript } from "@/lib/live-events";
@@ -264,6 +265,11 @@ function SessionDetailPage({ id }: { id: string }) {
     const query = nextParams.toString();
     window.history.replaceState(null, "", `/session/${id}${query ? `?${query}` : ""}`);
   }, [id]);
+
+  // A failed Desmos load turns every graph into a vector drawing; the recording says when.
+  useEffect(() => onDesmosStatus((status) => {
+    recordDebug("board", "desmos_status", { status, ...(status === "failed" ? { reason: desmosFailure() } : {}) });
+  }), [recordDebug]);
 
   // Keep refs synced
   useEffect(() => { sessionTitleRef.current = sessionTitle; }, [sessionTitle]);
@@ -813,6 +819,8 @@ function SessionDetailPage({ id }: { id: string }) {
     live.setSpeechRate?.(speechRateRef.current);
     recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
 
+    // Graphs are drawn by Desmos (a 4.3 MB script): fetch it while the session connects.
+    preloadDesmos();
     try {
       if (filesRef.current.some((f) => f.mimeType === "application/pdf" && !f.pages)) {
         const ready = await prepareFiles(filesRef.current);

@@ -31,6 +31,15 @@ test("on a phone the zoom stops at the readable minimum in one step, keeping the
   assert.ok(seen.y <= row.y && seen.y + seen.h >= row.y + row.h, "the row is fully visible top to bottom");
 });
 
+test("on a phone an item that fits without its padding is centred, both edges on screen", () => {
+  // A 420-wide graph with focusOn's margins, at the 0.8 minimum on a 390px screen.
+  const graph = { x: 3456, y: 100, w: 420, h: 380 };
+  const rect = { x: graph.x - 24, y: graph.y - 56, w: graph.w + 64, h: graph.h + 112 };
+  const view = { w: 390, h: 844 };
+  const seen = cameraView(planCamera(rect, view, { inset: 48, minZoom: 0.8 }), view);
+  assert.ok(seen.x <= graph.x && seen.x + seen.w >= graph.x + graph.w, JSON.stringify(seen));
+});
+
 test("min zoom never exceeds max zoom", () => {
   const cam = planCamera({ x: 0, y: 0, w: 5000, h: 5000 }, { w: 500, h: 500 }, { minZoom: 2, maxZoom: 1 });
   assert.equal(cam.z, 1);

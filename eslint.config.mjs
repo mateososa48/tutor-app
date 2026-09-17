@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored builds (pdf.js worker, Signalsmith Stretch) and Playwright's scratch output.
+    "public/vendor/**",
+    ".playwright-mcp/**",
   ]),
 ]);
 

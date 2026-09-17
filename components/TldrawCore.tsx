@@ -35,9 +35,20 @@ import { latexToPlain } from "@/lib/latex-plain";
 import { TutorPenOverlayUtil, TutorScribbleOverlayUtil } from "@/components/board/TutorPenOverlay";
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
 import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
-import { GraphShapeUtil, type TLGraphShape } from "@/components/board/GraphShape";
-import { desmosAvailable, renderDesmosGraph } from "@/components/board/desmos-renderer";
-import { buildAxesGraph, buildFunctionGraph, buildPointsGraph, graphPointBox, graphSpecText, type GraphSpec } from "@/lib/desmos-graph";
+import { GraphShapeUtil, type TLGraphShape, type TLGraphShapeProps } from "@/components/board/GraphShape";
+import { desmosAvailable, desmosFailure, renderDesmosGraph } from "@/components/board/desmos-renderer";
+import { autoYRange, buildAxesGraph, buildFunctionGraph, buildPointsGraph, curveCrossings, ensureRelation, graphFunction, toDesmosLatex, vectorExtra } from "@/lib/desmos-graph";
+import {
+  DEFAULT_GRAPH_SIZE,
+  findMarker,
+  graphSpecText,
+  isGraphTable,
+  markerBox,
+  parseGraphSpec,
+  type GraphSize,
+  type GraphSource,
+  type GraphSpec,
+} from "@/lib/desmos-spec";
 
 const OVERLAY_UTILS = [TutorPenOverlayUtil, TutorScribbleOverlayUtil];
 const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil];
@@ -141,12 +152,16 @@ const MARKER_HEX: Record<string, string> = {
   red: "#e03131",
   "light-blue": "#4ba1f1",
 };
+const HEX_MARKER = new Map(Object.entries(MARKER_HEX).map(([name, hex]) => [hex.toLowerCase(), name as TldrawColor]));
 const DIAGRAM_W = 520;
 // Desmos graphs (Sept 15 2026): a 4:3 picture, big enough to read at a glance
 // and small enough that three sit side by side on a laptop-sized board page
 // (at 480 × 360 only two fit and a graph-heavy lesson turned a page every two).
-const GRAPH_W = 420;
-const GRAPH_H = 315;
+// Vector graphs (no Desmos) take the same box, labels included, so a graph
+// redrawn as vectors after a failed load keeps its place and its caption.
+const GRAPH_SIZE: GraphSize = DEFAULT_GRAPH_SIZE;
+const GRAPH_CAPTION_GAP = 20;
+const VECTOR_INSET = { left: 28, right: 34, top: 28, bottom: 30 };
 
 // ── Whiteboard pages (Sept 14 2026) ─────────────────────────────────────────
 // The board is a page the size of the visible board. Each tool call's drawing
@@ -159,13 +174,13 @@ const PAGE_INSET = { top: 68, right: 36, bottom: 56, left: 36 };
 // The voice dock and its pills cover the bottom-right corner.
 const DOCK_BLOCK = { w: 384, h: 282 };
 const PLACE_SKIP = new Set(["start_new_problem", "start_board_section", "clear_whiteboard"]);
-const AREA_RIGHT_TOOLS = new Set(["add_function_graph", "add_coordinate_axes", "plot_points", "add_vector_diagram"]);
+const AREA_RIGHT_TOOLS = new Set(["add_function_graph", "add_coordinate_axes", "plot_points"]);
 const EQUATION_TOOLS = new Set(["draw_equation_step", "add_equation_sequence"]);
 // Pictures sit beside the words they illustrate.
 const PICTURE_TOOLS = new Set([
   "draw_fraction", "add_number_line", "draw_figure", "draw_angle", "draw_array", "add_area_model", "draw_balance",
   "draw_bar_chart", "add_table", "draw_tape_diagram", "draw_grid", "draw_transversal", "draw_icons", "draw_sketch",
-  "write_vertical", "draw_long_division", "add_process_map",
+  "write_vertical", "draw_long_division",
 ]);
 // Marks measure the marked words or drawing, without decorations beside them.
 const MARK_BOUNDS = { decor: false } as const;
@@ -359,6 +374,8 @@ export interface WhiteboardHandle {
   itemsSnapshot?(): BoardItem[];
   /** Take back what a cancelled tool call did. Returns what was undone, in words ("" for nothing). */
   undoCall?(callId: string): string;
+  /** Whether graphs are drawn by Desmos here (a key, a browser, no failed load). */
+  canUseDesmos?(): boolean;
 }
 
 /** `content`: what the call writes or draws, fingerprinted, so a later call can tell it is already up. */
@@ -402,6 +419,24 @@ function currentShapeIdSet(editor: Editor): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+// Saved boards leave graph pictures out: each is 30-80 KB of SVG and is
+// drawn again from its spec when the board is loaded.
+function withoutGraphPictures(snapshot: unknown): unknown {
+  const snap = snapshot as { store?: Record<string, { typeName?: string; type?: string; props?: Record<string, unknown> }> } | null;
+  if (!snap?.store) return snapshot;
+  let changed = false;
+  const store: Record<string, unknown> = {};
+  for (const [key, record] of Object.entries(snap.store)) {
+    if (record?.typeName === "shape" && record.type === "graph" && record.props?.svg) {
+      store[key] = { ...record, props: { ...record.props, svg: "", status: "rendering" } };
+      changed = true;
+    } else {
+      store[key] = record;
+    }
+  }
+  return changed ? { ...snap, store } : snapshot;
 }
 
 function diffStringSet(after: Set<string>, before: Set<string>): string[] {
@@ -918,8 +953,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       run(() => editor.updateShapes([{ id: shape.id, type: "line", opacity: 1, props: { points: pointMap } }]));
       return;
     }
-    // box / fade: a quick fade-in
-    const op = Math.min(1, Math.max(0, p));
+    // box / fade: a quick fade-in, to the shape's own opacity when it has one
+    const rest = typeof shape.meta.restOpacity === "number" ? shape.meta.restOpacity : 1;
+    const op = Math.min(1, Math.max(0, p)) * rest;
     if (state.last !== undefined && Math.abs(state.last - op) < 0.08 && p < 1) return;
     state.last = op;
     run(() => editor.updateShapes([{ id: shape.id, type: shape.type, opacity: op }]));
@@ -1125,6 +1161,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         inputs.push({ id: shape.id, kind: "eq", x, y, chars: String(props.latex ?? "").length });
       } else if (shape.type === "graph") {
         inputs.push({ id: shape.id, kind: "eq", x, y, chars: 70 });
+      } else if (shape.type === "draw" && props.dash === "none") {
+        // A fill with no outline (an inequality's side) has nothing to trace.
+        inputs.push({ id: shape.id, kind: "fade", x, y });
       } else if (shape.type === "draw") {
         const pts = strokePointsRef.current.get(shape.id);
         inputs.push({ id: shape.id, kind: "stroke", x, y, length: pts ? polylineLength(pts) : 240 });
@@ -1385,11 +1424,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     const props = shape.props as Record<string, unknown>;
     if (shape.type === "math") return latexToPlain(String(props.latex ?? ""));
     if (shape.type === "graph") {
-      try {
-        return graphSpecText(JSON.parse(String(props.spec ?? "{}")) as GraphSpec);
-      } catch {
-        return "";
-      }
+      const spec = parseGraphSpec(String(props.spec ?? ""), { w: Number(props.w) || GRAPH_SIZE.w, h: Number(props.h) || GRAPH_SIZE.h });
+      return spec ? graphSpecText(spec) : "";
     }
     if ("richText" in props) return revealTextRef.current.get(shape.id) ?? plainOf(editor, props.richText);
     return "";
@@ -1845,6 +1881,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       isClosed?: boolean;
       /** Keep corners crisp: the freehand renderer rounds them off otherwise. */
       sharp?: boolean;
+      /** See-through (overlapping shading blends); the writing fades it in to this. */
+      opacity?: number;
     },
   ) => {
     if (points.length < 2) return;
@@ -1880,7 +1918,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         scaleX: 1,
         scaleY: 1,
       },
-      meta: currentMeta(),
+      ...(opts.opacity !== undefined ? { opacity: opts.opacity } : {}),
+      meta: opts.opacity !== undefined ? { ...currentMeta(), restOpacity: opts.opacity } : currentMeta(),
     });
   }, [currentMeta]);
 
@@ -1935,6 +1974,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
 
   // Axes with arrowheads, ticks at a readable step, end labels, no outer box.
+  // (x, y, w, h) is the plot area; arrowheads and labels reach about 28px past it.
   const drawAxes = useCallback((
     editor: Editor,
     x: number,
@@ -1945,7 +1985,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     xMax: number,
     yMin: number,
     yMax: number,
-    label?: string
   ) => {
     const xAxisY = yMin <= 0 && yMax >= 0 ? y + h - ((0 - yMin) / (yMax - yMin)) * h : y + h;
     const yAxisX = xMin <= 0 && xMax >= 0 ? x + ((0 - xMin) / (xMax - xMin)) * w : x;
@@ -1990,24 +2029,286 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     }
     const tick = (text: string, tx: number, ty: number, width: number, align: "start" | "middle" | "end" = "middle") =>
       createText(editor, text, tx, ty, { color: PENCIL, size: "s", font: "sans", width, align });
-    tick(`${xMin}`, x - 24, xAxisY + 8, 48);
-    tick(`${xMax}`, x + w - 24, xAxisY + 8, 48);
-    tick(`${yMax}`, yAxisX + 8, y - 8, 60, "start");
-    tick(`${yMin}`, yAxisX + 8, y + h - 20, 60, "start");
+    tick(formatNumber(xMin), x - 24, xAxisY + 8, 48);
+    tick(formatNumber(xMax), x + w - 24, xAxisY + 8, 48);
+    tick(formatNumber(yMax), yAxisX + 8, y - 8, 60, "start");
+    tick(formatNumber(yMin), yAxisX + 8, y + h - 20, 60, "start");
     tick("x", x + w + 16, xAxisY - 12, 24, "start");
     tick("y", yAxisX - 26, y - 22, 24, "start");
-    if (label) {
-      createText(editor, label, x, y + h + 30, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
-    }
   }, [createLine, createText, currentMeta]);
 
+  // A graph without Desmos, drawn from what the tutor asked for (a graph
+  // spec's source) inside `box`, labels included, so it can stand in for a
+  // Desmos picture of the same size. `pens`: curve colours in order, then the
+  // slope triangle's.
+  const drawVectorGraph = useCallback((editor: Editor, source: GraphSource, box: Rect, pens: TldrawColor[]) => {
+    const area = {
+      x: box.x + VECTOR_INSET.left,
+      y: box.y + VECTOR_INSET.top,
+      w: Math.max(80, box.w - VECTOR_INSET.left - VECTOR_INSET.right),
+      h: Math.max(60, box.h - VECTOR_INSET.top - VECTOR_INSET.bottom),
+    };
+    const pen = (i: number): TldrawColor => pens.length > 0 ? pens[i % pens.length] : PEN;
+    const dot = (px: number, py: number, color: TldrawColor, label?: string) => {
+      createFreeformGeo(editor, "ellipse", px - 6, py - 6, 12, 12, color, "fill", { dash: "solid" });
+      if (label) createText(editor, label, px + 8, py - 26, { color, size: "s", font: "sans", width: 140 });
+    };
+    if (source.kind === "axes") {
+      drawAxes(editor, area.x, area.y, area.w, area.h, source.xMin, source.xMax, source.yMin, source.yMax);
+      return;
+    }
+    if (source.kind === "points") {
+      const { xMin, xMax, yMin, yMax } = source;
+      drawAxes(editor, area.x, area.y, area.w, area.h, xMin, xMax, yMin, yMax);
+      const color = pen(0);
+      const placed: Pt[] = [];
+      for (const point of source.points) {
+        if (point.x < xMin || point.x > xMax || point.y < yMin || point.y > yMax) continue;
+        const px = area.x + ((point.x - xMin) / (xMax - xMin)) * area.w;
+        const py = area.y + area.h - ((point.y - yMin) / (yMax - yMin)) * area.h;
+        placed.push({ x: px, y: py });
+        createFreeformGeo(editor, "ellipse", px - 6, py - 6, 12, 12, color, "fill", { dash: "solid" });
+        if (point.label) createText(editor, point.label, px + 8, py - 26, { color, size: "s", font: "sans", width: 120 });
+      }
+      if (source.connect && placed.length >= 2) {
+        createLineShape(editor, undefined, undefined, placed.length >= 3 ? [...placed, placed[0]] : placed, { color, size: "m", dash: "solid", spline: "line" });
+      }
+      return;
+    }
+
+    // A function: Compute Engine reads LaTeX and plain math; the old parser is the backup.
+    const { xMin, xMax } = source;
+    const extras = source.extras ?? {};
+    const evaluate = (expr: string): ((v: number) => number) | null => {
+      const read = graphFunction(ensureRelation(toDesmosLatex(expr)));
+      if (read) return read;
+      const plain = createMathEvaluator(expr);
+      if (!plain) return null;
+      return (v: number) => {
+        try {
+          return plain(v);
+        } catch {
+          return NaN;
+        }
+      };
+    };
+    const fn = evaluate(source.expression);
+    const fn2 = extras.secondExpression ? evaluate(extras.secondExpression) : null;
+    const curves = [fn, fn2].filter((f): f is (v: number) => number => Boolean(f));
+    // Extra lines: what vectors can draw of them (curves, pieces, vertical lines, circles, shading).
+    const more = (extras.extraExpressions ?? []).map((raw) => vectorExtra(raw));
+    const moreFns = more.flatMap((e) => (e?.line?.kind === "curve" ? [e.line.fn] : []));
+    const hasCircle = more.some((e) => e?.line?.kind === "circle");
+    const marks = extras.markPoints ?? [];
+    const auto = autoYRange([...curves, ...moreFns], xMin, xMax, marks.map((m) => m.y));
+    let yLo: number;
+    let yHi: number;
+    if (hasCircle && extras.yMin === undefined && extras.yMax === undefined) {
+      // A circle needs square units: y follows the x range, as on Desmos.
+      const span = ((xMax - xMin) * area.h) / area.w;
+      const mid = !auto || (auto.bottom <= 0 && auto.top >= 0) ? 0 : (auto.bottom + auto.top) / 2;
+      yLo = mid - span / 2;
+      yHi = mid + span / 2;
+    } else {
+      yLo = extras.yMin ?? auto?.bottom ?? -5;
+      yHi = extras.yMax ?? auto?.top ?? 5;
+      if (!(yHi > yLo)) yHi = yLo + 10;
+      const ys = niceStep(yLo, yHi, 6);
+      if (extras.yMin === undefined) yLo = Math.floor(yLo / ys) * ys;
+      if (extras.yMax === undefined) yHi = Math.ceil(yHi / ys) * ys;
+    }
+    const px = (v: number) => area.x + ((v - xMin) / (xMax - xMin)) * area.w;
+    const py = (v: number) => area.y + area.h - ((v - yLo) / (yHi - yLo)) * area.h;
+    const inRange = (v: number) => Number.isFinite(v) && v >= yLo && v <= yHi;
+    const clampY = (v: number) => Math.min(yHi, Math.max(yLo, v));
+    // Sampled runs, cut where the curve leaves the view (at the edge) or jumps (an asymptote).
+    const drawCurve = (f: (v: number) => number, color: TldrawColor, opts: { from?: number | null; to?: number | null; dash?: TLDefaultDashStyle } = {}) => {
+      const a = Math.max(xMin, opts.from ?? xMin);
+      const b = Math.min(xMax, opts.to ?? xMax);
+      if (!(b > a)) return;
+      let run: Pt[] = [];
+      const flush = () => {
+        if (run.length >= 2) createLineShape(editor, undefined, undefined, run, { color, size: "m", dash: opts.dash ?? "solid", spline: "line" });
+        run = [];
+      };
+      const N = Math.max(24, Math.round((160 * (b - a)) / (xMax - xMin)));
+      let prevX = a;
+      let prevY = f(a);
+      for (let i = 0; i <= N; i++) {
+        const sx = a + ((b - a) * i) / N;
+        const sy = f(sx);
+        const jump = Number.isFinite(prevY) && Number.isFinite(sy) && Math.abs(sy - prevY) > (yHi - yLo) * 0.8;
+        if (jump) flush();
+        if (inRange(sy)) {
+          if (run.length === 0 && i > 0 && !jump && Number.isFinite(prevY) && !inRange(prevY)) {
+            const edge = prevY > yHi ? yHi : yLo;
+            run.push({ x: px(prevX + ((sx - prevX) * (edge - prevY)) / (sy - prevY)), y: py(edge) });
+          }
+          run.push({ x: px(sx), y: py(sy) });
+        } else {
+          if (run.length > 0 && Number.isFinite(sy) && Number.isFinite(prevY) && !jump) {
+            const edge = sy > yHi ? yHi : yLo;
+            run.push({ x: px(prevX + ((sx - prevX) * (edge - prevY)) / (sy - prevY)), y: py(edge) });
+          }
+          flush();
+        }
+        prevX = sx;
+        prevY = sy;
+      }
+      flush();
+    };
+    // Where an extra line is drawn: a circle's outline, clamped to the view.
+    const ringOf = (c: { cx: number; cy: number; r: number }): Pt[] => {
+      const ring: Pt[] = [];
+      for (let i = 0; i <= 72; i++) {
+        const t = (i / 72) * Math.PI * 2;
+        const x = Math.min(xMax, Math.max(xMin, c.cx + c.r * Math.cos(t)));
+        ring.push({ x: px(x), y: py(clampY(c.cy + c.r * Math.sin(t))) });
+      }
+      return ring;
+    };
+    // An inequality's side: the pen, see-through so overlapping sides show where
+    // both hold, with no outline, under the axes.
+    const shadeRegion = (extra: NonNullable<(typeof more)[number]>, color: TldrawColor) => {
+      const line = extra.line;
+      let region: Pt[] = [];
+      if (line?.kind === "curve" && (extra.shade === "above" || extra.shade === "below")) {
+        const edge = extra.shade === "above" ? yHi : yLo;
+        let prev = NaN;
+        for (let i = 0; i <= 80; i++) {
+          const sx = xMin + ((xMax - xMin) * i) / 80;
+          const sy = line.fn(sx);
+          // An asymptote splits the region; better no shading than a wrong one.
+          if (!Number.isFinite(sy) || (Number.isFinite(prev) && Math.abs(sy - prev) > (yHi - yLo) * 0.8)) return;
+          prev = sy;
+          region.push({ x: px(sx), y: py(clampY(sy)) });
+        }
+        region.push({ x: px(xMax), y: py(edge) }, { x: px(xMin), y: py(edge) });
+      } else if (line?.kind === "vertical" && (extra.shade === "left" || extra.shade === "right")) {
+        const gx = px(Math.min(xMax, Math.max(xMin, line.x)));
+        const far = px(extra.shade === "left" ? xMin : xMax);
+        region = [{ x: gx, y: py(yHi) }, { x: far, y: py(yHi) }, { x: far, y: py(yLo) }, { x: gx, y: py(yLo) }];
+      } else if (line?.kind === "circle" && extra.shade === "inside") {
+        region = ringOf(line).slice(0, -1);
+      }
+      if (region.length >= 3) createDrawStroke(editor, undefined, undefined, region, { color, fill: "fill", dash: "none", size: "s", isClosed: true, sharp: true, opacity: 0.22 });
+    };
+    const drawExtra = (extra: NonNullable<(typeof more)[number]>, color: TldrawColor) => {
+      const line = extra.line;
+      if (!line) return;
+      const dash: TLDefaultDashStyle = extra.dashed ? "dashed" : "solid";
+      if (line.kind === "curve") {
+        drawCurve(line.fn, color, { from: line.from, to: line.to, dash });
+      } else if (line.kind === "vertical") {
+        if (line.x < xMin || line.x > xMax) return;
+        const gx = px(line.x);
+        const top = clampY(line.to ?? yHi);
+        const bottom = clampY(line.from ?? yLo);
+        if (top > bottom) createLineShape(editor, undefined, undefined, [{ x: gx, y: py(top) }, { x: gx, y: py(bottom) }], { color, size: "m", dash, spline: "line" });
+      } else {
+        createLineShape(editor, undefined, undefined, ringOf(line), { color, size: "m", dash, spline: "line" });
+      }
+    };
+    const extraPen = 1 + (extras.secondExpression ? 1 : 0);
+    more.forEach((extra, k) => {
+      if (extra) shadeRegion(extra, pen(extraPen + k));
+    });
+    drawAxes(editor, area.x, area.y, area.w, area.h, xMin, xMax, yLo, yHi);
+    more.forEach((extra, k) => {
+      if (extra) drawExtra(extra, pen(extraPen + k));
+    });
+    if (fn) drawCurve(fn, pen(0));
+    if (fn2) drawCurve(fn2, pen(1));
+    if (!fn) {
+      createText(editor, "Could not read that expression", area.x, area.y + area.h / 2 - 12, { color: "red", size: "s", font: "sans", width: area.w, align: "middle" });
+    }
+    // Where the two curves cross, then the marked points, in ink.
+    if (fn && fn2) {
+      for (const p of curveCrossings(fn, fn2, xMin, xMax)) {
+        if (inRange(p.y)) dot(px(p.x), py(p.y), INK, `(${formatNumber(p.x)}, ${formatNumber(p.y)})`);
+      }
+    }
+    for (const m of marks) {
+      if (m.x >= xMin && m.x <= xMax && inRange(m.y)) dot(px(m.x), py(m.y), INK, m.label);
+    }
+    if (extras.slopeRun && fn) {
+      const x1 = Math.min(extras.slopeRun.x1, extras.slopeRun.x2);
+      const x2 = Math.max(extras.slopeRun.x1, extras.slopeRun.x2);
+      const y1 = fn(x1);
+      const y2 = fn(x2);
+      if (Number.isFinite(y1) && Number.isFinite(y2)) {
+        const sp = pen(1 + (extras.secondExpression ? 1 : 0) + (extras.extraExpressions?.length ?? 0));
+        const ax = px(x1);
+        const ay = py(y1);
+        const bx = px(x2);
+        const by = py(y2);
+        createLineShape(editor, undefined, undefined, [{ x: ax, y: ay }, { x: bx, y: ay }], { color: sp, size: "s", dash: "dashed" });
+        createLineShape(editor, undefined, undefined, [{ x: bx, y: ay }, { x: bx, y: by }], { color: sp, size: "s", dash: "dashed" });
+        createFreeformGeo(editor, "ellipse", ax - 5, ay - 5, 10, 10, INK, "fill", { dash: "solid" });
+        createFreeformGeo(editor, "ellipse", bx - 5, by - 5, 10, 10, INK, "fill", { dash: "solid" });
+        createText(editor, `run ${formatNumber(x2 - x1)}`, (ax + bx) / 2 - 45, by < ay ? ay + 14 : ay - 34, { color: sp, size: "s", font: "sans", width: 90, align: "middle" });
+        createText(editor, `rise ${formatNumber(y2 - y1)}`, bx + 8, (ay + by) / 2 - 12, { color: sp, size: "s", font: "sans", width: 100 });
+      }
+    }
+  }, [createDrawStroke, createFreeformGeo, createLineShape, createText, drawAxes]);
+
   useImperativeHandle(ref, () => {
-    // Render a graph spec into a graph shape; board pictures wait for it.
-    const renderGraphInto = (editor: Editor, id: TLShapeId, spec: GraphSpec, w: number, h: number) => {
-      const job = renderDesmosGraph(spec, w, h)
+    // A graph's pens as tldraw colours, read back from its Desmos colours:
+    // the curves in order, then the slope triangle (or the joined points).
+    const graphPens = (spec: GraphSpec): TldrawColor[] => {
+      const pens: TldrawColor[] = [];
+      for (const item of spec.expressions) {
+        if (isGraphTable(item) || !item.color) continue;
+        if (!/^(curve\d+|run|shape|point1)$/.test(item.id)) continue;
+        const pen = HEX_MARKER.get(item.color.toLowerCase());
+        if (pen) pens.push(pen);
+      }
+      return pens;
+    };
+
+    // Desmos is gone (it failed to load, or never will here): the graph is
+    // redrawn as vectors in its own box, under the same item and tool call,
+    // and written in again.
+    const swapGraphToVector = (editor: Editor, id: TLShapeId, animate = true) => {
+      const shape = editor.getShape(id);
+      if (!shape || shape.type !== "graph") return;
+      const gp = shape.props as TLGraphShapeProps;
+      const spec = parseGraphSpec(gp.spec, { w: gp.w, h: gp.h });
+      if (!spec?.source) {
+        const issues = `Desmos did not load${desmosFailure() ? ` (${desmosFailure()})` : ""}`;
+        editor.run(() => editor.updateShapes([{ id, type: "graph", props: { status: "error", issues } }] as unknown as Parameters<Editor["updateShapes"]>[0]), { history: "ignore" });
+        return;
+      }
+      const source = spec.source;
+      const before = currentShapeIdSet(editor);
+      editor.run(() => drawVectorGraph(editor, source, { x: shape.x, y: shape.y, w: gp.w, h: gp.h }, graphPens(spec)), { history: "ignore" });
+      const created = diffStringSet(currentShapeIdSet(editor), before);
+      editor.run(() => {
+        const updates = created
+          .map((sid) => editor.getShape(sid as TLShapeId))
+          .filter((s): s is NonNullable<typeof s> => Boolean(s))
+          .map((s) => ({ id: s.id, type: s.type, meta: { ...s.meta, ...shape.meta } }));
+        if (updates.length > 0) editor.updateShapes(updates);
+        editor.deleteShapes([id]);
+      }, { history: "ignore" });
+      const item = itemsRef.current.find((i) => i.shapeIds.includes(id));
+      if (!item) return;
+      const updated: BoardItem = { ...item, shapeIds: item.shapeIds.flatMap((sid) => (sid === id ? created : [sid])) };
+      itemsRef.current = itemsRef.current.map((i) => (i === item ? updated : i));
+      if (animate) revealItem(editor, { ...updated, shapeIds: created }, null);
+    };
+
+    // Render a graph spec into a graph shape; board pictures wait for it. A
+    // failed load redraws the graph as vectors; a picture that fails for
+    // another reason (a stuck calculator) is tried once more, then redrawn too.
+    const renderGraphInto = (editor: Editor, id: TLShapeId, spec: GraphSpec, retried = false) => {
+      const shape = editor.getShape(id);
+      const size = shape ? { w: (shape.props as TLGraphShapeProps).w, h: (shape.props as TLGraphShapeProps).h } : spec.size;
+      const drawn = spec.expressions.filter((e) => !isGraphTable(e)).length;
+      const job = renderDesmosGraph(spec, size)
         .then(({ svg, errors }) => {
           if (!editor.getShape(id)) return;
-          const allFailed = spec.expressions.length > 0 && errors.length >= spec.expressions.length;
+          const allFailed = drawn > 0 && errors.length >= drawn;
           const issues = errors.map((e) => `${e.latex}: ${e.message}`).join(" | ");
           editor.run(
             () => editor.updateShapes([{ id, type: "graph", props: { svg, status: allFailed ? "error" : "ready", issues } }] as unknown as Parameters<Editor["updateShapes"]>[0]),
@@ -2016,34 +2317,42 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         })
         .catch((err: unknown) => {
           if (!editor.getShape(id)) return;
-          const issues = `Desmos did not load (${err instanceof Error ? err.message : String(err)})`;
-          editor.run(
-            () => editor.updateShapes([{ id, type: "graph", props: { status: "error", issues } }] as unknown as Parameters<Editor["updateShapes"]>[0]),
-            { history: "ignore" },
-          );
+          if (desmosAvailable() && !retried) {
+            renderGraphInto(editor, id, spec, true);
+            return;
+          }
+          if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] graph redrawn without Desmos:", err instanceof Error ? err.message : err);
+          swapGraphToVector(editor, id);
         });
       pendingGraphsRef.current.add(job);
       void job.finally(() => pendingGraphsRef.current.delete(job));
     };
 
-    // A real Desmos graph on the board, with its caption; placed like any drawing.
-    const createGraph = (editor: Editor, spec: GraphSpec, label: string | undefined, col: "left" | "right") => {
+    // A graph's place: the next spot in its column, with the caption under
+    // the picture's credit strip. `draw` fills the box.
+    const placeGraph = (editor: Editor, col: "left" | "right", label: string | undefined, size: GraphSize, draw: (box: Rect) => void) => {
       const x = colX(col);
       const y = colY(col).current;
-      const id = createShapeId();
-      editor.createShape<TLGraphShape>({
-        id,
-        type: "graph",
-        x,
-        y,
-        props: { w: GRAPH_W, h: GRAPH_H, spec: JSON.stringify(spec), svg: "", status: "rendering", issues: "", reveal: 1 },
-        meta: currentMeta(),
-      });
-      if (label) createText(editor, label, x, y + GRAPH_H + 20, { color: PENCIL, size: "s", font: "sans", width: GRAPH_W, align: "middle" });
-      colY(col).current += GRAPH_H + (label ? 86 : 58);
-      renderGraphInto(editor, id, spec, GRAPH_W, GRAPH_H);
-      return { x, y, w: GRAPH_W, h: GRAPH_H };
+      draw({ x, y, w: size.w, h: size.h });
+      if (label) createText(editor, label, x, y + size.h + GRAPH_CAPTION_GAP, { color: PENCIL, size: "s", font: "sans", width: size.w, align: "middle" });
+      colY(col).current += size.h + (label ? 86 : 58);
+      return { x, y, w: size.w, h: size.h };
     };
+
+    // A real Desmos graph on the board, with its caption; placed like any drawing.
+    const createGraph = (editor: Editor, spec: GraphSpec, label: string | undefined, col: "left" | "right") =>
+      placeGraph(editor, col, label, spec.size, ({ x, y }) => {
+        const id = createShapeId();
+        editor.createShape<TLGraphShape>({
+          id,
+          type: "graph",
+          x,
+          y,
+          props: { w: spec.size.w, h: spec.size.h, spec: JSON.stringify(spec), svg: "", status: "rendering", issues: "", reveal: 1 },
+          meta: currentMeta(),
+        });
+        renderGraphInto(editor, id, spec);
+      });
 
     // A section heading: its words in sans and a pencil rule at a region's
     // top left. Returns where the section's work starts.
@@ -2124,6 +2433,34 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return true;
     };
 
+    // The board as saved: graph pictures are dropped unless `keepGraphs`
+    // (an in-memory copy an undo puts straight back).
+    const snapshotBoard = (keepGraphs: boolean): WhiteboardSnapshot | null => {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      let store: unknown = null;
+      try {
+        store = editor.store.getStoreSnapshot();
+        if (!keepGraphs) store = withoutGraphPictures(store);
+      } catch {}
+      return {
+        store,
+        eqItems: [],
+        items: [...itemsRef.current],
+        itemSeq: itemSeqRef.current,
+        semanticBoard: semanticBoardRef.current,
+        pageState: {
+          pageIndex: pageIndex.current,
+          pageTop: pageTop.current,
+          leftY: leftY.current,
+          rightY: rightY.current,
+          frame: pageFrameRef.current ?? undefined,
+          section: sectionRegionRef.current,
+          rowTop: rowTopRef.current,
+        },
+      };
+    };
+
     const api: WhiteboardHandle = {
     clearWhiteboard() {
       const editor = editorRef.current;
@@ -2152,7 +2489,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return;
       const callId = currentCallIdRef.current;
       if (callId && itemsRef.current.length > 0) {
-        const before = api.getSnapshot();
+        const before = snapshotBoard(true);
         if (before) {
           clearedBoardsRef.current.set(callId, before);
           while (clearedBoardsRef.current.size > 3) clearedBoardsRef.current.delete(clearedBoardsRef.current.keys().next().value as string);
@@ -2273,10 +2610,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right", extras?: GraphExtras) {
       const editor = editorRef.current;
       if (!editor) return;
+      const col = column ?? "right";
+      const curves = 1 + (extras?.secondExpression ? 1 : 0) + (extras?.extraExpressions?.length ?? 0);
+      const pens = takePens(curves + (extras?.slopeRun ? 1 : 0));
+      let b: Rect;
       if (desmosAvailable()) {
-        const col = column ?? "right";
-        const curves = 1 + (extras?.secondExpression ? 1 : 0) + (extras?.extraExpressions?.length ?? 0);
-        const pens = takePens(curves + (extras?.slopeRun ? 1 : 0));
         const { spec } = buildFunctionGraph({
           expression,
           second: extras?.secondExpression,
@@ -2288,183 +2626,16 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           markPoints: extras?.markPoints,
           slopeRun: extras?.slopeRun ?? null,
           colors: pens.map((pen) => MARKER_HEX[pen] ?? MARKER_HEX.blue),
-          box: { w: GRAPH_W, h: GRAPH_H },
+          box: GRAPH_SIZE,
         });
-        const b = createGraph(editor, spec, label, col);
-        recordDirectSemanticAction(
-          { type: "function_graph", expression, x_min: xMin, x_max: xMax, label, column: col },
-          { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
-        );
-        return;
+        b = createGraph(editor, spec, label, col);
+      } else {
+        const source: GraphSource = { kind: "function", expression, xMin, xMax, extras: extras ? { ...extras } : undefined };
+        b = placeGraph(editor, col, label, GRAPH_SIZE, (box) => drawVectorGraph(editor, source, box, pens));
       }
-      const col = column ?? "right";
-      const W = 300;
-      const H = 220;
-      const fn = createMathEvaluator(expression);
-      const fn2 = extras?.secondExpression ? createMathEvaluator(extras.secondExpression) : null;
-
-      // Sample the curve(s), then pick a y-range that is padded, includes the
-      // x-axis when it is nearby, and lands on round numbers.
-      const samples: Pt[] = [];
-      const samples2: Pt[] = [];
-      let yMin = Infinity;
-      let yMax = -Infinity;
-      const sampleInto = (f: (v: number) => number, into: Pt[]) => {
-        for (let i = 0; i <= 120; i++) {
-          const sx = xMin + ((xMax - xMin) * i) / 120;
-          try {
-            const sy = f(sx);
-            if (Number.isFinite(sy)) {
-              into.push({ x: sx, y: sy });
-              yMin = Math.min(yMin, sy);
-              yMax = Math.max(yMax, sy);
-            }
-          } catch {
-            // discontinuity; skip the sample
-          }
-        }
-      };
-      if (fn) sampleInto(fn, samples);
-      if (fn2) sampleInto(fn2, samples2);
-      if (samples.length < 2) {
-        yMin = -5;
-        yMax = 5;
-      }
-      const pad = (yMax - yMin) * 0.12 || 1;
-      let yLo = yMin - pad;
-      let yHi = yMax + pad;
-      const span = yHi - yLo;
-      if (yLo > 0 && yLo < span) yLo = 0;
-      if (yHi < 0 && -yHi < span) yHi = 0;
-      const ys = niceStep(yLo, yHi, 6);
-      yLo = Math.floor(yLo / ys) * ys;
-      yHi = Math.ceil(yHi / ys) * ys;
-
-      const extra = label ? 76 : 48;
-      const x = colX(col);
-      const y = colY(col).current;
-      drawAxes(editor, x, y, W, H, xMin, xMax, yLo, yHi, label);
-
-      const px = (v: number) => x + ((v - xMin) / (xMax - xMin)) * W;
-      const py = (v: number) => y + H - ((v - yLo) / (yHi - yLo)) * H;
-      const pen = takePens(1)[0];
-      let run: Pt[] = [];
-      const flush = () => {
-        if (run.length >= 2) {
-          createLineShape(editor, undefined, undefined, run, { color: pen, size: "m", dash: "solid", spline: "line" });
-        }
-        run = [];
-      };
-      samples.forEach((s, i) => {
-        const prev = samples[i - 1];
-        // A jump bigger than most of the range is an asymptote, not a curve.
-        if (prev && Math.abs(s.y - prev.y) > (yHi - yLo) * 0.8) flush();
-        run.push({ x: px(s.x), y: py(s.y) });
-      });
-      flush();
-      if (fn2 && samples2.length >= 2) {
-        const pen2 = takePens(1)[0];
-        let run2: Pt[] = [];
-        const flush2 = () => {
-          if (run2.length >= 2) createLineShape(editor, undefined, undefined, run2, { color: pen2, size: "m", dash: "solid", spline: "line" });
-          run2 = [];
-        };
-        samples2.forEach((s2, i) => {
-          const prev = samples2[i - 1];
-          if (prev && Math.abs(s2.y - prev.y) > (yHi - yLo) * 0.8) flush2();
-          if (s2.y >= yLo && s2.y <= yHi) run2.push({ x: px(s2.x), y: py(s2.y) });
-          else flush2();
-        });
-        flush2();
-        // Where the curves cross: a sign change of the difference, refined.
-        if (fn) {
-          const diff = (v: number) => {
-            try {
-              const d = fn(v) - fn2(v);
-              return Number.isFinite(d) ? d : NaN;
-            } catch {
-              return NaN;
-            }
-          };
-          let found = 0;
-          for (let i = 1; i <= 240 && found < 3; i++) {
-            let a = xMin + ((xMax - xMin) * (i - 1)) / 240;
-            let b = xMin + ((xMax - xMin) * i) / 240;
-            let da = diff(a);
-            let db = diff(b);
-            if (!Number.isFinite(da) || !Number.isFinite(db) || da * db > 0) continue;
-            for (let k = 0; k < 30; k++) {
-              const m = (a + b) / 2;
-              const dm = diff(m);
-              if (!Number.isFinite(dm)) break;
-              if (da * dm <= 0) {
-                b = m;
-                db = dm;
-              } else {
-                a = m;
-                da = dm;
-              }
-            }
-            const ix = (a + b) / 2;
-            let iy = NaN;
-            try {
-              iy = fn(ix);
-            } catch {
-              // no point
-            }
-            if (!Number.isFinite(iy) || iy < yLo || iy > yHi) continue;
-            found++;
-            const gx = px(ix);
-            const gy = py(iy);
-            createFreeformGeo(editor, "ellipse", gx - 6, gy - 6, 12, 12, INK, "fill", { dash: "solid" });
-            createText(editor, `(${formatNumber(ix)}, ${formatNumber(iy)})`, gx + 9, gy + 3, { color: INK, size: "s", font: "sans", width: 130 });
-          }
-        }
-      }
-      if (!fn) {
-        createText(editor, "Could not read that expression", x, y + H / 2 - 12, { color: "red", size: "s", font: "sans", width: W, align: "middle" });
-      }
-
-      // Marked points and a slope triangle ride on the same axes.
-      if (extras && (extras.markPoints.length > 0 || extras.slopeRun)) {
-        const mpens = takePens(extras.markPoints.length + (extras.slopeRun ? 1 : 0));
-        extras.markPoints.forEach((pt, i) => {
-          const gx = px(pt.x);
-          const gy = py(pt.y);
-          const mp = mpens[i % mpens.length];
-          createFreeformGeo(editor, "ellipse", gx - 6, gy - 6, 12, 12, mp, "fill", { dash: "solid" });
-          if (pt.label) createText(editor, pt.label, gx + 9, gy + 3, { color: mp, size: "s", font: "sans", width: 140 });
-        });
-        if (extras.slopeRun && fn) {
-          const { x1, x2 } = extras.slopeRun;
-          let y1 = NaN;
-          let y2 = NaN;
-          try {
-            y1 = fn(x1);
-            y2 = fn(x2);
-          } catch {
-            // off the curve
-          }
-          if (Number.isFinite(y1) && Number.isFinite(y2)) {
-            const sp = mpens[mpens.length - 1];
-            const ax = px(x1);
-            const ay = py(y1);
-            const bx = px(x2);
-            const by = py(y2);
-            createLineShape(editor, undefined, undefined, [{ x: ax, y: ay }, { x: bx, y: ay }], { color: sp, size: "s", dash: "dashed" });
-            createLineShape(editor, undefined, undefined, [{ x: bx, y: ay }, { x: bx, y: by }], { color: sp, size: "s", dash: "dashed" });
-            createFreeformGeo(editor, "ellipse", ax - 5, ay - 5, 10, 10, sp, "fill", { dash: "solid" });
-            createFreeformGeo(editor, "ellipse", bx - 5, by - 5, 10, 10, sp, "fill", { dash: "solid" });
-            createText(editor, `run ${formatNumber(x2 - x1)}`, (ax + bx) / 2 - 45, by < ay ? ay + 14 : ay - 34, { color: sp, size: "s", font: "sans", width: 90, align: "middle" });
-            createText(editor, `rise ${formatNumber(y2 - y1)}`, bx + 8, (ay + by) / 2 - 12, { color: sp, size: "s", font: "sans", width: 100 });
-          }
-        }
-      }
-      colY(col).current += H + extra;
-      focusOn(editor, x, y, W, H + extra);
       recordDirectSemanticAction(
         { type: "function_graph", expression, x_min: xMin, x_max: xMax, label, column: col },
-        { bounds: { x, y, w: W, h: H + extra, column: col, pageIndex: pageIndex.current } },
+        { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
       );
     },
 
@@ -2678,80 +2849,35 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     addCoordinateAxes(xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right") {
       const editor = editorRef.current;
       if (!editor) return;
-      if (desmosAvailable()) {
-        const col = column ?? "right";
-        const b = createGraph(editor, buildAxesGraph({ xMin, xMax, yMin, yMax, box: { w: GRAPH_W, h: GRAPH_H } }), label, col);
-        recordDirectSemanticAction(
-          { type: "coordinate_axes", x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax, label, column: col },
-          { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
-        );
-        return;
-      }
       const col = column ?? "right";
-      const w = 300;
-      const h = 220;
-      const x = colX(col);
-      const y = colY(col).current;
-      drawAxes(editor, x, y, w, h, xMin, xMax, yMin, yMax, label);
-      colY(col).current += h + (label ? 76 : 48);
-      focusOn(editor, x, y, w, h);
+      const b = desmosAvailable()
+        ? createGraph(editor, buildAxesGraph({ xMin, xMax, yMin, yMax, box: GRAPH_SIZE }), label, col)
+        : placeGraph(editor, col, label, GRAPH_SIZE, (box) => drawVectorGraph(editor, { kind: "axes", xMin, xMax, yMin, yMax }, box, []));
       recordDirectSemanticAction(
         { type: "coordinate_axes", x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax, label, column: col },
-        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+        { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
       );
     },
 
     plotPoints(points: string, xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right", connect?: boolean) {
       const editor = editorRef.current;
       if (!editor) return;
-      if (desmosAvailable()) {
-        const col = column ?? "right";
-        const spec = buildPointsGraph({
-          points: parseCoordinatePoints(points),
-          connect: connect === true,
-          xMin,
-          xMax,
-          yMin,
-          yMax,
-          colors: takePens(1).map((pen) => MARKER_HEX[pen] ?? MARKER_HEX.blue),
-          box: { w: GRAPH_W, h: GRAPH_H },
-        });
-        const b = createGraph(editor, spec, label, col);
-        recordDirectSemanticAction(
-          { type: "plot_points", text: points, x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax, label, column: col },
-          { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
-        );
-        return;
-      }
       const col = column ?? "right";
-      const w = 300;
-      const h = 220;
-      const x = colX(col);
-      const y = colY(col).current;
-      drawAxes(editor, x, y, w, h, xMin, xMax, yMin, yMax, label);
-      const pen = takePens(1)[0];
-
-      const placed: Pt[] = [];
-      for (const point of parseCoordinatePoints(points)) {
-        if (point.x < xMin || point.x > xMax || point.y < yMin || point.y > yMax) continue;
-        const px = x + ((point.x - xMin) / (xMax - xMin)) * w;
-        const py = y + h - ((point.y - yMin) / (yMax - yMin)) * h;
-        placed.push({ x: px, y: py });
-        createFreeformGeo(editor, "ellipse", px - 6, py - 6, 12, 12, pen, "fill", { dash: "solid" });
-        if (point.label) {
-          createText(editor, point.label, px + 8, py - 26, { color: pen, size: "s", font: "sans", width: 120 });
-        }
-      }
-      if (connect && placed.length >= 2) {
-        // Join the points in order and close the shape.
-        createLineShape(editor, undefined, undefined, placed.length >= 3 ? [...placed, placed[0]] : placed, { color: pen, size: "m", dash: "solid", spline: "line" });
-      }
-
-      colY(col).current += h + (label ? 76 : 48);
-      focusOn(editor, x, y, w, h);
+      const pens = takePens(1);
+      const parsed = parseCoordinatePoints(points);
+      const b = desmosAvailable()
+        ? createGraph(
+            editor,
+            buildPointsGraph({ points: parsed, connect: connect === true, xMin, xMax, yMin, yMax, colors: pens.map((pen) => MARKER_HEX[pen] ?? MARKER_HEX.blue), box: GRAPH_SIZE }),
+            label,
+            col,
+          )
+        : placeGraph(editor, col, label, GRAPH_SIZE, (box) =>
+            drawVectorGraph(editor, { kind: "points", points: parsed, connect: connect === true, xMin, xMax, yMin, yMax }, box, pens),
+          );
       recordDirectSemanticAction(
         { type: "plot_points", text: points, x_min: xMin, x_max: xMax, y_min: yMin, y_max: yMax, label, column: col },
-        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
+        { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
       );
     },
 
@@ -3997,28 +4123,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     },
 
     getSnapshot() {
-      const editor = editorRef.current;
-      if (!editor) return null;
-      let store: unknown = null;
-      try {
-        store = editor.store.getStoreSnapshot();
-      } catch {}
-      return {
-        store,
-        eqItems: [],
-        items: [...itemsRef.current],
-        itemSeq: itemSeqRef.current,
-        semanticBoard: semanticBoardRef.current,
-        pageState: {
-          pageIndex: pageIndex.current,
-          pageTop: pageTop.current,
-          leftY: leftY.current,
-          rightY: rightY.current,
-          frame: pageFrameRef.current ?? undefined,
-          section: sectionRegionRef.current,
-          rowTop: rowTopRef.current,
-        },
-      };
+      return snapshotBoard(false);
     },
 
     getBoardSummary() {
@@ -4076,6 +4181,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
     setPlacement(request: PlaceRequest | null) {
       placeRequestRef.current = request;
+    },
+
+    canUseDesmos() {
+      return desmosAvailable();
     },
 
     takeNotes() {
@@ -4290,26 +4399,25 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const draw = () => {
         const host = itemsRef.current.find((i) => i.id === item.id);
         if (!host) return;
-        // A labelled point on a Desmos graph: a highlighter dab on the point itself.
+        // Words on a Desmos graph (a labelled point, "rise 4"): a dab on the
+        // point or the label. A graph's only DOM text is its credit, so a
+        // graph never falls back to measuring text.
         const holderShape = holder ? editor.getShape(holder as TLShapeId) : undefined;
-        if (holderShape?.type === "graph" && variants) {
-          const gp = holderShape.props as { w: number; h: number; spec: string };
+        const onGraph = holderShape?.type === "graph";
+        if (holderShape && onGraph && variants) {
+          const gp = holderShape.props as TLGraphShapeProps;
           const gb = editor.getShapePageBounds(holderShape.id);
-          try {
-            const spec = JSON.parse(gp.spec) as GraphSpec;
-            const marker = spec.markers.find((m) => variants.some((v) => normalizeForMatch(m.label).includes(v)));
-            if (marker && gb) {
-              const at = graphPointBox(marker, spec.bounds, gp.w, gp.h);
-              runHighlights(editor, item.id, swipes([{ x: gb.x + at.x - 16, y: gb.y + at.y - 13, w: 32, h: 26 }]), meta);
-              return;
-            }
-          } catch {
-            // an unreadable spec falls through to the whole graph
+          const spec = parseGraphSpec(gp.spec, { w: gp.w, h: gp.h });
+          const marker = spec ? findMarker(spec, (label) => variants.some((v) => normalizeForMatch(label).includes(v))) : undefined;
+          if (spec && marker && gb) {
+            const dab = markerBox(marker, spec.bounds, { w: gp.w, h: gp.h });
+            runHighlights(editor, item.id, swipes([{ x: gb.x + dab.x, y: gb.y + dab.y, w: dab.w, h: dab.h }]), meta);
+            return;
           }
         }
-        let strokes = holder && variants ? swipes(textRectsIn(editor, holder, variants) ?? []) : [];
+        let strokes = holder && variants && !onGraph ? swipes(textRectsIn(editor, holder, variants) ?? []) : [];
         // The words could not be measured: mark the line they are in.
-        if (strokes.length === 0 && (holder || textual)) {
+        if (strokes.length === 0 && !onGraph && (holder || textual)) {
           strokes = swipes((holder ? [holder] : own).flatMap((sid) => textRectsIn(editor, sid, null) ?? []));
         }
         // A drawing: a marker ring around it.
@@ -4375,6 +4483,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       await awaitRevealIdle();
       if (pendingGraphsRef.current.size > 0) {
         await Promise.race([Promise.allSettled([...pendingGraphsRef.current]), new Promise((resolve) => setTimeout(resolve, 8000))]);
+        // A graph Desmos could not draw is written in again as vectors.
+        await awaitRevealIdle();
       }
       const ids = editor.getCurrentPageShapeIds();
       if (ids.size === 0) return null;
@@ -4412,18 +4522,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       placedRectsRef.current.clear();
       // Math shapes came back with the store; old overlay items become shapes.
       mathOrderRef.current = editor.getCurrentPageShapesSorted().filter((shape) => shape.type === "math").map((shape) => shape.id);
-      if (desmosAvailable()) {
-        for (const shape of editor.getCurrentPageShapes()) {
-          if (shape.type !== "graph") continue;
-          const gp = shape.props as { w: number; h: number; spec: string; svg: string };
-          if (gp.svg || !gp.spec) continue;
-          try {
-            renderGraphInto(editor, shape.id, JSON.parse(gp.spec) as GraphSpec, gp.w, gp.h);
-          } catch {
-            // an unreadable spec keeps its placeholder
-          }
-        }
-      }
       for (const item of snap.eqItems ?? []) {
         if (!item || typeof item.latex !== "string") continue;
         createMath(editor, {
@@ -4472,6 +4570,17 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const maxSeq = itemsRef.current.reduce((m, item) => Math.max(m, Number(item.id.slice(1)) || 0), 0);
       itemSeqRef.current = Math.max(snap.itemSeq ?? 0, maxSeq, itemSeqRef.current);
       semanticBoardRef.current = normalizeSemanticBoard(snap.semanticBoard);
+      // Saved boards carry graph specs, not pictures: draw them again, with
+      // Desmos when it is here, else as vectors (once the items are back, so
+      // the vectors join the graph's item; shown at once, not written in).
+      for (const shape of editor.getCurrentPageShapes()) {
+        if (shape.type !== "graph") continue;
+        const gp = shape.props as TLGraphShapeProps;
+        if (gp.svg) continue;
+        const spec = parseGraphSpec(gp.spec, { w: gp.w, h: gp.h });
+        if (spec && desmosAvailable()) renderGraphInto(editor, shape.id, spec);
+        else if (spec) swapGraphToVector(editor, shape.id, false);
+      }
       // Defensive: ensure post-resume direct calls go through withDirectMeta
       // cleanly. (No prior path should leak meta across resume, but a snapshot
       // reload is a natural reset point so we make it explicit.)

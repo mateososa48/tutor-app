@@ -1,18 +1,20 @@
 "use client";
 
 import { HTMLContainer, Rectangle2d, ShapeUtil, T, type RecordProps, type TLBaseShape } from "tldraw";
+import { parseGraphSpec } from "@/lib/desmos-spec";
 
 // A graph on the board: a Desmos picture (SVG) of a graph spec
-// (lib/desmos-graph.ts), rendered by components/board/desmos-renderer.ts.
-// The spec is kept so a graph saved before its picture arrived can be drawn
-// again, and so the tutor can point at a labelled point by its coordinates.
+// (lib/desmos-spec.ts), rendered by components/board/desmos-renderer.ts.
+// The spec is kept so a graph can be drawn again (board snapshots leave the
+// picture out), and so the tutor can point at a labelled point by its
+// coordinates.
 
 export type TLGraphShapeProps = {
   w: number;
   h: number;
-  /** JSON of a GraphSpec. */
+  /** JSON of a GraphSpec (version 2; version 1 is upgraded on read). */
   spec: string;
-  /** The rendered SVG markup; empty until Desmos has drawn it. */
+  /** The rendered SVG markup; empty until Desmos has drawn it, and in saved snapshots. */
   svg: string;
   status: "rendering" | "ready" | "error";
   /** Expressions Desmos could not graph, "latex: message | …". */
@@ -31,6 +33,9 @@ export type TLGraphShape = TLBaseShape<"graph", TLGraphShapeProps>;
 
 /** A thin strip under the picture for the Desmos credit, so it never covers the plot. */
 export const GRAPH_CREDIT_H = 14;
+
+// Grey that reads 4.8:1 on white.
+const CREDIT_HEX = "#71717c";
 
 export function svgDataUrl(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -76,15 +81,16 @@ export class GraphShapeUtil extends ShapeUtil<TLGraphShape> {
     return path;
   }
 
-  // Board pictures (what the tutor sees) include the graph; an export that
-  // arrives before the picture waits for Desmos.
+  // Board pictures (what the tutor sees) include the graph and its credit; an
+  // export that arrives before the picture waits for Desmos.
   override async toSvg(shape: TLGraphShape) {
     const { w, h, spec } = shape.props;
     let svg = shape.props.svg;
     if (!svg && spec) {
       try {
-        const { renderDesmosGraph } = await import("./desmos-renderer");
-        svg = (await renderDesmosGraph(JSON.parse(spec), w, h)).svg;
+        const parsed = parseGraphSpec(spec, { w, h });
+        const { renderDesmosGraph, desmosAvailable } = await import("./desmos-renderer");
+        if (parsed && desmosAvailable()) svg = (await renderDesmosGraph(parsed, { w, h })).svg;
       } catch {
         svg = "";
       }
@@ -92,6 +98,9 @@ export class GraphShapeUtil extends ShapeUtil<TLGraphShape> {
     return (
       <g>
         {svg ? <image href={svgDataUrl(svg)} width={w} height={h} /> : <rect width={w} height={h} fill="#ffffff" stroke="#e4e5ea" />}
+        <text x={w - 2} y={h + 11} textAnchor="end" fontSize={10} fontWeight={500} letterSpacing="0.02em" fill={CREDIT_HEX} fontFamily="'tldraw_sans', sans-serif">
+          desmos
+        </text>
       </g>
     );
   }
@@ -143,7 +152,7 @@ function GraphView({ shape }: { shape: TLGraphShape }) {
             top: h + 2,
             font: "500 10px/1 var(--tl-font-sans, ui-sans-serif, system-ui, sans-serif)",
             letterSpacing: "0.02em",
-            color: "#71717c",
+            color: CREDIT_HEX,
           }}
         >
           desmos

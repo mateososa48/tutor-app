@@ -4,28 +4,19 @@
 // that shows the interesting part, and builds the list of Desmos expressions.
 import { ComputeEngine, compile } from "@cortex-js/compute-engine";
 import { formatNumber, type XYPoint } from "./board-diagrams";
+import {
+  graphSettings,
+  toPx,
+  type GraphBounds,
+  type GraphExpression,
+  type GraphMarker,
+  type GraphSize,
+  type GraphSpec,
+} from "./desmos-spec";
 
-export type GraphBounds = { left: number; right: number; bottom: number; top: number };
-
-/** One Desmos expression, in the shape the Desmos API's setExpressions takes. */
-export type GraphExpression = {
-  id: string;
-  latex: string;
-  color?: string;
-  lineStyle?: "SOLID" | "DASHED" | "DOTTED";
-  lineWidth?: number;
-  pointSize?: number;
-  pointOpacity?: number;
-  fillOpacity?: number;
-  label?: string;
-  showLabel?: boolean;
-  labelOrientation?: "above" | "below" | "left" | "right" | "default";
-};
-
-/** A labelled point on the graph, kept in math coordinates so the tutor can point at it. */
-export type GraphMarker = { x: number; y: number; label: string };
-
-export type GraphSpec = { bounds: GraphBounds; expressions: GraphExpression[]; markers: GraphMarker[] };
+// The spec types live in desmos-spec.ts (version 2); these names stay for callers.
+export type { GraphBounds, GraphExpression, GraphMarker, GraphSpec } from "./desmos-spec";
+export { graphSpecText } from "./desmos-spec";
 
 export const GRAPH_INK = "#121215";
 
@@ -231,9 +222,10 @@ export function autoYRange(fns: Array<(x: number) => number>, left: number, righ
   lo -= pad;
   hi += pad;
   const span = hi - lo;
-  // Show the x-axis when it is close by.
-  if (lo > 0 && lo < span * 0.5) lo = -span * 0.08;
-  if (hi < 0 && -hi < span * 0.5) hi = span * 0.08;
+  // Show the x-axis when it is close by, with room under it for its numbers
+  // (at 8% Desmos pinned them, greyed, to the picture's edge).
+  if (lo > 0 && lo < span * 0.5) lo = -span * 0.1;
+  if (hi < 0 && -hi < span * 0.5) hi = span * 0.1;
   return { bottom: lo, top: hi };
 }
 
@@ -262,10 +254,7 @@ export function fitBounds(b: GraphBounds, w: number, h: number, mode: "auto" | "
 
 /** Where a math point lands inside a graph picture w × h. */
 export function graphPointBox(point: { x: number; y: number }, bounds: GraphBounds, w: number, h: number): { x: number; y: number } {
-  return {
-    x: ((point.x - bounds.left) / (bounds.right - bounds.left)) * w,
-    y: ((bounds.top - point.y) / (bounds.top - bounds.bottom)) * h,
-  };
+  return toPx(point, bounds, { w, h });
 }
 
 /** Where two curves cross (a sign change of their difference, refined); jumps at asymptotes are not crossings. */
@@ -298,6 +287,134 @@ export function curveCrossings(f: (x: number) => number, g: (x: number) => numbe
   return out;
 }
 
+// ── Extra lines without Desmos ────────────────────────────────────────────────
+// The vector renderer (TldrawCore) draws what it can of the extra expressions:
+// a curve y = f(x) (a restricted piece too), a vertical line, a circle, and the
+// side an inequality shades. Anything else is left out.
+
+export type VectorExtra = {
+  line:
+    | { kind: "curve"; fn: (x: number) => number; from: number | null; to: number | null }
+    | { kind: "vertical"; x: number; from: number | null; to: number | null }
+    | { kind: "circle"; cx: number; cy: number; r: number }
+    | null;
+  /** A strict inequality's boundary is dashed. */
+  dashed: boolean;
+  /** The shaded side, for an inequality. */
+  shade: "above" | "below" | "left" | "right" | "inside" | "outside" | null;
+};
+
+const REL_SPLIT_RE = /(\\le(?![a-z])|\\ge(?![a-z])|<|>|=)/;
+const NUMBER_RE = /^-?\d+(?:\.\d+)?$/;
+
+/** (lhs) − (rhs) as a function of x and y, or null. */
+function relationFunction(lhs: string, rhs: string): ((x: number, y: number) => number) | null {
+  try {
+    const result = compile(engine().parse(`\\left(${lhs}\\right)-\\left(${rhs}\\right)`)) as unknown as { success?: boolean; run?: (scope: Record<string, number>) => unknown };
+    if (!result?.success || typeof result.run !== "function") return null;
+    const run = result.run.bind(result);
+    return (x: number, y: number) => {
+      try {
+        const v = Number(run({ x, y }));
+        return Number.isFinite(v) ? v : NaN;
+      } catch {
+        return NaN;
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** "\\left\\{1\\le x\\le 3\\right\\}" → the variable and its range; null when it is not that simple. */
+function readRestriction(latex: string): { v: "x" | "y"; lo: number; hi: number } | null {
+  const m = /^\\left\\{\s*(-?\d+(?:\.\d+)?)\s*(?:<|\\le)\s*([xy])\s*(?:<|\\le)\s*(-?\d+(?:\.\d+)?)\s*\\right\\}$/.exec(latex.trim());
+  if (!m) return null;
+  const lo = Number(m[1]);
+  const hi = Number(m[3]);
+  return hi > lo ? { v: m[2] as "x" | "y", lo, hi } : null;
+}
+
+const close = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * (1 + Math.abs(a) + Math.abs(b));
+
+export function vectorExtra(raw: string): VectorExtra | null {
+  const latex = ensureRelation(toDesmosLatex(raw));
+  const restrictions = latex.match(RESTRICTION_RE) ?? [];
+  if (restrictions.length > 1) return null;
+  const restriction = restrictions[0] ? readRestriction(restrictions[0]) : null;
+  if (restrictions[0] && !restriction) return null;
+  const body = latex.replace(RESTRICTION_RE, "").trim();
+  const parts = body.split(REL_SPLIT_RE);
+  if (parts.length !== 3) return null;
+  const [lhsRaw, op, rhsRaw] = parts;
+  const lhs = lhsRaw.trim();
+  const rhs = rhsRaw.trim();
+  if (!lhs || !rhs) return null;
+  const g = relationFunction(lhs, rhs);
+  if (!g) return null;
+  const dashed = op === "<" || op === ">";
+  const holds = (x: number, y: number) => {
+    const v = g(x, y);
+    if (!Number.isFinite(v)) return false;
+    return op === "<" ? v < 0 : op === ">" ? v > 0 : op === "=" ? close(v, 0) : op.startsWith("\\le") ? v <= 0 : v >= 0;
+  };
+  const inequality = op !== "=";
+
+  // x = c (a restriction on y makes it a segment).
+  if (lhs === "x" && NUMBER_RE.test(rhs)) {
+    if (restriction && restriction.v !== "y") return null;
+    const x = Number(rhs);
+    return {
+      line: { kind: "vertical", x, from: restriction?.lo ?? null, to: restriction?.hi ?? null },
+      dashed,
+      shade: inequality && !restriction ? (holds(x - 1, 0) ? "left" : "right") : null,
+    };
+  }
+  if (restriction && restriction.v !== "x") return null;
+  const from = restriction?.lo ?? null;
+  const to = restriction?.hi ?? null;
+
+  // y as a function of x: y op f(x), or anything linear in y (2x + 3y < 6).
+  let fn: ((x: number) => number) | null = lhs === "y" ? graphFunction(`y=${rhs}`) : null;
+  if (!fn) {
+    const probes = [-1.3, 0.7, 2.9];
+    const q = g(probes[0], 1) - g(probes[0], 0);
+    const linear = Number.isFinite(q) && Math.abs(q) > 1e-9 && probes.every((x) => close(g(x, 1) - g(x, 0), q) && close(g(x, 2) - g(x, 1), q));
+    if (linear) fn = (x: number) => -g(x, 0) / q;
+  }
+  if (fn) {
+    const f = fn;
+    let shade: VectorExtra["shade"] = null;
+    if (inequality && !restriction) {
+      const x0 = [0.5, 1.7, -2.3].find((x) => Number.isFinite(f(x)));
+      if (x0 !== undefined) shade = holds(x0, f(x0) + 1) ? "above" : "below";
+    }
+    return { line: { kind: "curve", fn: f, from, to }, dashed, shade };
+  }
+  if (restriction) return null;
+
+  // A circle: g = a(x² + y²) + bx + cy + d, read from a few values.
+  const d = g(0, 0);
+  const a = (g(1, 0) + g(-1, 0)) / 2 - d;
+  const b = (g(1, 0) - g(-1, 0)) / 2;
+  const c = g(0, 1) - a - d;
+  const model = (x: number, y: number) => a * (x * x + y * y) + b * x + c * y + d;
+  const fits = [[0, -1], [1, 1], [2, -3], [-2.5, 1.5]].every(([x, y]) => close(g(x, y), model(x, y)));
+  if (fits && Math.abs(a) > 1e-9) {
+    const cx = -b / (2 * a) + 0;
+    const cy = -c / (2 * a) + 0;
+    const r2 = cx * cx + cy * cy - d / a;
+    if (r2 > 0) {
+      return {
+        line: { kind: "circle", cx, cy, r: Math.sqrt(r2) },
+        dashed,
+        shade: inequality ? (holds(cx, cy) ? "inside" : "outside") : null,
+      };
+    }
+  }
+  return null;
+}
+
 // ── Graph specs ───────────────────────────────────────────────────────────────
 function num(n: number): string {
   const r = Math.round(n * 1e6) / 1e6;
@@ -317,8 +434,11 @@ function includeMarkers(b: GraphBounds, markers: GraphMarker[]): GraphBounds {
   return out;
 }
 
+/** A dot per point marker; label markers ride on their own expressions. */
 function markerExpressions(markers: GraphMarker[], color: string): GraphExpression[] {
-  return markers.map((m, i) => ({ id: `point${i + 1}`, latex: `(${num(m.x)},${num(m.y)})`, color, pointSize: 10, label: m.label, showLabel: Boolean(m.label) }));
+  return markers
+    .filter((m) => m.kind !== "label")
+    .map((m, i) => ({ id: `point${i + 1}`, latex: `(${num(m.x)},${num(m.y)})`, color, pointSize: 10, label: m.label, showLabel: Boolean(m.label) }));
 }
 
 /** An implicit relation in x and y (a circle): drawn with square units. */
@@ -339,7 +459,7 @@ export type FunctionGraphInput = {
   slopeRun?: { x1: number; x2: number } | null;
   /** Pen colours (hex) for the curves, in order; the slope triangle takes the next one. */
   colors: string[];
-  box: { w: number; h: number };
+  box: GraphSize;
 };
 
 export function buildFunctionGraph(input: FunctionGraphInput): { spec: GraphSpec; problems: string[] } {
@@ -363,11 +483,12 @@ export function buildFunctionGraph(input: FunctionGraphInput): { spec: GraphSpec
   const first = latexByRaw[0] ? graphFunction(latexByRaw[0]) : null;
   const second = input.second && latexByRaw[1] ? graphFunction(latexByRaw[1]) : null;
   if (first && second) {
-    for (const p of curveCrossings(first, second, input.xMin, input.xMax)) markers.push({ x: p.x, y: p.y, label: `(${formatNumber(p.x)}, ${formatNumber(p.y)})` });
+    for (const p of curveCrossings(first, second, input.xMin, input.xMax)) markers.push({ x: p.x, y: p.y, label: `(${formatNumber(p.x)}, ${formatNumber(p.y)})`, kind: "point" });
   }
-  for (const p of input.markPoints ?? []) markers.push({ x: p.x, y: p.y, label: p.label?.trim() ?? "" });
+  for (const p of input.markPoints ?? []) markers.push({ x: p.x, y: p.y, label: p.label?.trim() ?? "", kind: "point" });
 
   const slope: GraphExpression[] = [];
+  const slopeLabels: GraphMarker[] = [];
   if (input.slopeRun && first) {
     const x1 = Math.min(input.slopeRun.x1, input.slopeRun.x2);
     const x2 = Math.max(input.slopeRun.x1, input.slopeRun.x2);
@@ -377,15 +498,18 @@ export function buildFunctionGraph(input: FunctionGraphInput): { spec: GraphSpec
       const c = colors[raws.length % colors.length];
       const lowY = Math.min(y1, y2);
       const highY = Math.max(y1, y2);
+      const run = { x: (x1 + x2) / 2, y: y1, label: `run ${formatNumber(x2 - x1)}`, kind: "label" as const, orientation: (y2 >= y1 ? "below" : "above") as GraphMarker["orientation"] };
+      const rise = { x: x2, y: (y1 + y2) / 2, label: `rise ${formatNumber(y2 - y1)}`, kind: "label" as const, orientation: "right" as const };
       slope.push(
         { id: "run", latex: `y=${num(y1)}\\left\\{${num(x1)}\\le x\\le ${num(x2)}\\right\\}`, color: c, lineStyle: "DASHED", lineWidth: 2.5 },
         { id: "rise", latex: `x=${num(x2)}\\left\\{${num(lowY)}\\le y\\le ${num(highY)}\\right\\}`, color: c, lineStyle: "DASHED", lineWidth: 2.5 },
         // Label-only points: a near-zero dot. (pointOpacity 0 also hides the
         // label text in Desmos's SVG export, checked Sept 15 2026.)
-        { id: "runLabel", latex: `(${num((x1 + x2) / 2)},${num(y1)})`, color: c, pointSize: 0.01, label: `run ${formatNumber(x2 - x1)}`, showLabel: true, labelOrientation: y2 >= y1 ? "below" : "above" },
-        { id: "riseLabel", latex: `(${num(x2)},${num((y1 + y2) / 2)})`, color: c, pointSize: 0.01, label: `rise ${formatNumber(y2 - y1)}`, showLabel: true, labelOrientation: "right" },
+        { id: "runLabel", latex: `(${num(run.x)},${num(run.y)})`, color: c, pointSize: 0.01, label: run.label, showLabel: true, labelOrientation: run.orientation },
+        { id: "riseLabel", latex: `(${num(rise.x)},${num(rise.y)})`, color: c, pointSize: 0.01, label: rise.label, showLabel: true, labelOrientation: rise.orientation },
       );
-      markers.push({ x: x1, y: y1, label: "" }, { x: x2, y: y2, label: "" });
+      markers.push({ x: x1, y: y1, label: "", kind: "point" }, { x: x2, y: y2, label: "", kind: "point" });
+      slopeLabels.push(run, rise);
     }
   }
   expressions.push(...slope, ...markerExpressions(markers, GRAPH_INK));
@@ -407,27 +531,64 @@ export function buildFunctionGraph(input: FunctionGraphInput): { spec: GraphSpec
   }
   if (!(top > bottom)) top = bottom + 10;
   const bounds = fitBounds(includeMarkers({ left: input.xMin, right: input.xMax, bottom, top }, markers), input.box.w, input.box.h, equalUnits ? "equal" : "auto");
-  return { spec: { bounds, expressions, markers }, problems };
+  const spec: GraphSpec = {
+    v: 2,
+    kind: "function",
+    size: { ...input.box },
+    bounds,
+    settings: graphSettings(bounds, input.box),
+    expressions,
+    markers: [...markers, ...slopeLabels],
+    source: {
+      kind: "function",
+      expression: input.expression,
+      xMin: input.xMin,
+      xMax: input.xMax,
+      extras: {
+        markPoints: input.markPoints ?? [],
+        slopeRun: input.slopeRun ?? null,
+        ...(input.second ? { secondExpression: input.second } : {}),
+        ...(input.yMin !== undefined ? { yMin: input.yMin } : {}),
+        ...(input.yMax !== undefined ? { yMax: input.yMax } : {}),
+        ...(input.extras?.length ? { extraExpressions: input.extras } : {}),
+      },
+    },
+  };
+  return { spec, problems };
 }
 
-export function buildPointsGraph(input: { points: XYPoint[]; connect: boolean; xMin: number; xMax: number; yMin: number; yMax: number; colors: string[]; box: { w: number; h: number } }): GraphSpec {
+export function buildPointsGraph(input: { points: XYPoint[]; connect: boolean; xMin: number; xMax: number; yMin: number; yMax: number; colors: string[]; box: GraphSize }): GraphSpec {
   const color = input.colors[0] ?? "#4465e9";
   const points = input.points.slice(0, 24);
   const expressions: GraphExpression[] = [];
   if (input.connect && points.length >= 2) {
     expressions.push({ id: "shape", latex: `\\operatorname{polygon}(${points.map((p) => `(${num(p.x)},${num(p.y)})`).join(",")})`, color, fillOpacity: points.length >= 3 ? 0.15 : 0, lineWidth: 3 });
   }
-  const markers = points.map((p) => ({ x: p.x, y: p.y, label: p.label?.trim() ?? "" }));
+  const markers: GraphMarker[] = points.map((p) => ({ x: p.x, y: p.y, label: p.label?.trim() ?? "", kind: "point" }));
   expressions.push(...markerExpressions(markers, color));
   const bounds = fitBounds(includeMarkers({ left: input.xMin, right: input.xMax, bottom: input.yMin, top: input.yMax }, markers), input.box.w, input.box.h, input.connect ? "equal" : "auto");
-  return { bounds, expressions, markers };
+  return {
+    v: 2,
+    kind: "points",
+    size: { ...input.box },
+    bounds,
+    settings: graphSettings(bounds, input.box),
+    expressions,
+    markers,
+    source: { kind: "points", points, connect: input.connect, xMin: input.xMin, xMax: input.xMax, yMin: input.yMin, yMax: input.yMax },
+  };
 }
 
-export function buildAxesGraph(input: { xMin: number; xMax: number; yMin: number; yMax: number; box: { w: number; h: number } }): GraphSpec {
-  return { bounds: fitBounds({ left: input.xMin, right: input.xMax, bottom: input.yMin, top: input.yMax }, input.box.w, input.box.h), expressions: [], markers: [] };
-}
-
-/** The words on a graph (point labels, rise and run), for pointing and highlighting by text. */
-export function graphSpecText(spec: GraphSpec): string {
-  return [...spec.markers.map((m) => m.label), ...spec.expressions.map((e) => e.label ?? "")].filter(Boolean).join(" · ");
+export function buildAxesGraph(input: { xMin: number; xMax: number; yMin: number; yMax: number; box: GraphSize }): GraphSpec {
+  const bounds = fitBounds({ left: input.xMin, right: input.xMax, bottom: input.yMin, top: input.yMax }, input.box.w, input.box.h);
+  return {
+    v: 2,
+    kind: "axes",
+    size: { ...input.box },
+    bounds,
+    settings: graphSettings(bounds, input.box),
+    expressions: [],
+    markers: [],
+    source: { kind: "axes", xMin: input.xMin, xMax: input.xMax, yMin: input.yMin, yMax: input.yMax },
+  };
 }

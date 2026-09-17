@@ -259,7 +259,9 @@ const highlight: DemoCall[] = [
 
 // Desmos graphs (Sept 15 2026): every graph tool, plain math converted, a
 // slope triangle, inequality + circle + vertical line, a shape from points,
-// and a highlight on a labelled point.
+// and highlights on a labelled point and on the rise. Sept 17: a system of
+// inequalities and a disc for the vector fallback; add &nodesmos=1 to see
+// every graph without Desmos, &desmosfail=1 to see them swap when the load fails.
 const graphs: DemoCall[] = [
   { name: "start_new_problem", args: { title: "Graphs, drawn by Desmos" } },
   { name: "add_function_graph", args: { expression: "x^2-4x+3", x_min: -2, x_max: 6, y_min: -2, y_max: 5, mark_points: "(1,0):root, (3,0):root, (2,-1):vertex", label: "y = x² − 4x + 3" } },
@@ -269,7 +271,11 @@ const graphs: DemoCall[] = [
   { name: "add_function_graph", args: { expression: "2x-1", extra_expressions: "y>2x-1; x^2+y^2=9; x=3", x_min: -5, x_max: 5, label: "an inequality, a circle, a vertical line" } },
   { name: "plot_points", args: { points: "(1,1):A, (4,1):B, (4,3):C", x_min: -1, x_max: 6, y_min: -1, y_max: 5, connect: true, label: "triangle ABC" } },
   { name: "add_function_graph", args: { expression: "sqrt(x)", x_min: -1, x_max: 9, label: "sqrt(x), written plainly" } },
+  { name: "add_function_graph", args: { expression: "-2x/3+2", extra_expressions: "2x+3y<6; x>=-1", x_min: -4, x_max: 6, label: "two inequalities at once" } },
+  { name: "add_function_graph", args: { expression: "x^2", extra_expressions: "(x-1)^2+(y+2)^2<4; 2x+1\\left\\{0<x<3\\right\\}", x_min: -5, x_max: 5, label: "a disc and a piece of a line" } },
+  { name: "add_coordinate_axes", args: { x_min: -10, x_max: 10, y_min: -10, y_max: 10, label: "empty axes" } },
   { name: "highlight", args: { target: "b2", text: "vertex" } },
+  { name: "highlight", args: { target: "b5", text: "rise 4" } },
 ];
 
 // Marks (Sept 16): every mark lands on its item and in sky, whatever the
