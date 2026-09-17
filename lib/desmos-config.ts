@@ -3,10 +3,11 @@
 // NEXT_PUBLIC_ variable read in full, which Next inlines into client code.
 //
 // NEXT_PUBLIC_DESMOS_TOOLS lists the pictures rebuilt on Desmos: "all",
-// "none", or names ("add_number_line,draw_bar_chart,draw_figure"). Unset, a
-// development build draws them all on Desmos and a production build none,
-// until Mateo has compared them with the vector versions. Graphs
-// (add_function_graph, plot_points) use Desmos whenever it is here.
+// "none", or names ("add_number_line,draw_bar_chart,draw_figure"). Unset,
+// every build draws them all on Desmos: Mateo compared them with the vector
+// versions on Sept 17 2026 and chose Desmos ("desmos looks good"). Set it to
+// "none" to go back. Graphs (add_function_graph, plot_points) use Desmos
+// whenever it is here, and nothing uses it without a key.
 
 /** Pictures that have a Desmos version and a vector version. */
 export const DESMOS_PICTURE_TOOLS = ["add_number_line", "draw_bar_chart", "draw_figure"] as const;
@@ -25,7 +26,7 @@ export function desmosConfigured(): boolean {
  */
 export function desmosPictureTools(setting: string | undefined = process.env.NEXT_PUBLIC_DESMOS_TOOLS, override?: string | null): Set<string> {
   const raw = (override ?? setting)?.trim().toLowerCase();
-  if (raw === undefined || raw === "") return new Set(process.env.NODE_ENV === "production" ? [] : DESMOS_PICTURE_TOOLS);
+  if (raw === undefined || raw === "") return new Set(DESMOS_PICTURE_TOOLS);
   if (raw === "all") return new Set(DESMOS_PICTURE_TOOLS);
   if (raw === "none") return new Set();
   const known = new Set<string>(DESMOS_PICTURE_TOOLS);
