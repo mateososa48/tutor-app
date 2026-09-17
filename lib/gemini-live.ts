@@ -18,7 +18,21 @@ import {
   type TutorPolicy,
 } from "./tutor-policy";
 
-const MODEL = "gemini-3.1-flash-live-preview";
+// The Live models this account can open (checked against the API, Sept 17
+// 2026). Google now calls 3.1 "legacy audio-to-audio" and 3.8 Live "the
+// default for most low-latency voice agent experiences".
+//
+// gemini-3.8-live-extended-thinking works only on the v1alpha endpoint (the
+// one we use) and thinks for about 20 s before it draws or answers properly,
+// so it is here to try, not to run a session on. It also needs a thinking
+// level, or the socket closes with 1007.
+export const LIVE_MODELS: Record<string, string> = {
+  "3.1": "gemini-3.1-flash-live-preview",
+  "3.8": "gemini-3.8-live",
+  "3.8-thinking": "gemini-3.8-live-extended-thinking",
+};
+
+export const DEFAULT_LIVE_MODEL = LIVE_MODELS["3.1"];
 // Ephemeral tokens are a v1alpha feature; the WS endpoint must match.
 const WS_BASE =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
@@ -87,6 +101,8 @@ export class GeminiLiveSession {
   private sessionHandle: string | null = null;
   private systemInstruction: string;
   private voiceName: string;
+  /** Which Live model this session runs (LIVE_MODELS). */
+  readonly model: string;
   private tutorTurnText = "";
   // What the student said since the tutor last spoke. Transcripts arrive in
   // fragments, so signals (frustrated, bored, unsure…) are read once the tutor answers.
@@ -111,10 +127,11 @@ export class GeminiLiveSession {
   // Every tool blocks the model until it answers; nothing may hold it longer.
   private static readonly TOOL_TIMEOUT_MS = 3_000;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string }) {
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string }) {
     this.callbacks = callbacks;
     this.systemInstruction = options.systemInstruction;
     this.voiceName = options.voiceName;
+    this.model = options.model?.trim() || DEFAULT_LIVE_MODEL;
   }
 
   private debug(kind: string, message: string, payload?: Record<string, unknown>) {
@@ -214,10 +231,12 @@ export class GeminiLiveSession {
 
   private sendSetup(resumeHandle: string | null) {
     const voiceName = this.voiceName;
+    // The extended-thinking model refuses to start without a level.
+    const thinking = this.model.includes("thinking") ? { thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" } } : {};
 
     this.send({
       setup: {
-        model: `models/${MODEL}`,
+        model: `models/${this.model}`,
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: {
@@ -225,6 +244,7 @@ export class GeminiLiveSession {
               prebuiltVoiceConfig: { voiceName },
             },
           },
+          ...thinking,
         },
         systemInstruction: {
           parts: [{ text: this.systemInstruction }],

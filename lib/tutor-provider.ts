@@ -1,3 +1,4 @@
+import { DEFAULT_LIVE_MODEL, LIVE_MODELS } from "./gemini-live";
 import type { LiveTutorSession } from "./live-tutor";
 
 // Which live voice stack runs the session. While the OpenAI account is out of
@@ -10,6 +11,18 @@ export function resolveTutorProvider(search: { get(name: string): string | null 
   const fromUrl = search?.get("provider");
   if (fromUrl === "gemini" || fromUrl === "openai") return fromUrl;
   return process.env.NEXT_PUBLIC_TUTOR_PROVIDER === "openai" ? "openai" : "gemini";
+}
+
+/**
+ * Which Gemini Live model a session opens: `?live=3.8` (or a full model id)
+ * for one tab, else NEXT_PUBLIC_GEMINI_LIVE_MODEL, else the in-code default.
+ * The keys are in LIVE_MODELS; anything else is passed through, so a model
+ * released after this code still works by its full name.
+ */
+export function resolveLiveModel(search: { get(name: string): string | null } | null): string {
+  const asked = search?.get("live")?.trim() || process.env.NEXT_PUBLIC_GEMINI_LIVE_MODEL?.trim() || "";
+  if (!asked) return DEFAULT_LIVE_MODEL;
+  return LIVE_MODELS[asked] ?? (asked.startsWith("gemini-") ? asked : DEFAULT_LIVE_MODEL);
 }
 
 // The surface the session page relies on. Both clients implement it.

@@ -23,7 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { LiveTutorSession } from "@/lib/live-tutor";
 import type { LiveTutorCallbacks } from "@/lib/live-tutor";
 import { GeminiTutorSession } from "@/lib/gemini-tutor";
-import { resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
+import { resolveLiveModel, resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
 import { useTutorSpeed } from "@/components/session/SpeedControl";
 import { tutorSpeedRate } from "@/lib/voice-settings";
 import type { TranscriptEntry, ToolCallResult, TutorActivity } from "@/lib/live-types";
@@ -161,6 +161,8 @@ function SessionDetailPage({ id }: { id: string }) {
   const sessionRef = useRef<TutorClient | null>(null);
   // Which voice stack runs this session (env default, ?provider= override).
   const [provider] = useState(() => resolveTutorProvider(searchParams));
+  // Which Gemini Live model this session runs (?live=3.8 for one tab).
+  const [liveModel] = useState(() => resolveLiveModel(searchParams));
   // How fast the tutor's voice plays. Only the Gemini client can change it.
   const [tutorSpeed, setTutorSpeed] = useTutorSpeed();
   const speechRateRef = useRef(tutorSpeedRate(tutorSpeed));
@@ -787,6 +789,7 @@ function SessionDetailPage({ id }: { id: string }) {
         if (!timerRef.current) {
           recorderRef.current?.record("session.started", "system", {
             provider,
+            model: provider === "gemini" ? liveModel : undefined,
             resumed: isResumeRef.current,
             speechRate: speechRateRef.current,
             textOnly: qaTextOnlyRef.current === true,
@@ -866,7 +869,7 @@ function SessionDetailPage({ id }: { id: string }) {
       },
     };
 
-    const live: TutorClient = provider === "gemini" ? new GeminiTutorSession(callbacks) : new LiveTutorSession(callbacks);
+    const live: TutorClient = provider === "gemini" ? new GeminiTutorSession(callbacks, { model: liveModel }) : new LiveTutorSession(callbacks);
     sessionRef.current = live;
     live.setSpeechRate?.(speechRateRef.current);
     recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
@@ -897,7 +900,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);
@@ -1166,6 +1169,12 @@ function SessionDetailPage({ id }: { id: string }) {
     void intake(list);
   });
 
+  // The chip says which model ran, so a recording can be told apart later.
+  const liveTag =
+    provider !== "gemini"
+      ? provider
+      : `gemini ${/gemini-([\d.]+)/.exec(liveModel)?.[1] ?? ""}${liveModel.includes("thinking") ? " thinking" : ""}`.trim();
+
   const dockActivity: DockActivity =
     liveState === "connecting" || liveState === "idle"
       ? "connecting"
@@ -1246,7 +1255,7 @@ function SessionDetailPage({ id }: { id: string }) {
           liveState={liveState}
           title={sessionTitle}
           elapsed={formatTime(elapsedSeconds)}
-          qaLabel={debugMode ? `${qaTextOnly ? "QA text" : "QA mic"} on ${provider}` : provider === "gemini" ? "gemini" : null}
+          qaLabel={debugMode ? `${qaTextOnly ? "QA text" : "QA mic"} on ${liveTag}` : provider === "gemini" ? liveTag : null}
         />
         <div className="absolute top-4 right-4 z-30">
           <EndSessionButton disabled={liveState !== "active"} onConfirm={endSession} />
