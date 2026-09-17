@@ -15,7 +15,7 @@ import { Editor, createShapeId, toRichText } from "@tldraw/editor";
 import { InstancePresenceRecordType, type TLInstancePresence, type TLShapeId } from "@tldraw/tlschema";
 import {
   formatBoardItems,
-  highlightSizeFor,
+  highlightSwipeFor,
   isHeadingItem,
   itemLabelFrom,
   matchVariants,
@@ -23,22 +23,23 @@ import {
   normalizeForMatch,
   resolveItemTarget,
   ringPoints,
-  swipePoints,
+  toolRole,
   type BoardItem,
-  type HighlightColor,
   type ItemBounds,
 } from "@/lib/board-items";
+import { planCamera } from "@/lib/board-camera";
+import { BOARD_THEMES, SKY } from "@/components/board/board-theme";
 import { catchUpPace, planReveal, pointsShown, polylineLength, typedPrefix, REVEAL_CAP_MS, type RevealInput, type RevealStep } from "@/lib/board-reveal";
 import { findSpot, freeSpace, regionName, type PlaceHint, type PlaceRequest, type Rect } from "@/lib/board-layout";
 import { latexToPlain } from "@/lib/latex-plain";
-import { TutorPenOverlayUtil } from "@/components/board/TutorPenOverlay";
+import { TutorPenOverlayUtil, TutorScribbleOverlayUtil } from "@/components/board/TutorPenOverlay";
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
 import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
 import { GraphShapeUtil, type TLGraphShape } from "@/components/board/GraphShape";
 import { desmosAvailable, renderDesmosGraph } from "@/components/board/desmos-renderer";
 import { buildAxesGraph, buildFunctionGraph, buildPointsGraph, graphPointBox, graphSpecText, type GraphSpec } from "@/lib/desmos-graph";
 
-const OVERLAY_UTILS = [TutorPenOverlayUtil];
+const OVERLAY_UTILS = [TutorPenOverlayUtil, TutorScribbleOverlayUtil];
 const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil];
 import {
   compressLegacySegments,
@@ -115,16 +116,21 @@ const EQ_ROW_GAP = 8;
 const POINT_PATTERN = /\(\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*,\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*\)(?:\s*:\s*([^,;\n(]+))?/g;
 
 // ── Board style ─────────────────────────────────────────────────────────────
-// One pen for the tutor (blue), ink for structure (black), pencil grey for the
+// One pen for the tutor (blue), ink for structure (black), pencil for the
 // student's work and quiet labels. Diagrams use solid strokes; only
 // draw_sketch keeps tldraw's hand-drawn wobble.
 const INK: TldrawColor = "black";
 const PEN: TldrawColor = "blue";
-const PENCIL: TldrawColor = "grey";
+// The student's pencil: the app's second ink (components/board/board-theme.ts).
+const PENCIL: TldrawColor = "pencil";
+// Every tutor mark is the app's sky blue (Mateo, Sept 16); strikes are the deeper sky.
+const MARK: TldrawColor = "sky";
+const STRIKE: TldrawColor = "sky-deep";
 // Marker palette. Each new diagram, and each series inside one (two
 // fractions, five bars, three forces), takes the next pen so nothing that
-// should be told apart shares a colour. Structure stays in ink.
-const MARKERS: TldrawColor[] = ["blue", "violet", "green", "orange", "red", "light-blue"];
+// should be told apart shares a colour. Structure stays in ink. Light blue
+// left the palette: next to the sky marks it read as a mark.
+const MARKERS: TldrawColor[] = ["blue", "violet", "green", "orange", "red"];
 const MARKER_HEX: Record<string, string> = {
   blue: "#4465e9",
   violet: "#ae3ec9",
@@ -159,10 +165,10 @@ const PICTURE_TOOLS = new Set([
   "draw_bar_chart", "add_table", "draw_tape_diagram", "draw_grid", "draw_transversal", "draw_icons", "draw_sketch",
   "write_vertical", "draw_long_division", "add_process_map",
 ]);
-// Highlighter colours: yellow = look here, green = right, pink = the mistake, blue = the step we are on.
-const HIGHLIGHT_TL: Record<HighlightColor, TldrawColor> = { yellow: "yellow", green: "light-green", pink: "light-red", blue: "light-blue" };
-// A whole drawing gets a marker ring in the same colour family instead.
-const RING_TL: Record<HighlightColor, TldrawColor> = { yellow: "yellow", green: "green", pink: "light-red", blue: "blue" };
+// Marks measure the marked words or drawing, without decorations beside them.
+const MARK_BOUNDS = { decor: false } as const;
+// The tutor's presence (pen cursor, laser ring) in the app's sky.
+const TUTOR_COLOR = SKY;
 type HighlightStroke = { points: Array<{ x: number; y: number }>; size: TLDefaultSizeStyle; duration: number; ring?: boolean };
 
 function pageFrame(base: { w: number; h: number }, index: number): Rect {
@@ -341,7 +347,7 @@ export interface WhiteboardHandle {
   /** Where the next item goes; the dispatcher sets it before each tool call. Optional so fake boards compile. */
   setPlacement?(request: PlaceRequest | null): void;
   /** A highlighter over the words `text` in an item, or over the whole item. `part` says which it managed. */
-  highlight?(target: string, text: string | undefined, color: HighlightColor): { item: BoardItem; part: "text" | "item" } | null;
+  highlight?(target: string, text: string | undefined): { item: BoardItem; part: "text" | "item" } | null;
 }
 
 export type ItemToken = { tool: string; shapes: Set<string>; eqs: Set<string> };
@@ -598,9 +604,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   // Board items (b1, b2, …) and the tutor's presence (cursor + laser rings).
   const itemsRef = useRef<BoardItem[]>([]);
   const itemSeqRef = useRef(0);
-  // A mark drawn on an existing item (ring, strike) belongs to that item, so
-  // erasing the item erases its marks too.
-  const attachToItemRef = useRef<string | null>(null);
   const presenceIdRef = useRef<TLInstancePresence["id"] | null>(null);
   const cursorAnimRef = useRef<number | null>(null);
   const scribbleAnimRef = useRef<number | null>(null);
@@ -732,7 +735,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   }, []);
 
   // ── Tutor presence: a collaborator cursor tldraw draws for us ──────────────
-  const TUTOR_COLOR = "#2988f2";
   const ensurePresence = useCallback((editor: Editor): TLInstancePresence | null => {
     try {
       const existing = presenceIdRef.current ? (editor.store.get(presenceIdRef.current) as TLInstancePresence | undefined) : undefined;
@@ -1083,16 +1085,28 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     revealRafRef.current = requestAnimationFrame(frame);
   }, [applyStep, ensurePresence, finishReveal, moveCursor, patchPresence, penAt, scheduleCursorHide]);
 
+  // Jobs start after the tool call that queued them returns. A mark that ran
+  // inside the call became part of that call's item (and was moved into free
+  // space), and camera moves are skipped while a call is building.
+  const queueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enqueue = useCallback((job: RevealJob) => {
     revealQueueRef.current.push(job);
     if (!writingRef.current) {
       writingRef.current = true;
       onWritingRef.current?.(true);
     }
-    runQueue();
+    if (queueTimerRef.current !== null) return;
+    queueTimerRef.current = setTimeout(() => {
+      queueTimerRef.current = null;
+      runQueue();
+    }, 0);
   }, [runQueue]);
 
   const resetReveal = useCallback(() => {
+    if (queueTimerRef.current !== null) {
+      clearTimeout(queueTimerRef.current);
+      queueTimerRef.current = null;
+    }
     revealQueueRef.current = [];
     if (revealRafRef.current !== null) cancelAnimationFrame(revealRafRef.current);
     finishReveal();
@@ -1150,7 +1164,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     enqueue({ kind: "reveal", steps, restAt });
   }, [enqueue, plainOf]);
 
-  const itemBounds = useCallback((editor: Editor, item: BoardItem): ItemBounds | null => {
+  // What an item covers. Marks never count. `decor: false` also leaves out
+  // decorations (the "you" tag beside a student's words), for marks to measure.
+  const itemBounds = useCallback((editor: Editor, item: BoardItem, opts: { decor?: boolean } = {}): ItemBounds | null => {
     let box: ItemBounds | null = null;
     const add = (b: ItemBounds) => {
       if (!box) {
@@ -1167,6 +1183,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const shape = editor.getShape(id as TLShapeId);
       const b = editor.getShapePageBounds(id as TLShapeId);
       if (!shape || !b) continue;
+      // Marks (rings, swipes, strikes) are not part of what they mark.
+      const shapeMeta = shape.meta as { mark?: unknown; decor?: unknown } | undefined;
+      if (shapeMeta?.mark === true) continue;
+      if (opts.decor === false && shapeMeta?.decor === true) continue;
       if (shape.type === "text") {
         // A caption's text box is much wider than its words; measure the words
         // and place them by the shape's alignment so rings hug the text.
@@ -1372,13 +1392,42 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     return mergeLineRects(rects, shape?.type === "math");
   }, []);
 
+  // A mark belongs to the item it marks: it joins that item's shapes (erased
+  // with it) and is tagged so the item's size never includes it.
+  const markShapes = useCallback((editor: Editor, host: BoardItem, ids: string[], meta: BoardArtifactMeta | Record<string, never>) => {
+    if (ids.length === 0) return;
+    host.shapeIds = [...host.shapeIds, ...ids];
+    try {
+      const updates = ids
+        .map((sid) => editor.getShape(sid as TLShapeId))
+        .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape))
+        .map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, ...meta, itemId: host.id, mark: true } }));
+      if (updates.length > 0) editor.run(() => editor.updateShapes(updates), { history: "ignore" });
+    } catch {
+      // tagging is a nicety
+    }
+  }, []);
+
+  // Development check: a mark must land on the item it marks (the Sept 15
+  // recording had a ring drawn around empty space).
+  const checkMarkLanded = useCallback((editor: Editor, host: BoardItem, ids: string[]) => {
+    if (process.env.NODE_ENV === "production") return;
+    const target = itemBounds(editor, host, MARK_BOUNDS);
+    if (!target) return;
+    for (const sid of ids) {
+      const b = editor.getShapePageBounds(sid as TLShapeId);
+      if (!b) continue;
+      const overlaps = b.x < target.x + target.w + 40 && b.x + b.w > target.x - 40 && b.y < target.y + target.h + 40 && b.y + b.h > target.y - 40;
+      if (!overlaps) console.warn(`[TldrawCore] a mark for ${host.id} landed away from it`, { mark: { x: b.x, y: b.y, w: b.w, h: b.h }, target });
+    }
+  }, [itemBounds]);
+
   // Highlighter strokes, one after another, each grown under the pen. They
   // join the item, so erasing the item erases them too.
   const runHighlights = useCallback((
     editor: Editor,
     itemId: string,
     strokes: HighlightStroke[],
-    color: HighlightColor,
     meta: BoardArtifactMeta | Record<string, never>,
   ) => {
     const reduce = prefersReducedMotion();
@@ -1412,12 +1461,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           y: minY,
           opacity: reduce ? 1 : 0,
           props: stroke.ring
-            ? { ...common, color: RING_TL[color], size: "m", fill: "none", dash: "solid", isClosed: false }
-            : { ...common, color: HIGHLIGHT_TL[color], size: stroke.size },
-          meta: { ...meta, itemId },
+            ? { ...common, color: MARK, size: "m", fill: "none", dash: "solid", isClosed: false }
+            : { ...common, color: MARK, size: stroke.size },
+          meta: { ...meta, itemId, mark: true },
         } as Parameters<Editor["createShape"]>[0]);
       }, { history: "ignore" });
       host.shapeIds = [...host.shapeIds, id];
+      checkMarkLanded(editor, host, [id]);
       if (reduce) {
         next(k + 1);
         return;
@@ -1444,7 +1494,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       });
     };
     next(0);
-  }, [moveCursor, patchPresence, scheduleCursorHide]);
+  }, [checkMarkLanded, moveCursor, patchPresence, scheduleCursorHide]);
 
   useEffect(() => {
     const timers = scribbleTimersRef.current;
@@ -1527,11 +1577,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         pendingIsPageRef.current = false;
         if (!f) return;
         try {
-          editor.zoomToBounds(f, { targetZoom: 1, inset: isPage ? 0 : 48, animation: { duration: 320 } });
-          if (!isPage && editor.getZoomLevel() < 0.8) {
-            const cam = editor.getCamera();
-            editor.setCamera({ ...cam, z: 0.8 }, { animation: { duration: 160 } });
-          }
+          // One planned move. Animating zoomToBounds and then clamping the zoom
+          // stopped the first move, so the camera zoomed in place instead.
+          const screen = editor.getViewportScreenBounds();
+          const camera = planCamera(f, { w: screen.w, h: screen.h }, { inset: isPage ? 0 : 48, maxZoom: 1, minZoom: isPage ? 0.1 : 0.8 });
+          editor.setCamera(camera, { animation: { duration: 320 } });
         } catch {
           // Editor may be mid-teardown; a missed camera move is harmless.
         }
@@ -2742,8 +2792,14 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const y = colY(col).current;
       createText(editor, text, x, y, { size: "m", font: "draw", color: PENCIL, width: textW });
       // Tag drawn as a box plus its own text: a geo label would grow the box.
+      // It decorates the words, so a strike or ring on them leaves it alone.
+      const beforeTag = currentShapeIdSet(editor);
       createBox(editor, x + usedW + 14, y + 3, 58, 28, "", PENCIL, "solid");
       createText(editor, "you", x + usedW + 14, y + 5, { size: "s", font: "sans", color: PENCIL, width: 58, align: "middle" });
+      const tagShapes = diffStringSet(currentShapeIdSet(editor), beforeTag)
+        .map((sid) => editor.getShape(sid as TLShapeId))
+        .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape));
+      if (tagShapes.length > 0) editor.updateShapes(tagShapes.map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, decor: true } })));
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);
       recordDirectSemanticAction(
@@ -3990,20 +4046,37 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return false;
       const lines = mathLines(editor);
       const idx = resolveEqIndex(lines, target);
+      const meta = currentMeta();
       if (idx < 0) {
         // Not an equation line: ring, underline, or box any item by label
-        // (a student's attempt, a note) with a green marker.
+        // (a student's attempt, a note), drawn once what it marks is written.
         const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
         const b = item ? itemBounds(editor, item) : null;
         if (!item || !b) return false;
-        attachToItemRef.current = item.id;
-        if (style === "circle") {
-          createDrawStroke(editor, undefined, undefined, ringPoints(b, 10), { color: "green", size: "m", dash: "solid", fill: "none", isClosed: false });
-        } else if (style === "underline") {
-          createLineShape(editor, undefined, undefined, [{ x: b.x - 4, y: b.y + b.h + 6 }, { x: b.x + b.w + 4, y: b.y + b.h + 6 }], { color: "green", size: "m", dash: "solid" });
-        } else {
-          createBox(editor, b.x - 8, b.y - 6, b.w + 16, b.h + 12, "", "green", "none", { dash: "dashed" });
-        }
+        enqueue({
+          kind: "action",
+          wait: style === "circle" ? 1100 : 600,
+          run: () => {
+            const host = itemsRef.current.find((i) => i.id === item.id);
+            const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
+            if (!host || !bb) return;
+            focusOn(editor, bb.x - 16, bb.y - 16, bb.w + 32, bb.h + 32);
+            if (style === "circle") {
+              runHighlights(editor, host.id, [{ points: ringPoints(bb, 10), size: "m", duration: 900, ring: true }], meta);
+              return;
+            }
+            const before = currentShapeIdSet(editor);
+            if (style === "underline") {
+              createLineShape(editor, undefined, undefined, [{ x: bb.x - 4, y: bb.y + bb.h + 6 }, { x: bb.x + bb.w + 4, y: bb.y + bb.h + 6 }], { color: MARK, size: "m", dash: "solid" });
+            } else {
+              createBox(editor, bb.x - 8, bb.y - 6, bb.w + 16, bb.h + 12, "", MARK, "none", { dash: "dashed" });
+            }
+            const ids = diffStringSet(currentShapeIdSet(editor), before);
+            markShapes(editor, host, ids, meta);
+            checkMarkLanded(editor, host, ids);
+            revealItem(editor, { ...host, shapeIds: ids }, bb);
+          },
+        });
         recordDirectSemanticAction(
           { type: "highlight_step", step_label: target.step_label, style },
           { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
@@ -4011,7 +4084,16 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         return true;
       }
       const line = lines[idx];
-      editor.updateShapes([{ id: line.shape.id, type: "math", props: { highlight: style } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+      enqueue({
+        kind: "action",
+        wait: 500,
+        run: () => {
+          if (!editor.getShape(line.shape.id)) return;
+          const bb = editor.getShapePageBounds(line.shape.id);
+          if (bb) focusOn(editor, bb.x, bb.y, bb.w, bb.h);
+          editor.updateShapes([{ id: line.shape.id, type: "math", props: { highlight: style } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+        },
+      });
       const b = editor.getShapePageBounds(line.shape.id);
       recordDirectSemanticAction(
         { type: "highlight_step", step_label: target.step_label, step_index: target.step_index, style },
@@ -4025,13 +4107,28 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return false;
       const lines = mathLines(editor);
       const idx = resolveEqIndex(lines, target);
+      const meta = currentMeta();
       if (idx < 0) {
-        // Not an equation line: strike through any item by label in red.
+        // Not an equation line: strike through any item by label, once it is written.
         const item = target.step_label ? resolveItemTarget(itemsRef.current, target.step_label) : null;
         const b = item ? itemBounds(editor, item) : null;
         if (!item || !b) return false;
-        attachToItemRef.current = item.id;
-        createLineShape(editor, undefined, undefined, [{ x: b.x - 6, y: b.y + b.h * 0.55 }, { x: b.x + b.w + 6, y: b.y + b.h * 0.45 }], { color: "red", size: "m", dash: "solid" });
+        enqueue({
+          kind: "action",
+          wait: 600,
+          run: () => {
+            const host = itemsRef.current.find((i) => i.id === item.id);
+            const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
+            if (!host || !bb) return;
+            focusOn(editor, bb.x, bb.y, bb.w, bb.h);
+            const before = currentShapeIdSet(editor);
+            createLineShape(editor, undefined, undefined, [{ x: bb.x - 6, y: bb.y + bb.h * 0.55 }, { x: bb.x + bb.w + 6, y: bb.y + bb.h * 0.45 }], { color: STRIKE, size: "m", dash: "solid" });
+            const ids = diffStringSet(currentShapeIdSet(editor), before);
+            markShapes(editor, host, ids, meta);
+            checkMarkLanded(editor, host, ids);
+            revealItem(editor, { ...host, shapeIds: ids }, bb);
+          },
+        });
         recordDirectSemanticAction(
           { type: "cross_out_step", step_label: target.step_label },
           { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
@@ -4039,7 +4136,16 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         return true;
       }
       const line = lines[idx];
-      editor.updateShapes([{ id: line.shape.id, type: "math", props: { crossOut: true } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+      enqueue({
+        kind: "action",
+        wait: 500,
+        run: () => {
+          if (!editor.getShape(line.shape.id)) return;
+          const bb = editor.getShapePageBounds(line.shape.id);
+          if (bb) focusOn(editor, bb.x, bb.y, bb.w, bb.h);
+          editor.updateShapes([{ id: line.shape.id, type: "math", props: { crossOut: true } }] as unknown as Parameters<Editor["updateShapes"]>[0]);
+        },
+      });
       const b = editor.getShapePageBounds(line.shape.id);
       recordDirectSemanticAction(
         { type: "cross_out_step", step_label: target.step_label, step_index: target.step_index },
@@ -4607,26 +4713,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const shapeIds = diffStringSet(currentShapeIdSet(editor), token.shapes);
       const eqItemIds: string[] = [];
       if (shapeIds.length === 0) return null;
-      const attachTo = attachToItemRef.current;
-      attachToItemRef.current = null;
-      if (attachTo) {
-        const host = itemsRef.current.find((item) => item.id === attachTo);
-        if (host) {
-          host.shapeIds = [...host.shapeIds, ...shapeIds];
-          try {
-            const updates = shapeIds
-              .map((shapeId) => editor.getShape(shapeId as TLShapeId))
-              .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape))
-              .map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, itemId: host.id } }));
-            if (updates.length > 0) editor.updateShapes(updates);
-          } catch {
-            // tagging is a nicety
-          }
-          const hostBox = itemBounds(editor, host);
-          revealItem(editor, { ...host, shapeIds }, hostBox);
-          if (hostBox) focusOn(editor, hostBox.x, hostBox.y, hostBox.w, hostBox.h);
-          return host.id;
-        }
+      // Only drawing adds an item. Marks draw from the queue after the call,
+      // onto the item they mark; anything a mark drew during the call is a bug.
+      if (toolRole(token.tool) !== "draw") {
+        if (process.env.NODE_ENV !== "production") console.warn(`[TldrawCore] ${token.tool} drew ${shapeIds.length} shape(s) during its call; marks belong in the queue`);
+        return null;
       }
       const id = `b${++itemSeqRef.current}`;
       const item: BoardItem = {
@@ -4699,31 +4790,31 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!item) return null;
       const b = itemBounds(editor, item);
       if (!b) return null;
-      focusOn(editor, b.x - 16, b.y - 16, b.w + 32, b.h + 32);
-      const ring = ringPoints(b, 12);
+      const meta = currentMeta();
       if (keep) {
-        // A marker ring is a real stroke, written like everything else, and
-        // it belongs to the item it rings.
-        attachToItemRef.current = item.id;
-        createDrawStroke(editor, undefined, undefined, ring, { color: "orange", size: "m", dash: "solid", fill: "none", isClosed: false });
         recordDirectSemanticAction(
           { type: "highlight_step", step_label: item.label, style: "circle" },
           { shapeIds: [], bounds: { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } },
         );
-      } else {
-        enqueue({
-          kind: "action",
-          wait: 700,
-          run: () => {
-            const bb = itemBounds(editor, item) ?? b;
-            tutorScribble(editor, ringPoints(bb, 12), { duration: 640, hold: 3000, size: 5 });
-          },
-        });
       }
+      enqueue({
+        kind: "action",
+        wait: keep ? 1100 : 700,
+        run: () => {
+          const host = itemsRef.current.find((i) => i.id === item.id);
+          const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
+          if (!host || !bb) return;
+          focusOn(editor, bb.x - 16, bb.y - 16, bb.w + 32, bb.h + 32);
+          // A kept ring is a real sky stroke that belongs to the item; the
+          // laser ring is the tutor's presence and fades.
+          if (keep) runHighlights(editor, host.id, [{ points: ringPoints(bb, 12), size: "m", duration: 900, ring: true }], meta);
+          else tutorScribble(editor, ringPoints(bb, 12), { duration: 640, hold: 3000, size: 5 });
+        },
+      });
       return item;
     },
 
-    highlight(target: string, text: string | undefined, color: HighlightColor) {
+    highlight(target: string, text: string | undefined) {
       const editor = editorRef.current;
       if (!editor) return null;
       const item = resolveItemTarget(itemsRef.current, target);
@@ -4731,10 +4822,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const box = itemBounds(editor, item);
       if (!box) return null;
       const variants = text && text.trim() ? matchVariants(text) : null;
-      const own = item.shapeIds.filter((sid) => {
-        const type = editor.getShape(sid as TLShapeId)?.type;
-        return type !== undefined && type !== "highlight";
-      });
+      const isMark = (sid: string) => {
+        const shape = editor.getShape(sid as TLShapeId);
+        return !shape || shape.type === "highlight" || (shape.meta as { mark?: unknown }).mark === true;
+      };
+      const own = item.shapeIds.filter((sid) => !isMark(sid));
       // Decide now whether the words are on the board, so the result can say so.
       const holder = variants
         ? own.find((sid) => {
@@ -4750,8 +4842,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const meta = currentMeta();
       const swipes = (rects: Rect[]): HighlightStroke[] =>
         rects.slice(0, 4).map((r) => {
-          const pen = highlightSizeFor(r.h);
-          return { points: swipePoints(r, pen.width), size: pen.size as TLDefaultSizeStyle, duration: Math.min(620, 260 + r.w * 1.4) };
+          const swipe = highlightSwipeFor(r);
+          return { points: swipe.points, size: swipe.size as TLDefaultSizeStyle, duration: Math.min(620, 260 + Math.max(r.w, r.h) * 1.4) };
         });
       const draw = () => {
         const host = itemsRef.current.find((i) => i.id === item.id);
@@ -4766,7 +4858,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
             const marker = spec.markers.find((m) => variants.some((v) => normalizeForMatch(m.label).includes(v)));
             if (marker && gb) {
               const at = graphPointBox(marker, spec.bounds, gp.w, gp.h);
-              runHighlights(editor, item.id, swipes([{ x: gb.x + at.x - 16, y: gb.y + at.y - 13, w: 32, h: 26 }]), color, meta);
+              runHighlights(editor, item.id, swipes([{ x: gb.x + at.x - 16, y: gb.y + at.y - 13, w: 32, h: 26 }]), meta);
               return;
             }
           } catch {
@@ -4780,16 +4872,17 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         }
         // A drawing: a marker ring around it.
         if (strokes.length === 0) {
-          const bb = itemBounds(editor, host) ?? box;
+          const bb = itemBounds(editor, host, MARK_BOUNDS) ?? box;
           strokes = [{ points: ringPoints(bb, 10), size: "m", duration: 900, ring: true }];
         }
-        runHighlights(editor, item.id, strokes, color, meta);
+        runHighlights(editor, item.id, strokes, meta);
       };
       enqueue({
         kind: "action",
         wait: part === "text" ? 1300 : textual ? 2400 : 1500,
         run: () => {
-          const bb = itemBounds(editor, item) ?? box;
+          const host = itemsRef.current.find((i) => i.id === item.id);
+          const bb = (host && itemBounds(editor, host, MARK_BOUNDS)) ?? box;
           const moving = !rectVisible(editor, bb);
           focusOn(editor, bb.x, bb.y, bb.w, bb.h);
           if (!moving) {
@@ -4948,6 +5041,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       <Tldraw
         onMount={handleMount}
+        themes={BOARD_THEMES}
         autoFocus={autoFocus}
         hideUi
         components={TLDRAW_COMPONENTS}

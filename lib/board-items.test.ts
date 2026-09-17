@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBoardItems, highlightSizeFor, itemLabelFrom, matchVariants, mergeLineRects, normalizeForMatch, swipePoints, parseTargetList, resolveItemTarget, ringPoints, type BoardItem } from "./board-items";
+import { formatBoardItems, highlightSizeFor, highlightSwipeFor, itemLabelFrom, matchVariants, mergeLineRects, normalizeForMatch, swipePoints, parseTargetList, resolveItemTarget, ringPoints, RING_OVERLAP, toolRole, type BoardItem } from "./board-items";
 
 const item = (id: string, tool: string, label: string, owner: "tutor" | "student" = "tutor"): BoardItem => ({
   id, tool, label, shapeIds: [`shape:${id}`], eqItemIds: [], owner, createdAt: 0,
@@ -43,8 +43,50 @@ test("the summary lists ids, kinds, and owners", () => {
 test("target lists split on pipes and commas; rings close on themselves", () => {
   assert.deepEqual(parseTargetList("b3|b4, b5"), ["b3", "b4", "b5"]);
   const pts = ringPoints({ x: 0, y: 0, w: 100, h: 40 });
-  assert.equal(pts.length, 45);
-  assert.ok(pts.every((p) => p.x > -30 && p.x < 130 && p.y > -30 && p.y < 70));
+  assert.equal(pts.length, 49);
+  assert.ok(pts.every((p) => p.x > -40 && p.x < 140 && p.y > -40 && p.y < 80));
+});
+
+test("rings enclose every corner of wide, square and tall items", () => {
+  const inside = (pt: { x: number; y: number }, poly: Array<{ x: number; y: number }>) => {
+    let hit = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const a = poly[i];
+      const b = poly[j];
+      if (a.y > pt.y !== b.y > pt.y && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x) hit = !hit;
+    }
+    return hit;
+  };
+  for (const [w, h] of [[40, 40], [100, 40], [300, 40], [560, 110], [800, 40], [40, 300]]) {
+    const pts = ringPoints({ x: 0, y: 0, w, h }, 10);
+    // One full turn (the ring overlaps its start a little past that).
+    const loop = pts.slice(0, Math.floor((pts.length * 2 * Math.PI) / (2 * Math.PI + RING_OVERLAP)));
+    for (const corner of [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: 0, y: h }, { x: w, y: h }]) {
+      assert.ok(inside(corner, loop), `${w}×${h}: corner ${corner.x},${corner.y} is outside the ring`);
+    }
+    // Snug: no more than about a tenth wider than the item plus its padding.
+    const widest = Math.max(...pts.map((p) => p.x)) - Math.min(...pts.map((p) => p.x));
+    assert.ok(widest <= (w + 20) * 1.12 + 4, `${w}×${h}: ring is needlessly wide (${Math.round(widest)} for ${w})`);
+  }
+});
+
+test("marks, erasing, looking and memory never count as drawing", () => {
+  for (const mark of ["point_at", "circle_item", "highlight", "highlight_step", "cross_out_step"]) assert.equal(toolRole(mark), "mark");
+  assert.equal(toolRole("erase_older"), "erase");
+  assert.equal(toolRole("look_at_board"), "look");
+  assert.equal(toolRole("remember_about_student"), "memory");
+  assert.equal(toolRole("draw_fraction"), "draw");
+  assert.equal(toolRole("draw_desmos"), "draw");
+});
+
+test("a stacked fraction gets an upright swipe as wide as the text; a word gets a flat one", () => {
+  const tall = highlightSwipeFor({ x: 200, y: 100, w: 16, h: 50 });
+  assert.ok(tall.points.every((pt) => pt.x === 208), "vertical");
+  assert.ok(tall.width <= 27, `pen fits the fraction's width, got ${tall.width}`);
+  assert.ok(Math.min(...tall.points.map((p) => p.y)) >= 100 && Math.max(...tall.points.map((p) => p.y)) <= 150);
+  const wide = highlightSwipeFor({ x: 100, y: 50, w: 80, h: 30 });
+  const ys = wide.points.map((p) => p.y);
+  assert.ok(Math.max(...ys) - Math.min(...ys) <= 2.01, "flat");
 });
 
 test("long labels keep their caption", async () => {

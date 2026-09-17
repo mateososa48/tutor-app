@@ -94,7 +94,11 @@ export type BoardAgentAction = {
     | "light-green"
     | "light-red"
     | "red"
-    | "white";
+    | "white"
+    // The board's own colours (components/board/board-theme.ts).
+    | "sky"
+    | "sky-deep"
+    | "pencil";
   fill?: "none" | "semi" | "solid" | "pattern" | "fill" | "lined-fill";
   font?: "draw" | "sans" | "serif" | "mono";
   dash?: "draw" | "solid" | "dashed" | "dotted";

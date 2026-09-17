@@ -25,7 +25,7 @@ import {
   isSolidFigure,
   FIGURE_KINDS,
 } from "@/lib/board-diagrams";
-import { HIGHLIGHT_COLORS, parseTargetList, type HighlightColor } from "@/lib/board-items";
+import { parseTargetList } from "@/lib/board-items";
 import { parsePlace, type PlaceRequest } from "@/lib/board-layout";
 import { ensureRelation, graphLatexProblem, toDesmosLatex } from "@/lib/desmos-graph";
 import { latexToPlain } from "@/lib/latex-plain";
@@ -83,9 +83,6 @@ function countLines(body: string): number {
   return body.split(/\n|\s\|\s/).map((l) => l.trim()).filter(Boolean).length;
 }
 
-function pickHighlightColor(value: string | undefined): HighlightColor | undefined {
-  return HIGHLIGHT_COLORS.find((c) => c === value);
-}
 
 function pickSize(value: string | undefined): "heading" | "body" | undefined {
   if (value === "heading" || value === "body") return value;
@@ -890,16 +887,14 @@ function dispatchInner(
       if (isToolError(target)) return target;
       const text = opt(args, "text");
       if (text.error) return text.error;
-      const colorArg = opt(args, "color");
-      if (colorArg.error) return colorArg.error;
-      const color = pickHighlightColor(colorArg.value) ?? "yellow";
+      // One sky highlighter (Sept 16): an old `color` argument is ignored.
       if (!board.highlight) return fail("Highlighting is not available on this board.");
-      const res = board.withDirectMeta({ owner: "tutor" }, () => board.highlight!(target, text.value, color));
+      const res = board.withDirectMeta({ owner: "tutor" }, () => board.highlight!(target, text.value));
       if (!res) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
       if (text.value && res.part === "item") {
-        return ok(`Couldn't find "${text.value}" written in ${res.item.id}, so the whole item (${res.item.label}) is highlighted in ${color}`);
+        return ok(`Couldn't find "${text.value}" written in ${res.item.id}, so the whole item (${res.item.label}) is marked`);
       }
-      return ok(text.value ? `Highlighted "${text.value}" in ${res.item.id} (${res.item.label}) in ${color}` : `Highlighted ${res.item.id} (${res.item.label}) in ${color}`);
+      return ok(text.value ? `Highlighted "${text.value}" in ${res.item.id} (${res.item.label})` : `Marked ${res.item.id} (${res.item.label})`);
     }
 
     case "circle_item": {
@@ -911,7 +906,7 @@ function dispatchInner(
       if (isToolError(keep)) return keep;
       const item = board.withDirectMeta({ owner: "tutor" }, () => board.circleItem(target, keep === true));
       if (!item) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
-      return ok(keep ? `Ringed ${item.id} (${item.label}) in orange.` : `Laser ring around ${item.id} (${item.label}), fading in a few seconds.`);
+      return ok(keep ? `Ringed ${item.id} (${item.label}); the ring stays.` : `Laser ring around ${item.id} (${item.label}), fading in a few seconds.`);
     }
 
     case "erase_items": {

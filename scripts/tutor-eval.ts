@@ -347,8 +347,14 @@ async function main() {
         if (verbose) console.log(`  student: ${turn.student}\n  tutor:   ${turn.tutor}\n  tools:   ${turn.tools.map((t) => t.name).join(", ") || "(none)"}\n`);
         if (i < turnsPer - 1) say = await studentLine(ai, studentModel, p, turns);
       }
-      const verdict = await judge(ai, judgeModel, p, turns);
-      if (!verdict) console.log("  (judge returned no parseable verdict)");
+      // A judge outage (503s for minutes) must not throw away the tutor's turns.
+      let verdict: Judgement | null = null;
+      try {
+        verdict = await judge(ai, judgeModel, p, turns);
+        if (!verdict) console.log("  (judge returned no parseable verdict)");
+      } catch (err) {
+        console.log(`  (judge unavailable: ${err instanceof Error ? err.message.slice(0, 160) : String(err)})`);
+      }
       if (verbose && verdict) {
         for (const v of verdict.turns) if (v.reason && v.reason !== "fine") console.log(`  turn ${v.turn}: ${v.reason}`);
         console.log(`  outcome: ${verdict.outcome_met ? "met" : "missed"} — ${verdict.outcome_reason}`);

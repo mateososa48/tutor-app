@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { SKY, SKY_DEEP } from "@/components/board/board-theme";
 import { HTMLContainer, Rectangle2d, ShapeUtil, T, type RecordProps, type TLBaseShape } from "tldraw";
 import katex from "katex";
 import { latexToPlain } from "@/lib/latex-plain";
@@ -41,8 +42,9 @@ declare module "@tldraw/tlschema" {
 export type TLMathShape = TLBaseShape<"math", TLMathShapeProps>;
 
 export const MATH_FONT_PX = 23.2; // 1.45rem at the root 16px
-export const MATH_CORRECT_HEX = "#099268";
-export const MATH_WRONG_HEX = "#e03131";
+// Marks on a line are the tutor's sky pen (Sept 16); strikes use the deeper sky.
+export const MATH_CORRECT_HEX = SKY;
+export const MATH_WRONG_HEX = SKY_DEEP;
 const ANNOTATION_COLOR = "oklch(0.55 0.005 220)";
 
 function escapeHtml(s: string): string {

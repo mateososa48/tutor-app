@@ -460,11 +460,18 @@ body {
   50%      { transform: translate3d(4%, 3%, 0) scale(1.08); }
 }
 
+/* Transitions are switched off, not shortened: every element's
+   transition-property defaults to `all`, so even 0.01ms turned each style
+   change into a transition, and code that restyles an element and reads its
+   size at once got the old size. tldraw measures all board text that way, so
+   under reduced motion every note measured one line tall and the board
+   overlapped (Sept 16 2026). Nothing here waits for transitionend. */
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
   }
   html { scroll-behavior: auto !important; }
 }

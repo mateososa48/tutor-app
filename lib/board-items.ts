@@ -159,9 +159,33 @@ export function formatBoardItems(items: BoardItem[], title?: string, limit = 10,
   return `${title ? `"${title}". ` : ""}${items.length} item${items.length === 1 ? "" : "s"}${hidden > 0 ? ` (oldest ${hidden} not listed)` : ""}: ${list}.${free}${page} Refer to items by id (point_at, highlight, circle_item, erase_items).`;
 }
 
+// ── What a tool does to the board ──────────────────────────────────────────
+// Only drawing tools add an item. A mark (pointing, a ring, a highlight, a
+// strike) belongs to the item it marks: a highlight that became its own item
+// was moved into free space and drawn around nothing (Sept 15 recording).
+export type ToolRole = "draw" | "mark" | "erase" | "look" | "memory";
+
+const TOOL_ROLES: Record<string, ToolRole> = {
+  point_at: "mark",
+  circle_item: "mark",
+  highlight: "mark",
+  highlight_step: "mark",
+  cross_out_step: "mark",
+  erase_items: "erase",
+  erase_older: "erase",
+  clear_whiteboard: "erase",
+  look_at_board: "look",
+  look_at_worksheet: "look",
+  remember_about_student: "memory",
+  check_answer: "memory",
+  record_attempt: "memory",
+};
+
+export function toolRole(name: string): ToolRole {
+  return TOOL_ROLES[name] ?? "draw";
+}
+
 // ── Highlighter ─────────────────────────────────────────────────────────────
-export type HighlightColor = "yellow" | "green" | "pink" | "blue";
-export const HIGHLIGHT_COLORS: readonly HighlightColor[] = ["yellow", "green", "pink", "blue"];
 
 /** Text as it compares on the board: no spaces, one minus sign, one dot. */
 export function normalizeForMatch(text: string): string {
@@ -228,6 +252,35 @@ export function swipePoints(r: ItemBounds, strokeWidth: number): Array<{ x: numb
   });
 }
 
+export type HighlightSwipe = { points: Array<{ x: number; y: number }>; size: HighlightSize; width: number };
+
+/**
+ * The highlighter stroke for one rectangle of text. Short wide text gets a
+ * horizontal swipe as tall as the line. A tall narrow target (a stacked
+ * fraction, one digit over another) gets a vertical swipe as wide as the text:
+ * a horizontal stroke tall enough to cover it spilled over the signs beside it.
+ */
+export function highlightSwipeFor(r: ItemBounds): HighlightSwipe {
+  if (r.h > r.w * 1.3) {
+    const pen = highlightSizeFor(Math.max(r.w, 12));
+    const midX = r.x + r.w / 2;
+    const size = pen.width + 1;
+    let y0 = r.y + pen.width / 2 - 4;
+    let y1 = r.y + r.h - pen.width / 2 + 4;
+    const minRun = (size * 2) / 3 + 4;
+    if (y1 - y0 < minRun) {
+      const cy = r.y + r.h / 2;
+      y0 = cy - minRun / 2;
+      y1 = cy + minRun / 2;
+    }
+    const run = y1 - y0;
+    const n = Math.max(2, Math.ceil(run) + 1);
+    return { size: pen.size, width: pen.width, points: Array.from({ length: n }, (_, i) => ({ x: midX, y: y0 + (run * i) / (n - 1) })) };
+  }
+  const pen = highlightSizeFor(r.h);
+  return { size: pen.size, width: pen.width, points: swipePoints(r, pen.width) };
+}
+
 /** Glyph rectangles merged into one rectangle per line of text, or into one overall. */
 export function mergeLineRects(rects: ItemBounds[], single = false): ItemBounds[] {
   const union = (a: ItemBounds, b: ItemBounds): ItemBounds => {
@@ -249,19 +302,35 @@ export function mergeLineRects(rects: ItemBounds[], single = false): ItemBounds[
 
 // A hand-drawn ring around a box: an ellipse with a slight wobble, starting
 // at the upper left and overlapping itself a little at the end.
-export function ringPoints(b: ItemBounds, pad = 12, n = 44): Array<{ x: number; y: number }> {
+/** How far a ring runs past its start, like a hand closing a loop (radians). */
+export const RING_OVERLAP = 0.35;
+
+export function ringPoints(b: ItemBounds, pad = 12, n = 48): Array<{ x: number; y: number }> {
+  // A squarish oval (superellipse, exponent 6) with a slight hand wobble. Its
+  // axes grow until even the wobble's inward dips clear the box's corners: a
+  // plain ellipse cut through the corners of wide items, and a rounder shape
+  // had to grow so much it ran into the neighbours.
+  const EXP = 6;
+  const WOBBLE_IN = 1 - 0.02 - 0.01;
   const cx = b.x + b.w / 2;
   const cy = b.y + b.h / 2;
-  const rx = b.w / 2 + pad;
-  const ry = b.h / 2 + pad;
+  let rx = b.w / 2 + pad;
+  let ry = b.h / 2 + pad;
+  const reach = Math.pow((b.w / 2) / (rx * WOBBLE_IN), EXP) + Math.pow((b.h / 2) / (ry * WOBBLE_IN), EXP);
+  if (reach > 1) {
+    const grow = Math.pow(reach, 1 / EXP);
+    rx *= grow;
+    ry *= grow;
+  }
   const pts: Array<{ x: number; y: number }> = [];
   const start = -2.35; // radians, upper left
-  const sweep = Math.PI * 2 + 0.55;
+  const sweep = Math.PI * 2 + RING_OVERLAP;
+  const shape = (v: number) => Math.sign(v) * Math.pow(Math.abs(v), 2 / EXP);
   for (let i = 0; i <= n; i++) {
     const p = i / n;
     const a = start + sweep * p;
-    const wobble = 1 + 0.035 * Math.sin(p * 17.3) + 0.02 * Math.cos(p * 7.1);
-    pts.push({ x: cx + rx * wobble * Math.cos(a), y: cy + ry * wobble * Math.sin(a) });
+    const wobble = 1 + 0.02 * Math.sin(p * 17.3) + 0.01 * Math.cos(p * 7.1);
+    pts.push({ x: cx + rx * wobble * shape(Math.cos(a)), y: cy + ry * wobble * shape(Math.sin(a)) });
   }
   return pts;
 }

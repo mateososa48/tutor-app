@@ -696,13 +696,12 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "highlight",
     description:
-      "Run a highlighter over something on the board while you talk about it: one term in an equation, a number in a table, a label on a number line or figure, or a whole item. Use it often, whenever you say 'this', 'notice', or 'look at'. Colours mean something: yellow = look here, green = right or what works, pink = the mistake or the tricky part, blue = the step we are on. Highlights stay until erased.",
+      "Run your sky-blue highlighter over something on the board while you talk about it: one term in an equation, a number in a table, a label on a number line or figure, or a whole item. Use it whenever you say 'this', 'notice', or 'look at'. There is one colour, so say what the mark means ('this is the step we fix'). Highlights stay until erased.",
     parameters: {
       type: "object",
       properties: {
         target: { type: "string", description: "Item id ('b3'), label words, or 'last'." },
         text: { type: "string", description: "The exact part to highlight as it reads on the board, e.g. '2x', '3/4', '11'. Leave it out to highlight the whole item." },
-        color: { type: "string", enum: ["yellow", "green", "pink", "blue"], description: "Default yellow." },
       },
       required: ["target"],
     },
@@ -710,12 +709,12 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
   {
     name: "circle_item",
     description:
-      "Draw a ring around something on the board to mark it: the part a question is about, the line that matters, a mistake. By default a laser ring that fades after a few seconds; keep=true leaves an orange ring on the board.",
+      "Draw a ring around something on the board to mark it: the part a question is about, the line that matters, the answer once they get it. By default a laser ring that fades after a few seconds; keep=true leaves a sky ring on the board.",
     parameters: {
       type: "object",
       properties: {
         target: { type: "string", description: "Item id ('b3'), label words, or 'last'." },
-        keep: { type: "boolean", description: "true = permanent orange ring. Default false (fades)." },
+        keep: { type: "boolean", description: "true = a ring that stays (use it to mark a final answer). Default false (fades)." },
       },
       required: ["target"],
     },

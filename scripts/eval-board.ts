@@ -2,14 +2,11 @@
 // items and the problem title but draws nothing. Marks (pointing, rings,
 // highlights) never become items: they belong to the item they mark, which is
 // how the real board works since the Sept 16 marking fix.
-import { formatBoardItems, isHeadingItem, itemLabelFrom, resolveItemTarget, type BoardItem } from "../lib/board-items";
+import { formatBoardItems, isHeadingItem, itemLabelFrom, resolveItemTarget, toolRole, type BoardItem } from "../lib/board-items";
 import type { ItemToken, WhiteboardHandle } from "../components/TldrawCore";
 
-/** Tools that mark, look, erase or remember: they never add an item to the board. */
-export const NON_CREATING_TOOLS = new Set([
-  "point_at", "circle_item", "highlight", "highlight_step", "cross_out_step",
-  "erase_items", "erase_older", "look_at_board", "look_at_worksheet", "clear_whiteboard", "remember_about_student",
-]);
+/** Tools that mark, look, erase or remember: they never add an item to the board (same rule as the app). */
+export const NON_CREATING_TOOLS = { has: (name: string) => toolRole(name) !== "draw" };
 
 export type FakeBoard = {
   handle: WhiteboardHandle;

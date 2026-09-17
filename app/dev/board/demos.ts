@@ -183,17 +183,17 @@ const highlight: DemoCall[] = [
   { name: "start_new_problem", args: { title: "Solving 2x + 3 = 11" } },
   { name: "draw_equation_step", args: { latex: "2x + 3 = 11" } },
   { name: "draw_balance", args: { left: "x | x | 3", right: "11", label: "2x + 3 = 11" } },
-  { name: "highlight", args: { target: "b2", text: "+ 3", color: "yellow" } },
+  { name: "highlight", args: { target: "b2", text: "+ 3" } },
   { name: "draw_equation_step", args: { latex: "2x = 8", annotation: "subtract 3 from both sides" } },
-  { name: "highlight", args: { target: "b4", text: "8", color: "green" } },
+  { name: "highlight", args: { target: "b4", text: "8" } },
   { name: "add_student_attempt", args: { text: "so x = 16?" } },
-  { name: "highlight", args: { target: "b5", text: "16", color: "pink" } },
+  { name: "highlight", args: { target: "b5", text: "16" } },
   { name: "draw_equation_step", args: { latex: "x = 4", annotation: "divide both sides by 2" } },
-  { name: "highlight", args: { target: "b6", color: "blue" } },
+  { name: "highlight", args: { target: "b6" } },
   { name: "add_number_line", args: { min: -2, max: 6, points: "4:x = 4" } },
-  { name: "highlight", args: { target: "b7", text: "4", color: "yellow" } },
-  { name: "highlight", args: { target: "b3", color: "yellow" } },
-  { name: "highlight", args: { target: "b2", text: "11", color: "green" } },
+  { name: "highlight", args: { target: "b7", text: "4" } },
+  { name: "highlight", args: { target: "b3" } },
+  { name: "highlight", args: { target: "b2", text: "11" } },
 ];
 
 // Desmos graphs (Sept 15 2026): every graph tool, plain math converted, a
@@ -208,7 +208,27 @@ const graphs: DemoCall[] = [
   { name: "add_function_graph", args: { expression: "2x-1", extra_expressions: "y>2x-1; x^2+y^2=9; x=3", x_min: -5, x_max: 5, label: "an inequality, a circle, a vertical line" } },
   { name: "plot_points", args: { points: "(1,1):A, (4,1):B, (4,3):C", x_min: -1, x_max: 6, y_min: -1, y_max: 5, connect: true, label: "triangle ABC" } },
   { name: "add_function_graph", args: { expression: "sqrt(x)", x_min: -1, x_max: 9, label: "sqrt(x), written plainly" } },
-  { name: "highlight", args: { target: "b2", text: "vertex", color: "yellow" } },
+  { name: "highlight", args: { target: "b2", text: "vertex" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, math, icons, icons2, eqs, layout, highlight, graphs, all };
+// Marks (Sept 16): every mark lands on its item and in sky, whatever the
+// queue is doing. Play it at &step=6000 too: an idle queue used to draw a
+// highlight inside the tool call and move it into empty space.
+const rings: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Marks land on what they mark" } },
+  { name: "add_text_note", args: { text: "A long line of words that runs most of the way across the board page" } },
+  { name: "circle_item", args: { target: "b2", keep: true } },
+  { name: "circle_item", args: { target: "b2", keep: true } },
+  { name: "draw_equation_step", args: { latex: "\\frac{3}{4} + \\frac{1}{4} = 1", annotation: "same size pieces" } },
+  { name: "circle_item", args: { target: "last", keep: true } },
+  { name: "highlight", args: { target: "b3", text: "3/4" } },
+  { name: "add_student_attempt", args: { text: "3/4 + 1/4 = 4/8" } },
+  { name: "highlight_step", args: { step_label: "4/8", style: "box" } },
+  { name: "cross_out_step", args: { step_label: "4/8" } },
+  { name: "draw_figure", args: { figure: "rectangle", side_labels: "8 cm | 3 cm" } },
+  { name: "highlight", args: { target: "b5" } },
+  { name: "circle_item", args: { target: "b5" } },
+  { name: "highlight_step", args: { step_label: "long line", style: "underline" } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, highlight, graphs, all };
