@@ -180,12 +180,8 @@ export type GraphSource =
 /** A variable the student can drag in Explore. */
 export type GraphSlider = { name: string; value: number; min: number; max: number; step?: number };
 
-/** What the student changed in Explore, drawn back onto the board. */
-export type GraphStudentState = {
-  sliders?: Record<string, number>;
-  points?: Record<string, { x: number; y: number }>;
-  bounds?: GraphBounds;
-};
+/** What the student changed in Explore (now drawn on the board), in words for the tutor. */
+export type GraphStudentState = { summary: string };
 
 export type GraphSpec = {
   v: 2;

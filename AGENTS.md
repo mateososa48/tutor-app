@@ -48,7 +48,7 @@ A live voice tutor for students in grades 5–12 with a shared whiteboard. The s
   - **Without Desmos.** When `desmosConfigured()` is false (a production build with no key), the prompt keeps the old `add_function_graph` / `plot_points` / dot-plot lines. Both builders take `PromptOptions { desmos?: boolean }`, defaulting to `desmosConfigured()`.
   - **Examples.** In `examplesSection(desmos)`, Example 5 is a right answer: `check_answer`, the attempt, a kept ring, and a two-line `draw_desmos` (`draw_equation_step` without Desmos). Example 9 is "what?": point at the item and ask a smaller question.
   - **`add_callout`.** It keeps a question that follows a praise sentence (`withoutPraise` in `lib/board-content-rules.ts`): "Exactly. What is 11 minus 3?" is written as "What is 11 minus 3?".
-  - **Sizes.** The backend prompt ceiling is 19,600, up from 19,200; the test profile now measures 19,543. The Gemini prompt has its first ceiling, 20,800, and measures 20,641. Without a profile: backend 19,280 (18,963 without Desmos), Gemini 20,332. The whiteboard tool schema went from 41 tools at 44,085 characters to 37 at 38,815, under the 39,000 test.
+  - **Sizes.** The backend prompt ceiling is 19,600, up from 19,200. With the test profile the backend prompt measures 19,594 after Explore's clause (19,574 before it; an earlier note said 19,543, which was stale), six under the ceiling, so the next rule has to pay for itself. The Gemini prompt has its first ceiling, 20,800, and measures 20,692. Without a profile: backend 19,300 (18,951 without Desmos), Gemini 20,352. The whiteboard tool schema went from 41 tools at 44,085 characters to 37 at 38,815, under the 39,000 test.
   - **Eval.** `board-eval --set sessions` (flash-lite, 6 scenarios × 6 turns), Sept 16 baseline → Sept 17:
 
     | Measure | Sept 16 | Sept 17 |
@@ -193,6 +193,46 @@ Mateo found the old graphs "not good" (a fixed 300 × 220 box, numbers only at t
   - **Axis numbers need a tall picture (Sept 17).** Desmos draws no axis numbers in a screenshot under about 260px tall (250 has none, 260 has them), whatever its width or the calculator's own size; number lines, dot and box plots, bar charts and histograms therefore write their own. Numbers pinned against the picture's edge turn grey, so a data view keeps 34px under its x-axis and 40px beside its y-axis.
   - **Text size.** The calculator's `fontSize` option changes nothing in screenshots; a label's `labelSize` does (decimals like "1.25" work), and stacked fractions scale with it.
   - **Label geometry (measured Sept 17 on the board's 420 × 315 picture).** Labels are about 6.8px a character and 17px tall ("rise 4" is 37 × 17), set about 6px from their point on the side `labelOrientation` names; with the default orientation Desmos picks a side itself (left, right, above or below, whichever is free). In the SVG each label is a `g.dcg-svg-label`; its `<title>` sits on the point's own group.
+
+## Explore: live Desmos graphs (Sept 17 2026)
+Mateo asked for the Desmos graphs to be interactive ("so the student can click around, change things"). A graph on the board stays a picture; Explore opens it as a live calculator.
+- **The button.** Graphs of kind function, points, axes and free (`isExplorable` in `lib/desmos-explore.ts`) get an "Explore" pill in their top right corner once they are drawn and written in (`ExploreButtons` in TldrawCore). The pill is 28px inside a 44px target, icon only under 640px or on a small graph, and sits in the part of the graph that is on screen. Number lines, charts, figures and data plots get none: they are pieces laid out in pixels.
+  - **Its own layer.** The pills live in a layer beside tldraw at z-index 5, not in tldraw's `InFrontOfTheCanvas`. tldraw's container is not isolated, so its in-front layer (z-index 250) painted the pills over the panel and would paint them over the dock; isolating the container instead would let the dock cover the tldraw watermark on phones.
+  - **Who shows them.** Pages opt in with `onExplore` (the session page, `/dev/board?explore=1`); the landing's board has none.
+  - **Pressed.** "Exploring" keeps ink text on the sky fill, with a deep-sky border: sky text on the fill measured 3.6:1.
+- **The panel** (`components/session/GraphExplorer.tsx`), never modal: the student keeps talking and the board stays usable.
+  - **Laptop.** A dialog over the graph it came from, placed by `lib/explore-panel.ts` (pure, tested): over the whole graph clear of the chips and the dock column; else reaching into that column, still above the dock; else beside the graph. It is 340px wider than the graph for Desmos's list (560 to 800px), grows out of the graph in 220ms (150ms out), and only fades under reduced motion.
+  - **Phone** (under 768px, `useIsMobile`). A vaul bottom sheet (`modal={false}`, `handleOnly`) under the session chip; below 450px Desmos puts its list under the graph. vaul's Title and Description label the sheet with their own ids: passing any `id`, even `undefined`, breaks that.
+  - **Header.** "Explore · caption" (the graph's caption, else its first line), one line of what to do (`exploreInvite`: "Drag the m and b sliders to see what they change."), Reset (disabled until something changed) and Close.
+  - **Footer.** What the tutor has seen: "Your tutor will see what you change.", "…will see this when you pause.", "…has seen your changes.", or "Close this to keep your changes on the board." when the session cannot tell the tutor.
+  - **States.** A faint grid while Desmos starts; "The live graph didn't open." with Try again; "Your tutor erased this graph." with Close.
+  - **Keys.** Escape inside a Desmos math field leaves the field; Escape again closes, and focus goes back to the graph's button. Typing in Desmos leaves tldraw's tool alone.
+- **The live calculator.** One at a time, destroyed on close; in development `window.__chalkExplore` is the live calculator.
+  - **What it shows.** `exploreItems(spec)` hands it the graph's items with the scaffolding (slope triangles, labels) marked `secret`, and leaves out the slider caption. A graph of points becomes named draggable points `P_{i}` that its polygon follows, and draw_desmos's loose points can be dragged.
+  - **Options.** The list, zoom buttons and keypad; no settings menu, links, folders, notes, images or actions; accent #1d7ee6.
+  - **Bounds.** `fitExploreBounds` keeps the board picture's proportions, so a slope looks as steep as on the board, and `setDefaultState` makes Desmos's own reset return to the tutor's graph.
+- **What the tutor hears** (`components/session/useGraphExplore.ts`, `lib/explore-report.ts`).
+  - **What changed.** Every change is compared with where the graph started (`snapshotOf`, `diffExplore`, `describeExploreChanges`), for example "moved m from 1 to 3; moved C from (4, 3) to (5, 4); added y = -x". Undoing everything reports "put the graph back the way it started".
+  - **When.** A report is a session event, and the tutor answers it, so it waits: 2.5s after the last change, at least 8s after the last report, and only while nobody is talking (the tutor silent for 1.5s and neither thinking nor writing, the student silent for 2s).
+  - **How.** First a 640px JPEG of the live graph (`sendImageFrame`, at least a second after other pictures; GPT-Live gets it with a caption), then the event: `[Explore b2: the student moved m from 1 to 3. They are still exploring; a picture of their graph came with this. React to what they found in a sentence, and ask what they notice.]`.
+  - **On close.** Whatever the tutor has not heard goes out at the next quiet moment, after a fresh board picture, and is dropped after 30s.
+  - **Recording.** All of it is recorded as `live.debug` kind `explore` (opened, report, report_final, closed, report_dropped).
+- **The board keeps the student's version** (`applyExploreSnapshot`, then `applyGraphSpec` on the handle).
+  - **What carries over.** Slider values (and the caption), moved points (and their polygon), edited and removed lines, and the student's own lines in pencil grey as `student1`, `student2`… (numbered after lines from earlier visits). The old picture stays up until the new one is drawn.
+  - **What the tutor reads.** `studentState.summary` keeps the changes across visits and `[Board: …]` shows them, for example `[the student changed it in Explore: moved m from 1 to 3; added y=-x]`. A graph with sliders or points shows `[Explore: sliders m, b]`.
+  - **Erased while open.** If the tutor erases the graph during Explore, nothing is applied.
+- **Prompt.** One clause for Desmos builds: sliders "show what a number changes: ask them to drag it in Explore". The `draw_desmos` description also says the student can drag sliders in Explore.
+- **Both voice stacks** send reports (`sendStudentEvent` and `sendImageFrame` on `TutorClient`). Neither has been tried in a live session yet.
+- **Free QA.** `/dev/board?demo=explore&explore=1` shows a slider graph, a triangle of points and a number line with no button. Reports go to the log, and `&tutor=off` shows a session that cannot tell the tutor.
+- **Checked headless at 1440 and 390 (Sept 17).**
+
+  | Measure | Laptop | Phone |
+  |---|---|---|
+  | Button target | 101×44 | 44×44 |
+  | Panel | 760×547 | sheet 390×784 |
+  | Live graph | 442×442 | 388×273, list below |
+
+  Clicking a button neither pans nor selects. The desktop panel only fades under reduced motion.
 
 ## Whiteboard layout (Sept 14 2026; sections and pages Sept 16)
 Mateo found the tutor used the board "like a list" (everything stacked in one or two fixed columns) and kept it in the middle. The fixed-column layout is still how tools draw, but the result is moved:

@@ -9,9 +9,12 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useState,
 } from "react";
 import { Tldraw, renderPlaintextFromRichText, type TLComponents } from "tldraw";
-import { Editor, createShapeId, toRichText } from "@tldraw/editor";
+import { Editor, createShapeId, toRichText, useValue } from "@tldraw/editor";
+import { SlidersHorizontal } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { InstancePresenceRecordType, type TLInstancePresence, type TLShapeId } from "@tldraw/tlschema";
 import {
   formatBoardItems,
@@ -38,6 +41,7 @@ import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
 import { GraphShapeUtil, type TLGraphShape, type TLGraphShapeProps } from "@/components/board/GraphShape";
 import { desmosAvailable, desmosFailure, desmosStatus, devParam, renderDesmosGraph } from "@/components/board/desmos-renderer";
 import { buildBarChartGraph } from "@/lib/desmos-bar-chart";
+import { exploreHint, hasExploreControls, isExplorable } from "@/lib/desmos-explore";
 import { desmosPictureTools } from "@/lib/desmos-config";
 import { buildFigureGraph, DESMOS_FIGURES } from "@/lib/desmos-figure";
 import { buildNumberLineGraph } from "@/lib/desmos-number-line";
@@ -384,6 +388,10 @@ export interface WhiteboardHandle {
   desmosFor?(tool: string, figure?: string): boolean;
   /** A Desmos picture from a spec the caller builds with the pens it is handed (draw_desmos, draw_data_plot). */
   drawGraph?(build: (colors: string[]) => GraphSpec, opts: { pens: number; label?: string; column?: "left" | "right"; summary?: string }): void;
+  /** A graph item as it is now (its spec and its box on screen), or null once it is gone. For Explore. */
+  getGraph?(itemId: string): ExploreTarget | null;
+  /** Draw a graph item again from a new spec (the student's version from Explore). False when it is gone. */
+  applyGraphSpec?(itemId: string, spec: GraphSpec): boolean;
 }
 
 /** `content`: what the call writes or draws, fingerprinted, so a later call can tell it is already up. */
@@ -580,6 +588,107 @@ function PlainBackground() {
   return <div style={{ position: "absolute", inset: 0, backgroundColor: "#ffffff" }} />;
 }
 
+// ── Explore (Sept 17 2026) ──────────────────────────────────────────────────
+// A graph the student can open live (lib/desmos-explore.ts) gets an Explore
+// button in its top right corner. The buttons are real buttons in a layer of
+// their own beside tldraw, following the camera: clicks never reach the
+// canvas, and tldraw leaves keys alone while a button has focus. The layer
+// sits at z-index 5, above the canvas and under the page's captions, dock and
+// panels. (tldraw's in-front layer is z-index 250 in the page's stacking
+// context, which put the buttons over the Explore panel and would put them
+// over the dock; tldraw's container is not isolated, and isolating it would
+// let the dock cover the tldraw watermark on phones.) Pages without Explore
+// (the landing page) get none.
+
+/** A graph item opened in Explore: its spec now, and its box on screen (px, relative to the board). */
+export type ExploreTarget = {
+  itemId: string;
+  label: string;
+  spec: GraphSpec;
+  rect: { x: number; y: number; w: number; h: number };
+};
+
+// Parsing a spec on every camera move adds up; the answer changes only with the spec.
+const explorableBySpec = new Map<string, boolean>();
+function explorableSpecText(text: string, size: GraphSize): boolean {
+  let known = explorableBySpec.get(text);
+  if (known === undefined) {
+    known = isExplorable(parseGraphSpec(text, size));
+    if (explorableBySpec.size >= 64) explorableBySpec.clear();
+    explorableBySpec.set(text, known);
+  }
+  return known;
+}
+
+// The button's top right corner, in px from the board's top left.
+type ExploreSpot = { itemId: string; right: number; top: number; compact: boolean };
+
+function ExploreButtons({ editor, activeItemId, open }: { editor: Editor; activeItemId: string | null; open: (itemId: string) => void }) {
+  const spots = useValue(
+    "explore buttons",
+    (): ExploreSpot[] => {
+      const view = editor.getViewportScreenBounds();
+      const out: ExploreSpot[] = [];
+      for (const shape of editor.getCurrentPageShapes()) {
+        if (shape.type !== "graph" || shape.opacity < 1) continue;
+        const gp = shape.props as TLGraphShapeProps;
+        const itemId = (shape.meta as { itemId?: unknown }).itemId;
+        // Only once the picture is drawn and written in.
+        if (typeof itemId !== "string" || gp.status !== "ready" || gp.reveal < 1) continue;
+        if (!explorableSpecText(gp.spec, { w: gp.w, h: gp.h })) continue;
+        const topLeft = editor.pageToScreen({ x: shape.x, y: shape.y });
+        const bottomRight = editor.pageToScreen({ x: shape.x + gp.w, y: shape.y + gp.h });
+        // The part of the graph on screen holds the button, in its top right corner.
+        const left = Math.max(topLeft.x - view.x, 0);
+        const top = Math.max(topLeft.y - view.y, 0);
+        const right = Math.min(bottomRight.x - view.x, view.w);
+        const bottom = Math.min(bottomRight.y - view.y, view.h);
+        if (right - left < 72 || bottom - top < 56) continue;
+        out.push({ itemId, right, top, compact: view.w < 640 || right - left < 220 });
+      }
+      return out;
+    },
+    [editor],
+  );
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden" style={{ zIndex: 5 }}>
+      {spots.map((spot) => (
+        <ExploreButton key={spot.itemId} spot={spot} active={spot.itemId === activeItemId} onOpen={open} />
+      ))}
+    </div>
+  );
+}
+
+// A 28px pill inside a 44px target, 8px in from the graph's top right corner.
+function ExploreButton({ spot, active, onOpen }: { spot: ExploreSpot; active: boolean; onOpen: (itemId: string) => void }) {
+  return (
+    <button
+      type="button"
+      data-explore-item={spot.itemId}
+      aria-pressed={active}
+      aria-label={`Explore graph ${spot.itemId}`}
+      title={spot.compact ? "Explore this graph" : undefined}
+      onClick={() => onOpen(spot.itemId)}
+      className="group pointer-events-auto absolute flex h-11 min-w-11 items-center justify-end px-2 font-[family-name:var(--lp-font-body)] outline-none"
+      style={{ left: spot.right, top: spot.top, transform: "translateX(-100%)" }}
+    >
+      <span
+        className={cn(
+          "flex h-7 items-center gap-1.5 rounded-full border border-(--lp-line-strong) bg-white/95 text-[12.5px] leading-none font-medium text-(--lp-ink) shadow-(--lp-shadow-card) backdrop-blur-sm",
+          "transition-[scale,background-color,border-color,color] duration-150 ease-out group-hover:border-[rgba(18,18,21,0.26)] group-hover:bg-white group-active:scale-[0.96]",
+          "group-focus-visible:outline-3 group-focus-visible:outline-offset-2 group-focus-visible:outline-(--lp-sky-glow)",
+          // Pressed: a sky fill and border; the label stays ink (sky text on the fill is 3.6:1).
+          "group-aria-pressed:border-(--lp-sky-deep) group-aria-pressed:bg-(--lp-sky-soft)",
+          spot.compact ? "w-7 justify-center" : "px-2.5",
+        )}
+      >
+        <SlidersHorizontal aria-hidden className="size-3.5 shrink-0 text-(--lp-sky-deep)" strokeWidth={2} />
+        {!spot.compact && <span>{active ? "Exploring" : "Explore"}</span>}
+      </span>
+    </button>
+  );
+}
+
 const TLDRAW_COMPONENTS: TLComponents = { Background: PlainBackground };
 
 export type TldrawCoreProps = {
@@ -587,9 +696,13 @@ export type TldrawCoreProps = {
   onWriting?: (busy: boolean) => void;
   /** Let tldraw take keyboard focus on mount (default). The landing page demo turns this off. */
   autoFocus?: boolean;
+  /** Graphs a student can open live get an Explore button that calls this. Pages without it show none. */
+  onExplore?: (target: ExploreTarget) => void;
+  /** The graph item open in Explore; its button shows as pressed. */
+  exploringItemId?: string | null;
 };
 
-const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting, autoFocus = true }, ref) {
+const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting, autoFocus = true, onExplore, exploringItemId = null }, ref) {
   const editorRef = useRef<Editor | null>(null);
   const leftY = useRef(START_Y);
   const rightY = useRef(START_Y);
@@ -642,6 +755,56 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   useEffect(() => {
     onWritingRef.current = onWriting;
   }, [onWriting]);
+  const onExploreRef = useRef(onExplore);
+  useEffect(() => {
+    onExploreRef.current = onExplore;
+  }, [onExplore]);
+  // A graph item as it is now: its spec, and where it is on screen.
+  const exploreTargetFor = useCallback((itemId: string): ExploreTarget | null => {
+    const editor = editorRef.current;
+    const item = itemsRef.current.find((i) => i.id === itemId);
+    if (!editor || !item) return null;
+    for (const sid of item.shapeIds) {
+      const shape = editor.getShape(sid as TLShapeId);
+      if (shape?.type !== "graph") continue;
+      const gp = shape.props as TLGraphShapeProps;
+      const spec = parseGraphSpec(gp.spec, { w: gp.w, h: gp.h });
+      if (!spec) return null;
+      const view = editor.getViewportScreenBounds();
+      const topLeft = editor.pageToScreen({ x: shape.x, y: shape.y });
+      const bottomRight = editor.pageToScreen({ x: shape.x + gp.w, y: shape.y + gp.h });
+      // The graph's caption names it for the student; else its first line.
+      let label = "";
+      for (const other of item.shapeIds) {
+        const text = editor.getShape(other as TLShapeId);
+        const richText = text?.type === "text" ? (text.props as { richText?: unknown }).richText : undefined;
+        if (!richText) continue;
+        try {
+          label = renderPlaintextFromRichText(editor, richText as Parameters<typeof renderPlaintextFromRichText>[1]).trim();
+        } catch {
+          label = "";
+        }
+        if (label) break;
+      }
+      if (!label) {
+        const first = spec.expressions.find((e) => !isGraphTable(e) && /^(curve|item)\d+$/.test(e.id));
+        label = first && !isGraphTable(first) ? latexToPlain(first.latex) : "";
+      }
+      return {
+        itemId,
+        label,
+        spec,
+        rect: { x: topLeft.x - view.x, y: topLeft.y - view.y, w: bottomRight.x - topLeft.x, h: bottomRight.y - topLeft.y },
+      };
+    }
+    return null;
+  }, []);
+  const openExplore = useCallback((itemId: string) => {
+    const target = exploreTargetFor(itemId);
+    if (target) onExploreRef.current?.(target);
+  }, [exploreTargetFor]);
+  // The buttons need the editor in state: they render once it has mounted.
+  const [mountedEditor, setMountedEditor] = useState<Editor | null>(null);
   const cursorHideRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scribbleTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   // Page layout: the current page's frame in page coordinates, the current
@@ -1621,6 +1784,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
+    setMountedEditor(editor);
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as { __chalkEditor?: Editor }).__chalkEditor = editor;
       (window as unknown as { __chalkBoard?: WhiteboardHandle | null }).__chalkBoard = handleRef.current;
@@ -4240,8 +4404,17 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         for (const sid of item.shapeIds) {
           const shape = editor.getShape(sid as TLShapeId);
           if (shape?.type !== "graph") continue;
-          const gp = shape.props as { status: string; issues: string };
-          if (gp.issues) issues[item.id] = gp.status === "error" ? `could not draw: ${gp.issues}` : `some lines did not draw: ${gp.issues}`;
+          const gp = shape.props as TLGraphShapeProps;
+          const notes: string[] = [];
+          if (gp.issues) notes.push(gp.status === "error" ? `could not draw: ${gp.issues}` : `some lines did not draw: ${gp.issues}`);
+          // What the student can drag in Explore, or what they changed there.
+          if (onExploreRef.current && gp.status === "ready") {
+            const spec = parseGraphSpec(gp.spec, { w: gp.w, h: gp.h });
+            const changed = spec?.studentState?.summary;
+            if (changed) notes.push(`the student changed it in Explore: ${changed.length > 140 ? `${changed.slice(0, 139)}…` : changed}`);
+            else if (isExplorable(spec) && hasExploreControls(spec)) notes.push(`Explore: ${exploreHint(spec)}`);
+          }
+          if (notes.length > 0) issues[item.id] = notes.join("; ");
         }
       }
       return formatBoardItems(itemsRef.current, title, 10, {
@@ -4288,6 +4461,25 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         { type: "bar_chart", text: opts.summary ?? spec.kind, label: opts.label, column: col },
         { bounds: { ...b, column: col, pageIndex: pageIndex.current } },
       );
+    },
+
+    getGraph(itemId: string) {
+      return exploreTargetFor(itemId);
+    },
+
+    applyGraphSpec(itemId: string, spec: GraphSpec) {
+      const editor = editorRef.current;
+      const item = itemsRef.current.find((i) => i.id === itemId);
+      if (!editor || !item) return false;
+      const shape = item.shapeIds.map((sid) => editor.getShape(sid as TLShapeId)).find((s) => s?.type === "graph");
+      if (!shape) return false;
+      // The old picture stays up until the new one is drawn.
+      editor.run(
+        () => editor.updateShapes([{ id: shape.id, type: "graph", props: { spec: JSON.stringify(spec) } }] as unknown as Parameters<Editor["updateShapes"]>[0]),
+        { history: "ignore" },
+      );
+      renderGraphInto(editor, shape.id, spec);
+      return true;
     },
 
     takeNotes() {
@@ -4706,6 +4898,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         shapeUtils={SHAPE_UTILS}
         licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY}
       />
+      {onExplore && mountedEditor && <ExploreButtons editor={mountedEditor} activeItemId={exploringItemId} open={openExplore} />}
     </div>
   );
 });

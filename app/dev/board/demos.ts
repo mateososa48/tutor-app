@@ -353,4 +353,13 @@ const desmos: DemoCall[] = [
   { name: "draw_desmos", args: { expressions: "y=x", settings: "blue" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, all };
+// Explore: open with &explore=1. A slider graph, a triangle of points and a
+// number line (no button: not explorable), all on one page.
+const explore: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Explore" } },
+  { name: "draw_desmos", args: { expressions: "y=mx+b", sliders: "m=1:-5..5; b=0:-5..5", label: "a line you can change" } },
+  { name: "plot_points", args: { points: "(1,1):A, (4,1):B, (4,3):C", x_min: -1, x_max: 6, y_min: -1, y_max: 5, connect: true, label: "triangle ABC" } },
+  { name: "add_number_line", args: { min: 0, max: 10, points: "3,7", label: "not explorable" } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, all };

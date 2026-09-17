@@ -42,14 +42,16 @@ test("backend instructions carry the profile, memory notes, and the output contr
   // mention undrawn board content, words are labels), which cost 268 chars net
   // after trimming the lines they replaced. Raise it again only for a rule that
   // earns it, never to make room for prose.
-  // Raised to 19.6k on Sept 17 (18,810 → 19,543) for what recorded sessions
+  // Raised to 19.6k on Sept 17 (18,810 → 19,574) for what recorded sessions
   // showed missing: rule 4 (what you work out goes on the board, a right
   // answer is ringed), "what?" and "I don't know" never answered by the tutor
   // itself, looking at the worksheet before copying from it, one sky pen,
   // Desmos routing and a "what?" example; paid down by trimming the board
   // intro, concrete-to-abstract, the [Board] rule and a fallback line.
+  // Explore (Sept 17): "ask them to drag it in Explore" (+32), paid for by
+  // "Four rules that override the rest" (-12): 19,594, six under the ceiling.
   assert.ok(text.length < 19600, `backend prompt too long: ${text.length}`);
-  // Gemini gets the conversation sections too (20,641 on Sept 17).
+  // Gemini gets the conversation sections too (20,692 on Sept 17).
   const gemini = buildGeminiInstructions(profile, ["mixes up numerator and denominator"]);
   assert.ok(gemini.length < 20800, `gemini prompt too long: ${gemini.length}`);
 });
@@ -69,6 +71,8 @@ test("what recorded sessions got wrong is now a rule", () => {
 });
 
 test("routing sends anything on axes to Desmos only where Desmos can draw", () => {
+  assert.match(buildBackendInstructions(profile, [], { desmos: true }), /drag it in Explore/);
+  assert.doesNotMatch(buildBackendInstructions(profile, [], { desmos: false }), /Explore/);
   const withDesmos = buildGeminiInstructions(null, [], { desmos: true });
   assert.match(withDesmos, /Anything on a coordinate plane is drawn by Desmos/);
   assert.match(withDesmos, /draw_desmos \(expressions, points, polygons; sliders/);

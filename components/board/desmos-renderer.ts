@@ -157,6 +157,11 @@ function loadDesmos(): Promise<DesmosApi> {
   return loading;
 }
 
+/** The Desmos API itself, for a live calculator (Explore). Rejects when Desmos is not here or failed to load. */
+export function loadDesmosApi(): Promise<{ GraphingCalculator(el: HTMLElement, options: Record<string, unknown>): unknown }> {
+  return loadDesmos();
+}
+
 /**
  * Start loading Desmos when the browser is idle, before the first graph needs
  * it (the script is 4.3 MB). Sessions call this; the landing page never does.

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Play, Plus, RotateCcw, Square } from "lucide-react";
 import Whiteboard from "@/components/Whiteboard";
@@ -12,6 +12,8 @@ import { TopBar } from "@/components/app/TopBar";
 import { SessionChip, type LiveState } from "@/components/session/SessionChip";
 import { VoiceDock, type DockActivity } from "@/components/session/VoiceDock";
 import { CaptionBar } from "@/components/session/CaptionBar";
+import { GraphExplorer } from "@/components/session/GraphExplorer";
+import { useGraphExplore, type ExploreChannel } from "@/components/session/useGraphExplore";
 import { DropOverlay } from "@/components/session/FilesPopover";
 import { TranscriptList } from "@/components/session/TranscriptPanel";
 import { useFileDrop, useFileIntake } from "@/components/session/useFileIntake";
@@ -523,6 +525,55 @@ function SessionDetailPage({ id }: { id: string }) {
     setTutorActivity((prev) => (busy ? "writing" : prev === "writing" ? "idle" : prev));
   }, []);
 
+  // ── Explore: a board graph opened live (components/session/GraphExplorer) ──
+  // What the student changes reaches the tutor as a session event, which the
+  // tutor answers, so it waits until nobody is talking: the tutor quiet for
+  // 1.5 s and not thinking or writing, and the student silent for 2 s.
+  const speakingRef = useRef(false);
+  const tutorQuietSinceRef = useRef(0);
+  const activityRef = useRef<TutorActivity>("idle");
+  const lastStudentSpeechRef = useRef(0);
+  useEffect(() => {
+    speakingRef.current = isTutorSpeaking;
+    if (!isTutorSpeaking) tutorQuietSinceRef.current = Date.now();
+  }, [isTutorSpeaking]);
+  useEffect(() => {
+    activityRef.current = tutorActivity;
+  }, [tutorActivity]);
+  const exploreChannel = useMemo<ExploreChannel>(() => ({
+    canReport: () => liveStateRef.current === "active" && Boolean(sessionRef.current?.sendStudentEvent),
+    isQuiet: () => {
+      const now = Date.now();
+      return !speakingRef.current && activityRef.current === "idle" && now - tutorQuietSinceRef.current > 1500 && now - lastStudentSpeechRef.current > 2000;
+    },
+    report: async ({ itemId, event, picture, closed }) => {
+      const live = sessionRef.current;
+      if (!live?.sendStudentEvent) return false;
+      if (picture && live.sendImageFrame) {
+        // The picture of their graph arrives before the words about it.
+        await frameGap();
+        if (sessionRef.current !== live) return false;
+        live.sendImageFrame(picture, `[Explore ${itemId}: the student's graph as it is now.]`);
+        void recorderRef.current?.recordFrame({ url: picture, width: 0, height: 0 }, `explore ${itemId}`, true);
+      } else if (closed) {
+        // The board graph now shows their version.
+        await sendBoardFrame();
+      }
+      if (sessionRef.current !== live) return false;
+      return live.sendStudentEvent(event);
+    },
+    log: (label, detail) => recordDebug("explore", label, detail),
+  }), [frameGap, recordDebug, sendBoardFrame]);
+  // Destructured: the React Compiler lint treats an object holding a ref as a ref.
+  const {
+    state: exploreState,
+    explorerRef,
+    open: openExplore,
+    close: closeExplore,
+    change: changeExplore,
+    exited: exploreExited,
+  } = useGraphExplore(() => whiteboardRef.current, exploreChannel);
+
   const setTemporaryFileNotice = useCallback((message: string) => {
     setFileNotice(message);
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
@@ -711,6 +762,7 @@ function SessionDetailPage({ id }: { id: string }) {
         });
         // Recorded in order with the rest of the session (one POST per fragment raced and shuffled them).
         const at = entry.at ?? Date.now();
+        if (entry.role === "student") lastStudentSpeechRef.current = Date.now();
         recorderRef.current?.record("transcript.entry", entry.role, { text: entry.text, at, role: entry.role, id: entry.id, spaced: entry.spaced === true }, at);
         setTranscript((prev) => {
           const next = appendTranscriptEntry(prev, entry);
@@ -1183,7 +1235,12 @@ function SessionDetailPage({ id }: { id: string }) {
   return (
     <AppShell defaultOpen={false}>
       <main className="relative min-h-0 flex-1 overflow-hidden bg-white" {...dropHandlers}>
-        <Whiteboard ref={whiteboardRef} onWriting={handleBoardWriting} />
+        <Whiteboard
+          ref={whiteboardRef}
+          onWriting={handleBoardWriting}
+          onExplore={openExplore}
+          exploringItemId={exploreState?.open ? exploreState.target.itemId : null}
+        />
 
         <SessionChip
           liveState={liveState}
@@ -1196,6 +1253,16 @@ function SessionDetailPage({ id }: { id: string }) {
         </div>
 
         <CaptionBar text={subtitleText} />
+        {exploreState && (
+          <GraphExplorer
+            key={exploreState.target.itemId}
+            ref={explorerRef}
+            state={exploreState}
+            onChange={changeExplore}
+            onClose={closeExplore}
+            onExited={exploreExited}
+          />
+        )}
         <DropOverlay show={dragging} />
         {liveState === "error" && (
           <ErrorNotice

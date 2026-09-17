@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Whiteboard, { type WhiteboardHandle } from "@/components/Whiteboard";
+import { GraphExplorer } from "@/components/session/GraphExplorer";
+import { useGraphExplore, type ExploreChannel } from "@/components/session/useGraphExplore";
 import { preloadDesmos, whenDesmosSettled } from "@/components/board/desmos-renderer";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
 import { BOARD_DEMOS } from "./demos";
@@ -15,6 +17,20 @@ export default function BoardDemo() {
   const count = Number(params.get("count") ?? 0) || Infinity;
   const [ready, setReady] = useState(false);
   const [log, setLog] = useState<string[]>([]);
+  // ?explore=1: graphs get Explore buttons; what a session would tell the
+  // tutor goes to the log (?tutor=off: a session that cannot tell it).
+  const exploreOn = params.get("explore") === "1";
+  const tutorOff = params.get("tutor") === "off";
+  const channel = useMemo<ExploreChannel>(() => ({
+    canReport: () => !tutorOff,
+    isQuiet: () => true,
+    report: async ({ event, picture }) => {
+      setLog((prev) => [...prev, `${picture ? `[picture ${Math.round(picture.length / 1024)} KB] ` : ""}${event}`]);
+      return true;
+    },
+    log: (label, detail) => setLog((prev) => [...prev, `explore ${label}: ${JSON.stringify(detail)}`]),
+  }), [tutorOff]);
+  const { state: exploreState, explorerRef, open: openExplore, close: closeExplore, change: changeExplore, exited: exploreExited } = useGraphExplore(() => ref.current, channel);
 
   // The board mounts through a dynamic import, so wait for the handle, and for
   // Desmos, as a session does, so pictures draw the same way on every run.
@@ -90,7 +106,21 @@ export default function BoardDemo() {
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#fff" }}>
-      <Whiteboard ref={ref} />
+      <Whiteboard
+        ref={ref}
+        onExplore={exploreOn ? openExplore : undefined}
+        exploringItemId={exploreState?.open ? exploreState.target.itemId : null}
+      />
+      {exploreState && (
+        <GraphExplorer
+          key={exploreState.target.itemId}
+          ref={explorerRef}
+          state={exploreState}
+          onChange={changeExplore}
+          onClose={closeExplore}
+          onExited={exploreExited}
+        />
+      )}
       <nav
         style={{
           position: "absolute",
