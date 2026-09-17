@@ -13,8 +13,22 @@ export async function GET(req: NextRequest) {
 
   const limit = parseInt(req.nextUrl.searchParams.get("limit") ?? "20", 10);
 
+  // Named columns: the list keeps working when a column lands in the schema
+  // before its SQL has run on the database (event_seq did, Sept 16).
   const rows = await db
-    .select()
+    .select({
+      id: tutorSessions.id,
+      userId: tutorSessions.userId,
+      title: tutorSessions.title,
+      status: tutorSessions.status,
+      startedAt: tutorSessions.startedAt,
+      endedAt: tutorSessions.endedAt,
+      durationSec: tutorSessions.durationSec,
+      lastActiveAt: tutorSessions.lastActiveAt,
+      pausedAt: tutorSessions.pausedAt,
+      transcript: tutorSessions.transcript,
+      createdAt: tutorSessions.createdAt,
+    })
     .from(tutorSessions)
     .where(eq(tutorSessions.userId, session.user.id))
     .orderBy(desc(tutorSessions.startedAt))

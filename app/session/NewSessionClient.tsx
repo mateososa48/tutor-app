@@ -23,6 +23,8 @@ export default function NewSessionClient() {
 
   const skipIntake =
     searchParams.get("mock") === "1" || searchParams.get("debug") === "1" || searchParams.get("qa") === "1";
+  // /session?topic=… opens the intake with the text box filled in.
+  const initialTopic = (searchParams.get("topic") ?? "").slice(0, 200);
 
   const go = async (intake: SessionIntake | null, files: UploadedFile[]) => {
     if (startedRef.current) return;
@@ -59,6 +61,7 @@ export default function NewSessionClient() {
       </div>
       {!skipIntake && (
         <SessionIntakeDialog
+          initialTopic={initialTopic}
           starting={starting}
           error={error}
           onStart={(intake, files) => void go(intake, files)}

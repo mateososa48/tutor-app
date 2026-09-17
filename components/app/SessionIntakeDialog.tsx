@@ -29,13 +29,16 @@ export function SessionIntakeDialog({
   onCancel,
   starting = false,
   error,
+  initialTopic = "",
 }: {
   onStart: (intake: SessionIntake, files: UploadedFile[]) => void;
   onCancel: () => void;
   starting?: boolean;
   error?: string | null;
+  /** Prefills the text box, e.g. from a "practice this" link on the home page. */
+  initialTopic?: string;
 }) {
-  const [intake, setIntake] = useState<SessionIntake>(EMPTY_INTAKE);
+  const [intake, setIntake] = useState<SessionIntake>({ ...EMPTY_INTAKE, topic: initialTopic });
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [dragging, setDragging] = useState(false);
   const addFiles = (added: UploadedFile[]) => setFiles((prev) => [...prev, ...added]);
