@@ -1,4 +1,3 @@
-import { BOARD_ICON_NAMES } from "@/lib/board-icon-names.generated";
 
 export type WhiteboardToolName =
   | "start_new_problem"
@@ -638,12 +637,18 @@ export const WHITEBOARD_TOOL_DECLARATIONS = [
     parameters: {
       type: "object",
       properties: {
-        icon: { type: "string", enum: [...BOARD_ICON_NAMES], description: "Which thing." },
-        count: { type: "number", description: "How many, 1 to 40." },
-        group_size: { type: "number", description: "Optional: put a gap after every N icons to show equal groups, 2 to 10." },
+        icon: { type: "string", description: "Which thing, in plain words: apples, cookies, coins, cars, dogs, kids, stars, boxes. About 380 everyday things (food, animals, people, money, school, transport, buildings, sport, nature), plus coloured squares and circles, the digits 0-10 and clock faces. A name that does not exist is refused with near matches." },
+        count: { type: "number", description: "How many, 1 to 120. Ask for the real number: 55 apples draws 55 apples." },
+        group_size: { type: "number", description: "Optional: equal groups of N, 2 to 12. Whole groups never split across a row, so groups of 5 read as groups of 5." },
         crossed: { type: "number", description: "Optional: cross out the last N icons with a red X (eaten, spent, given away)." },
-        second_icon: { type: "string", enum: [...BOARD_ICON_NAMES], description: "Optional second row of a different thing, to compare or to show a ratio." },
-        second_count: { type: "number", description: "How many in the second row, 1 to 40." },
+        second_icon: { type: "string", description: "Optional second row of a different thing, to compare or to show a ratio." },
+        second_count: { type: "number", description: "How many in the second row, 1 to 120." },
+        arrange: {
+          type: "string",
+          enum: ["rows", "array", "ten_frame", "ring", "groups"],
+          description: "Layout. 'rows' (default) wraps. 'array' is rows by columns, the picture of multiplication: 55 in 5 columns is 11 rows of 5. 'ten_frame' is framed tens, 5 by 2. 'ring' is a circle, for a clock face or things round a table. 'groups' draws each group in its own box.",
+        },
+        columns: { type: "number", description: "For arrange='array': how many per row, 1 to 20." },
         label: { type: "string", description: "Optional caption, e.g. '12 cookies, 4 friends'. 160 chars max." },
         column: COLUMN,
         place: PLACE,

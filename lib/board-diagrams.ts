@@ -681,10 +681,17 @@ export function altitude(pts: Pt[]): { apex: Pt; foot: Pt } | null {
   return { apex, foot: { x: apex.x, y: baseY } };
 }
 
+/** How rows of things are laid out. Rows wrap; the rest are deliberate pictures. */
+export type IconArrange = "rows" | "array" | "ten_frame" | "ring" | "groups";
+
 export type IconsDrawing = {
   icon: string;
   count: number;
   groupSize?: number;
+  /** Layout. Default "rows". */
+  arrange?: IconArrange;
+  /** Icons per row for arrange="array". */
+  columns?: number;
   /** How many of the last icons get a red X (taken away). */
   crossed?: number;
   secondIcon?: string;

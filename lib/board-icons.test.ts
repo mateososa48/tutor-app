@@ -15,6 +15,10 @@ test("icon names resolve from plurals, phrases, and aliases", () => {
   assert.equal(resolveIconName("red apples"), "apple");
   assert.equal(resolveIconName("chocolate chip cookie"), "cookie");
   assert.equal(resolveIconName("a balloon"), "balloon");
-  assert.equal(resolveIconName("zebra"), null);
+  // The set grew to 380 on Sept 15, so the old "not an icon" example (zebra) is one now.
+  assert.equal(resolveIconName("zebra"), "zebra");
+  assert.equal(resolveIconName("red squares"), "red_square");
+  assert.equal(resolveIconName("clock 3"), "clock_3");
+  assert.equal(resolveIconName("windmill"), null);
   assert.equal(resolveIconName(""), null);
 });

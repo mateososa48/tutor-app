@@ -47,3 +47,22 @@ export function resolveIconName(input: string): BoardIconName | null {
 export function iconLabel(name: string): string {
   return name.replaceAll("_", " ");
 }
+
+/** Near matches for a name that did not resolve, so an error can suggest instead of list. */
+export function suggestIcons(input: string, limit = 6): string[] {
+  const key = input.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!key) return [];
+  const bigrams = (t: string) => new Set(Array.from({ length: Math.max(0, t.length - 1) }, (_, i) => t.slice(i, i + 2)));
+  const a = bigrams(key);
+  return (BOARD_ICON_NAMES as readonly string[])
+    .map((name) => {
+      const b = bigrams(name);
+      let shared = 0;
+      for (const g of a) if (b.has(g)) shared++;
+      return { name, score: (2 * shared) / (a.size + b.size || 1) + (name[0] === key[0] ? 0.05 : 0) };
+    })
+    .filter((s) => s.score > 0.12)
+    .sort((x, y) => y.score - x.score)
+    .slice(0, limit)
+    .map((s) => s.name);
+}

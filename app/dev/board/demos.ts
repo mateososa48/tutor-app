@@ -149,6 +149,12 @@ const icons2: DemoCall[] = [
   { name: "draw_icons", args: { icon: "kids", count: 7, group_size: 7, second_icon: "pizza slices", second_count: 14, label: "7 kids, 14 slices", column: "right" } },
   { name: "draw_icons", args: { icon: "coins", count: 6, crossed: 6, label: "spent them all" } },
   { name: "draw_icons", args: { icon: "ice cream", count: 9, second_icon: "money", second_count: 3, label: "9 ice creams, 3 coins" } },
+  // Arrangements and a count past the old 40 cap (Sept 15).
+  { name: "draw_icons", args: { icon: "apple", count: 55, group_size: 5, label: "55 apples in groups of 5", column: "right" } },
+  { name: "draw_icons", args: { icon: "cookie", count: 24, arrange: "array", columns: 6, label: "24 cookies, 6 to a row" } },
+  { name: "draw_icons", args: { icon: "star", count: 23, arrange: "ten_frame", label: "23 in ten-frames", column: "right" } },
+  { name: "draw_icons", args: { icon: "coin", count: 12, group_size: 3, arrange: "groups", label: "12 coins in 4 groups of 3" } },
+  { name: "draw_icons", args: { icon: "boy", count: 10, arrange: "ring", label: "10 kids round a table", column: "right" } },
   { name: "circle_item", args: { target: "40 cookies" } },
 ];
 

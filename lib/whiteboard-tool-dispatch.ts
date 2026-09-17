@@ -2,6 +2,7 @@ import type { WhiteboardHandle } from "@/components/TldrawCore";
 import type { CalloutStyle } from "@/lib/whiteboard-tools";
 import {
   clamp,
+  type IconArrange,
   describeFractionModel,
   formatTick,
   isFigureKind,
@@ -28,8 +29,7 @@ import { HIGHLIGHT_COLORS, parseTargetList, type HighlightColor } from "@/lib/bo
 import { parsePlace, type PlaceRequest } from "@/lib/board-layout";
 import { ensureRelation, graphLatexProblem, toDesmosLatex } from "@/lib/desmos-graph";
 import { latexToPlain } from "@/lib/latex-plain";
-import { BOARD_ICON_NAMES } from "@/lib/board-icon-names.generated";
-import { resolveIconName } from "@/lib/board-icons";
+import { resolveIconName, suggestIcons } from "@/lib/board-icons";
 import { normalizeLatex, splitLatexLines } from "@/lib/latex-normalize";
 import {
   fail,
@@ -66,6 +66,15 @@ function columnPlacement(value: unknown): PlaceRequest | null {
 // The board is for short things. Long prose belongs in speech: the model
 // reached for text boxes whenever a topic had no obvious picture, and the
 // board filled with paragraphs (Sept 15 sessions).
+// The board is an infinite canvas, so this is about readability, not space.
+const MAX_ICONS = 120;
+
+function iconMiss(name: string): string {
+  const near = suggestIcons(name);
+  return near.length
+    ? `No icon called "${name}". Closest: ${near.join(", ")}.`
+    : `No icon called "${name}". Try a plainer everyday word, or draw_sketch for anything the set does not have.`;
+}
 const NOTE_MAX = 160;
 const BOX_BODY_MAX = 140;
 const BOX_BODY_LINES = 3;
@@ -822,28 +831,42 @@ function dispatchInner(
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;
       const iconRaw = requiredString(args, "icon"); if (isToolError(iconRaw)) return iconRaw;
-      const names = BOARD_ICON_NAMES as readonly string[];
       const icon = resolveIconName(iconRaw);
-      if (!icon) return fail(`No icon called "${iconRaw}". Pick one of: ${names.join(", ")}.`);
+      if (!icon) return fail(iconMiss(iconRaw));
       const countRaw = requiredNumber(args, "count"); if (isToolError(countRaw)) return countRaw;
-      const count = clamp(Math.round(countRaw), 1, 40);
+      // Never clamp silently: a lesson on Sept 15 asked for 55 apples three
+      // times, got 40 each time with a result that said 40, and the tutor
+      // ended up apologising to the student for the app.
+      const wanted = Math.round(countRaw);
+      if (wanted < 1) return fail('"count" must be at least 1.');
+      if (wanted > MAX_ICONS) {
+        return fail(`${wanted} icons is more than the board holds (${MAX_ICONS} max). Draw one group and label it, use draw_tape_diagram for a large amount, or write the number instead.`);
+      }
+      const count = wanted;
       const gsRaw = optionalNumber(args, "group_size"); if (isToolError(gsRaw)) return gsRaw;
-      const groupSize = gsRaw && gsRaw >= 2 ? clamp(Math.round(gsRaw), 2, 10) : undefined;
+      const groupSize = gsRaw && gsRaw >= 2 ? clamp(Math.round(gsRaw), 2, 12) : undefined;
+      const arrangeRaw = opt(args, "arrange"); if (arrangeRaw.error) return arrangeRaw.error;
+      const ARRANGES: readonly IconArrange[] = ["rows", "array", "ten_frame", "ring", "groups"];
+      const arrange = arrangeRaw.value ? ARRANGES.find((a) => a === arrangeRaw.value) : undefined;
+      if (arrangeRaw.value && !arrange) return fail(`"arrange" must be one of: ${ARRANGES.join(", ")}.`);
+      const columnsRaw = optionalNumber(args, "columns"); if (isToolError(columnsRaw)) return columnsRaw;
+      const columns = columnsRaw ? clamp(Math.round(columnsRaw), 1, 20) : undefined;
       const crossedRaw = optionalNumber(args, "crossed"); if (isToolError(crossedRaw)) return crossedRaw;
       const crossed = crossedRaw ? clamp(Math.round(crossedRaw), 0, count) : 0;
       const secondRaw = opt(args, "second_icon"); if (secondRaw.error) return secondRaw.error;
       const secondIcon = secondRaw.value ? resolveIconName(secondRaw.value) ?? undefined : undefined;
-      if (secondRaw.value && !secondIcon) return fail(`No icon called "${secondRaw.value}". Pick one of: ${names.join(", ")}.`);
+      if (secondRaw.value && !secondIcon) return fail(iconMiss(secondRaw.value));
       const secondCountRaw = optionalNumber(args, "second_count"); if (isToolError(secondCountRaw)) return secondCountRaw;
-      const secondCount = secondIcon ? clamp(Math.round(secondCountRaw ?? count), 1, 40) : undefined;
+      const secondCount = secondIcon ? clamp(Math.round(secondCountRaw ?? count), 1, MAX_ICONS) : undefined;
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${count} ${icon.replaceAll("_", " ")}` }, () =>
-        board.drawIcons({ icon, count, groupSize, crossed, secondIcon, secondCount, label: label.value, column: pickColumn(column.value) }),
+        board.drawIcons({ icon, count, groupSize, arrange, columns, crossed, secondIcon, secondCount, label: label.value, column: pickColumn(column.value) }),
       );
       const bits = [
         `${count} ${icon.replaceAll("_", " ")}${count === 1 ? "" : "s"}`,
         groupSize ? `in groups of ${groupSize}` : "",
+        arrange && arrange !== "rows" ? `laid out as ${arrange.replace("_", " ")}${columns ? ` of ${columns}` : ""}` : "",
         crossed ? `${crossed} crossed out` : "",
         secondIcon ? `and ${secondCount} ${secondIcon.replaceAll("_", " ")}${secondCount === 1 ? "" : "s"} in a second row` : "",
       ].filter(Boolean).join(", ");

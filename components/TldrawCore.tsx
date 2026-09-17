@@ -3565,47 +3565,124 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const col = opts.column ?? "left";
       const ICON = 44;
       const GAP = 8;
-      const GROUP_GAP = 24;
+      const GROUP_GAP = 30;
       const BLOCK_GAP = 18;
+      const MAX_W = 560;
+      const countW = 56;
+      const cell = ICON + GAP;
+      const groupSize = opts.groupSize && opts.groupSize >= 2 ? opts.groupSize : 0;
+      const arrange = opts.arrange ?? "rows";
       const specs = [
         { icon: opts.icon, count: opts.count, crossed: opts.crossed ?? 0 },
         ...(opts.secondIcon && opts.secondCount ? [{ icon: opts.secondIcon, count: opts.secondCount, crossed: 0 }] : []),
       ];
-      const groupSize = opts.groupSize && opts.groupSize >= 2 ? opts.groupSize : 0;
-      const perRowFor = (count: number) => (groupSize ? groupSize * Math.max(1, Math.floor(10 / groupSize)) : Math.min(count, 10));
-      const blockWidth = (count: number) => {
-        const perRow = Math.min(count, perRowFor(count));
-        const groups = groupSize ? Math.ceil(perRow / groupSize) : 1;
-        return perRow * ICON + (perRow - 1) * GAP + (groups - 1) * (GROUP_GAP - GAP);
+
+      type Spot = { x: number; y: number };
+      type Box = { x: number; y: number; w: number; h: number };
+      type Block = { spots: Spot[]; w: number; h: number; boxes: Box[] };
+
+      // A grid, optionally with a gap after every `gs` icons. Whole groups
+      // never split across a row: a student read "groups of 5" as groups of
+      // 20 when two groups shared a row (Sept 15).
+      const grid = (count: number, perRow: number, gs: number, boxed: boolean): Block => {
+        const spots: Spot[] = [];
+        for (let i = 0; i < count; i++) {
+          const c = i % perRow;
+          const g = gs ? Math.floor(c / gs) : 0;
+          spots.push({ x: c * cell + g * (GROUP_GAP - GAP), y: Math.floor(i / perRow) * cell });
+        }
+        const groupsPerRow = gs ? Math.max(1, Math.round(perRow / gs)) : 1;
+        const rows = Math.max(1, Math.ceil(count / perRow));
+        const boxes: Box[] = [];
+        if (boxed && gs) {
+          for (let s = 0; s < count; s += gs) {
+            const n = Math.min(gs, count - s);
+            const first = spots[s];
+            const last = spots[s + n - 1];
+            if (!first || !last || first.y !== last.y) continue;
+            boxes.push({ x: first.x - 7, y: first.y - 7, w: last.x + ICON - first.x + 14, h: ICON + 14 });
+          }
+        }
+        return {
+          spots,
+          w: Math.min(count, perRow) * cell - GAP + (groupsPerRow - 1) * (GROUP_GAP - GAP),
+          h: rows * cell - GAP,
+          boxes,
+        };
       };
-      const blockHeight = (count: number) => Math.ceil(count / perRowFor(count)) * (ICON + GAP) - GAP;
-      const countW = 56;
-      const w = Math.max(...specs.map((sp) => blockWidth(sp.count))) + countW + 8;
-      const h = specs.reduce((sum, sp) => sum + blockHeight(sp.count), 0) + (specs.length - 1) * BLOCK_GAP + (opts.label ? 34 : 0) + 4;
+
+      const build = (count: number): Block => {
+        if (arrange === "ring") {
+          const r = Math.max(74, (count * cell) / (2 * Math.PI));
+          const spots: Spot[] = [];
+          for (let i = 0; i < count; i++) {
+            const a = -Math.PI / 2 + (i * 2 * Math.PI) / count;
+            spots.push({ x: r + r * Math.cos(a), y: r + r * Math.sin(a) });
+          }
+          return { spots, w: 2 * r + ICON, h: 2 * r + ICON, boxes: [] };
+        }
+        if (arrange === "ten_frame") {
+          const frames = Math.max(1, Math.ceil(count / 10));
+          const frameW = 5 * cell - GAP + 14;
+          const frameH = 2 * cell - GAP + 14;
+          // Two frames are 556px against a 560px column, so they only sit side by
+          // side with a gap tighter than GROUP_GAP. 23 reads as 10 + 10 + 3.
+          const FRAME_GAP = 24;
+          const perRow = Math.max(1, Math.floor((MAX_W + FRAME_GAP) / (frameW + FRAME_GAP)));
+          const spots: Spot[] = [];
+          const boxes: Box[] = [];
+          for (let f = 0; f < frames; f++) {
+            const ox = (f % perRow) * (frameW + FRAME_GAP);
+            const oy = Math.floor(f / perRow) * (frameH + FRAME_GAP);
+            boxes.push({ x: ox - 7, y: oy - 7, w: frameW, h: frameH });
+            for (let i = f * 10; i < Math.min(count, f * 10 + 10); i++) {
+              const k = i % 10;
+              spots.push({ x: ox + (k % 5) * cell, y: oy + Math.floor(k / 5) * cell });
+            }
+          }
+          return {
+            spots,
+            w: Math.min(frames, perRow) * (frameW + FRAME_GAP) - FRAME_GAP,
+            h: Math.ceil(frames / perRow) * (frameH + FRAME_GAP) - FRAME_GAP,
+            boxes,
+          };
+        }
+        if (arrange === "array") {
+          const cols = Math.max(1, Math.min(opts.columns ?? groupSize ?? Math.ceil(Math.sqrt(count)), 20));
+          return grid(count, cols, 0, false);
+        }
+        if (groupSize) {
+          const groupW = groupSize * cell - GAP;
+          const perRowGroups = Math.max(1, Math.floor((MAX_W + GROUP_GAP) / (groupW + GROUP_GAP)));
+          return grid(count, perRowGroups * groupSize, groupSize, arrange === "groups");
+        }
+        return grid(count, Math.max(1, Math.min(count, Math.floor(MAX_W / cell))), 0, false);
+      };
+
+      const blocks = specs.map((sp) => build(sp.count));
+      const w = Math.max(...blocks.map((b) => b.w)) + countW + 8;
+      const h = blocks.reduce((sum, b) => sum + b.h, 0) + (blocks.length - 1) * BLOCK_GAP + (opts.label ? 34 : 0) + 4;
       ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       let cy = y;
-      specs.forEach((sp) => {
-        const perRow = perRowFor(sp.count);
-        for (let i = 0; i < sp.count; i++) {
-          const row = Math.floor(i / perRow);
-          const colIdx = i % perRow;
-          const g = groupSize ? Math.floor(colIdx / groupSize) : 0;
-          const ix = x + colIdx * (ICON + GAP) + g * (GROUP_GAP - GAP);
-          const iy = cy + row * (ICON + GAP);
+      specs.forEach((sp, bi) => {
+        const block = blocks[bi];
+        for (const b of block.boxes) {
+          createFreeformGeo(editor, "rectangle", x + b.x, cy + b.y, b.w, b.h, PENCIL, "none", { dash: "dashed" });
+        }
+        block.spots.forEach((spot, i) => {
           editor.createShape<TLIconShape>({
             id: createShapeId(),
             type: "icon",
-            x: ix,
-            y: iy,
+            x: x + spot.x,
+            y: cy + spot.y,
             props: { w: ICON, h: ICON, icon: sp.icon, crossed: i >= sp.count - sp.crossed, reveal: 1 },
             meta: currentMeta(),
           });
-        }
-        const bh = blockHeight(sp.count);
-        createText(editor, `${sp.count}`, x + blockWidth(sp.count) + 10, cy + Math.min(bh, ICON) / 2 - 12, { color: PENCIL, size: "s", font: "sans", width: countW });
-        cy += bh + BLOCK_GAP;
+        });
+        createText(editor, `${sp.count}`, x + block.w + 10, cy + Math.min(block.h, ICON) / 2 - 12, { color: PENCIL, size: "s", font: "sans", width: countW });
+        cy += block.h + BLOCK_GAP;
       });
       if (opts.label) {
         const cw = Math.max(w, 260);
