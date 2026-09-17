@@ -411,12 +411,15 @@ export function planSection(
   const band = { x: area.x, y: bandY, w: area.w, h: bottom - bandY };
   if (roomy(band, blocked, minW, minH)) return { region: band, kind: "band" };
 
-  // 3. Under the work on the right only, where it stops higher up.
+  // 3. Under the work on the right only, where it stops higher up: from a
+  // column start, or just right of any piece of work.
   const colW = columnWidth(area);
   const columns = Math.max(1, Math.round(area.w / colW));
+  const starts = new Set<number>();
+  for (let k = 1; k < columns; k++) starts.add(area.x + k * colW);
+  for (const r of work) if (r.x + r.w + PANEL_GUTTER < right) starts.add(r.x + r.w + PANEL_GUTTER);
   let best: Rect | null = null;
-  for (let k = 1; k < columns; k++) {
-    const x = area.x + k * colW;
+  for (const x of starts) {
     const above = work.filter((r) => r.x + r.w > x + 1);
     const y = above.length > 0 ? Math.max(...above.map((r) => r.y + r.h)) + gap * 2 : area.y;
     const r = { x, y, w: right - x, h: bottom - y };

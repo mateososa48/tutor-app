@@ -58,13 +58,15 @@ import {
   densifyPolyline,
   dividerAngles,
   edgeLabelPoint,
+  figureSideLabels,
   figureVertices,
   formatTick,
+  labelLanes,
+  placeSketchLabels,
   fractionLatex,
   fractionText,
   niceMax,
   niceStep,
-  parseLineMarks,
   sectorPolygon,
   clamp,
   altitude,
@@ -92,7 +94,7 @@ import {
   type Pt,
   type SketchDrawing,
 } from "@/lib/board-diagrams";
-import type { CalloutStyle } from "@/lib/whiteboard-tools";
+import { splitSlots } from "@/lib/board-content-rules";
 import type { BoardAgentAction, BoardArtifactMeta } from "@/lib/board-agent-types";
 import {
   applySemanticBoardAction,
@@ -281,7 +283,6 @@ export interface WhiteboardHandle {
   drawEquationStep(latex: string, annotation?: string, column?: "left" | "right"): void;
   addTextNote(text: string, size?: "heading" | "body", column?: "left" | "right"): void;
   addFunctionGraph(expression: string, xMin: number, xMax: number, label?: string, column?: "left" | "right", extras?: GraphExtras): void;
-  drawShape(shape: string, label?: string, width?: number, height?: number, column?: "left" | "right"): void;
   addTable(columns: string, rows: string, title?: string, column?: "left" | "right"): void;
   addNumberLine(opts: NumberLineDrawing): void;
   addCoordinateAxes(xMin: number, xMax: number, yMin: number, yMax: number, label?: string, column?: "left" | "right"): void;
@@ -289,22 +290,11 @@ export interface WhiteboardHandle {
   addWorkedExampleBox(title: string, body: string, column?: "left" | "right"): void;
   addStudentAttempt(text: string, column?: "left" | "right"): void;
   addProblemSetup(goal: string, givens?: string, unknowns?: string, plan?: string, column?: "left" | "right"): void;
-  addEquationSequence(steps: string, annotations?: string, title?: string, column?: "left" | "right"): void;
-  /** @internal Low-level sticky note primitive. Use addCallout for semantic color selection. */
-  addStickyNote(opts: {
-    text: string;
-    color?: TLDefaultColorStyle;
-    font?: TLDefaultFontStyle;
-    size?: TLDefaultSizeStyle;
-    scale?: number;
-    growY?: number;
-    column?: "left" | "right";
-  }): void;
-  addCallout(text: string, style: CalloutStyle, column?: "left" | "right"): void;
-  addTwoColumnComparison(title: string, leftTitle: string, leftBody: string, rightTitle: string, rightBody: string, column?: "left" | "right"): void;
+  /** Equation lines as one block; an empty annotation slot leaves that line unannotated. */
+  addEquationSequence(steps: string[], annotations: string[], title?: string, column?: "left" | "right"): void;
+  /** A small sky tag with one short line. */
+  addCallout(text: string, column?: "left" | "right"): void;
   addAreaModel(title: string, rowLabels: string, columnLabels: string, cells: string, column?: "left" | "right"): void;
-  addVectorDiagram(title: string, centerLabel: string, vectors: string, column?: "left" | "right"): void;
-  addProcessMap(title: string, nodes: string, connectors?: string, column?: "left" | "right"): void;
   // Picture tools. Inputs are parsed and validated by the dispatcher.
   drawFraction(opts: FractionDrawing): void;
   drawFigure(opts: FigureDrawing): void;
@@ -325,7 +315,6 @@ export interface WhiteboardHandle {
    * Cross out an equation step. Same resolution rules as `highlightStep`.
    */
   crossOutStep(target: StepTarget): boolean;
-  applyBoardActions(actions: BoardAgentAction[], jobId: string): void;
   /**
    * Run `fn` with `jobMetaRef.current` set to a tutor-owned meta object.
    * Used by the direct-tool dispatcher so tutor-direct shapes get
@@ -338,15 +327,6 @@ export interface WhiteboardHandle {
   clearWhiteboard(): void;
   getSnapshot(): WhiteboardSnapshot | null;
   loadSnapshot(snap: WhiteboardSnapshot): void;
-  /**
-   * Best-effort JPEG screenshot of the current board, ~768px wide. Returns a
-   * `data:image/jpeg;base64,...` data URL on success, or `null` if anything
-   * fails (no editor, no shapes, export error). Never throws.
-   *
-   * Privacy: caller decides whether to send this anywhere; this method just
-   * materializes the bytes in memory.
-   */
-  captureScreenshot(): Promise<string | null>;
   getBoardSummary(): string;
   /** Item bookkeeping around one tool call: everything created between begin and end becomes one board item. */
   beginItem(tool: string): ItemToken;
@@ -375,9 +355,12 @@ export interface WhiteboardHandle {
   takeNotes?(): string[];
   /** A highlighter over the words `text` in an item, or over the whole item. `part` says which it managed. */
   highlight?(target: string, text: string | undefined): { item: BoardItem; part: "text" | "item" } | null;
+  /** The board's items as they are now (the dispatcher looks for duplicates in them). */
+  itemsSnapshot?(): BoardItem[];
 }
 
-export type ItemToken = { tool: string; shapes: Set<string>; eqs: Set<string> };
+/** `content`: what the call writes or draws, fingerprinted, so a later call can tell it is already up. */
+export type ItemToken = { tool: string; shapes: Set<string>; eqs: Set<string>; content?: string };
 
 // ── Legacy equation overlay item ────────────────────────────────────────────
 // Typeset math is a "math" shape in the store now (components/board/MathShape).
@@ -408,26 +391,6 @@ function compactArtifactMeta(meta: BoardArtifactMeta | null): BoardArtifactMeta 
   if (meta.owner) compact.owner = meta.owner;
   if (meta.tutorReferenceLabel) compact.tutorReferenceLabel = meta.tutorReferenceLabel;
   return compact;
-}
-
-function targetShapeIds(action: BoardAgentAction): string[] {
-  return Array.from(
-    new Set([
-      ...(action.target_ids ?? []),
-      ...(action.target_id ? [action.target_id] : []),
-    ].filter((id) => id.startsWith("shape:"))),
-  );
-}
-
-function canMutateShape(
-  shape: unknown,
-  opts: { allow_student_owned?: boolean; allow_tutor_owned?: boolean } = {},
-): boolean {
-  const meta = (shape as { meta?: { owner?: unknown } }).meta;
-  const owner = meta?.owner;
-  if (owner === "student" && !opts.allow_student_owned) return false;
-  if (owner === "tutor" && !opts.allow_tutor_owned) return false;
-  return true;
 }
 
 function currentShapeIdSet(editor: Editor): Set<string> {
@@ -500,14 +463,6 @@ function sharpenCorners(points: Array<{ x: number; y: number }>): Array<{ x: num
   return out;
 }
 
-function shapeSize(shape: unknown): { w: number; h: number } {
-  const props = (shape as { props?: { w?: unknown; h?: unknown } }).props;
-  return {
-    w: typeof props?.w === "number" && Number.isFinite(props.w) ? props.w : 0,
-    h: typeof props?.h === "number" && Number.isFinite(props.h) ? props.h : 0,
-  };
-}
-
 // ── ID generator ────────────────────────────────────────────────────────────
 
 // "(1,1):A, (3,4):B; (-2, 2)" — commas separate points as well as the two
@@ -525,11 +480,12 @@ function parseCoordinatePoints(input: string): Array<{ x: number; y: number; lab
   return points;
 }
 
+// Cells read like the board's math: "x^2" shows as x².
 function formatTableText(columns: string, rows: string): string {
-  const headers = columns.split("|").map((cell) => cell.trim()).filter(Boolean);
+  const headers = columns.split("|").map((cell) => latexToPlain(cell.trim())).filter(Boolean);
   const parsedRows = rows
     .split(/[;\n]/)
-    .map((row) => row.split("|").map((cell) => cell.trim()))
+    .map((row) => row.split("|").map((cell) => latexToPlain(cell.trim())))
     .filter((row) => row.some(Boolean));
 
   const widthCount = Math.max(headers.length, ...parsedRows.map((row) => row.length), 1);
@@ -549,11 +505,12 @@ function splitPipeList(input: string): string[] {
   return input.split("|").map((part) => part.trim()).filter(Boolean);
 }
 
+// Rows keep their empty cells, so a blank for the student stays in its column.
 function splitRows(input: string): string[][] {
   return input
     .split(/[;\n]/)
-    .map((row) => splitPipeList(row))
-    .filter((row) => row.length > 0);
+    .map((row) => splitSlots(row))
+    .filter((row) => row.some((cell) => cell !== ""));
 }
 
 function formatSetupLine(label: string, value?: string): string | null {
@@ -568,18 +525,6 @@ function unionRect(a: FocusRect, b: FocusRect): FocusRect {
   const maxX = Math.max(a.x + a.w, b.x + b.w);
   const maxY = Math.max(a.y + a.h, b.y + b.h);
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-}
-
-function parseVectors(input: string): Array<{ direction: string; label: string }> {
-  return input
-    .split(/[;\n]/)
-    .map((chunk) => {
-      const [directionRaw, ...labelParts] = chunk.split(":");
-      const direction = directionRaw.trim().toLowerCase();
-      const label = labelParts.join(":").trim();
-      return direction && label ? { direction, label } : null;
-    })
-    .filter((item): item is { direction: string; label: string } => Boolean(item));
 }
 
 // ── Equation block (KaTeX HTML overlay) ────────────────────────────────────
@@ -1792,46 +1737,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     });
   }, [currentMeta]);
 
-  const createArrow = useCallback((
-    editor: Editor,
-    x: number,
-    y: number,
-    x2: number,
-    y2: number,
-    label = "",
-    color: TldrawColor = "black",
-    options?: {
-      font?: TLDefaultFontStyle;
-      dash?: TLDefaultDashStyle;
-    },
-  ) => {
-    editor.createShape({
-      id: createShapeId(),
-      type: "arrow",
-      x,
-      y,
-      props: {
-        kind: "arc",
-        start: { x: 0, y: 0 },
-        end: { x: x2 - x, y: y2 - y },
-        bend: 0,
-        color,
-        dash: options?.dash ?? "solid",
-        size: "m",
-        fill: "none",
-        arrowheadStart: "none",
-        arrowheadEnd: "arrow",
-        richText: toRichText(label),
-        labelColor: color,
-        font: options?.font ?? "draw",
-        scale: 1,
-        labelPosition: 0.5,
-        elbowMidPoint: 0.5,
-      },
-      meta: currentMeta(),
-    });
-  }, [currentMeta]);
-
   const createBox = useCallback((
     editor: Editor,
     x: number,
@@ -1913,51 +1818,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     });
   }, [currentMeta]);
 
-  // ── Phase 6 helpers (note / draw stroke / line) ───────────────────────────
-  // Sticky note. Notes are intrinsically ~200×220 (size "m"), grow with text.
-  // Width/height are not first-class props — do NOT pass them. The renderer
-  // recomputes layout from font/size/scale/growY.
-  const createNote = useCallback((
-    editor: Editor,
-    x: number,
-    y: number,
-    opts: {
-      text: string;
-      color?: TldrawColor;
-      labelColor?: TldrawColor;
-      font?: TLDefaultFontStyle;
-      size?: TLDefaultSizeStyle;
-      scale?: number;
-      growY?: number;
-      align?: "start" | "middle" | "end";
-      verticalAlign?: "start" | "middle" | "end";
-    },
-  ) => {
-    editor.createShape({
-      id: createShapeId(),
-      type: "note",
-      x,
-      y,
-      props: {
-        color: opts.color ?? "yellow",
-        labelColor: opts.labelColor ?? "black",
-        size: opts.size ?? "m",
-        font: opts.font ?? "draw",
-        // `null` tells tldraw to recompute on next render — DO NOT pass 0
-        // (legacy meaning differs across migrations).
-        fontSizeAdjustment: null,
-        align: opts.align ?? "middle",
-        verticalAlign: opts.verticalAlign ?? "middle",
-        growY: opts.growY ?? 0,
-        url: "",
-        richText: toRichText(opts.text),
-        scale: opts.scale ?? 1,
-        textFirstEditedBy: null,
-      },
-      meta: currentMeta(),
-    });
-  }, [currentMeta]);
-
+  // ── Stroke and line helpers ─────────────────────────────────────────────────
   // Real freehand stroke. Builds a single tldraw `draw` shape from a polyline.
   // `x`/`y` are the shape origin; if omitted/NaN, derived from min(points) and
   // points are rebased to shape-local coordinates. `z: 0.5` is the synthetic
@@ -2063,12 +1924,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     });
   }, [currentMeta]);
 
-  const ensureColumnRoom = useCallback(
-    (_editor: Editor, _column: "left" | "right", _height: number) => {
-      // Infinite canvas — content grows downward forever. No page breaks.
-    },
-    [],
-  );
 
   // Axes with arrowheads, ticks at a readable step, end labels, no outer box.
   const drawAxes = useCallback((
@@ -2366,7 +2221,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "left";
-      ensureColumnRoom(editor, col, EQ_H + EQ_ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const line = createMath(editor, { latex, annotation, x, y, display: true });
@@ -2388,7 +2242,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const font: TLDefaultFontStyle = isHeading ? "sans" : "draw";
       const fontSize: TLDefaultSizeStyle = isHeading ? "l" : "m";
       const approxH = measureText(editor, text, font, fontSize, 560).h;
-      ensureColumnRoom(editor, col, approxH + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       createText(editor, text, x, y, { size: fontSize, font, color: INK, width: 560 });
@@ -2471,7 +2324,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       yHi = Math.ceil(yHi / ys) * ys;
 
       const extra = label ? 76 : 48;
-      ensureColumnRoom(editor, col, H + extra);
       const x = colX(col);
       const y = colY(col).current;
       drawAxes(editor, x, y, W, H, xMin, xMax, yLo, yHi, label);
@@ -2599,105 +2451,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
-    drawShape(shape: string, label?: string, width?: number, height?: number, column?: "left" | "right") {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const col = column ?? "left";
-
-      const defaults: Record<string, [number, number]> = {
-        rectangle: [160, 90],
-        ellipse: [120, 90],
-        diamond: [130, 80],
-        triangle: [160, 110],
-        arrow: [180, 50],
-      };
-      const [dw, dh] = defaults[shape] ?? [160, 90];
-      const w = width ?? dw;
-      const h = height ?? dh;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
-      const x = colX(col);
-      const y = colY(col).current;
-
-      if (shape === "arrow") {
-        editor.createShape({
-          id: createShapeId(),
-          type: "arrow",
-          x,
-          y: y + 20,
-          props: {
-            kind: "arc",
-            start: { x: 0, y: 0 },
-            end: { x: w, y: 0 },
-            bend: 0,
-            color: "black",
-            size: "m",
-            dash: "draw",
-            fill: "none",
-            arrowheadStart: "none",
-            arrowheadEnd: "arrow",
-            richText: toRichText(label ?? ""),
-            labelColor: "black",
-            font: "sans",
-            scale: 1,
-            labelPosition: 0.5,
-            elbowMidPoint: 0.5,
-          },
-          meta: currentMeta(),
-        });
-        colY(col).current += 50 + ROW_GAP;
-        focusOn(editor, x, y, w, 60);
-        recordDirectSemanticAction(
-          { type: "shape", shape: "arrow", label, width: w, height: h, column: col },
-          { bounds: { x, y, w, h: 60, column: col, pageIndex: pageIndex.current } },
-        );
-      } else {
-        type GeoType = "rectangle" | "ellipse" | "diamond" | "triangle";
-        const geoMap: Record<string, GeoType> = {
-          rectangle: "rectangle",
-          ellipse: "ellipse",
-          diamond: "diamond",
-          triangle: "triangle",
-        };
-        editor.createShape({
-          id: createShapeId(),
-          type: "geo",
-          x,
-          y,
-          props: {
-            geo: geoMap[shape] ?? "rectangle",
-            w,
-            h,
-            richText: toRichText(label ?? ""),
-            size: "m",
-            color: "black",
-            fill: "none",
-            dash: "draw",
-            font: "sans",
-            align: "middle",
-            verticalAlign: "middle",
-            labelColor: "black",
-            url: "",
-            growY: 0,
-            scale: 1,
-          },
-          meta: currentMeta(),
-        });
-        colY(col).current += h + ROW_GAP;
-        focusOn(editor, x, y, w, h);
-        recordDirectSemanticAction(
-          {
-            type: "shape",
-            shape: (shape === "ellipse" || shape === "diamond" || shape === "triangle") ? shape : "rectangle",
-            label,
-            width: w,
-            height: h,
-            column: col,
-          },
-          { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
-        );
-      }
-    },
-
     addTable(columns: string, rows: string, title?: string, column?: "left" | "right") {
       const editor = editorRef.current;
       if (!editor) return;
@@ -2706,7 +2459,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const lineCount = tableText.split("\n").length + (title ? 2 : 0);
       const h = Math.max(96, lineCount * 24 + 26);
       const w = 560;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
 
@@ -2736,13 +2488,42 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const w = DIAGRAM_W;
       const PAD = 26; // arrow overhang past the first and last tick
       const hasJumps = opts.jumps.length > 0;
-      const hasTopLabels = opts.marks.some((m) => m.label) || opts.intervals.some((iv) => iv.label);
-      const top = hasJumps ? 74 : hasTopLabels ? 44 : 18;
-      const second = opts.secondMin !== undefined && opts.secondMax !== undefined && opts.secondMax !== opts.secondMin;
-      const SECOND_DY = 70;
-      const h = top + 46 + (second ? SECOND_DY : 0) + (opts.label ? 30 : 0);
       const tickStyle = opts.labelStyle ?? autoTickStyle(step);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
+      const rel = (v: number) => PAD + ((v - min) / (max - min)) * (w - PAD * 2);
+      const textW = (t: string) => Math.ceil(measureText(editor, t, "sans", "s", null).w) + 8;
+      const ticks = tickValues(min, max, step);
+      // A dot between ticks says its value under the line (Sept 16 2026: dots
+      // at 3 and 11 on a line ticked in twos showed only "P1y" and "P2y").
+      const onTick = (v: number) => ticks.some((t) => Math.abs(t - v) <= Math.abs(step) * 1e-6);
+      const markValues = [...new Set(opts.marks.map((m) => m.value))].filter((v) => !onTick(v));
+      const bottomItems = [
+        ...ticks.map((v) => ({ x: rel(v), w: textW(formatTick(v, step, tickStyle)) })),
+        ...markValues.map((v) => ({ x: rel(v), w: textW(formatTick(v, step, tickStyle)) })),
+      ];
+      const bottomLanes = labelLanes(bottomItems).slice(ticks.length);
+      // Labels above the line: ranges first, then the first dot at each value.
+      const topLabels: Array<{ text: string; x: number; kind: "range" | "mark"; index: number }> = [];
+      opts.intervals.forEach((iv, i) => {
+        if (!iv.label) return;
+        const from = Math.max(min, iv.from);
+        const to = Math.min(max, iv.to);
+        const x1 = iv.from < min ? 0 : rel(from);
+        const x2 = iv.to > max ? w : rel(to);
+        topLabels.push({ text: iv.label, x: (x1 + x2) / 2, kind: "range", index: i });
+      });
+      const firstAt = new Set<number>();
+      opts.marks.forEach((m, i) => {
+        if (!m.label || firstAt.has(m.value)) return;
+        firstAt.add(m.value);
+        topLabels.push({ text: m.label, x: rel(m.value), kind: "mark", index: i });
+      });
+      const topLanes = labelLanes(topLabels.map((l) => ({ x: l.x, w: textW(l.text) })));
+      const topRows = topLabels.length ? Math.max(...topLanes) + 1 : 0;
+      const bottomRows = bottomLanes.length ? Math.max(0, ...bottomLanes) + 1 : 1;
+      const top = Math.max(hasJumps ? 74 : 18, topRows ? 44 + (topRows - 1) * 20 : 0);
+      const second = opts.secondMin !== undefined && opts.secondMax !== undefined && opts.secondMax !== opts.secondMin;
+      const SECOND_DY = 70 + (bottomRows - 1) * 18;
+      const h = top + 46 + (bottomRows - 1) * 18 + (second ? SECOND_DY : 0) + (opts.label ? 30 : 0);
       const x = colX(col);
       const y = colY(col).current;
       const lineY = y + top;
@@ -2800,17 +2581,16 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const x1 = rayLeft ? x : px(from);
         const x2 = rayRight ? x + w : px(to);
         arrow(x1, x2, { color: intervalPen(i), size: "l", startHead: rayLeft, endHead: rayRight });
-        if (iv.label) {
-          createText(editor, iv.label, (x1 + x2) / 2 - 90, lineY - 40, { color: intervalPen(i), size: "s", font: "sans", width: 180, align: "middle" });
-        }
       });
 
       // The axis, then ticks with labels.
       arrow(x, x + w, { color: INK, size: "m", startHead: true, endHead: true });
-      for (const v of tickValues(min, max, step)) {
+      for (const v of ticks) {
         const tx = px(v);
+        const label = formatTick(v, step, tickStyle);
+        const lw = Math.max(64, textW(label));
         createLine(editor, tx, lineY - 8, tx, lineY + 8, INK);
-        createText(editor, formatTick(v, step, tickStyle), tx - 32, lineY + 14, { color: PENCIL, size: "s", font: "sans", width: 64, align: "middle" });
+        createText(editor, label, tx - lw / 2, lineY + 14, { color: PENCIL, size: "s", font: "sans", width: lw, align: "middle" });
       }
       if (second) {
         // A double number line: same positions, a second scale of values.
@@ -2839,9 +2619,17 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const k = entry.count;
         stacked.set(m.value, { count: k + 1, first: entry.first });
         dot(px(m.value), false, markPen(entry.first), -k * 16);
-        if (m.label && k === 0) {
-          createText(editor, m.label, px(m.value) - 70, lineY - 40, { color: markPen(i), size: "s", font: "sans", width: 140, align: "middle" });
-        }
+      });
+      markValues.forEach((v, j) => {
+        const first = opts.marks.findIndex((m) => m.value === v);
+        const label = formatTick(v, step, tickStyle);
+        const lw = Math.max(64, textW(label));
+        createText(editor, label, px(v) - lw / 2, lineY + 14 + bottomLanes[j] * 18, { color: markPen(first), size: "s", font: "sans", width: lw, align: "middle" });
+      });
+      topLabels.forEach((l, j) => {
+        const color = l.kind === "range" ? intervalPen(l.index) : markPen(l.index);
+        const lw = Math.max(80, textW(l.text));
+        createText(editor, l.text, x + l.x - lw / 2, lineY - 40 - topLanes[j] * 20, { color, size: "s", font: "sans", width: lw, align: "middle" });
       });
 
       // Hop arrows arc above the line; a negative bend curves upward.
@@ -2852,7 +2640,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       });
 
       if (opts.label) {
-        createText(editor, opts.label, x, lineY + 44 + (second ? SECOND_DY : 0), { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
+        createText(editor, opts.label, x, lineY + 44 + (bottomRows - 1) * 18 + (second ? SECOND_DY : 0), { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
       }
 
       colY(col).current += h + ROW_GAP;
@@ -2885,7 +2673,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const col = column ?? "right";
       const w = 300;
       const h = 220;
-      ensureColumnRoom(editor, col, h + 52);
       const x = colX(col);
       const y = colY(col).current;
       drawAxes(editor, x, y, w, h, xMin, xMax, yMin, yMax, label);
@@ -2922,7 +2709,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const col = column ?? "right";
       const w = 300;
       const h = 220;
-      ensureColumnRoom(editor, col, h + 52);
       const x = colX(col);
       const y = colY(col).current;
       drawAxes(editor, x, y, w, h, xMin, xMax, yMin, yMax, label);
@@ -2962,7 +2748,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const titleH = measureText(editor, title, "sans", "m", innerW).h;
       const bodyH = measureText(editor, body, "draw", "m", innerW).h;
       const h = PADDING + titleH + 10 + bodyH + PADDING;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       createBox(editor, x, y, w, h, "", INK, "semi");
@@ -2987,7 +2772,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const usedW = Math.min(textW, measured.w);
       const w = usedW + 96;
       const h = Math.max(32, measured.h);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       createText(editor, text, x, y, { size: "m", font: "draw", color: PENCIL, width: textW });
@@ -3008,66 +2792,28 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
-    addStickyNote(opts) {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const col = opts.column ?? "left";
-      const NOTE_H = 220;
-      ensureColumnRoom(editor, col, NOTE_H + ROW_GAP);
-      const x = colX(col);
-      const y = colY(col).current;
-      createNote(editor, x, y, {
-        text: opts.text,
-        color: opts.color,
-        font: opts.font,
-        size: opts.size,
-        scale: opts.scale,
-        growY: opts.growY,
-      });
-      colY(col).current += NOTE_H + ROW_GAP;
-      focusOn(editor, x, y, 220, NOTE_H);
-      recordDirectSemanticAction(
-        {
-          type: "freeform_note",
-          text: opts.text,
-          color: opts.color,
-          font: opts.font,
-          size: opts.size,
-          column: col,
-        },
-        { bounds: { x, y, w: 220, h: NOTE_H, column: col, pageIndex: pageIndex.current } },
-      );
-    },
-
-    addCallout(text: string, style: CalloutStyle, column?: "left" | "right") {
+    addCallout(text: string, column?: "left" | "right") {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "left";
-      const NOTE_H = 220;
-      ensureColumnRoom(editor, col, NOTE_H + ROW_GAP);
+      // A small sky tag sized to its words (Sept 16 2026). The sticky notes it
+      // replaces were 220 px squares in six colours, the loudest thing on the
+      // board, and the colours meant nothing once every mark was sky.
+      const PAD_X = 14;
+      const PAD_Y = 9;
+      const maxW = 360;
+      const measured = measureText(editor, text, "sans", "s", maxW - PAD_X * 2);
+      const w = Math.min(maxW, Math.ceil(measured.w) + PAD_X * 2 + 6);
+      const h = Math.ceil(measured.h) + PAD_Y * 2;
       const x = colX(col);
       const y = colY(col).current;
-
-      const colorMap: Record<CalloutStyle, TldrawColor> = {
-        hint: "yellow",
-        correct: "green",
-        wrong: "red",
-        warning: "orange",
-        important: "violet",
-        remember: "light-blue",
-      };
-
-      createNote(editor, x, y, {
-        text,
-        color: colorMap[style],
-        font: "draw",
-        size: "m",
-      });
-      colY(col).current += NOTE_H + ROW_GAP;
-      focusOn(editor, x, y, 220, NOTE_H);
+      createBox(editor, x, y, w, h, "", "sky", "semi", { size: "s" });
+      createText(editor, text, x + PAD_X, y + PAD_Y, { color: INK, size: "s", font: "sans", width: w - PAD_X * 2 });
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
       recordDirectSemanticAction(
-        { type: "freeform_note", text, color: colorMap[style], font: "draw", size: "m", column: col },
-        { bounds: { x, y, w: 220, h: NOTE_H, column: col, pageIndex: pageIndex.current } },
+        { type: "text_note", text, size: "body", column: col },
+        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
       );
     },
 
@@ -3087,7 +2833,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const LABEL_H = 30;
       const bodyH = measureText(editor, lines.join("\n"), "draw", "m", innerW).h;
       const h = PADDING + LABEL_H + bodyH + PADDING;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
 
@@ -3102,26 +2847,23 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
-    addEquationSequence(steps: string, annotations?: string, title?: string, column?: "left" | "right") {
+    addEquationSequence(stepList: string[], annotationList: string[], title?: string, column?: "left" | "right") {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "left";
-      const stepList = splitPipeList(steps ?? "");
-      const annotationList = annotations ? splitPipeList(annotations) : [];
       const titleHeight = title ? 38 : 0;
       const totalHeight = titleHeight + stepList.length * (EQ_H + EQ_ROW_GAP);
-      ensureColumnRoom(editor, col, totalHeight);
       const x = colX(col);
       let y = colY(col).current;
 
       if (title) {
-        createText(editor, title, x, y, { color: "grey", size: "s", width: 520 });
+        createText(editor, title, x, y, { color: PENCIL, size: "s", font: "sans", width: 520 });
         y += titleHeight;
       }
 
       let cy = y;
       const created = stepList.map((latex, index) => {
-        const line = createMath(editor, { latex, annotation: annotationList[index], x, y: cy, display: true });
+        const line = createMath(editor, { latex, annotation: annotationList[index] || undefined, x, y: cy, display: true });
         cy += Math.max(EQ_H, line.h + 6) + EQ_ROW_GAP;
         return line;
       });
@@ -3136,7 +2878,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       colY(col).current = y;
       focusOn(editor, x, colY(col).current - totalHeight, 520, totalHeight);
       recordDirectSemanticAction(
-        { type: "equation_sequence", steps, annotations, title, column: col },
+        { type: "equation_sequence", steps: stepList.join(" | "), annotations: annotationList.join(" | "), title, column: col },
         {
           shapeIds: created.map((line) => line.id),
           bounds: { x, y: colY(col).current - totalHeight, w: 520, h: totalHeight, column: col, pageIndex: pageIndex.current },
@@ -3144,44 +2886,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
-    addTwoColumnComparison(title: string, leftTitle: string, leftBody: string, rightTitle: string, rightBody: string, column?: "left" | "right") {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const col = column ?? "left";
-      const w = 560;
-      const boxGap = 16;
-      const boxW = (w - boxGap) / 2;
-      const bodyH = Math.max(
-        measureText(editor, leftBody, "draw", "s", boxW - 24).h,
-        measureText(editor, rightBody, "draw", "s", boxW - 24).h,
-      );
-      const h = 34 + 38 + bodyH + 16;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
-      const x = colX(col);
-      const y = colY(col).current;
-
-      createText(editor, title, x, y, { size: "m", width: w });
-      createBox(editor, x, y + 34, boxW, h - 34, "", "red", "semi");
-      createBox(editor, x + boxW + boxGap, y + 34, boxW, h - 34, "", "green", "semi");
-      createText(editor, leftTitle, x + 12, y + 46, { color: "red", size: "s", width: boxW - 24 });
-      createText(editor, rightTitle, x + boxW + boxGap + 12, y + 46, { color: "green", size: "s", width: boxW - 24 });
-      createText(editor, leftBody, x + 12, y + 72, { size: "s", width: boxW - 24 });
-      createText(editor, rightBody, x + boxW + boxGap + 12, y + 72, { size: "s", width: boxW - 24 });
-      colY(col).current += h + ROW_GAP;
-      focusOn(editor, x, y, w, h);
-      recordDirectSemanticAction(
-        { type: "two_column_comparison", title, left_title: leftTitle, left_body: leftBody, right_title: rightTitle, right_body: rightBody, column: col },
-        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
-      );
-    },
-
     addAreaModel(title: string, rowLabels: string, columnLabels: string, cells: string, column?: "left" | "right") {
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "right";
-      const rows = splitPipeList(rowLabels);
-      const cols = splitPipeList(columnLabels);
-      const cellRows = splitRows(cells);
+      const rows = splitPipeList(rowLabels).map(latexToPlain);
+      const cols = splitPipeList(columnLabels).map(latexToPlain);
+      const cellRows = splitRows(cells).map((row) => row.map(latexToPlain));
       const rowCount = Math.max(rows.length, cellRows.length, 1);
       const colCount = Math.max(cols.length, ...cellRows.map((row) => row.length), 1);
       const labelW = 74;
@@ -3191,7 +2902,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const gridW = labelW + colCount * cellW;
       const gridH = headerH + rowCount * cellH;
       const h = gridH + 58;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const gx = x;
@@ -3233,103 +2943,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
-    addVectorDiagram(title: string, centerLabel: string, vectors: string, column?: "left" | "right") {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const col = column ?? "right";
-      const parsed = parseVectors(vectors);
-      const D = Math.SQRT1_2;
-      const unit: Record<string, [number, number]> = {
-        up: [0, -1],
-        down: [0, 1],
-        left: [-1, 0],
-        right: [1, 0],
-        "up-right": [D, -D],
-        "up-left": [-D, -D],
-        "down-right": [D, D],
-        "down-left": [-D, D],
-      };
-      const w = DIAGRAM_W;
-      const BOX = 64;
-      const LEN = 90;
-      const reach = BOX / 2 + LEN + 42; // arrow plus its label
-      const h = 40 + reach * 2 + 8;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
-      const x = colX(col);
-      const y = colY(col).current;
-      const cx = x + w / 2;
-      const cy = y + 40 + reach;
-
-      createText(editor, title, x, y, { size: "m", font: "sans", color: INK, width: w });
-      createBox(editor, cx - BOX / 2, cy - BOX / 2, BOX, BOX, "", INK, "semi");
-      createText(editor, centerLabel, cx - 70, cy - 12, { size: "s", font: "sans", color: INK, width: 140, align: "middle" });
-      const pens = takePens(parsed.length);
-      parsed.forEach((vector, i) => {
-        const dir = unit[vector.direction];
-        if (!dir) return;
-        const pen = pens[i];
-        const [ux, uy] = dir;
-        // Start on the box edge, not at the centre, so arrows read as forces on the object.
-        const edge = BOX / 2 / Math.max(Math.abs(ux), Math.abs(uy));
-        const sx = cx + ux * edge;
-        const sy = cy + uy * edge;
-        const tx = cx + ux * (edge + LEN);
-        const ty = cy + uy * (edge + LEN);
-        createArrow(editor, sx, sy, tx, ty, "", pen, { dash: "solid" });
-        const tw = measureText(editor, vector.label, "sans", "s", null).w;
-        const labelW = Math.max(60, tw + 12);
-        const lx = cx + ux * (edge + LEN + 14);
-        const ly = cy + uy * (edge + LEN + 14);
-        createText(editor, vector.label, lx + ux * (labelW / 2) - labelW / 2, ly + uy * 12 - 12, { size: "s", font: "sans", color: pen, width: labelW, align: "middle" });
-      });
-
-      colY(col).current += h + ROW_GAP;
-      focusOn(editor, x, y, w, h);
-      recordDirectSemanticAction(
-        { type: "vector_diagram", title, center_label: centerLabel, vectors, column: col },
-        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
-      );
-    },
-
-    addProcessMap(title: string, nodes: string, connectors?: string, column?: "left" | "right") {
-      const editor = editorRef.current;
-      if (!editor) return;
-      const col = column ?? "right";
-      const nodeList = splitPipeList(nodes);
-      const connectorList = splitPipeList(connectors ?? "");
-      const w = 560;
-      const h = 142;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
-      const x = colX(col);
-      const y = colY(col).current;
-      const gap = 24;
-      const nodeW = Math.max(78, Math.floor((w - gap * (nodeList.length - 1)) / Math.max(nodeList.length, 1)));
-      const nodeH = 52;
-      const nodeY = y + 62;
-
-      createText(editor, title, x, y, { size: "m", width: w });
-      nodeList.forEach((node, index) => {
-        const nodeX = x + index * (nodeW + gap);
-        createBox(editor, nodeX, nodeY, nodeW, nodeH, node, "blue", "semi");
-        if (index < nodeList.length - 1) {
-          const startX = nodeX + nodeW + 4;
-          const endX = nodeX + nodeW + gap - 4;
-          createArrow(editor, startX, nodeY + nodeH / 2, endX, nodeY + nodeH / 2, "", "grey");
-          const connector = connectorList[index];
-          if (connector) {
-            createText(editor, connector, startX, nodeY + nodeH / 2 - 28, { color: "grey", size: "s", width: gap + 42 });
-          }
-        }
-      });
-
-      colY(col).current += h + ROW_GAP;
-      focusOn(editor, x, y, w, h);
-      recordDirectSemanticAction(
-        { type: "process_map", title, nodes, connectors, column: col },
-        { bounds: { x, y, w, h, column: col, pageIndex: pageIndex.current } },
-      );
-    },
-
     // ── Pictures ────────────────────────────────────────────────────────────
     // Every picture: a clean diagram in ink and pen, typeset or sans labels,
     // one caption line in pencil. Placed in the column flow like everything
@@ -3347,7 +2960,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const LABEL_W = 56; // typeset fraction beside each model
       const modelH = opts.model === "circle" ? R * 2 : BAR_H;
       const h = modelH + (opts.label ? 36 : 0);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x0 = colX(col);
       const y0 = colY(col).current;
       const labelIds: string[] = [];
@@ -3428,7 +3040,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const [fw, fh] = SIZE[opts.figure] ?? [230, 170];
       const w = fw + PAD * 2;
       const h = fh + PAD * 2 + (opts.label ? 22 : 0);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const ox = x + PAD;
@@ -3519,7 +3130,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           const s = 16;
           createLineShape(editor, undefined, undefined, [{ x: v.x, y: v.y - s }, { x: v.x + s, y: v.y - s }, { x: v.x + s, y: v.y }], { color: INK, size: "s", dash: "solid" });
         }
-        opts.sideLabels.slice(0, pts.length).forEach((text, i) => {
+        figureSideLabels(opts.figure, opts.sideLabels).edges.slice(0, pts.length).forEach((text, i) => {
+          if (!text) return;
           const a = pts[i];
           const b = pts[(i + 1) % pts.length];
           const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
@@ -3579,7 +3191,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const rowsH = opts.rows.length * SEG_H + (opts.rows.length - 1) * GAP;
       const w = nameW + maxSeg * SEG_W + totalW + braceW + 8;
       const h = rowsH + (opts.label ? 34 : 0) + 8;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const pens = takePens(opts.rows.length);
@@ -3616,7 +3227,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const gh = opts.rows * CELL;
       const w = gw + 8;
       const h = gh + (opts.label ? 34 : 0) + 8;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const ox = x + 4;
@@ -3670,7 +3280,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const lines = (opts.carries ? 0.8 : 0) + opts.operands.length + opts.partials.length + (opts.result ? 1 : 0);
       const rules = 1 + (opts.partials.length > 0 && opts.result ? 1 : 0);
       const h = lines * lineH + rules * 10 + (opts.label ? 30 : 0) + 8;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const pens = takePens(2);
@@ -3717,7 +3326,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const dividendW = widest * digitW + 10;
       const w = divisorW + 12 + dividendW + 8;
       const h = lineH * (2 + opts.steps.length) + opts.steps.filter((t) => /^\s*[-−]/.test(t)).length * 6 + (opts.label ? 30 : 0) + 8;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const pens = takePens(2);
@@ -3758,7 +3366,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const PAD = 34;
       const w = W + PAD * 2;
       const h = H + PAD * 2 + (opts.label ? 30 : 0);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const ox = x + PAD;
@@ -3918,7 +3525,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const blocks = specs.map((sp) => build(sp.count));
       const w = Math.max(...blocks.map((b) => b.w)) + countW + 8;
       const h = blocks.reduce((sum, b) => sum + b.h, 0) + (blocks.length - 1) * BLOCK_GAP + (opts.label ? 34 : 0) + 4;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       let cy = y;
@@ -3972,7 +3578,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const maxY = Math.max(0, ey, ey2);
       const w = maxX - minX + PAD * 2;
       const h = maxY - minY + PAD * 2 + (opts.caption ? 22 : 0);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const vx = x + PAD - minX;
@@ -4046,7 +3651,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const gridH = opts.rows * SP;
       const w = LEFT + gridW + 8;
       const h = TOP + gridH + 8 + (opts.label ? 30 : 0);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const ox = x + LEFT;
@@ -4104,7 +3708,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const dy = tilt * 18;
       const cyOffset = 74;
       const h = cyOffset + 18 + V + 8 + (opts.label ? 30 : 0);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const cx = x + w / 2;
@@ -4162,7 +3765,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const PAD_B = 34;
       const PAD_T = opts.label ? 44 : 16;
       const h = PAD_T + CHART_H + PAD_B + 4;
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const baseY = y + PAD_T + CHART_H;
@@ -4202,7 +3804,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const col = opts.column ?? "left";
       const w = opts.width;
       const h = opts.height + (opts.label ? 30 : 0);
-      ensureColumnRoom(editor, col, h + ROW_GAP);
       const x = colX(col);
       const y = colY(col).current;
       const sx = opts.width / 100;
@@ -4219,8 +3820,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           isClosed: stroke.closed,
         });
       }
-      for (const l of opts.labels) {
-        createText(editor, l.text, x + l.x * sx - 70, y + l.y * sy - 12, { color: PENCIL, size: "s", font: "sans", width: 140, align: "middle" });
+      const measure = (t: string) => {
+        const m = measureText(editor, t, "sans", "s", 180);
+        return { w: Math.ceil(m.w) + 6, h: Math.ceil(m.h) };
+      };
+      for (const l of placeSketchLabels(opts.strokes, opts.labels, opts.width, opts.height, measure)) {
+        createText(editor, l.text, x + l.x, y + l.y, { color: PENCIL, size: "s", font: "sans", width: l.w, align: "middle" });
       }
       if (opts.label) {
         createText(editor, opts.label, x, y + opts.height + 8, { color: PENCIL, size: "s", font: "sans", width: w, align: "middle" });
@@ -4367,439 +3972,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
-    applyBoardActions(actions: BoardAgentAction[], jobId: string) {
-      const editor = editorRef.current;
-      if (!editor) return;
-      // Cancel any prior pending post-batch focus before starting a fresh
-      // batch — a new applyBoardActions call always supersedes a stale focus
-      // intent from a previous batch.
-      cancelPendingFocus();
-      // Snapshot the page's shape IDs before the batch so we can compute the
-      // union bounding box of newly added shapes for the debounced focus.
-      let preBatchIds: Set<string> | null = null;
-      try {
-        preBatchIds = new Set(
-          (editor.getCurrentPageShapeIds() as unknown as Iterable<string>),
-        );
-      } catch {
-        preBatchIds = null;
-      }
-      // Only schedule the post-batch focus for multi-action batches or
-      // freeform actions — single templated actions already drive their own
-      // focus inside the per-handle methods.
-      const hasFreeform = actions.some(
-        (a) =>
-          a.type === "freeform_text" ||
-          a.type === "freeform_shape" ||
-          a.type === "freeform_arrow" ||
-          a.type === "freeform_pen" ||
-          a.type === "freeform_draw" ||
-          a.type === "freeform_line" ||
-          a.type === "freeform_note",
-      );
-      const shouldDebouncedFocus = actions.length >= 2 || hasFreeform;
-      for (const action of actions) {
-        const meta: BoardArtifactMeta = {
-          jobId,
-          role: action.role,
-          concept: action.concept,
-          summary: action.summary,
-          owner: action.owner ?? "board-agent",
-          tutorReferenceLabel: action.tutorReferenceLabel ?? action.label ?? action.title,
-        };
-        const shapeIdsBeforeAction = currentShapeIdSet(editor);
-        withJobMeta(meta, () => {
-          switch (action.type) {
-            case "clear_board":
-              api.clearWhiteboard();
-              break;
-            case "start_new_problem":
-              api.startNewProblem(action.title ?? action.text ?? "New problem");
-              break;
-            case "start_section":
-              api.startBoardSection(action.title ?? action.text ?? "Board work");
-              break;
-            case "problem_setup":
-              api.addProblemSetup(
-                action.goal ?? action.text ?? action.title ?? "Goal",
-                action.givens,
-                action.unknowns,
-                action.plan,
-                action.column,
-              );
-              break;
-            case "equation_sequence":
-              api.addEquationSequence(action.steps ?? action.latex ?? "", action.annotations, action.title, action.column);
-              break;
-            case "two_column_comparison":
-              api.addTwoColumnComparison(
-                action.title ?? "Compare",
-                action.left_title ?? "Attempt",
-                action.left_body ?? "",
-                action.right_title ?? "Repair",
-                action.right_body ?? "",
-                action.column,
-              );
-              break;
-            case "area_model":
-              api.addAreaModel(
-                action.title ?? "Model",
-                action.row_labels ?? "",
-                action.column_labels ?? "",
-                action.cells ?? "",
-                action.column,
-              );
-              break;
-            case "vector_diagram":
-              api.addVectorDiagram(
-                action.title ?? "Diagram",
-                action.center_label ?? action.label ?? "object",
-                action.vectors ?? "",
-                action.column,
-              );
-              break;
-            case "process_map":
-              api.addProcessMap(action.title ?? "Map", action.nodes ?? action.text ?? "", action.connectors, action.column);
-              break;
-            case "text_note":
-              api.addTextNote(action.text ?? action.label ?? action.title ?? "", action.size === "heading" ? "heading" : "body", action.column);
-              break;
-            case "function_graph":
-              api.addFunctionGraph(
-                action.expression ?? "x",
-                action.x_min ?? -5,
-                action.x_max ?? 5,
-                action.label,
-                action.column,
-              );
-              break;
-            case "shape":
-              api.drawShape(action.shape ?? "rectangle", action.label ?? action.text, action.width, action.height, action.column);
-              break;
-            case "table":
-              api.addTable(action.columns ?? "Item | Value", action.rows ?? "", action.title, action.column);
-              break;
-            case "number_line":
-              api.addNumberLine({
-                min: action.min ?? -5,
-                max: action.max ?? 5,
-                marks: parseLineMarks(action.text),
-                intervals: [],
-                jumps: [],
-                label: action.label,
-                column: action.column,
-              });
-              break;
-            case "coordinate_axes":
-              api.addCoordinateAxes(
-                action.x_min ?? -5,
-                action.x_max ?? 5,
-                action.y_min ?? -5,
-                action.y_max ?? 5,
-                action.label,
-                action.column,
-              );
-              break;
-            case "plot_points":
-              api.plotPoints(
-                action.text ?? "",
-                action.x_min ?? -5,
-                action.x_max ?? 5,
-                action.y_min ?? -5,
-                action.y_max ?? 5,
-                action.label,
-                action.column,
-              );
-              break;
-            case "worked_example_box":
-              api.addWorkedExampleBox(action.title ?? "Key idea", action.body ?? action.text ?? "", action.column);
-              break;
-            case "student_attempt":
-              api.addStudentAttempt(action.text ?? action.body ?? "", action.column);
-              break;
-            case "highlight_step":
-              api.highlightStep(
-                { step_label: action.step_label, step_index: action.step_index },
-                action.style ?? "box",
-              );
-              break;
-            case "cross_out_step":
-              api.crossOutStep({
-                step_label: action.step_label,
-                step_index: action.step_index,
-              });
-              break;
-            case "freeform_text":
-              createText(editor, action.text ?? action.label ?? "", action.x ?? colX(action.column ?? "left"), action.y ?? colY(action.column ?? "left").current, {
-                color: action.color,
-                size: action.size === "s" || action.size === "m" || action.size === "l" || action.size === "xl" ? action.size : "m",
-                width: action.width,
-              });
-              focusOn(editor, action.x ?? LEFT_X, action.y ?? START_Y, action.width ?? 360, 80);
-              break;
-            case "freeform_shape": {
-              const shape = (action.shape ?? "rectangle") as "rectangle" | "ellipse" | "diamond" | "triangle" | "arrow";
-              if (shape === "arrow") {
-                api.drawShape("arrow", action.label ?? action.text, action.width, action.height, action.column);
-                break;
-              }
-              const hasCoords = typeof action.x === "number" && typeof action.y === "number";
-              if (hasCoords) {
-                const w = action.width ?? 120;
-                const h = action.height ?? 90;
-                createFreeformGeo(
-                  editor,
-                  shape,
-                  action.x!,
-                  action.y!,
-                  w,
-                  h,
-                  action.color ?? "black",
-                  action.fill ?? "none",
-                  { font: action.font, dash: action.dash },
-                );
-                focusOn(editor, action.x!, action.y!, w + 40, h + 40);
-              } else {
-                api.drawShape(shape, undefined, action.width, action.height, action.column);
-              }
-              break;
-            }
-            case "freeform_arrow":
-              createArrow(
-                editor,
-                action.x ?? LEFT_X,
-                action.y ?? START_Y,
-                action.x2 ?? (action.x ?? LEFT_X) + 180,
-                action.y2 ?? (action.y ?? START_Y),
-                action.label ?? action.text ?? "",
-                action.color ?? "black",
-                { font: action.font, dash: action.dash },
-              );
-              focusOn(editor, action.x ?? LEFT_X, action.y ?? START_Y, Math.abs((action.x2 ?? 180) - (action.x ?? 0)) + 80, 100);
-              break;
-            // Phase 6: `freeform_pen` previously produced N short arrow shapes
-            // per stroke. It now routes through `createDrawStroke` to produce
-            // ONE real tldraw `draw` shape with the full point list — cleaner
-            // freehand at the cost of per-segment color control. Kept as an
-            // alias for back-compat; prefer `freeform_draw` going forward.
-            case "freeform_pen":
-            case "freeform_draw": {
-              const pts = action.points ?? [];
-              if (pts.length < 2) break;
-              createDrawStroke(editor, action.x, action.y, pts, {
-                color: action.color ?? "black",
-                size:
-                  action.size === "s" || action.size === "m" || action.size === "l" || action.size === "xl"
-                    ? action.size
-                    : "m",
-                dash: action.dash ?? "draw",
-                fill: action.fill,
-                isClosed: action.fill === "solid" || action.fill === "semi",
-              });
-              const minX = Math.min(...pts.map((p) => p.x));
-              const minY = Math.min(...pts.map((p) => p.y));
-              const maxX = Math.max(...pts.map((p) => p.x));
-              const maxY = Math.max(...pts.map((p) => p.y));
-              focusOn(editor, minX, minY, Math.max(80, maxX - minX), Math.max(80, maxY - minY));
-              break;
-            }
-            case "freeform_line": {
-              const pts = action.points ?? [];
-              if (pts.length < 2) break;
-              createLineShape(editor, action.x, action.y, pts, {
-                color: action.color ?? "black",
-                size:
-                  action.size === "s" || action.size === "m" || action.size === "l" || action.size === "xl"
-                    ? action.size
-                    : "m",
-                dash: action.dash ?? "solid",
-                spline: action.spline ?? "line",
-              });
-              const minX = Math.min(...pts.map((p) => p.x));
-              const minY = Math.min(...pts.map((p) => p.y));
-              const maxX = Math.max(...pts.map((p) => p.x));
-              const maxY = Math.max(...pts.map((p) => p.y));
-              focusOn(editor, minX, minY, Math.max(80, maxX - minX), Math.max(80, maxY - minY));
-              break;
-            }
-            case "freeform_note": {
-              const noteCol = action.column ?? "left";
-              const x = typeof action.x === "number" ? action.x : colX(noteCol);
-              const y = typeof action.y === "number" ? action.y : colY(noteCol).current;
-              const text = action.text ?? action.label ?? "";
-              createNote(editor, x, y, {
-                text,
-                color: action.color ?? "yellow",
-                labelColor: "black",
-                font: action.font ?? "draw",
-                size:
-                  action.size === "s" || action.size === "m" || action.size === "l" || action.size === "xl"
-                    ? action.size
-                    : "m",
-                scale: action.scale ?? 1,
-                growY: action.growY ?? 0,
-              });
-              // If we fell back to the column cursor, advance it so subsequent
-              // templated actions in this batch don't collide with the note.
-              if (typeof action.x !== "number" || typeof action.y !== "number") {
-                colY(noteCol).current += 220 + ROW_GAP;
-              }
-              focusOn(editor, x, y, 220, 220);
-              break;
-            }
-            case "delete_shape": {
-              const mutateOpts = {
-                allow_student_owned: action.allow_student_owned,
-                allow_tutor_owned: action.allow_tutor_owned,
-              };
-              const ids = targetShapeIds(action).filter((id) => {
-                const shape = editor.getShape(id as Parameters<typeof editor.getShape>[0]);
-                return shape && canMutateShape(shape, mutateOpts);
-              });
-              if (ids.length > 0) {
-                editor.deleteShapes(ids as unknown as Parameters<typeof editor.deleteShapes>[0]);
-              }
-              break;
-            }
-            case "move_shape": {
-              const dx = action.dx ?? 0;
-              const dy = action.dy ?? 0;
-              if (dx === 0 && dy === 0) break;
-              const mutateOpts = {
-                allow_student_owned: action.allow_student_owned,
-                allow_tutor_owned: action.allow_tutor_owned,
-              };
-              for (const id of targetShapeIds(action)) {
-                const shape = editor.getShape(id as Parameters<typeof editor.getShape>[0]);
-                if (!shape || !canMutateShape(shape, mutateOpts)) continue;
-                editor.updateShape({
-                  id: shape.id,
-                  type: shape.type,
-                  x: shape.x + dx,
-                  y: shape.y + dy,
-                } as Parameters<typeof editor.updateShape>[0]);
-              }
-              break;
-            }
-            case "update_text": {
-              const text = action.text ?? action.label ?? "";
-              const mutateOpts = {
-                allow_student_owned: action.allow_student_owned,
-                allow_tutor_owned: action.allow_tutor_owned,
-              };
-              for (const id of targetShapeIds(action)) {
-                const shape = editor.getShape(id as Parameters<typeof editor.getShape>[0]);
-                if (!shape || !canMutateShape(shape, mutateOpts)) continue;
-                editor.updateShape({
-                  id: shape.id,
-                  type: shape.type,
-                  props: {
-                    ...shape.props,
-                    richText: toRichText(text),
-                  },
-                } as Parameters<typeof editor.updateShape>[0]);
-              }
-              break;
-            }
-            case "align_shapes": {
-              type EditorShape = NonNullable<ReturnType<typeof editor.getShape>>;
-              const mutateOpts = {
-                allow_student_owned: action.allow_student_owned,
-                allow_tutor_owned: action.allow_tutor_owned,
-              };
-              const targets = targetShapeIds(action)
-                .map((id) => editor.getShape(id as Parameters<typeof editor.getShape>[0]))
-                .filter((shape): shape is EditorShape => Boolean(shape) && canMutateShape(shape, mutateOpts));
-              if (targets.length < 2) break;
-
-              const dims = targets.map((shape) => ({ shape, ...shapeSize(shape) }));
-              const align = action.align ?? "left";
-              const value =
-                align === "right"
-                  ? Math.max(...dims.map(({ shape, w }) => shape.x + w))
-                  : align === "bottom"
-                    ? Math.max(...dims.map(({ shape, h }) => shape.y + h))
-                    : align === "center-x"
-                      ? dims.reduce((sum, { shape, w }) => sum + shape.x + w / 2, 0) / dims.length
-                      : align === "center-y"
-                        ? dims.reduce((sum, { shape, h }) => sum + shape.y + h / 2, 0) / dims.length
-                        : align === "top"
-                          ? Math.min(...dims.map(({ shape }) => shape.y))
-                          : Math.min(...dims.map(({ shape }) => shape.x));
-
-              for (const { shape, w, h } of dims) {
-                const x =
-                  align === "right" ? value - w :
-                  align === "center-x" ? value - w / 2 :
-                  align === "left" ? value :
-                  shape.x;
-                const y =
-                  align === "bottom" ? value - h :
-                  align === "center-y" ? value - h / 2 :
-                  align === "top" ? value :
-                  shape.y;
-                editor.updateShape({
-                  id: shape.id,
-                  type: shape.type,
-                  x,
-                  y,
-                } as Parameters<typeof editor.updateShape>[0]);
-              }
-              break;
-            }
-          }
-        });
-        const createdShapeIds = diffStringSet(currentShapeIdSet(editor), shapeIdsBeforeAction);
-        semanticBoardRef.current = applySemanticBoardAction(
-          semanticBoardRef.current,
-          action,
-          meta,
-          {
-            shapeIds: createdShapeIds,
-            eqItemIds: [],
-          },
-        );
-      }
-      // Post-batch debounced camera focus on the newly added shapes' bounding
-      // box. Skip for single templated actions (their own focusOn call wins)
-      // and bail silently if the editor doesn't expose the IDs we need.
-      if (shouldDebouncedFocus && preBatchIds) {
-        focusDebounceRef.current.raf = requestAnimationFrame(() => {
-          focusDebounceRef.current.raf = null;
-          focusDebounceRef.current.timeout = setTimeout(() => {
-            focusDebounceRef.current.timeout = null;
-            const ed = editorRef.current;
-            if (!ed) return;
-            try {
-              const allIds = ed.getCurrentPageShapeIds() as unknown as Iterable<string>;
-              const newIds: string[] = [];
-              for (const id of allIds) {
-                if (!preBatchIds.has(id)) newIds.push(id);
-              }
-              if (newIds.length === 0) return;
-              type ShapeId = Parameters<typeof ed.getShapePageBounds>[0];
-              let minX = Infinity;
-              let minY = Infinity;
-              let maxX = -Infinity;
-              let maxY = -Infinity;
-              for (const id of newIds) {
-                const b = ed.getShapePageBounds(id as ShapeId);
-                if (!b) continue;
-                if (b.minX < minX) minX = b.minX;
-                if (b.minY < minY) minY = b.minY;
-                if (b.maxX > maxX) maxX = b.maxX;
-                if (b.maxY > maxY) maxY = b.maxY;
-              }
-              if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
-              focusOn(ed, minX, minY, Math.max(60, maxX - minX), Math.max(60, maxY - minY));
-            } catch {
-              // Camera focus is a nicety; never throw from the post-batch pass.
-            }
-          }, 150);
-        });
-      }
-    },
-
     getSnapshot() {
       const editor = editorRef.current;
       if (!editor) return null;
@@ -4823,37 +3995,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           rowTop: rowTopRef.current,
         },
       };
-    },
-
-    async captureScreenshot(): Promise<string | null> {
-      // Best-effort. Every failure path returns null; never throws.
-      try {
-        const editor = editorRef.current;
-        if (!editor) return null;
-        const shapes = editor.getCurrentPageShapes();
-        if (!shapes || shapes.length === 0) return null;
-        // tldraw 5: editor.toImageDataUrl returns { url, width, height }.
-        // scale ~0.4 against a default 2x pixelRatio aims for ~768px wide for
-        // typical board widths. JPEG quality 0.6 keeps the payload small
-        // (~40-80KB) so we don't bloat the board-agent request.
-        const result = await editor.toImageDataUrl(shapes.map((s) => s.id), {
-          format: "jpeg",
-          quality: 0.6,
-          scale: 0.4,
-          background: true,
-          padding: 16,
-        });
-        const url = (result && typeof result === "object" ? (result as { url?: unknown }).url : undefined);
-        if (typeof url === "string" && url.startsWith("data:image/")) {
-          return url;
-        }
-        return null;
-      } catch (err) {
-        if (process.env.NODE_ENV !== "production") {
-          console.warn("[TldrawCore] captureScreenshot failed", err);
-        }
-        return null;
-      }
     },
 
     getBoardSummary() {
@@ -4918,6 +4059,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return notes;
     },
 
+    itemsSnapshot() {
+      return itemsRef.current.map((item) => ({ ...item }));
+    },
+
     endItem(token: ItemToken, label: string | null, owner: "tutor" | "student" = "tutor"): string | null {
       buildingItemRef.current = false;
       const request = placeRequestRef.current;
@@ -4942,6 +4087,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         eqItemIds,
         owner: token.tool === "add_student_attempt" ? "student" : owner,
         createdAt: Date.now(),
+        ...(token.content ? { content: token.content } : {}),
       };
       itemsRef.current = [...itemsRef.current, item].slice(-200);
       // Into free space on the board. Headings place themselves.

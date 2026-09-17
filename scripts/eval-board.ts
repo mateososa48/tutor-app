@@ -32,6 +32,7 @@ export function createFakeBoard(): FakeBoard {
         eqItemIds: [],
         owner: token.tool === "add_student_attempt" ? "student" : "tutor",
         createdAt: Date.now(),
+        ...(token.content ? { content: token.content } : {}),
       }];
       return id;
     },

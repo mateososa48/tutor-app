@@ -43,6 +43,9 @@ const UNICODE: Array<[RegExp, string]> = [
 function wrapWords(latex: string): string {
   return latex.replace(/(^|[^\\a-zA-Z{])([A-Za-z]{2,}(?:\s+[A-Za-z]{2,})*)(?![a-zA-Z}])/g, (m, before: string, word: string, offset: number) => {
     if (KNOWN.has(word)) return m;
+    // Two letters are usually a product of variables ("y = mx + b"), unless
+    // they are one of the short words people write between numbers.
+    if (word.length === 2 && !SHORT_WORDS.has(word.toLowerCase())) return m;
     if (UNITS.has(word)) return `${before.trimEnd()}\\,\\text{${word}}`;
     // Math mode drops the spaces around \text; keep them inside it so
     // "12 and 12" does not set as "12and12".
@@ -55,12 +58,15 @@ function wrapWords(latex: string): string {
 
 // Letters that are fine in math mode as written (functions, variable runs).
 const KNOWN = new Set(["sin", "cos", "tan", "log", "ln", "exp", "lim", "max", "min", "dx", "dy", "abc", "xyz"]);
+const SHORT_WORDS = new Set(["of", "is", "or", "if", "in", "to", "an", "at", "by", "on", "as", "so", "no", "we", "be", "it", "do", "cm", "mm", "km", "kg", "mg", "ft", "lb", "oz", "ml", "mi", "yd"]);
 // Units are set upright with a thin space: 24\\,\\text{cm}.
 const UNITS = new Set(["cm", "mm", "km", "kg", "mg", "mph", "ft", "lb", "lbs", "oz", "ml", "kph", "hrs", "min", "sec", "mi", "yd"]);
 
 export function normalizeLatex(input: string): string {
   let s = input.replace(/\r/g, "").trim();
   for (const [re, rep] of UNICODE) s = s.replace(re, rep);
+  // "x^10" sets as x¹0 in LaTeX; nobody writing it means that.
+  s = s.replace(/([\^_])(\d{2,})/g, "$1{$2}");
   // "40 / 2" stays a slash; "3/4" as a lone fraction reads better typeset.
   s = s.replace(/(^|[\s=(+\-])(\d+)\/(\d+)(?=$|[\s=)+\-])/g, (m, before: string, a: string, b: string) => `${before}\\tfrac{${a}}{${b}}`);
   s = wrapWords(s);

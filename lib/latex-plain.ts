@@ -28,7 +28,33 @@ const SYMBOLS: Array<[RegExp, string]> = [
   [/\\degree|\^\\circ|\^\{\\circ\}/g, "°"],
   [/\\rightarrow|\\to\b/g, "→"],
   [/\\%/g, "%"],
+  [/\\prime(?![a-zA-Z])/g, "′"],
+  // Function names are words, not commands to drop: \log_2 8 reads "log₂ 8".
+  [/\\(arcsin|arccos|arctan|sinh|cosh|tanh|sin|cos|tan|sec|csc|cot|log|ln|exp|lim|max|min|gcd)(?![a-zA-Z])/g, "$1"],
 ];
+
+// What the tutor reads back from its own board (Sept 16 2026): "x^2" read as
+// a caret and "x^10" as "x^10"; a picture of the board should say x² and x¹⁰.
+// Only characters with a Unicode super- or subscript form convert; anything
+// else keeps the caret with brackets: x^(n+1) stays readable.
+const SUPERSCRIPT: Record<string, string> = {
+  "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+  "+": "⁺", "-": "⁻", "−": "⁻", "=": "⁼", "(": "⁽", ")": "⁾", "′": "′",
+  a: "ᵃ", b: "ᵇ", c: "ᶜ", d: "ᵈ", e: "ᵉ", f: "ᶠ", g: "ᵍ", h: "ʰ", i: "ⁱ", j: "ʲ", k: "ᵏ", l: "ˡ", m: "ᵐ",
+  n: "ⁿ", o: "ᵒ", p: "ᵖ", r: "ʳ", s: "ˢ", t: "ᵗ", u: "ᵘ", v: "ᵛ", w: "ʷ", x: "ˣ", y: "ʸ", z: "ᶻ",
+};
+const SUBSCRIPT: Record<string, string> = {
+  "0": "₀", "1": "₁", "2": "₂", "3": "₃", "4": "₄", "5": "₅", "6": "₆", "7": "₇", "8": "₈", "9": "₉",
+  "+": "₊", "-": "₋", "−": "₋", "=": "₌", "(": "₍", ")": "₎",
+  a: "ₐ", e: "ₑ", h: "ₕ", i: "ᵢ", j: "ⱼ", k: "ₖ", l: "ₗ", m: "ₘ", n: "ₙ", o: "ₒ", p: "ₚ", r: "ᵣ", s: "ₛ", t: "ₜ", u: "ᵤ", v: "ᵥ", x: "ₓ",
+};
+
+function script(text: string, table: Record<string, string>, mark: string): string {
+  const t = text.replace(/\s+/g, "");
+  if (!t) return "";
+  const chars = [...t];
+  return chars.every((ch) => ch in table) ? chars.map((ch) => table[ch]).join("") : `${mark}(${t})`;
+}
 
 function stripGroup(s: string): string {
   return s.startsWith("{") && s.endsWith("}") ? s.slice(1, -1) : s;
@@ -106,15 +132,22 @@ export function latexToPlain(latex: string): string {
   s = replaceCommand(s, "dfrac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);
   s = replaceCommand(s, "tfrac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);
   s = replaceCommand(s, "frac", 2, (a, b) => `${wrap(a)}/${wrap(b)}`);
+  // \sqrt[3]{x} is a cube root: ∛(x).
+  s = s.replace(/\\sqrt\s*\[\s*([^\]]+?)\s*\]/g, (_, n: string) => (n === "3" ? "\\cbrtmark" : n === "4" ? "\\qdrtmark" : `${script(n, SUPERSCRIPT, "^")}\\sqrt`));
+  s = replaceCommand(s, "cbrtmark", 1, (a) => `∛(${a})`);
+  s = replaceCommand(s, "qdrtmark", 1, (a) => `∜(${a})`);
   s = replaceCommand(s, "sqrt", 1, (a) => `√(${a})`);
   s = replaceCommand(s, "text", 1, (a) => a);
   s = replaceCommand(s, "mathrm", 1, (a) => a);
+  s = replaceCommand(s, "operatorname", 1, (a) => a);
+  s = replaceCommand(s, "mathbf", 1, (a) => a);
   s = replaceCommand(s, "textbf", 1, (a) => a);
   s = replaceCommand(s, "overline", 1, (a) => `‾${a}`);
   s = replaceCommand(s, "vec", 1, (a) => `${a}⃗`);
   for (const [re, rep] of SYMBOLS) s = s.replace(re, rep);
-  // superscripts and subscripts keep their caret/underscore, braces dropped
-  s = s.replace(/\^\{([^{}]*)\}/g, "^$1").replace(/_\{([^{}]*)\}/g, "_$1");
+  // Superscripts and subscripts as the board shows them: x², a₁, x^(n+1).
+  s = s.replace(/\^\s*(\{[^{}]*\}|[^\s{}\\])/g, (_, g: string) => script(stripGroup(g), SUPERSCRIPT, "^"));
+  s = s.replace(/_\s*(\{[^{}]*\}|[^\s{}\\])/g, (_, g: string) => script(stripGroup(g), SUBSCRIPT, "_"));
   s = s.replace(/\\[a-zA-Z]+/g, "").replace(/[{}]/g, "");
   for (const [, hold, literal] of ESCAPES) s = s.split(hold).join(literal);
   return s.replace(/\s+/g, " ").trim();

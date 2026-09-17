@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import {
   arcPolyline,
   describeFractionModel,
+  figureSideLabels,
+  labelLanes,
+  placeSketchLabels,
   dividerAngles,
   edgeLabelPoint,
   figureVertices,
@@ -193,4 +196,43 @@ test("tape rows keep empty boxes and only read totals from the last box", async 
   const totals = parseTapeRows("3 | 3 | 3 | 3 = 12");
   assert.equal(totals[0].segments.length, 4);
   assert.equal(totals[0].total, "12");
+});
+
+test("a right triangle's labels are the two legs, then the hypotenuse", () => {
+  // Edges: 0 bottom leg, 1 hypotenuse, 2 upright leg.
+  assert.deepEqual(figureSideLabels("right_triangle", ["6", "8", "x"]), { edges: ["6", "x", "8"], description: "legs 6 and 8, hypotenuse x" });
+  assert.deepEqual(figureSideLabels("right_triangle", ["3", "4", "?"]).edges, ["3", "?", "4"]);
+  // Numbers that only fit Pythagoras with 10 as the hypotenuse go where they fit.
+  assert.deepEqual(figureSideLabels("right_triangle", ["6", "10", "8"]), { edges: ["6", "10", "8"], description: "legs 6 and 8, hypotenuse 10" });
+  assert.deepEqual(figureSideLabels("right_triangle", ["13", "5", "12"]).description, "legs 12 and 5, hypotenuse 13");
+  assert.deepEqual(figureSideLabels("right_triangle", ["", "5"]), { edges: ["", "", "5"], description: "leg 5" });
+  // Other figures keep their order.
+  assert.deepEqual(figureSideLabels("rectangle", ["8 cm", "3 cm"]), { edges: ["8 cm", "3 cm"], description: "sides 8 cm, 3 cm" });
+  assert.equal(figureSideLabels("cube", ["2", "2", "2"]).description, "dimensions 2, 2, 2");
+});
+
+test("sketch labels name the right strokes and stay off them", () => {
+  // The recorded rise-over-run sketch: base, slope, upright side.
+  const strokes = parseSketchStrokes("10,80 90,80;10,80 90,20;90,20 90,80");
+  const labels = parseSketchLabels("60,20:rise = height;30,60:run = width");
+  const measure = (t: string) => ({ w: t.length * 8, h: 18 });
+  const [rise, run] = placeSketchLabels(strokes, labels, 320, 220, measure);
+  const cx = (l: { x: number; w: number }) => l.x + l.w / 2;
+  const cy = (l: { y: number; h: number }) => l.y + l.h / 2;
+  // Rise sits beside the upright stroke (x = 288), halfway up it.
+  assert.ok(rise.x >= 288, `rise starts right of the upright side, got ${rise.x}`);
+  assert.ok(Math.abs(cy(rise) - 110) < 12, `rise is level with the middle of the side, got ${cy(rise)}`);
+  // Run sits under the base (y = 176), centred on it.
+  assert.ok(run.y >= 176, `run is under the base, got ${run.y}`);
+  assert.ok(Math.abs(cx(run) - 160) < 12, `run is centred on the base, got ${cx(run)}`);
+  // A label dropped on a stroke is pushed off it.
+  const onLine = placeSketchLabels(parseSketchStrokes("0,50 100,50"), parseSketchLabels("50,50:road"), 300, 200, measure)[0];
+  assert.ok(onLine.y + onLine.h < 100 || onLine.y > 100, `the label no longer crosses y = 100: ${JSON.stringify(onLine)}`);
+  // Two labels in the same spot are separated.
+  const twins = placeSketchLabels([], parseSketchLabels("50,50:first; 50,50:second"), 300, 200, measure);
+  assert.ok(twins[1].y >= twins[0].y + twins[0].h, JSON.stringify(twins));
+});
+
+test("labels that would overlap climb into lanes", () => {
+  assert.deepEqual(labelLanes([{ x: 0, w: 40 }, { x: 30, w: 40 }, { x: 100, w: 40 }, { x: 10, w: 20 }]), [0, 1, 0, 2]);
 });

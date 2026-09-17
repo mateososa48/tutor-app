@@ -40,7 +40,24 @@ test("dead board parameters are gone from the schema", () => {
   const section = WHITEBOARD_FUNCTION_TOOLS.find((t) => t.name === "start_board_section")!;
   const props = (section.parameters as { properties: Record<string, unknown> }).properties;
   assert.ok(!("fresh_page" in props), "fresh_page was removed with the page metaphor");
-  const map = WHITEBOARD_FUNCTION_TOOLS.find((t) => t.name === "add_process_map")!;
-  const connectors = (map.parameters as { properties: { connectors: { description: string } } }).properties.connectors;
-  assert.match(connectors.description, /pipe-separated/i);
+  // `place` replaced `column` (Sept 16 2026); the dispatcher still reads it from old recordings.
+  for (const tool of WHITEBOARD_FUNCTION_TOOLS) {
+    const toolProps = (tool.parameters as { properties?: Record<string, unknown> }).properties ?? {};
+    assert.ok(!("column" in toolProps), `${tool.name} still offers column`);
+  }
+  const callout = WHITEBOARD_FUNCTION_TOOLS.find((t) => t.name === "add_callout")!;
+  assert.ok(!("style" in (callout.parameters as { properties: Record<string, unknown> }).properties), "callouts are one sky tag");
+  assert.doesNotMatch(JSON.stringify(WHITEBOARD_TOOL_DECLARATIONS), /new page/i);
+});
+
+test("off-topic tools are cut and the schema stays small", () => {
+  const names = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name));
+  // Still replayed by the dispatcher for old recordings, but no longer offered.
+  for (const cut of ["add_two_column_comparison", "add_vector_diagram", "add_process_map", "clear_whiteboard", "highlight_step", "add_coordinate_axes"]) {
+    assert.ok(!names.has(cut), `${cut} should not be declared`);
+  }
+  // Every session sends the whole schema. Sept 16 2026: 43,513 characters for
+  // 41 tools before the cut, 35,748 for 35 after.
+  const size = JSON.stringify(WHITEBOARD_TOOL_DECLARATIONS).length;
+  assert.ok(size < 39000, `whiteboard tool schema is ${size} characters`);
 });

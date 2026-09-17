@@ -70,7 +70,7 @@ export const LESSON: LessonBeat[] = [
     activity: "writing",
     board: [
       { name: "draw_equation_step", args: { latex: "x = 4", annotation: "divide both sides by 2" } },
-      { name: "highlight_step", args: { step_label: "x = 4", style: "circle" } },
+      { name: "circle_item", args: { target: "x = 4", keep: true } },
     ],
   },
   {
@@ -96,7 +96,7 @@ export const SCENES: Record<string, BoardCall[]> = {
     { name: "draw_equation_step", args: { latex: "3(x - 2) = 12" } },
     { name: "draw_equation_step", args: { latex: "3x - 6 = 12", annotation: "distribute the 3" } },
     { name: "draw_equation_step", args: { latex: "3x = 18", annotation: "add 6 to both sides" } },
-    { name: "highlight_step", args: { step_label: "3x = 18", style: "underline" } },
+    { name: "highlight", args: { target: "3x = 18" } },
   ],
   hint: [
     { name: "draw_equation_step", args: { latex: "2x = 8", annotation: "subtract 3 from both sides" } },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { SKY, SKY_DEEP } from "@/components/board/board-theme";
+import { PENCIL_HEX, SKY, SKY_DEEP } from "@/components/board/board-theme";
 import { HTMLContainer, Rectangle2d, ShapeUtil, T, type RecordProps, type TLBaseShape } from "tldraw";
 import katex from "katex";
 import { latexToPlain } from "@/lib/latex-plain";
@@ -45,7 +45,11 @@ export const MATH_FONT_PX = 23.2; // 1.45rem at the root 16px
 // Marks on a line are the tutor's sky pen (Sept 16); strikes use the deeper sky.
 export const MATH_CORRECT_HEX = SKY;
 export const MATH_WRONG_HEX = SKY_DEEP;
-const ANNOTATION_COLOR = "oklch(0.55 0.005 220)";
+// The note beside a line ("subtract 3 from both sides"): the board's sans in
+// the student's pencil grey, 16 px everywhere it is measured, drawn and
+// exported (Sept 16 2026: it was 13 px and 2.9:1, too small to read on a phone).
+const ANNOTATION_PX = 16;
+const ANNOTATION_FONT = "'tldraw_sans', sans-serif";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -85,7 +89,7 @@ export function measureMath(latex: string, display: boolean, annotation = "", sc
   }
   measurer.innerHTML =
     `<span style="display:inline-block;font-size:${MATH_FONT_PX * scale}px;padding:2px 4px;line-height:normal">${renderMathHtml(latex, display)}</span>` +
-    (annotation ? `<span style="display:inline-block;margin-left:18px;font-size:13px;font-family:sans-serif;letter-spacing:0.01em;vertical-align:middle">${escapeHtml(annotation)}</span>` : "");
+    (annotation ? `<span style="display:inline-block;margin-left:18px;font-size:${ANNOTATION_PX}px;font-family:${ANNOTATION_FONT};vertical-align:middle">${escapeHtml(annotation)}</span>` : "");
   const math = measurer.children[0] as HTMLElement | undefined;
   const mathRect = math?.getBoundingClientRect();
   const all = measurer.getBoundingClientRect();
@@ -160,7 +164,7 @@ export class MathShapeUtil extends ShapeUtil<TLMathShape> {
         {highlight === "underline" && <line x1={0} y1={h - 2} x2={mathW} y2={h - 2} stroke={MATH_CORRECT_HEX} strokeWidth={2} />}
         {crossOut && <line x1={-4} y1={h / 2 + 2} x2={mathW + 4} y2={h / 2 - 3} stroke={MATH_WRONG_HEX} strokeWidth={2} />}
         {annotation && (
-          <text x={textW + 18} y={base} fontFamily="sans-serif" fontSize={13} fill="#7a8a99">
+          <text x={textW + 18} y={base} fontFamily={ANNOTATION_FONT} fontSize={ANNOTATION_PX} fill={PENCIL_HEX}>
             {annotation}
           </text>
         )}
@@ -227,11 +231,11 @@ function MathView({ shape }: { shape: TLMathShape }) {
               left: mathW + 18,
               top: "50%",
               transform: "translateY(-50%)",
-              fontSize: 13,
+              fontSize: ANNOTATION_PX,
+              fontFamily: ANNOTATION_FONT,
               fontWeight: 400,
-              color: ANNOTATION_COLOR,
+              color: PENCIL_HEX,
               whiteSpace: "nowrap",
-              letterSpacing: "0.01em",
             }}
           >
             {annotation}

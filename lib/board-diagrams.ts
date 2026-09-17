@@ -300,6 +300,38 @@ export function figureVertices(figure: FigureKind, w: number, h: number): Pt[] {
   }
 }
 
+/**
+ * Each outline edge's label (edge i runs from vertex i to vertex i + 1) from
+ * the labels the tutor gave, and how the result should describe them. A right
+ * triangle takes 'bottom leg | upright leg | hypotenuse' (Sept 16 2026: "6 | 8
+ * | x" used to put 8 on the hypotenuse, a different problem from the one the
+ * student was solving). Three numbers that only fit Pythagoras another way
+ * are put where they fit.
+ */
+export function figureSideLabels(figure: FigureKind, labels: string[]): { edges: string[]; description: string } {
+  if (figure !== "right_triangle") {
+    const given = labels.filter(Boolean);
+    return { edges: labels, description: given.length ? `${isSolidFigure(figure) ? "dimensions" : "sides"} ${given.join(", ")}` : "" };
+  }
+  let [bottom = "", upright = "", hyp = ""] = labels;
+  const nums = [bottom, upright, hyp].map((t) => (t ? parseNumber(t) : null));
+  if (nums.every((n): n is number => n !== null && n > 0)) {
+    const [a, b, c] = nums as number[];
+    const same = (x: number, y: number) => Math.abs(x - y) <= 1e-6 * Math.max(1, Math.abs(y));
+    if (!same(a * a + b * b, c * c)) {
+      if (same(a * a + c * c, b * b)) [upright, hyp] = [hyp, upright];
+      else if (same(b * b + c * c, a * a)) [bottom, hyp] = [hyp, bottom];
+    }
+  }
+  const legs = [bottom, upright].filter(Boolean);
+  const description = [
+    legs.length ? `${legs.length === 2 ? "legs" : "leg"} ${legs.join(" and ")}` : "",
+    hyp ? `hypotenuse ${hyp}` : "",
+  ].filter(Boolean).join(", ");
+  // Outline edges: 0 the bottom leg, 1 the hypotenuse, 2 the upright leg.
+  return { edges: [bottom, hyp, upright], description };
+}
+
 export function centroid(pts: Pt[]): Pt {
   const n = pts.length || 1;
   return {
@@ -381,6 +413,132 @@ export function parseSketchLabels(input?: string): SketchLabel[] {
     if (out.length >= 12) break;
   }
   return out;
+}
+
+// Where a sketch's labels go (Sept 16 2026). A recorded "rise over run"
+// sketch put "rise = height" beside the slanted stroke and "run = width"
+// above it, so the picture taught the wrong sides. A label that names a rise
+// or height now sits beside the most upright stroke near it, one that names a
+// run, width or base under the flattest one; then any label on a stroke or on
+// another label is pushed clear.
+export type PlacedLabel = { text: string; x: number; y: number; w: number; h: number };
+
+type Segment = { a: Pt; b: Pt };
+
+function segmentsOf(strokes: SketchStroke[], sx: number, sy: number): Segment[] {
+  const out: Segment[] = [];
+  for (const stroke of strokes) {
+    const pts = stroke.points.map((p) => ({ x: p.x * sx, y: p.y * sy }));
+    if (stroke.closed && pts.length > 2) pts.push(pts[0]);
+    for (let i = 1; i < pts.length; i++) out.push({ a: pts[i - 1], b: pts[i] });
+  }
+  return out;
+}
+
+function closestOnSegment(p: Pt, s: Segment): Pt {
+  const dx = s.b.x - s.a.x;
+  const dy = s.b.y - s.a.y;
+  const len2 = dx * dx + dy * dy || 1;
+  const t = clamp(((p.x - s.a.x) * dx + (p.y - s.a.y) * dy) / len2, 0, 1);
+  return { x: s.a.x + t * dx, y: s.a.y + t * dy };
+}
+
+function segmentHitsBox(s: Segment, box: { x: number; y: number; w: number; h: number }): boolean {
+  const inside = (p: Pt) => p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h;
+  if (inside(s.a) || inside(s.b)) return true;
+  const corners = [
+    { x: box.x, y: box.y }, { x: box.x + box.w, y: box.y },
+    { x: box.x + box.w, y: box.y + box.h }, { x: box.x, y: box.y + box.h },
+  ];
+  const cross = (o: Pt, a: Pt, b: Pt) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  for (let i = 0; i < 4; i++) {
+    const c = corners[i];
+    const d = corners[(i + 1) % 4];
+    const d1 = cross(c, d, s.a);
+    const d2 = cross(c, d, s.b);
+    const d3 = cross(s.a, s.b, c);
+    const d4 = cross(s.a, s.b, d);
+    if (d1 * d2 < 0 && d3 * d4 < 0) return true;
+  }
+  return false;
+}
+
+const UPRIGHT_WORDS = /\b(rise|height|high|tall|vertical|up|down)\b/i;
+const FLAT_WORDS = /\b(run|width|wide|base|across|horizontal|length|long)\b/i;
+
+export function placeSketchLabels(
+  strokes: SketchStroke[],
+  labels: SketchLabel[],
+  width: number,
+  height: number,
+  measure: (text: string) => { w: number; h: number },
+): PlacedLabel[] {
+  const sx = width / 100;
+  const sy = height / 100;
+  const segs = segmentsOf(strokes, sx, sy);
+  const all = segs.flatMap((s) => [s.a, s.b]);
+  const mid = all.length ? centroid(all) : { x: width / 2, y: height / 2 };
+  const placed: PlacedLabel[] = [];
+  for (const label of labels) {
+    const size = measure(label.text);
+    let c = { x: label.x * sx, y: label.y * sy };
+    const upright = UPRIGHT_WORDS.test(label.text);
+    const flat = FLAT_WORDS.test(label.text);
+    if (upright !== flat) {
+      const fits = segs.filter((s) => {
+        const dx = Math.abs(s.b.x - s.a.x);
+        const dy = Math.abs(s.b.y - s.a.y);
+        return Math.hypot(dx, dy) > 8 && (upright ? dy > dx * 2 : dx > dy * 2);
+      });
+      const near = fits.reduce<Segment | null>((best, s) => {
+        const d = Math.hypot(closestOnSegment(c, s).x - c.x, closestOnSegment(c, s).y - c.y);
+        return !best || d < Math.hypot(closestOnSegment(c, best).x - c.x, closestOnSegment(c, best).y - c.y) ? s : best;
+      }, null);
+      if (near) {
+        const m = { x: (near.a.x + near.b.x) / 2, y: (near.a.y + near.b.y) / 2 };
+        c = upright
+          ? { x: m.x + (m.x >= mid.x ? 1 : -1) * (size.w / 2 + 10), y: m.y }
+          : { x: m.x, y: m.y + (m.y >= mid.y ? 1 : -1) * (size.h / 2 + 8) };
+      }
+    }
+    // Clear of strokes: step away from the nearest one.
+    const boxAt = (p: Pt) => ({ x: p.x - size.w / 2 - 3, y: p.y - size.h / 2 - 3, w: size.w + 6, h: size.h + 6 });
+    const clearOfOthers = (p: Pt) => placed.every((o) => !(p.x - size.w / 2 < o.x + o.w + 4 && o.x - 4 < p.x + size.w / 2 && p.y - size.h / 2 < o.y + o.h + 2 && o.y - 2 < p.y + size.h / 2));
+    for (let step = 0; step < 24; step++) {
+      const hit = segs.find((s) => segmentHitsBox(s, boxAt(c)));
+      if (!hit && clearOfOthers(c)) break;
+      let dir: Pt;
+      if (hit) {
+        const q = closestOnSegment(c, hit);
+        dir = { x: c.x - q.x, y: c.y - q.y };
+        if (Math.hypot(dir.x, dir.y) < 0.5) {
+          // On the stroke itself: its normal, pointing away from the middle.
+          const nx = -(hit.b.y - hit.a.y);
+          const ny = hit.b.x - hit.a.x;
+          const outward = (c.x - mid.x) * nx + (c.y - mid.y) * ny >= 0 ? 1 : -1;
+          dir = { x: nx * outward, y: ny * outward };
+        }
+      } else {
+        dir = { x: 0, y: 1 };
+      }
+      const len = Math.hypot(dir.x, dir.y) || 1;
+      c = { x: c.x + (dir.x / len) * 6, y: c.y + (dir.y / len) * 6 };
+    }
+    placed.push({ text: label.text, x: c.x - size.w / 2, y: c.y - size.h / 2, w: size.w, h: size.h });
+  }
+  return placed;
+}
+
+/** A lane for each label centred at x: labels that would overlap climb to the next lane. */
+export function labelLanes(items: Array<{ x: number; w: number }>, gap = 6): number[] {
+  const lanes: Array<Array<[number, number]>> = [];
+  return items.map(({ x, w }) => {
+    const span: [number, number] = [x - w / 2 - gap / 2, x + w / 2 + gap / 2];
+    let lane = 0;
+    while (lanes[lane]?.some(([a, b]) => span[0] < b && a < span[1])) lane++;
+    (lanes[lane] ??= []).push(span);
+    return lane;
+  });
 }
 
 // ── Charts and arrays ──────────────────────────────────────────────────────

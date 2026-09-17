@@ -10,6 +10,8 @@ export type BoardItem = {
   eqItemIds: string[];
   owner: "tutor" | "student";
   createdAt: number;
+  /** What the call wrote or drew, fingerprinted (board-content-rules), so it is not written twice. */
+  content?: string;
 };
 
 export type ItemBounds = { x: number; y: number; w: number; h: number };
@@ -197,12 +199,16 @@ export function toolRole(name: string): ToolRole {
 
 // ── Highlighter ─────────────────────────────────────────────────────────────
 
-/** Text as it compares on the board: no spaces, one minus sign, one dot. */
+/**
+ * Text as it compares on the board: no spaces, one minus sign, one dot, and
+ * powers without their marks, so "x^2", "x^{2}" and the board's "x²" (NFKC
+ * turns it into "x2") all match.
+ */
 export function normalizeForMatch(text: string): string {
   return text
     .normalize("NFKC")
     .toLowerCase()
-    .replace(/[\s\u200b-\u200d\u2060\ufeff]+/g, "")
+    .replace(/[\s\u200b-\u200d\u2060\ufeff^_{}]+/g, "")
     .replace(/[\u2212\u2013\u2014]/g, "-")
     .replace(/[\u22c5\u2219*]/g, "\u00b7");
 }

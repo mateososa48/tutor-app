@@ -39,3 +39,12 @@ test("line breaks split into lines", () => {
   assert.deepEqual(splitLatexLines("5x + 2 = 3x + 10 \\implies 2x + 2 = 10 \\implies 2x = 8"), ["5x + 2 = 3x + 10", "2x + 2 = 10", "2x = 8"]);
   assert.deepEqual(splitLatexLines("\\begin{cases} x + y = 5 \\\\ x - y = 1 \\end{cases}"), ["\\begin{cases} x + y = 5 \\\\ x - y = 1 \\end{cases}"]);
 });
+
+test("variable products stay math, long powers keep their digits together", () => {
+  assert.equal(normalizeLatex("y = mx + b"), "y = mx + b");
+  assert.equal(normalizeLatex("ab + cd = 12"), "ab + cd = 12");
+  assert.equal(normalizeLatex("x is 4"), "x \\text{ is } 4");
+  assert.equal(normalizeLatex("x^10 + 2^16"), "x^{10} + 2^{16}");
+  assert.equal(normalizeLatex("a_12"), "a_{12}");
+  assert.equal(normalizeLatex("x^2y"), "x^2y");
+});

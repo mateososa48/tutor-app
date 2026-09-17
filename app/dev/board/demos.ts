@@ -25,7 +25,7 @@ const algebra: DemoCall[] = [
   { name: "draw_equation_step", args: { latex: "x = 16" } },
   { name: "cross_out_step", args: { step_label: "x = 16" } },
   { name: "draw_equation_step", args: { latex: "x = 4", annotation: "divide both sides by 2" } },
-  { name: "highlight_step", args: { step_label: "x = 4", style: "circle" } },
+  { name: "circle_item", args: { target: "x = 4", keep: true } },
   { name: "add_number_line", args: { min: -2, max: 6, points: "4:x = 4", jumps: "0>4:+4", column: "right" } },
   { name: "add_worked_example_box", args: { title: "Key idea", body: "Whatever you do to one side of the equals sign, do to the other side too. The balance stays level.", column: "right" } },
   { name: "start_board_section", args: { title: "Your turn" } },
@@ -52,7 +52,6 @@ const data: DemoCall[] = [
   { name: "add_function_graph", args: { expression: "x^2 - 4", x_min: -4, x_max: 4, label: "y = x² − 4", column: "right" } },
   { name: "plot_points", args: { points: "(1,1):A, (3,4):B, (-2,2):C", x_min: -4, x_max: 4, y_min: -4, y_max: 5, label: "three points", column: "right" } },
   { name: "draw_sketch", args: { strokes: "10,90 90,90; closed 10,90 90,90 90,35; 84,26 84,26", labels: "86,12:ball; 50,97:ground; 40,50:ramp", label: "a ball at the top of a ramp" } },
-  { name: "add_vector_diagram", args: { title: "Forces on the ball", center_label: "ball", vectors: "down:Weight mg; up-right:Normal N; down-left:Friction f", column: "right" } },
 ];
 
 // Pointing, ringing, erasing: the tutor's hands, not just its pen.
@@ -103,8 +102,6 @@ const all: DemoCall[] = [
   ...algebra.slice(1),
   ...geometry.slice(1),
   ...data.slice(1),
-  { name: "add_two_column_comparison", args: { title: "Which one is right?", left_title: "Incorrect", left_body: "2x = 8\nx = 16", right_title: "Correct", right_body: "2x = 8\nx = 4" } },
-  { name: "add_process_map", args: { title: "How to solve it", nodes: "Read | Draw | Try | Check", connectors: "then | then | then", column: "right" } },
 ];
 
 // Real things: counting, groups, taking away, comparing, an analogy.
@@ -175,6 +172,29 @@ const layout: DemoCall[] = [
   { name: "start_board_section", args: { title: "Your turn" } },
   { name: "draw_equation_step", args: { latex: "\\frac{1}{3} + \\frac{1}{6}" } },
   { name: "draw_fraction", args: { fraction: "1/3", second_fraction: "1/6", model: "bar", place: "beside b12" } },
+];
+
+// Board content (Sept 16 2026): pipes become new lines, a non-answer and
+// praise are refused, a repeat points at what is already up, the callout is
+// a small sky tag, a number line says the values of its dots, a sketch's
+// labels sit on the strokes they name, a right triangle's labels are the legs
+// then the hypotenuse, notes beside lines read at 16 px, and empty
+// annotation slots keep the others on their own lines.
+const content: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Slope from two points" } },
+  { name: "add_text_note", args: { text: "Point 1: (2, 3) | Point 2: (6, 11)" } },
+  { name: "add_student_attempt", args: { text: "i dont know" } },
+  { name: "add_callout", args: { text: "Perfect slope calculation!", style: "correct" } },
+  { name: "add_callout", args: { text: "Which change goes on top?", style: "hint" } },
+  { name: "add_text_note", args: { text: "Point 1: (2, 3) | Point 2: (6, 11)" } },
+  { name: "draw_equation_step", args: { latex: "\\text{slope} = \\frac{11 - 3}{6 - 2}", annotation: "change in y over change in x" } },
+  { name: "add_number_line", args: { min: 0, max: 12, step: 2, points: "3:P1y, 11:P2y, 10:ten" } },
+  { name: "draw_sketch", args: { strokes: "10,80 90,80;10,80 90,20;90,20 90,80", labels: "60,20:rise = 8;30,60:run = 4", label: "slope = rise over run" } },
+  { name: "start_board_section", args: { title: "Pythagoras" } },
+  { name: "draw_figure", args: { figure: "right_triangle", side_labels: "6 | 8 | x" } },
+  { name: "draw_equation_step", args: { latex: "6^2 + 8^2 = x^2", annotation: "the legs squared add up" } },
+  { name: "add_equation_sequence", args: { steps: "36 + 64 = x^2 | 100 = x^2 | x = 10", annotations: "| | take the square root" } },
+  { name: "circle_item", args: { target: "last", keep: true } },
 ];
 
 // Sections and pages (Sept 16 2026). A section opens as a panel beside the
@@ -255,4 +275,4 @@ const rings: DemoCall[] = [
   { name: "highlight_step", args: { step_label: "long line", style: "underline" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, highlight, graphs, all };
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, highlight, graphs, all };

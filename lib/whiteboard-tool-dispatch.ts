@@ -1,9 +1,9 @@
 import type { WhiteboardHandle } from "@/components/TldrawCore";
-import type { CalloutStyle } from "@/lib/whiteboard-tools";
 import {
   clamp,
   type IconArrange,
   describeFractionModel,
+  figureSideLabels,
   formatTick,
   isFigureKind,
   niceStep,
@@ -22,10 +22,19 @@ import {
   parseAngleMarks,
   parseXYPoints,
   parseSlopeRun,
-  isSolidFigure,
   FIGURE_KINDS,
 } from "@/lib/board-diagrams";
-import { parseTargetList } from "@/lib/board-items";
+import { parseTargetList, toolRole } from "@/lib/board-items";
+import {
+  attemptProblem,
+  boardLines,
+  calloutProblem,
+  contentFingerprint,
+  findDuplicate,
+  pictureContent,
+  splitSlots,
+  splitSteps,
+} from "@/lib/board-content-rules";
 import { parsePlace, type PlaceRequest } from "@/lib/board-layout";
 import { ensureRelation, graphLatexProblem, toDesmosLatex } from "@/lib/desmos-graph";
 import { latexToPlain } from "@/lib/latex-plain";
@@ -78,6 +87,9 @@ function iconMiss(name: string): string {
 const NOTE_MAX = 160;
 const BOX_BODY_MAX = 140;
 const BOX_BODY_LINES = 3;
+const CALLOUT_MAX = 120;
+// Separates a result from a follow-up sentence that should come after the item id.
+const NEXT = "\u241e";
 
 function countLines(body: string): number {
   return body.split(/\n|\s\|\s/).map((l) => l.trim()).filter(Boolean).length;
@@ -89,10 +101,29 @@ function pickSize(value: string | undefined): "heading" | "body" | undefined {
   return undefined;
 }
 
-// Models sometimes double-escape newlines in JSON, producing literal \n
-// strings. Normalize them to real newline characters before drawing.
-function normalizeText(s: string): string {
-  return s.replace(/\\n/g, "\n");
+// What a call writes or draws, to recognise the same thing written twice.
+// Headings are never duplicates (a heading starts something new).
+function contentOf(name: string, args: Args): string | null {
+  const str = (key: string) => (typeof args[key] === "string" ? (args[key] as string) : "");
+  switch (name) {
+    case "start_new_problem":
+    case "start_board_section":
+      return null;
+    case "add_text_note":
+    case "add_callout":
+    case "add_student_attempt":
+      return boardLines(str("text"));
+    case "add_worked_example_box":
+      return `${str("title")}\n${boardLines(str("body"))}`;
+    case "add_problem_setup":
+      return [str("goal"), str("givens"), str("unknowns"), str("plan")].join("\n");
+    case "draw_equation_step":
+      return splitLatexLines(str("latex")).map(normalizeLatex).join("\n");
+    case "add_equation_sequence":
+      return splitSteps(str("steps")).map(normalizeLatex).join("\n");
+    default:
+      return toolRole(name) === "draw" ? pictureContent(args) : null;
+  }
 }
 
 function pickHighlightStyle(value: string | undefined): "circle" | "underline" | "box" | undefined {
@@ -119,16 +150,33 @@ export function dispatchWhiteboardTool(
   const token = board ? board.beginItem(name) : null;
   // Where the new item goes: the tutor's `place`, else its older `column`.
   if (board?.setPlacement) board.setPlacement(parsePlace(args.place) ?? columnPlacement(args.column));
+  // Already up? Point at it rather than write it a second time (a recorded
+  // session wrote the same two points on the board twice in a row).
+  const content = board && token ? contentOf(name, args) : null;
+  if (board && token && content) {
+    token.content = contentFingerprint(name, content);
+    const twin = board.itemsSnapshot ? findDuplicate(name, token.content, board.itemsSnapshot()) : null;
+    if (twin) {
+      board.endItem(token, null);
+      const shown = board.withDirectMeta({ owner: "tutor" }, () => board.pointAt(twin));
+      const notes = board.takeNotes?.() ?? [];
+      return ok(`Already on the board as ${twin}${shown ? ` (${shown.label})` : ""}, so it was not written again; pointing at it instead${notes.length ? `; ${notes.join("; ")}` : ""}.`);
+    }
+  }
   const result = dispatchInner(name, args, ctx);
   if (!board || !token) return result;
   const itemId = board.endItem(token, result.success ? result.message ?? null : null);
   // What placement or a mark noticed: "stayed on this page: there was room",
   // "b2 is on page 1, so the board turns there to show it".
   const notes = board.takeNotes?.() ?? [];
-  if (!result.success || (!itemId && notes.length === 0)) return result;
-  let message = (result.message ?? "Done").replace(/[.]\s*$/, "");
+  if (!result.success) return result;
+  // A follow-up ("Next, write the problem…") comes after the item id.
+  const [said, next] = (result.message ?? "Done").split(NEXT);
+  if (!itemId && notes.length === 0 && !next) return result;
+  let message = said.replace(/[.]\s*$/, "");
   if (itemId) message += ` (item ${itemId})`;
   if (notes.length > 0) message += `; ${notes.join("; ")}`;
+  if (next) message += `. ${next}`;
   return { success: true, message };
 }
 
@@ -151,7 +199,7 @@ function dispatchInner(
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
         board.startNewProblem(title),
       );
-      return ok(`Cleared the board and wrote the heading "${title}".`);
+      return ok(`Cleared the board and wrote the heading "${title}".${NEXT}Next, write the problem itself exactly as given, then work under it.`);
     }
 
     case "start_board_section": {
@@ -176,10 +224,10 @@ function dispatchInner(
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: goal }, () =>
         board.addProblemSetup(
-          goal,
-          givens.value ? normalizeText(givens.value) : undefined,
-          unknowns.value ? normalizeText(unknowns.value) : undefined,
-          plan.value ? normalizeText(plan.value) : undefined,
+          boardLines(goal),
+          givens.value ? splitSlots(givens.value).map(boardLines).filter(Boolean).join("; ") : undefined,
+          unknowns.value ? boardLines(unknowns.value) : undefined,
+          plan.value ? boardLines(plan.value) : undefined,
           pickColumn(column.value),
         ),
       );
@@ -191,15 +239,15 @@ function dispatchInner(
       if (isToolError(board)) return board;
       const stepsRaw = requiredString(args, "steps");
       if (isToolError(stepsRaw)) return stepsRaw;
-      const steps = splitPipe(stepsRaw).map(normalizeLatex).filter(Boolean).join(" | ");
-      if (!steps) return fail('"steps" is empty.');
+      const steps = splitSteps(stepsRaw).map(normalizeLatex).filter(Boolean);
+      if (steps.length === 0) return fail('"steps" is empty.');
       const annotations = opt(args, "annotations"); if (annotations.error) return annotations.error;
       const title = opt(args, "title"); if (title.error) return title.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title.value }, () =>
-        board.addEquationSequence(steps, annotations.value, title.value, pickColumn(column.value)),
+        board.addEquationSequence(steps, splitSlots(annotations.value), title.value, pickColumn(column.value)),
       );
-      return ok(`Wrote ${splitPipe(steps).length} equation lines.`);
+      return ok(`Wrote ${steps.length} equation lines: ${steps.map(latexToPlain).join(" / ")}.`);
     }
 
     case "draw_equation_step": {
@@ -223,16 +271,16 @@ function dispatchInner(
       if (isToolError(board)) return board;
       const text = requiredString(args, "text");
       if (isToolError(text)) return text;
-      const note = normalizeText(text);
+      const note = boardLines(text);
       if (note.length > NOTE_MAX) {
         return fail(`That note is ${note.length} characters. A board note is one short line (${NOTE_MAX} max): say the explanation out loud, or draw the idea instead.`);
       }
       const size = opt(args, "size"); if (size.error) return size.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor" }, () =>
-        board.addTextNote(normalizeText(text), pickSize(size.value), pickColumn(column.value)),
+        board.addTextNote(note, pickSize(size.value), pickColumn(column.value)),
       );
-      return ok(`Wrote the note "${normalizeText(text).replace(/\s+/g, " ").slice(0, 90)}".`);
+      return ok(`Wrote the note "${note.replace(/\s+/g, " ").slice(0, 90)}".`);
     }
 
     case "add_callout": {
@@ -240,17 +288,16 @@ function dispatchInner(
       if (isToolError(board)) return board;
       const text = requiredString(args, "text");
       if (isToolError(text)) return text;
-      const style = requiredString(args, "style");
-      if (isToolError(style)) return style;
-      const ALLOWED_STYLES: readonly CalloutStyle[] = ["hint", "correct", "wrong", "warning", "important", "remember"];
-      if (!ALLOWED_STYLES.includes(style as CalloutStyle)) {
-        return fail(`Argument "style" must be one of: ${ALLOWED_STYLES.join(", ")}.`);
+      // One sky tag (Sept 16 2026): an old `style` argument is ignored.
+      const tag = boardLines(text).replace(/\n+/g, " ");
+      const problem = calloutProblem(tag);
+      if (problem) return fail(problem);
+      if (tag.length > CALLOUT_MAX) {
+        return fail(`That tag is ${tag.length} characters. A tag holds one short line (${CALLOUT_MAX} max): keep the question or the rule, say the rest.`);
       }
       const column = opt(args, "column"); if (column.error) return column.error;
-      board.withDirectMeta({ owner: "tutor" }, () =>
-        board.addCallout(normalizeText(text), style as CalloutStyle, pickColumn(column.value)),
-      );
-      return ok(`Callout (${style}): "${normalizeText(text).replace(/\s+/g, " ").slice(0, 90)}".`);
+      board.withDirectMeta({ owner: "tutor" }, () => board.addCallout(tag, pickColumn(column.value)));
+      return ok(`Tagged "${tag.slice(0, 90)}".`);
     }
 
     case "add_student_attempt": {
@@ -258,15 +305,20 @@ function dispatchInner(
       if (isToolError(board)) return board;
       const text = requiredString(args, "text");
       if (isToolError(text)) return text;
+      const attempt = boardLines(text);
+      const problem = attemptProblem(attempt);
+      if (problem) return fail(problem);
       const column = opt(args, "column"); if (column.error) return column.error;
       // Student attempts are student-owned even though the tutor calls the
       // tool, so later corrections never overwrite the student's work.
       board.withDirectMeta({ owner: "student" }, () =>
-        board.addStudentAttempt(normalizeText(text), pickColumn(column.value)),
+        board.addStudentAttempt(attempt, pickColumn(column.value)),
       );
-      return ok(`Student's attempt "${normalizeText(text).replace(/\s+/g, " ").slice(0, 80)}" written in their hand.`);
+      return ok(`Student's attempt "${attempt.replace(/\s+/g, " ").slice(0, 80)}" written in their hand.`);
     }
 
+    // Undeclared since Sept 16 2026, still replayed for old recordings and
+    // scripts: highlight_step, add_coordinate_axes, clear_whiteboard.
     case "highlight_step": {
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;
@@ -418,7 +470,7 @@ function dispatchInner(
         }),
       );
       const detail = [
-        sideLabels.length ? `${isSolidFigure(figure) ? "dimensions" : "sides"} ${sideLabels.join(", ")}` : "",
+        figureSideLabels(figure, sideLabels).description,
         height.value ? `height ${height.value}` : "",
         vertexLabels.length ? `vertices ${vertexLabels.join(", ")}` : "",
         angleLabels.length ? `angles ${angleLabels.join(", ")}` : "",
@@ -489,7 +541,7 @@ function dispatchInner(
       if (isToolError(cells)) return cells;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
-        board.addAreaModel(title, rowLabels, columnLabels, normalizeText(cells), pickColumn(column.value)),
+        board.addAreaModel(title, rowLabels, columnLabels, cells.replace(/\\n/g, "\n"), pickColumn(column.value)),
       );
       return ok(`Drew the area model "${title}" with rows ${splitPipe(rowLabels).join(", ")} and columns ${splitPipe(columnLabels).join(", ")}.`);
     }
@@ -670,67 +722,16 @@ function dispatchInner(
       if (isToolError(title)) return title;
       const body = requiredString(args, "body");
       if (isToolError(body)) return body;
-      const boxBody = normalizeText(body);
+      const boxBody = boardLines(body);
       if (boxBody.length > BOX_BODY_MAX || countLines(boxBody) > BOX_BODY_LINES) {
         const lines = countLines(boxBody);
         return fail(`That box is ${boxBody.length} characters over ${lines} ${lines === 1 ? "line" : "lines"}. A box holds ${BOX_BODY_LINES} short lines (${BOX_BODY_MAX} chars max): keep the rule, say the rest out loud, or draw it.`);
       }
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
-        board.addWorkedExampleBox(title, normalizeText(body), pickColumn(column.value)),
+        board.addWorkedExampleBox(title, boxBody, pickColumn(column.value)),
       );
       return ok(`Boxed "${title}".`);
-    }
-
-    case "add_two_column_comparison": {
-      const board = ensureBoard(ctx);
-      if (isToolError(board)) return board;
-      const title = requiredString(args, "title");
-      if (isToolError(title)) return title;
-      const leftTitle = requiredString(args, "left_title");
-      if (isToolError(leftTitle)) return leftTitle;
-      const leftBody = requiredString(args, "left_body");
-      if (isToolError(leftBody)) return leftBody;
-      const rightTitle = requiredString(args, "right_title");
-      if (isToolError(rightTitle)) return rightTitle;
-      const rightBody = requiredString(args, "right_body");
-      if (isToolError(rightBody)) return rightBody;
-      const column = opt(args, "column"); if (column.error) return column.error;
-      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
-        board.addTwoColumnComparison(title, leftTitle, normalizeText(leftBody), rightTitle, normalizeText(rightBody), pickColumn(column.value)),
-      );
-      return ok(`Drew "${leftTitle}" beside "${rightTitle}".`);
-    }
-
-    case "add_vector_diagram": {
-      const board = ensureBoard(ctx);
-      if (isToolError(board)) return board;
-      const title = requiredString(args, "title");
-      if (isToolError(title)) return title;
-      const centerLabel = requiredString(args, "center_label");
-      if (isToolError(centerLabel)) return centerLabel;
-      const vectors = requiredString(args, "vectors");
-      if (isToolError(vectors)) return vectors;
-      const column = opt(args, "column"); if (column.error) return column.error;
-      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
-        board.addVectorDiagram(title, centerLabel, vectors, pickColumn(column.value) ?? "right"),
-      );
-      return ok(`Drew the diagram "${title}".`);
-    }
-
-    case "add_process_map": {
-      const board = ensureBoard(ctx);
-      if (isToolError(board)) return board;
-      const title = requiredString(args, "title");
-      if (isToolError(title)) return title;
-      const nodes = requiredString(args, "nodes");
-      if (isToolError(nodes)) return nodes;
-      const connectors = opt(args, "connectors"); if (connectors.error) return connectors.error;
-      const column = opt(args, "column"); if (column.error) return column.error;
-      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
-        board.addProcessMap(title, nodes, connectors.value, pickColumn(column.value)),
-      );
-      return ok(`Drew the process map "${title}".`);
     }
 
     case "draw_tape_diagram": {

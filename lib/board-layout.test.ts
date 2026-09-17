@@ -186,6 +186,10 @@ test("a section opens beside the work, then under it, then nowhere", () => {
   const lower = planSection(uneven, area, []);
   assert.equal(lower?.kind, "panel");
   assert.ok(lower && lower.region.x >= 600 && lower.region.y >= 220, JSON.stringify(lower));
+  // Room under wide work on the right, beside narrower work on the left.
+  const underRight = planSection([{ x: 0, y: 100, w: 400, h: 520 }, { x: 420, y: 100, w: 540, h: 100 }], area, [dock]);
+  assert.equal(underRight?.kind, "panel");
+  assert.ok(underRight && underRight.region.x === 456 && underRight.region.y === 256, JSON.stringify(underRight));
   // Full: no section fits on this page.
   assert.equal(planSection([{ x: 0, y: 100, w: 1382, h: 520 }], area, [dock]), null);
   // A second row of sections fills along the row before starting a third.

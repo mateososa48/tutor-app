@@ -141,6 +141,9 @@ test("the summary names the page of work the student cannot see", () => {
 
 test("highlight text matches typeset forms", () => {
   assert.equal(normalizeForMatch("2x + 3 \u2212 1"), "2x+3-1");
+  assert.equal(normalizeForMatch("x^2"), normalizeForMatch("x²"));
+  assert.equal(normalizeForMatch("x^{10}"), normalizeForMatch("x¹⁰"));
+  assert.equal(normalizeForMatch("a_1"), normalizeForMatch("a₁"));
   assert.equal(normalizeForMatch("3 \u22c5 4"), normalizeForMatch("3*4"));
   assert.deepEqual(matchVariants("3/4"), ["3/4", "34", "43"]);
   assert.equal(normalizeForMatch("1\u200b2"), "12");
