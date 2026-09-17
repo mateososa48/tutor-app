@@ -85,7 +85,7 @@ export default function HomePage() {
           </header>
 
           {/* Desktop: start card and past sessions on the left, the side card spanning both rows. */}
-          <div className="mt-9 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:grid-rows-[auto_1fr] lg:gap-x-8">
+          <div className="mt-9 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:grid-rows-[auto_1fr] lg:gap-x-8">
             <StartCard className="lg:col-start-1 lg:row-start-1" onStart={() => router.push("/session")} />
             <SideCard
               className="lg:col-start-2 lg:row-span-2 lg:row-start-1"
@@ -320,7 +320,7 @@ function WeekSection({ sessions }: { sessions: SavedSession[] | null }) {
       {stats ? (
         <>
           <p className="lp-display m-0 mt-2 text-[28px] leading-none text-(--lp-ink) tabular-nums">{formatWeekTotal(stats.totalSec)}</p>
-          <div role="group" aria-label="Practice time per day" className="mt-6 grid grid-cols-7 gap-2">
+          <div role="group" aria-label="Practice time per day" className="mt-9 grid grid-cols-7 gap-2">
             {stats.days.map((day, i) => {
               const ran = day.seconds >= 60;
               const name = day.today ? "Today" : new Date(day.start).toLocaleDateString("en-US", { weekday: "long" });
