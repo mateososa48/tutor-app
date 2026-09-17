@@ -135,14 +135,18 @@ function StartCard({ onStart, className }: { onStart: () => void; className?: st
           <span className="block text-[19px] leading-tight font-semibold text-(--lp-ink)">Start a new session</span>
           <span className="mt-1.5 block text-[14.5px] text-(--lp-ink-2)">Type the problem or add a photo of it.</span>
         </span>
-        {/* The glossy black button material (.btn-gloss, as on sign-in). Its own CSS
-            sets the transition, so the wrapper carries the grow; on card hover a top
-            sheen fades in, the same brightening the class gives on direct hover. */}
-        <span className="shrink-0 transition-[scale] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-105 group-active:scale-95 motion-reduce:transition-none">
-          <span className="btn-gloss relative flex size-11 items-center justify-center overflow-hidden rounded-full">
+        {/* The glossy black button material (.btn-gloss, as on sign-in) with its top
+            sheen always on. Hovering the card only grows it a little: the wrapper
+            carries the grow, and the pinned background keeps the class's own hover
+            brightening from kicking in. */}
+        <span className="shrink-0 transition-[scale] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.08] group-active:scale-95 motion-reduce:transition-none">
+          <span
+            className="btn-gloss relative flex size-11 items-center justify-center overflow-hidden rounded-full"
+            style={{ background: "linear-gradient(180deg, #2c2c32 0%, #19191d 100%)" }}
+          >
             <span
               aria-hidden
-              className="pointer-events-none absolute inset-0 rounded-full bg-[linear-gradient(180deg,rgba(255,255,255,0.16),rgba(255,255,255,0)_62%)] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+              className="pointer-events-none absolute inset-0 rounded-full bg-[linear-gradient(180deg,rgba(255,255,255,0.16),rgba(255,255,255,0)_62%)]"
             />
             <Plus className="relative size-5" strokeWidth={2.4} />
           </span>
