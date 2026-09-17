@@ -658,6 +658,55 @@ body {
   font-weight: 600;
 }
 
+/* Headings below the hero (Sept 16 2026): the display face one step lighter,
+   which is most of what makes the product sections read as modern. */
+.lp-title {
+  font-family: var(--lp-font-display), var(--lp-font-body), system-ui, sans-serif;
+  letter-spacing: -0.028em;
+  font-weight: 500;
+}
+
+/* The page's frame below the hero: two hairlines standing at the container's
+   outer edges (1180px), only once the viewport has room for a margin outside
+   them. Sections draw a dashed rule across the whole viewport at their top. */
+.lp-rails { position: relative; }
+@media (min-width: 1240px) {
+  .lp-rails::before,
+  .lp-rails::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--lp-line);
+    pointer-events: none;
+  }
+  .lp-rails::before { left: calc(50% - 590px); }
+  .lp-rails::after { right: calc(50% - 590px); }
+}
+.lp-rule::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, var(--lp-line-strong) 0 4px, transparent 4px 10px);
+  pointer-events: none;
+}
+
+/* The tabbed showcase: a sky line that fills under the open tab for one turn. */
+@keyframes lp-tab-fill {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+.lp-tab-fill {
+  transform-origin: left;
+  animation: lp-tab-fill var(--turn, 7s) linear forwards;
+}
+.lp-tab-fill[data-paused] { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) {
+  .lp-tab-fill { animation: none; transform: scaleX(1); }
+}
+
 .lp-btn {
   --press: 5px;
   --btn-shadow: var(--lp-ink);

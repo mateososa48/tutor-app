@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { motion } from "motion/react";
+import { motion, useScroll, useSpring, useTransform } from "motion/react";
 import { ArrowRight } from "lucide-react";
 import BlurText from "@/components/BlurText";
 import Magnet from "@/components/Magnet";
@@ -93,6 +93,43 @@ function Backdrop() {
   );
 }
 
+// The app frame arrives leaning back, like a screen seen from a little above,
+// and stands up as it scrolls into view: 14 degrees to flat, 0.94 to full
+// size, between the frame's top crossing 92% and 30% of the viewport. The
+// values are scroll-driven motion values run through a light spring, so
+// nothing re-renders while the page scrolls. At rest Motion writes
+// `transform: none`, so the live board stays crisp. Reduced motion: flat.
+function HeroFrame() {
+  const reduce = useReduce();
+  const ref = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({ target: ref, offset: ["start 92%", "start 30%"] });
+  const progress = useSpring(scrollYProgress, { stiffness: 140, damping: 26, mass: 0.5 });
+  const rotateX = useTransform(progress, [0, 1], [14, 0]);
+  const scale = useTransform(progress, [0, 1], [0.94, 1]);
+  const still = { rotateX: 0, scale: 1 };
+
+  return (
+    <motion.div
+      ref={ref}
+      initial={reduce ? false : { opacity: 0, y: 28 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.8, delay: 0.4, ease: EASE }}
+      className="relative mt-14 lg:mt-16"
+      data-no-tune
+    >
+      <div style={{ perspective: 1400 }}>
+        <motion.div style={reduce ? still : { rotateX, scale, transformOrigin: "50% 100%" }}>
+          <div className="lp-frame">
+            <div className="lp-window relative overflow-hidden">
+              <SessionDemo />
+            </div>
+          </div>
+        </motion.div>
+      </div>
+    </motion.div>
+  );
+}
+
 export function Hero() {
   const reduce = useReduce();
 
@@ -100,18 +137,18 @@ export function Hero() {
     <section className="relative isolate pt-32 pb-14 sm:pb-20 lg:pt-40 lg:pb-24">
       <Backdrop />
       <div className="mx-auto max-w-[1180px] px-5 sm:px-8">
-        <div className="max-w-[820px]">
-          <h1 className="lp-display text-[clamp(2.75rem,5.2vw,4.25rem)] leading-[1.02]">
-            <BlurText text="A tutor at the board, whenever you're stuck." animateBy="words" delay={55} direction="top" />
+        <div className="max-w-[880px]">
+          <h1 className="lp-title text-[clamp(2.75rem,5vw,4.125rem)] leading-[1.02]">
+            <BlurText text="A math tutor you talk to. It writes as it explains." animateBy="words" delay={55} direction="top" />
           </h1>
 
           <motion.p
             initial={reduce ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.5, ease: EASE }}
-            className="mt-6 max-w-[44ch] text-[1.125rem] leading-[1.55] text-(--lp-ink) sm:text-[1.25rem]"
+            className="mt-6 max-w-[46ch] text-[1.125rem] leading-[1.55] text-(--lp-ink) sm:text-[1.25rem]"
           >
-            Talk through homework with a tutor that draws every step on a whiteboard and never just gives the answer.
+            Grades 5 to 12. Say where you&rsquo;re stuck. It draws the step, then waits for you to try the next one.
           </motion.p>
 
           <motion.div
@@ -132,19 +169,7 @@ export function Hero() {
           </motion.div>
         </div>
 
-        <motion.div
-          initial={reduce ? false : { opacity: 0, y: 28, scale: 0.985 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.8, delay: 0.4, ease: EASE }}
-          className="relative mt-14 lg:mt-16"
-          data-no-tune
-        >
-          <div className="lp-frame">
-            <div className="lp-window relative overflow-hidden">
-              <SessionDemo />
-            </div>
-          </div>
-        </motion.div>
+        <HeroFrame />
       </div>
     </section>
   );

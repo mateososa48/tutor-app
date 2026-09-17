@@ -1,22 +1,13 @@
 "use client";
 
-import { useId, useState } from "react";
-import Link from "next/link";
-import { AnimatePresence, motion } from "motion/react";
-import { ArrowRight, Minus, Plus } from "lucide-react";
-import Magnet from "@/components/Magnet";
-import { Button } from "@/components/ui/button";
-import { BlurFade } from "@/components/ui/blur-fade";
-import { cn } from "@/lib/utils";
-import { useReduce } from "./useScript";
+import { Accordion } from "@base-ui/react/accordion";
+import { Plus } from "lucide-react";
+import { Container, Label, Lede, Reveal, Section, Title } from "./Section";
 
-// The FAQ as a chat thread, the layout and motion of React Bits Pro "FAQ 2"
-// (rebuilt by eye, no code copied) in our own parts: the page's section heading,
-// the pressed `.lp-btn` CTAs, questions in the soft grey chip the app's transcript
-// uses for the student, the shadcn outline icon button, and the answer as a sky
-// reply. One answer open at a time. Timings were measured frame by frame on the
-// original: height 400 ms and the reply's scale/drop 300 ms on the standard
-// curve, the fade 300 ms ease-in-out.
+// Questions as hairline rows: the heading stays put on the left, the rows open
+// one at a time on the right, the plus turning into a cross. Base UI's
+// accordion does the state and the keyboard; the height comes from its
+// measured panel variable so the open is a real transition, not a keyframe.
 
 const ITEMS = [
   {
@@ -41,113 +32,38 @@ const ITEMS = [
   },
 ];
 
-const STANDARD = [0.4, 0, 0.2, 1] as const;
-const IN_OUT = [0.42, 0, 0.58, 1] as const;
-// A deeper sky than --lp-sky-deep so white text on the reply passes 4.5:1 (4.7:1).
-const REPLY = "#1d72dc";
-
 export function Faq() {
-  const [open, setOpen] = useState<number | null>(null);
-  const reduce = useReduce();
-  const base = useId();
-  const toggle = (i: number) => setOpen((cur) => (cur === i ? null : i));
-
   return (
-    <section id="faq" className="scroll-mt-24 py-16 sm:py-24">
-      <div className="mx-auto grid max-w-[1180px] gap-12 px-5 sm:px-8 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-16">
-        <div className="lg:sticky lg:top-28 lg:self-start">
-          <BlurFade inView>
-            <h2 className="lp-display max-w-[16ch] text-[clamp(2rem,3.6vw,3rem)] leading-[1.06]">Ready to try it?</h2>
-            <div className="mt-8 flex flex-wrap items-center gap-4">
-              <Magnet padding={48} magnetStrength={22} disabled={!!reduce}>
-                <Link href="/signin" className="lp-btn">
-                  Try a session free
-                  <ArrowRight size={17} strokeWidth={2.4} aria-hidden />
-                </Link>
-              </Magnet>
-              <a href="#how-it-works" className="lp-btn lp-btn-quiet">
-                See how it works
-              </a>
-            </div>
-          </BlurFade>
-        </div>
+    <Section id="faq">
+      <Container className="grid gap-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-16">
+        <Reveal className="lg:sticky lg:top-28 lg:self-start">
+          <Label>Questions</Label>
+          <Title className="max-w-[14ch]">What people ask before trying it.</Title>
+          <Lede>Short answers. The rest is quicker to find out in a session.</Lede>
+        </Reveal>
 
-        <div className="flex flex-col gap-7">
-          {ITEMS.map((item, i) => {
-            const isOpen = open === i;
-            const answerId = `${base}-a${i}`;
-            return (
-              <div key={item.q} className="flex flex-col">
-                <div className="flex items-start gap-3">
-                  <button
-                    type="button"
-                    aria-expanded={isOpen}
-                    aria-controls={answerId}
-                    onClick={() => toggle(i)}
-                    className="group/q max-w-[85%] cursor-pointer rounded-[12px] text-left outline-none focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) sm:max-w-[75%]"
-                  >
-                    <div
-                      className={cn(
-                        "rounded-[12px] border px-4 py-3 transition-all duration-200 ease-[cubic-bezier(0.4,0,0.2,1)] sm:px-5 sm:py-3.5",
-                        isOpen
-                          ? "border-(--lp-sky)/40 bg-(--lp-sky-soft)"
-                          : "border-transparent bg-(--lp-gray) group-hover/q:bg-(--lp-gray-2)",
-                      )}
-                    >
-                      <p className="m-0 text-[15px] leading-relaxed font-medium text-(--lp-ink) sm:text-[16px]">{item.q}</p>
-                    </div>
-                  </button>
-                  {/* The same toggle for the pointer; keyboard users get one stop, the question. */}
-                  <Button
-                    variant="outline"
-                    size="icon-sm"
-                    tabIndex={-1}
-                    aria-hidden
-                    onClick={() => toggle(i)}
-                    className={cn(
-                      "mt-3 size-6 text-(--lp-ink-2) transition-colors duration-200 sm:size-7",
-                      isOpen && "border-(--lp-sky)/50 bg-(--lp-sky-tint) text-(--lp-sky-deep) hover:border-(--lp-sky) hover:bg-(--lp-sky-soft) hover:text-(--lp-sky-deep)",
-                    )}
-                  >
-                    {isOpen ? <Minus strokeWidth={2.4} /> : <Plus strokeWidth={2.4} />}
-                  </Button>
-                </div>
-
-                <AnimatePresence initial={false}>
-                  {isOpen && (
-                    <motion.div
-                      key="answer"
-                      id={answerId}
-                      role="region"
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={
-                        reduce
-                          ? { height: { duration: 0 }, opacity: { duration: 0.15 } }
-                          : { height: { duration: 0.4, ease: STANDARD }, opacity: { duration: 0.3, ease: IN_OUT } }
-                      }
-                      className="flex flex-col overflow-hidden"
-                    >
-                      <motion.div
-                        initial={reduce ? false : { scale: 0.2, y: -10 }}
-                        animate={{ scale: 1, y: 0 }}
-                        exit={reduce ? undefined : { scale: 0.5, y: -10 }}
-                        transition={{ duration: 0.3, ease: STANDARD }}
-                        className="mt-4 max-w-[85%] self-end sm:max-w-[75%]"
-                      >
-                        <div className="rounded-[12px] px-4 py-3 sm:px-5 sm:py-3.5" style={{ backgroundColor: REPLY }}>
-                          <p className="m-0 text-[15px] leading-relaxed text-white sm:text-[16px]">{item.a}</p>
-                        </div>
-                      </motion.div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </section>
+        <Reveal delay={0.08}>
+          <Accordion.Root className="flex flex-col border-t border-(--lp-line-strong)">
+            {ITEMS.map((item) => (
+              <Accordion.Item key={item.q} className="border-b border-(--lp-line-strong)">
+                <Accordion.Header className="m-0">
+                  <Accordion.Trigger className="group flex w-full cursor-pointer items-center justify-between gap-6 py-5 text-left outline-none focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) sm:py-6">
+                    <span className="text-[17px] font-medium text-(--lp-ink) transition-colors duration-150 group-hover:text-(--lp-sky-deep) sm:text-[18px]">
+                      {item.q}
+                    </span>
+                    <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-(--lp-line-strong) text-(--lp-ink-2) transition-[transform,background-color,color] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:bg-(--lp-gray) group-data-[panel-open]:rotate-45 group-data-[panel-open]:bg-(--lp-ink) group-data-[panel-open]:text-white">
+                      <Plus size={15} strokeWidth={2.4} aria-hidden />
+                    </span>
+                  </Accordion.Trigger>
+                </Accordion.Header>
+                <Accordion.Panel className="h-(--accordion-panel-height) overflow-hidden transition-[height,opacity] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] data-[ending-style]:h-0 data-[ending-style]:opacity-0 data-[starting-style]:h-0 data-[starting-style]:opacity-0 motion-reduce:transition-none">
+                  <p className="m-0 max-w-[58ch] pb-6 text-[15.5px] leading-[1.6] text-(--lp-ink-2)">{item.a}</p>
+                </Accordion.Panel>
+              </Accordion.Item>
+            ))}
+          </Accordion.Root>
+        </Reveal>
+      </Container>
+    </Section>
   );
 }
