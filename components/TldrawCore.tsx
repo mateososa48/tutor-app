@@ -79,12 +79,12 @@ import {
   edgeLabelPoint,
   figureSideLabels,
   figureVertices,
+  barScale,
   formatTick,
   labelLanes,
   placeSketchLabels,
   fractionLatex,
   fractionText,
-  niceMax,
   niceStep,
   sectorPolygon,
   clamp,
@@ -4156,33 +4156,45 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const w = 440;
       const CHART_H = 200;
       const PAD_L = 64;
-      const PAD_B = 34;
-      const PAD_T = opts.label ? 44 : 16;
-      const h = PAD_T + CHART_H + PAD_B + 4;
-      const x = colX(col);
-      const y = colY(col).current;
-      const baseY = y + PAD_T + CHART_H;
-      const maxV = niceMax(Math.max(0, ...opts.values));
       const n = opts.categories.length;
       const slot = (w - PAD_L - 12) / n;
       const barW = Math.min(64, slot * 0.62);
+      // Names wider than their slot take two alternating rows instead of breaking mid-word ("Januar / y").
+      const nameW = opts.categories.map((cat) => measureText(editor, cat, "sans", "s", null).w + 8);
+      const staggered = nameW.some((nw) => nw > slot - 4);
+      const PAD_B = staggered ? 58 : 34;
+      // Room over the tallest bar for its value, clear of the title.
+      const PAD_T = (opts.label ? 44 : 16) + 22;
+      const h = PAD_T + CHART_H + PAD_B + 4;
+      const x = colX(col);
+      const y = colY(col).current;
+      const chartBottom = y + PAD_T + CHART_H;
+      // The scale reaches below zero when a value is negative (it used to clamp them to 0).
+      const scale = barScale(opts.values);
+      const yOf = (v: number) => y + PAD_T + ((scale.top - v) / (scale.top - scale.bottom)) * CHART_H;
+      const zeroY = yOf(0);
+      const tickStep = scale.ticks.length > 1 ? scale.ticks[1] - scale.ticks[0] : 1;
       const pens = takePens(n);
 
       if (opts.label) createText(editor, opts.label, x, y, { color: INK, size: "m", font: "sans", width: w });
-      createLineShape(editor, undefined, undefined, [{ x: x + PAD_L, y: y + PAD_T - 4 }, { x: x + PAD_L, y: baseY }, { x: x + w, y: baseY }], { color: INK, size: "s", dash: "solid" });
-      for (const v of [0, maxV / 2, maxV]) {
-        const gy = baseY - (v / maxV) * CHART_H;
+      createLineShape(editor, undefined, undefined, [{ x: x + PAD_L, y: y + PAD_T - 4 }, { x: x + PAD_L, y: chartBottom }], { color: INK, size: "s", dash: "solid" });
+      createLine(editor, x + PAD_L, zeroY, x + w, zeroY, INK);
+      for (const v of scale.ticks) {
+        const gy = yOf(v);
         createLine(editor, x + PAD_L - 6, gy, x + PAD_L, gy, INK);
-        const text = v === maxV && opts.unit ? `${formatTick(v, maxV / 2)} ${opts.unit}` : formatTick(v, maxV / 2);
+        const text = v === scale.top && v !== 0 && opts.unit ? `${formatTick(v, tickStep)} ${opts.unit}` : formatTick(v, tickStep);
         createText(editor, text, x - 40, gy - 12, { color: PENCIL, size: "s", font: "sans", width: PAD_L + 30, align: "end" });
       }
       opts.categories.forEach((cat, i) => {
-        const v = Math.max(0, opts.values[i] ?? 0);
-        const bh = (v / maxV) * CHART_H;
+        const v = opts.values[i] ?? 0;
+        const top = yOf(Math.max(0, v));
+        const bottom = yOf(Math.min(0, v));
         const bx = x + PAD_L + i * slot + (slot - barW) / 2;
-        if (bh > 0) createBox(editor, bx, baseY - bh, barW, bh, "", pens[i], "solid");
-        createText(editor, `${opts.values[i]}`, bx - 20, baseY - bh - 26, { color: INK, size: "s", font: "sans", width: barW + 40, align: "middle" });
-        createText(editor, cat, bx - (slot - barW) / 2, baseY + 8, { color: PENCIL, size: "s", font: "sans", width: slot, align: "middle" });
+        if (bottom - top > 0.5) createBox(editor, bx, top, barW, bottom - top, "", pens[i], "solid");
+        // A value sits over its bar; a negative one just over the zero line, where its column is empty.
+        createText(editor, `${opts.values[i]}`, bx - 20, (v < 0 ? zeroY : top) - 26, { color: INK, size: "s", font: "sans", width: barW + 40, align: "middle" });
+        const nw = Math.max(slot, Math.min(nameW[i], slot * 2 - 8));
+        createText(editor, cat, bx + barW / 2 - nw / 2, chartBottom + 8 + (staggered && i % 2 === 1 ? 24 : 0), { color: PENCIL, size: "s", font: "sans", width: nw, align: "middle" });
       });
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);

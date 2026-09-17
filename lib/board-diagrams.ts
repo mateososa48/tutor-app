@@ -556,6 +556,24 @@ export function niceMax(maxValue: number): number {
   return 10 * pow;
 }
 
+/**
+ * A bar chart's value scale: a friendly top, a friendly bottom below zero
+ * when a value is negative, and the ticks to number (both ends, their
+ * halves, and zero). The vector chart used to clamp every value to zero,
+ * so a −3 °C day drew no bar (Sept 17 2026).
+ */
+export function barScale(values: number[]): { top: number; bottom: number; ticks: number[] } {
+  const hi = Math.max(0, ...values);
+  const lo = Math.min(0, ...values);
+  const top = hi > 0 ? niceMax(hi) : lo < 0 ? 0 : 1;
+  const bottom = lo < 0 ? -niceMax(-lo) : 0;
+  const ticks = new Set<number>([bottom, 0, top]);
+  if (bottom < 0) ticks.add(bottom / 2);
+  if (top > 0) ticks.add(top / 2);
+  // `v === 0 ? 0 : v` turns −0 into 0.
+  return { top, bottom, ticks: [...ticks].map((v) => (v === 0 ? 0 : v)).sort((a, b) => a - b) };
+}
+
 // ── Structured inputs the renderer draws (built by the tool dispatcher) ───
 
 export type BoardColumn = "left" | "right";

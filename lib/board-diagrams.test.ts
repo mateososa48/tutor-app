@@ -12,6 +12,7 @@ import {
   formatTick,
   fractionLatex,
   niceMax,
+  barScale,
   niceStep,
   parseFraction,
   parseLineIntervals,
@@ -235,4 +236,12 @@ test("sketch labels name the right strokes and stay off them", () => {
 
 test("labels that would overlap climb into lanes", () => {
   assert.deepEqual(labelLanes([{ x: 0, w: 40 }, { x: 30, w: 40 }, { x: 100, w: 40 }, { x: 10, w: 20 }]), [0, 1, 0, 2]);
+});
+
+test("a bar chart's scale reaches below zero for negative values", () => {
+  assert.deepEqual(barScale([3, 5, 2, 6, 4]), { top: 10, bottom: 0, ticks: [0, 5, 10] });
+  assert.deepEqual(barScale([4, -3, 2.5]), { top: 4, bottom: -4, ticks: [-4, -2, 0, 2, 4] });
+  assert.deepEqual(barScale([-2, -7]), { top: 0, bottom: -10, ticks: [-10, -5, 0] });
+  assert.deepEqual(barScale([0, 0]), { top: 1, bottom: 0, ticks: [0, 0.5, 1] });
+  assert.deepEqual(barScale([12, 15, 9, 22, 30, 28]), { top: 40, bottom: 0, ticks: [0, 20, 40] });
 });
