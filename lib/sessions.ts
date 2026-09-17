@@ -35,6 +35,8 @@ export type SessionEvent = {
     | "session.ended";
   actor: "student" | "tutor" | "system";
   payload: Record<string, unknown>;
+  /** The recorder's sequence number (Sept 16 on); null for older events. */
+  clientSeq?: number | null;
   createdAt: string;
 };
 

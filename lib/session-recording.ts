@@ -2,6 +2,8 @@
 // the client recorder clamps payloads with it, the events route validates
 // kinds with it, and the admin pages and exports read recordings with it.
 
+import { joinTranscript } from "./live-events";
+
 export const RECORDED_EVENT_KINDS = [
   "transcript.entry",
   "whiteboard.snapshot",
@@ -27,7 +29,16 @@ export type TimelineEvent = {
   kind: string;
   actor: string;
   payload: Record<string, unknown>;
+  /** The recorder's own sequence number (Sept 16 on); breaks ties between events in the same millisecond. */
+  cseq?: number | null;
 };
+
+/** Recording order: time, then the client's sequence when both events have one, then the server's. */
+export function compareEvents(a: Pick<TimelineEvent, "offsetMs" | "seq" | "cseq">, b: Pick<TimelineEvent, "offsetMs" | "seq" | "cseq">): number {
+  if (a.offsetMs !== b.offsetMs) return a.offsetMs - b.offsetMs;
+  if (a.cseq != null && b.cseq != null && a.cseq !== b.cseq) return a.cseq - b.cseq;
+  return a.seq - b.seq;
+}
 
 /** Keep a recorded payload small: long strings are cut, long lists trimmed, deep nesting stopped. */
 export function clampPayload(value: unknown, maxString = 4000, depth = 0): unknown {
@@ -82,31 +93,30 @@ export function lastIndexAtOrBefore<T extends { offsetMs: number }>(list: readon
 // ── Speech ────────────────────────────────────────────────────────────────────
 export type Utterance = { role: "student" | "tutor"; text: string; startMs: number; endMs: number };
 
-function joinFragments(a: string, b: string): string {
-  if (/^[.,!?;:%)\]}'’]/.test(b) || /[([{-]$/.test(a)) return `${a}${b}`;
-  return `${a} ${b}`;
-}
-
 /** Live transcription arrives in small fragments; consecutive fragments from one speaker become one utterance. */
 export function mergeUtterances(events: readonly TimelineEvent[], gapMs = 1800): Utterance[] {
+  // Fragments keep the spacing they were sent with (payload.spaced, Sept 16 on);
+  // older recordings stored trimmed fragments and get spaces added back.
   const fragments = events
     .filter((e) => e.kind === "transcript.entry")
+    .slice()
+    .sort(compareEvents)
     .map((e) => {
       const role = e.payload.role === "student" || e.payload.role === "tutor" ? e.payload.role : e.actor;
-      return { role, text: typeof e.payload.text === "string" ? e.payload.text.trim() : "", at: e.offsetMs, seq: e.seq };
+      return { role, text: typeof e.payload.text === "string" ? e.payload.text : "", spaced: e.payload.spaced === true, at: e.offsetMs };
     })
-    .filter((f): f is { role: "student" | "tutor"; text: string; at: number; seq: number } => Boolean(f.text) && (f.role === "student" || f.role === "tutor"))
-    .sort((a, b) => a.at - b.at || a.seq - b.seq);
+    .filter((f): f is { role: "student" | "tutor"; text: string; spaced: boolean; at: number } => Boolean(f.text.trim()) && (f.role === "student" || f.role === "tutor"));
   const out: Utterance[] = [];
   for (const f of fragments) {
     const last = out[out.length - 1];
     if (last && last.role === f.role && f.at - last.endMs <= gapMs) {
-      last.text = joinFragments(last.text, f.text);
+      last.text = joinTranscript(last.text, f.text, f.spaced);
       last.endMs = f.at;
     } else {
-      out.push({ role: f.role, text: f.text, startMs: f.at, endMs: f.at });
+      out.push({ role: f.role, text: f.text.trimStart(), startMs: f.at, endMs: f.at });
     }
   }
+  for (const u of out) u.text = u.text.trimEnd();
   return out;
 }
 
@@ -114,7 +124,7 @@ export function mergeUtterances(events: readonly TimelineEvent[], gapMs = 1800):
 export function speakingIntervals(events: readonly TimelineEvent[]): Array<{ startMs: number; endMs: number }> {
   const out: Array<{ startMs: number; endMs: number }> = [];
   let open: number | null = null;
-  const sorted = events.filter((e) => e.kind === "tutor.speaking").sort((a, b) => a.offsetMs - b.offsetMs || a.seq - b.seq);
+  const sorted = events.filter((e) => e.kind === "tutor.speaking").sort(compareEvents);
   for (const e of sorted) {
     if (e.payload.speaking === true) {
       if (open === null) open = e.offsetMs;
@@ -176,7 +186,7 @@ function toolRecords(sorted: readonly TimelineEvent[]): ToolRecord[] {
 }
 
 export function analyzeSession(events: readonly TimelineEvent[], durationMs = 0): SessionAnalysis {
-  const sorted = [...events].sort((a, b) => a.offsetMs - b.offsetMs || a.seq - b.seq);
+  const sorted = [...events].sort(compareEvents);
   const utterances = mergeUtterances(sorted);
   const speaking = speakingIntervals(sorted);
   const debug = sorted.filter((e) => e.kind === "live.debug");
@@ -295,7 +305,7 @@ function toolDetail(args: unknown, success: boolean, message: unknown, error: un
 const QUIET_CONNECTION = new Set(["connect_requested", "websocket_open", "resumption_handle_stored", "live_provider_selected", "gemini_start"]);
 
 export function buildLog(events: readonly TimelineEvent[]): LogEntry[] {
-  const sorted = [...events].sort((a, b) => a.offsetMs - b.offsetMs || a.seq - b.seq);
+  const sorted = [...events].sort(compareEvents);
   const entries: LogEntry[] = [];
   mergeUtterances(sorted).forEach((u, i) => {
     entries.push({ key: `u${i}`, offsetMs: u.startMs, endMs: u.endMs, lane: u.role, title: u.text, tone: "default", hidden: false, issue: false });

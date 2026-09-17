@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
-import { tutorSessions, sessionEvents } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { tutorSessions } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { appendSessionEvents } from "@/lib/db/session-events";
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -25,22 +26,9 @@ export async function POST(_req: NextRequest, ctx: RouteCtx) {
     .set({ status: "paused", pausedAt: now })
     .where(eq(tutorSessions.id, id));
 
-  const last = await db
-    .select({ seq: sessionEvents.seq })
-    .from(sessionEvents)
-    .where(eq(sessionEvents.sessionId, id))
-    .orderBy(desc(sessionEvents.seq))
-    .limit(1);
-  const nextSeq = last.length ? last[0].seq + 1 : 1;
-
-  await db.insert(sessionEvents).values({
-    sessionId: id,
-    seq: nextSeq,
-    offsetMs: Math.max(0, now - session.startedAt),
-    kind: "session.paused",
-    actor: "system",
-    payload: {},
-  });
+  await appendSessionEvents(id, [
+    { kind: "session.paused", actor: "system", offsetMs: Math.max(0, now - session.startedAt), payload: {} },
+  ], now);
 
   return NextResponse.json({ ok: true });
 }

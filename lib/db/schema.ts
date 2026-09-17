@@ -75,6 +75,9 @@ export const tutorSessions = pgTable("tutor_sessions", {
   lastActiveAt: bigint("last_active_at", { mode: "number" }).notNull(),
   pausedAt: bigint("paused_at", { mode: "number" }),
   transcript: jsonb("transcript").notNull().default([]),
+  // Highest session_events.seq handed out; lib/db/session-events.ts bumps it in
+  // the same statement as the insert (lib/db/sql/2026-09-16-event-seq.sql).
+  eventSeq: integer("event_seq").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -90,9 +93,13 @@ export const sessionEvents = pgTable(
     kind: text("kind").notNull(),
     actor: text("actor").notNull().default("system"),
     payload: jsonb("payload").notNull().default({}),
+    // The recorder's own sequence number, for events in the same millisecond.
+    clientSeq: integer("client_seq"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (t) => [index("session_events_session_seq_idx").on(t.sessionId, t.seq)],
+  // Unique since step B of lib/db/sql/2026-09-16-event-seq-unique.sql; there is
+  // no migrations folder, so this line documents the index rather than creates it.
+  (t) => [uniqueIndex("session_events_session_seq_uidx").on(t.sessionId, t.seq)],
 );
 
 // Board pictures recorded during sessions, for the admin replay (Sept 15 2026).

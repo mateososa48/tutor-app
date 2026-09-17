@@ -40,6 +40,8 @@ import type { UploadedFile } from "@/lib/file-processor";
 import { intakeOpeningMessage, intakeTitle, setActiveIntake, takeIntake } from "@/lib/session-intake";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
 import { SessionRecorder } from "@/lib/session-recorder";
+import { compareEvents } from "@/lib/session-recording";
+import { joinTranscript } from "@/lib/live-events";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
 
@@ -47,6 +49,7 @@ const TRANSCRIPT_MERGE_WINDOW_MS = 1200;
 const TRANSCRIPT_MAX_MERGED_CHARS = 700;
 const DEBUG_TRACE_LIMIT = 1000;
 const RESUME_HISTORY_TURNS = 24;
+const RECORDING_SKIPS = new Set(["tool_call_received", "board_frame_sent"]);
 
 function shouldMergeTranscript(last: TranscriptEntry | undefined, entry: TranscriptEntry): last is TranscriptEntry {
   if (!last || last.role !== entry.role) return false;
@@ -62,9 +65,9 @@ function appendTranscriptEntry(entries: TranscriptEntry[], entry: TranscriptEntr
   const last = entries[entries.length - 1];
   const entryAt = entry.at ?? Date.now();
   if (shouldMergeTranscript(last, entry)) {
-    return [...entries.slice(0, -1), { ...last, text: `${last.text} ${entry.text}`, at: entryAt }];
+    return [...entries.slice(0, -1), { ...last, text: joinTranscript(last.text, entry.text, entry.spaced), at: entryAt }];
   }
-  return [...entries, entry];
+  return [...entries, { ...entry, text: entry.text.trimStart() }];
 }
 
 // Merge consecutive same-role transcript fragments emitted close together.
@@ -225,9 +228,14 @@ function SessionDetailPage({ id }: { id: string }) {
     label: string,
     detail?: Record<string, unknown>,
   ) => {
-    if (!debugModeRef.current) return;
     const now = Date.now();
-    if (kind !== "transcript") recorderRef.current?.record("live.debug", kind === "tool" || kind === "pacing" ? "tutor" : "system", { kind: kind, message: label, payload: detail ?? null }, now);
+    // Every session is recorded in full (the debug panel is only for ?debug=1).
+    // Transcript fragments are recorded as transcript.entry instead, and the
+    // received-call and frame-sent notices repeat what other events carry.
+    if (kind !== "transcript" && !RECORDING_SKIPS.has(label)) {
+      recorderRef.current?.record("live.debug", kind === "tool" || kind === "pacing" ? "tutor" : "system", { kind: kind, message: label, payload: detail ?? null }, now);
+    }
+    if (!debugModeRef.current) return;
     const event: TutorDebugEvent = {
       id: `dbg_${now}_${++debugEventIdRef.current}`,
       at: now,
@@ -331,6 +339,11 @@ function SessionDetailPage({ id }: { id: string }) {
   const persistSnapshot = useCallback(() => {
     const snap = whiteboardRef.current?.getSnapshot();
     if (!snap) return;
+    const recorder = recorderRef.current;
+    if (recorder) {
+      recorder.recordLarge("whiteboard.snapshot", "system", snap as unknown as Record<string, unknown>);
+      return;
+    }
     appendEvent(id, {
       kind: "whiteboard.snapshot",
       actor: "system",
@@ -488,12 +501,16 @@ function SessionDetailPage({ id }: { id: string }) {
     sessionRef.current = null;
     // Graceful close first so the last transcript fragments flush into state.
     await live?.end();
-    await appendEvent(id, {
-      kind: "session.ended",
-      actor: "system",
-      offsetMs: Math.max(0, endedAt - sessionStartedAtRef.current),
-      payload: {},
-    });
+    if (recorderRef.current) {
+      recorderRef.current.record("session.ended", "system", {}, Date.now());
+    } else {
+      await appendEvent(id, {
+        kind: "session.ended",
+        actor: "system",
+        offsetMs: Math.max(0, endedAt - sessionStartedAtRef.current),
+        payload: {},
+      });
+    }
     await recorderRef.current?.flush();
     await patchSession(id, {
       status: "ended",
@@ -594,13 +611,9 @@ function SessionDetailPage({ id }: { id: string }) {
           chars: entry.text.length,
           text: entry.text,
         });
-        // append + persist
-        appendEvent(id, {
-          kind: "transcript.entry",
-          actor: entry.role,
-          offsetMs: offsetMs(),
-          payload: { text: entry.text, at: entry.at ?? Date.now(), role: entry.role, id: entry.id },
-        });
+        // Recorded in order with the rest of the session (one POST per fragment raced and shuffled them).
+        const at = entry.at ?? Date.now();
+        recorderRef.current?.record("transcript.entry", entry.role, { text: entry.text, at, role: entry.role, id: entry.id, spaced: entry.spaced === true }, at);
         setTranscript((prev) => {
           const next = appendTranscriptEntry(prev, entry);
           transcriptRef.current = next;
@@ -788,18 +801,13 @@ function SessionDetailPage({ id }: { id: string }) {
       text,
       at: Date.now(),
     };
-    appendEvent(id, {
-      kind: "transcript.entry",
-      actor: "student",
-      offsetMs: offsetMs(),
-      payload: { text, at: entry.at, role: "student", id: entry.id },
-    });
+    recorderRef.current?.record("transcript.entry", "student", { text, at: entry.at, role: "student", id: entry.id }, entry.at);
     setTranscript((prev) => {
       const next = appendTranscriptEntry(prev, entry);
       transcriptRef.current = next;
       return next;
     });
-  }, [id, recordDebug]);
+  }, [recordDebug]);
 
   // Mute keyboard shortcut
   useEffect(() => {
@@ -870,14 +878,16 @@ function SessionDetailPage({ id }: { id: string }) {
       const rawEntries: TranscriptEntry[] = [];
       let latestSnap: WhiteboardSnapshot | null = null;
       if (!isNew) {
-        for (const ev of data.events) {
+        const ordered = [...data.events].sort((a, b) => compareEvents({ ...a, cseq: a.clientSeq }, { ...b, cseq: b.clientSeq }));
+        for (const ev of ordered) {
           if (ev.kind === "transcript.entry") {
-            const p = ev.payload as { text: string; at?: number; role: "tutor" | "student"; id?: string };
+            const p = ev.payload as { text: string; at?: number; role: "tutor" | "student"; id?: string; spaced?: boolean };
             rawEntries.push({
               id: p.id ?? `ev_${ev.id}`,
               role: p.role,
               text: p.text,
               at: p.at,
+              spaced: p.spaced === true,
             });
           } else if (ev.kind === "whiteboard.snapshot") {
             latestSnap = ev.payload as unknown as WhiteboardSnapshot;
@@ -908,12 +918,7 @@ function SessionDetailPage({ id }: { id: string }) {
         const withOpening = appendTranscriptEntry(hydratedTranscript, opening);
         setTranscript(withOpening);
         transcriptRef.current = withOpening;
-        void appendEvent(id, {
-          kind: "transcript.entry",
-          actor: "student",
-          offsetMs: 0,
-          payload: { text: opening.text, at: opening.at, role: "student", id: opening.id },
-        });
+        recorderRef.current?.record("transcript.entry", "student", { text: opening.text, at: opening.at, role: "student", id: opening.id }, opening.at);
       }
 
       const initialTitle = isNew ? (handoff ? intakeTitle(handoff.intake) : "Session") : data.session.title;

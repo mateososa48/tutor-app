@@ -7,6 +7,8 @@ export type TranscriptEntry = {
   text: string;
   id: string;
   at?: number;
+  /** A raw fragment that carries its own spacing: join it without adding spaces. */
+  spaced?: boolean;
 };
 
 export type ToolCallResult =

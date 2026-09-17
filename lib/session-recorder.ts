@@ -2,14 +2,20 @@
 // queued with its time since the session started and sent in batches, and
 // board pictures are uploaded once each (repeats point at the first upload).
 // Nothing here may disturb the session: every network failure is swallowed.
+//
+// Order matters (Sept 16): transcripts used to go out one POST per fragment
+// and came back shuffled. Every event now carries a client sequence number
+// (cseq) and batches go out strictly one at a time, in order.
 import { clampPayload } from "./session-recording";
 
 type Actor = "student" | "tutor" | "system";
-type Pending = { kind: string; actor: Actor; offsetMs: number; payload: Record<string, unknown> };
+type Pending = { kind: string; actor: Actor; offsetMs: number; payload: Record<string, unknown>; cseq: number; large: boolean };
 
 const FLUSH_DELAY_MS = 1500;
 const FLUSH_SIZE = 40;
+const MAX_BATCH = 200;
 const MAX_QUEUE = 2000;
+const MAX_FAILURES = 3;
 
 async function hashText(text: string): Promise<string> {
   try {
@@ -22,16 +28,25 @@ async function hashText(text: string): Promise<string> {
   }
 }
 
+type FetchLike = (input: string, init?: RequestInit) => Promise<Pick<Response, "ok" | "json">>;
+
+function wire(e: Pending) {
+  return { kind: e.kind, actor: e.actor, offsetMs: e.offsetMs, payload: e.payload, cseq: e.cseq };
+}
+
 export class SessionRecorder {
   private queue: Pending[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private sending: Promise<void> | null = null;
+  private chain: Promise<void> = Promise.resolve();
   private failures = 0;
+  private cseq = 0;
   private frameIds = new Map<string, number>();
+  private lastLarge = new Map<string, string>();
 
   constructor(
     private readonly sessionId: string,
     private readonly startedAt: () => number,
+    private readonly fetchImpl: FetchLike = (input, init) => fetch(input, init),
   ) {}
 
   private offset(at: number): number {
@@ -45,37 +60,93 @@ export class SessionRecorder {
 
   record(kind: string, actor: Actor, payload: Record<string, unknown> = {}, at = Date.now()): void {
     const clamped = clampPayload(payload);
-    this.queue.push({ kind, actor, offsetMs: this.offset(at), payload: clamped && typeof clamped === "object" ? (clamped as Record<string, unknown>) : {} });
-    if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
-    if (this.queue.length >= FLUSH_SIZE) void this.flush();
-    else if (!this.timer) this.timer = setTimeout(() => void this.flush(), FLUSH_DELAY_MS);
+    this.enqueue({
+      kind,
+      actor,
+      offsetMs: this.offset(at),
+      payload: clamped && typeof clamped === "object" ? (clamped as Record<string, unknown>) : {},
+      cseq: ++this.cseq,
+      large: false,
+    });
   }
 
-  /** Send everything queued. Safe to call often; batches go out one at a time. */
-  async flush(): Promise<void> {
+  /**
+   * A big payload (a board snapshot) is kept whole and sent in a request of
+   * its own. An identical payload to the last one of the same kind is skipped.
+   */
+  recordLarge(kind: string, actor: Actor, payload: Record<string, unknown>, at = Date.now()): void {
+    let text: string;
+    try {
+      text = JSON.stringify(payload);
+    } catch {
+      return;
+    }
+    if (this.lastLarge.get(kind) === text) return;
+    this.lastLarge.set(kind, text);
+    this.enqueue({ kind, actor, offsetMs: this.offset(at), payload, cseq: ++this.cseq, large: true });
+  }
+
+  private enqueue(event: Pending): void {
+    this.queue.push(event);
+    if (this.queue.length > MAX_QUEUE) this.queue.splice(0, this.queue.length - MAX_QUEUE);
+    if (event.large || this.queue.length >= FLUSH_SIZE) void this.flush();
+    else this.schedule(FLUSH_DELAY_MS);
+  }
+
+  private schedule(delayMs: number): void {
+    if (this.timer) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.flush();
+    }, delayMs);
+  }
+
+  /** Send everything queued. Safe to call often: requests go out one at a time, in order. */
+  flush(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
-    if (this.sending) await this.sending;
-    if (this.queue.length === 0) return;
-    const events = this.queue.splice(0, 200);
-    const body = JSON.stringify({ events });
-    this.sending = fetch(this.url("events"), { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: body.length < 60_000 })
-      .then((res) => {
-        if (!res.ok) throw new Error(`events ${res.status}`);
+    this.chain = this.chain.then(() => this.drain());
+    return this.chain;
+  }
+
+  private takeBatch(): Pending[] {
+    if (this.queue[0]?.large) return this.queue.splice(0, 1);
+    let n = 0;
+    while (n < this.queue.length && n < MAX_BATCH && !this.queue[n].large) n++;
+    return this.queue.splice(0, n);
+  }
+
+  private async drain(): Promise<void> {
+    while (this.queue.length > 0) {
+      const batch = this.takeBatch();
+      if (batch.length === 0) return;
+      const body = JSON.stringify({ events: batch.map(wire) });
+      let ok = false;
+      try {
+        const res = await this.fetchImpl(this.url("events"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+          keepalive: body.length < 60_000,
+        });
+        ok = res.ok;
+      } catch {
+        ok = false;
+      }
+      if (ok) {
         this.failures = 0;
-      })
-      .catch(() => {
-        // Try again a few times, then give up rather than grow without bound.
-        this.failures += 1;
-        if (this.failures <= 3) this.queue.unshift(...events);
-      })
-      .finally(() => {
-        this.sending = null;
-      });
-    await this.sending;
-    if (this.queue.length > 0 && !this.timer) this.timer = setTimeout(() => void this.flush(), FLUSH_DELAY_MS);
+        continue;
+      }
+      // Try a batch again a few times (it keeps its place at the front), then
+      // give up on it rather than block everything behind it.
+      this.failures += 1;
+      if (this.failures <= MAX_FAILURES) this.queue.unshift(...batch);
+      else this.failures = 0;
+      this.schedule(FLUSH_DELAY_MS * (this.failures + 1));
+      return;
+    }
   }
 
   /** On page hide: hand the queue to the browser, which delivers it even as the page goes away. */
@@ -86,11 +157,16 @@ export class SessionRecorder {
     }
     if (this.queue.length === 0) return;
     const events = this.queue.splice(0, this.queue.length);
-    try {
-      navigator.sendBeacon(this.url("events"), new Blob([JSON.stringify({ events })], { type: "application/json" }));
-    } catch {
-      // the page is going away; nothing else to do
-    }
+    const send = (list: Pending[]) => {
+      try {
+        navigator.sendBeacon(this.url("events"), new Blob([JSON.stringify({ events: list.map(wire) })], { type: "application/json" }));
+      } catch {
+        // the page is going away; nothing else to do
+      }
+    };
+    const small = events.filter((e) => !e.large);
+    if (small.length > 0) send(small);
+    for (const e of events) if (e.large) send([e]);
   }
 
   /** Save a board picture (a data URL) and a board.frame event pointing at it. */
@@ -106,7 +182,7 @@ export class SessionRecorder {
       return;
     }
     try {
-      const res = await fetch(this.url("frames"), {
+      const res = await this.fetchImpl(this.url("frames"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data, mime, hash, width: image.width, height: image.height, offsetMs: this.offset(at), reason }),

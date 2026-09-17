@@ -1,9 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BackendTurnTracker, TranscriptAssembler } from "./live-events";
+import { BackendTurnTracker, TranscriptAssembler, hasBoundarySpace, joinTranscript } from "./live-events";
 import type { TutorActivity } from "./live-types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("joinTranscript keeps the model's spacing and adds one only where it is missing", () => {
+  assert.equal(joinTranscript("That's", " okay,"), "That's okay,");
+  assert.equal(joinTranscript("That's ", "okay"), "That's okay");
+  assert.equal(joinTranscript("That's", "okay"), "That's okay");
+  assert.equal(joinTranscript("a ", " b"), "a b");
+  assert.equal(joinTranscript("tricky", "."), "tricky.");
+  assert.equal(joinTranscript("say", "’s"), "say’s");
+  assert.equal(joinTranscript("twenty-", "five"), "twenty-five");
+  assert.equal(joinTranscript("", "  Hello"), "Hello");
+  assert.equal(joinTranscript("x", ""), "x");
+  // A spaced stream rebuilds the sentence exactly, words split mid-way included.
+  const raw = ["That's", " okay,", " this", " kind", " of", " problem", " can", " be", " tri", "cky", "."];
+  assert.ok(raw.some(hasBoundarySpace));
+  assert.equal(raw.reduce((a, b) => joinTranscript(a, b, true), ""), "That's okay, this kind of problem can be tricky.");
+  // Trimmed pieces (older recordings) get their spaces back.
+  const trimmed = ["That's", "okay,", "this", "kind", "of", "problem", "can", "be", "tricky", "."];
+  assert.ok(!trimmed.some(hasBoundarySpace));
+  assert.equal(trimmed.reduce((a, b) => joinTranscript(a, b), ""), "That's okay, this kind of problem can be tricky.");
+});
 
 test("TranscriptAssembler joins fragments and flushes after a pause", async () => {
   const flushed: { role: string; text: string }[] = [];

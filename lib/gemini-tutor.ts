@@ -1,4 +1,5 @@
 import { GeminiLiveSession } from "./gemini-live";
+import { joinTranscript } from "./live-events";
 import { AudioCapture, AudioPlayer } from "./audio";
 import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
 import type { UploadedFile } from "./file-processor";
@@ -126,7 +127,7 @@ export class GeminiTutorSession {
         onTranscript: (entry) => {
           if (entry.role === "tutor") {
             this.beginTurnIfNeeded();
-            this.turnText = this.turnText ? `${this.turnText} ${entry.text}` : entry.text;
+            this.turnText = joinTranscript(this.turnText, entry.text, entry.spaced);
           } else {
             this.resetTurn();
             this.showCaption("");

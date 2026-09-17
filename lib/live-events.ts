@@ -7,6 +7,26 @@ import type { ToolCallResult, TutorActivity } from "./live-types";
 
 type Role = "tutor" | "student";
 
+/** Whether a transcript fragment carries its own spacing (" okay,", "that "). */
+export function hasBoundarySpace(text: string): boolean {
+  return /^\s|\s$/.test(text);
+}
+
+/**
+ * Joins two transcript fragments. In a spaced stream (the model sends each
+ * piece with its own spaces, so "tri"+"cky" is one word) pieces are simply
+ * concatenated. Trimmed pieces (older recordings, assembled utterances) get a
+ * space unless the next piece is punctuation.
+ */
+export function joinTranscript(a: string, b: string, spaced = false): string {
+  if (!a) return b.trimStart();
+  if (!b) return a;
+  if (/\s$/.test(a)) return a + b.trimStart();
+  if (spaced || /^\s/.test(b)) return a + b;
+  if (/^[.,!?;:%)\]}'’”…]/.test(b) || /[-–—([{'‘“/]$/.test(a)) return a + b;
+  return `${a} ${b}`;
+}
+
 // ── Transcript assembly ────────────────────────────────────────────────────
 // GPT-Live streams `session.input_transcript.delta` / `session.output_transcript.delta`
 // as small fragments with no turn boundaries. We buffer per speaker and flush

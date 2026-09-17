@@ -154,6 +154,7 @@ export async function loadAdminSession(id: string): Promise<{ session: AdminSess
     db
       .select({
         seq: sessionEvents.seq,
+        cseq: sessionEvents.clientSeq,
         offsetMs: sessionEvents.offsetMs,
         kind: sessionEvents.kind,
         actor: sessionEvents.actor,

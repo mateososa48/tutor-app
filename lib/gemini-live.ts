@@ -1,6 +1,7 @@
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import type { UploadedFile } from "./file-processor";
 import { TUTOR_TOOL_DECLARATIONS, runTutorTool } from "./tutor-tools";
+import { hasBoundarySpace, joinTranscript } from "./live-events";
 import {
   createPolicy,
   formatMemory,
@@ -29,6 +30,8 @@ export type TranscriptEntry = {
   text: string;
   id: string;
   at?: number;
+  /** The text is a raw fragment that carries its own spacing (join without adding spaces). */
+  spaced?: boolean;
 };
 
 export type SessionCallbacks = {
@@ -82,6 +85,9 @@ export class GeminiLiveSession {
   // Attempts, signals, and notes behind the [Tutor state] line (lib/tutor-policy.ts).
   private policy: TutorPolicy = createPolicy(Date.now());
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
+  // Set once a transcript fragment arrives with its own leading or trailing
+  // space: from then on fragments are joined exactly as sent.
+  private spacedTranscripts = false;
 
   private static readonly MAX_RECONNECT_ATTEMPTS = 4;
   private static readonly TURN_FINISH_DEBOUNCE_MS = 1_600;
@@ -119,6 +125,9 @@ export class GeminiLiveSession {
     if (this.manualDisconnect) return;
 
     const ws = new WebSocket(`${WS_BASE}?access_token=${encodeURIComponent(token)}`);
+    // Binary frames as ArrayBuffers decode synchronously; Blobs need an async
+    // read that let a later message be handled first (shuffled transcripts).
+    ws.binaryType = "arraybuffer";
     this.ws = ws;
 
     console.log(
@@ -137,20 +146,29 @@ export class GeminiLiveSession {
       this.sendSetup(resumeHandle);
     };
 
-    ws.onmessage = async (e) => {
-      if (this.ws !== ws || this.manualDisconnect) return;
-      let text: string;
-      if (typeof e.data === "string") {
-        text = e.data;
-      } else if (e.data instanceof Blob) {
-        text = await e.data.text();
-      } else if (e.data instanceof ArrayBuffer) {
-        text = new TextDecoder().decode(e.data);
-      } else {
-        console.warn("[Gemini] Unhandled message type:", typeof e.data);
-        return;
-      }
-      this.handleMessage(text);
+    // Messages are handled strictly in arrival order, even if one ever needs an
+    // async read; a failure in one never stops the ones after it.
+    let inOrder: Promise<void> = Promise.resolve();
+    ws.onmessage = (e) => {
+      const data: unknown = e.data;
+      const read: () => string | Promise<string> | null =
+        typeof data === "string" ? () => data
+          : data instanceof ArrayBuffer ? () => new TextDecoder().decode(data)
+            : data instanceof Blob ? () => data.text()
+              : () => null;
+      inOrder = inOrder.then(async () => {
+        if (this.ws !== ws || this.manualDisconnect) return;
+        const text = await read();
+        if (text === null) {
+          console.warn("[Gemini] Unhandled message type:", typeof data);
+          return;
+        }
+        if (this.ws !== ws || this.manualDisconnect) return;
+        this.handleMessage(text);
+      }).catch((err) => {
+        console.error("[Gemini] Failed to handle a message:", err);
+        this.debug("error", "message_handling_failed", { message: err instanceof Error ? err.message : String(err) });
+      });
     };
 
     ws.onclose = (e) => {
@@ -315,9 +333,15 @@ export class GeminiLiveSession {
 
   private noteStudentTranscript(text: string) {
     this.clearTurnTimer();
-    const piece = text.trim();
-    this.studentUtterance = this.studentUtterance ? `${this.studentUtterance} ${piece}` : piece;
+    this.studentUtterance = joinTranscript(this.studentUtterance, text, this.spacedTranscripts);
     this.tutorTurnText = "";
+  }
+
+  /** A transcript fragment as it arrived, with its own spacing; null when it is only whitespace. */
+  private transcriptEntry(role: "tutor" | "student", text: string): TranscriptEntry | null {
+    if (!text.trim()) return null;
+    if (hasBoundarySpace(text)) this.spacedTranscripts = true;
+    return { role, text, id: this.nextId(), at: Date.now(), spaced: this.spacedTranscripts };
   }
 
   // The student is done talking (the tutor answers or calls a tool): read the
@@ -329,12 +353,9 @@ export class GeminiLiveSession {
   }
 
   private noteTutorTranscript(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!text.trim()) return;
     this.flushStudentUtterance();
-    this.tutorTurnText = this.tutorTurnText
-      ? `${this.tutorTurnText} ${trimmed}`
-      : trimmed;
+    this.tutorTurnText = joinTranscript(this.tutorTurnText, text, this.spacedTranscripts);
     this.scheduleTurnFinishCheck();
   }
 
@@ -498,28 +519,20 @@ export class GeminiLiveSession {
         this.callbacks.onInterrupted();
       }
 
-      // Tutor speech transcript
+      // Tutor speech transcript, kept exactly as sent (see transcriptEntry).
       const outTx = serverContent.outputTranscription as Record<string, unknown> | undefined;
-      if (typeof outTx?.text === "string" && outTx.text.trim()) {
-        this.noteTutorTranscript(outTx.text);
-        this.callbacks.onTranscript({
-          role: "tutor",
-          text: outTx.text.trim(),
-          id: this.nextId(),
-          at: Date.now(),
-        });
+      const tutorEntry = typeof outTx?.text === "string" ? this.transcriptEntry("tutor", outTx.text) : null;
+      if (tutorEntry) {
+        this.noteTutorTranscript(tutorEntry.text);
+        this.callbacks.onTranscript(tutorEntry);
       }
 
       // Student speech transcript (some models put it in serverContent)
       const inTx = serverContent.inputTranscription as Record<string, unknown> | undefined;
-      if (typeof inTx?.text === "string" && inTx.text.trim()) {
-        this.noteStudentTranscript(inTx.text);
-        this.callbacks.onTranscript({
-          role: "student",
-          text: inTx.text.trim(),
-          id: this.nextId(),
-          at: Date.now(),
-        });
+      const studentEntry = typeof inTx?.text === "string" ? this.transcriptEntry("student", inTx.text) : null;
+      if (studentEntry) {
+        this.noteStudentTranscript(studentEntry.text);
+        this.callbacks.onTranscript(studentEntry);
       }
 
       if (serverContent.turnComplete === true) {
@@ -531,14 +544,10 @@ export class GeminiLiveSession {
 
     // Student transcript at top level (model-dependent placement)
     const topInputTx = msg.inputTranscription as Record<string, unknown> | undefined;
-    if (typeof topInputTx?.text === "string" && topInputTx.text.trim()) {
-      this.noteStudentTranscript(topInputTx.text);
-      this.callbacks.onTranscript({
-        role: "student",
-        text: topInputTx.text.trim(),
-        id: this.nextId(),
-        at: Date.now(),
-      });
+    const topEntry = typeof topInputTx?.text === "string" ? this.transcriptEntry("student", topInputTx.text) : null;
+    if (topEntry) {
+      this.noteStudentTranscript(topEntry.text);
+      this.callbacks.onTranscript(topEntry);
     }
 
     // Whiteboard tool calls

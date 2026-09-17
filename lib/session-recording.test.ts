@@ -5,6 +5,7 @@ import {
   buildLog,
   buildMarkdownExport,
   clampPayload,
+  compareEvents,
   formatClock,
   lastIndexAtOrBefore,
   mergeUtterances,
@@ -16,6 +17,29 @@ let seq = 0;
 const ev = (offsetMs: number, kind: string, actor: string, payload: Record<string, unknown> = {}): TimelineEvent => ({ seq: ++seq, offsetMs, kind, actor, payload });
 const said = (offsetMs: number, role: "student" | "tutor", text: string) => ev(offsetMs, "transcript.entry", role, { role, text });
 const debug = (offsetMs: number, kind: string, message: string, payload: Record<string, unknown> = {}) => ev(offsetMs, "live.debug", "system", { kind, message, payload });
+
+test("events in the same millisecond keep the recorder's order, whatever seq the server gave them", () => {
+  // Fragments of one sentence, all at 5000 ms, stored with shuffled seq (the old race).
+  const pieces = [
+    { seq: 12, cseq: 1, text: "That's" },
+    { seq: 10, cseq: 2, text: " okay," },
+    { seq: 14, cseq: 3, text: " this kind of problem" },
+    { seq: 11, cseq: 4, text: " can be" },
+    { seq: 13, cseq: 5, text: " tricky." },
+  ];
+  const events: TimelineEvent[] = pieces.map((p) => ({ seq: p.seq, cseq: p.cseq, offsetMs: 5000, kind: "transcript.entry", actor: "tutor", payload: { role: "tutor", text: p.text, spaced: true } }));
+  assert.deepEqual(mergeUtterances(events).map((u) => u.text), ["That's okay, this kind of problem can be tricky."]);
+  // Older events without cseq fall back to seq; time always comes first.
+  assert.ok(compareEvents({ offsetMs: 1, seq: 9 }, { offsetMs: 2, seq: 1 }) < 0);
+  assert.ok(compareEvents({ offsetMs: 1, seq: 2, cseq: null }, { offsetMs: 1, seq: 1, cseq: 5 }) > 0);
+  assert.ok(compareEvents({ offsetMs: 1, seq: 2, cseq: 1 }, { offsetMs: 1, seq: 1, cseq: 5 }) < 0);
+});
+
+test("spaced fragments join exactly; old trimmed ones get spaces", () => {
+  const spaced = (at: number, text: string): TimelineEvent => ev(at, "transcript.entry", "tutor", { role: "tutor", text, spaced: true });
+  assert.deepEqual(mergeUtterances([spaced(0, "Tri"), spaced(10, "cky"), spaced(20, " one.")]).map((u) => u.text), ["Tricky one."]);
+  assert.deepEqual(mergeUtterances([said(0, "tutor", "Tricky"), said(10, "tutor", "one"), said(20, "tutor", ".")]).map((u) => u.text), ["Tricky one."]);
+});
 
 test("payloads stay small", () => {
   const out = clampPayload({ text: "x".repeat(5000), list: Array.from({ length: 250 }, (_, i) => i), gone: undefined }) as Record<string, unknown>;
