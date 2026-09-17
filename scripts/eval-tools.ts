@@ -61,7 +61,9 @@ export async function withRetry<T>(fn: () => Promise<T>, attempts = 8): Promise<
       const msg = err instanceof Error ? err.message : String(err);
       if (/limit: 0\b/.test(msg)) throw new Error(`No quota for this model on this API key: ${/model: ([\w.-]+)/.exec(msg)?.[1] ?? "unknown"}.`);
       if (/PerDay/.test(msg)) throw new Error(`Daily free-tier quota used up for ${/model: ([\w.-]+)/.exec(msg)?.[1] ?? "this model"}. It resets daily.`);
-      const retryable = /429|RESOURCE_EXHAUSTED|503|UNAVAILABLE|overloaded/i.test(msg);
+      // Rate limits, overloads, and dropped connections all clear up by waiting.
+      const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : "";
+      const retryable = /429|RESOURCE_EXHAUSTED|503|UNAVAILABLE|overloaded|fetch failed|ECONNRESET|ETIMEDOUT|socket hang up|EAI_AGAIN/i.test(`${msg} ${cause}`);
       if (!retryable || i >= attempts - 1) throw err;
       const m = /retry in ([\d.]+)s/i.exec(msg);
       const wait = Math.min(90_000, Math.ceil((m ? Number(m[1]) : 15 * (i + 1)) * 1000) + 1500);

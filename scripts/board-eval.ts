@@ -332,6 +332,13 @@ async function main() {
   const rows: Row[] = [];
   const transcripts: Array<{ scenario: string; run: number; turns: TurnStats[] }> = [];
   const used = new Set<string>();
+  const out = arg("out", "");
+  // Written after every scenario, so a late failure keeps what already ran.
+  const save = (done: boolean) => {
+    if (!out) return;
+    const never = DECLARED.filter((n) => !used.has(n));
+    fs.writeFileSync(out, JSON.stringify({ model, set: setName, turns, runs, date: new Date().toISOString(), complete: done, rows, never, transcripts }, null, 2));
+  };
   for (const scenario of scenarios) {
     for (let r = 0; r < runs; r++) {
       console.log(`=== ${scenario.name} (${model}) run ${r + 1}/${runs}`);
@@ -339,6 +346,7 @@ async function main() {
       for (const t of stats) for (const x of t.tools) used.add(x.name);
       rows.push(rowFor(scenario.name, stats));
       transcripts.push({ scenario: scenario.name, run: r + 1, turns: stats });
+      save(false);
     }
   }
   const total = rows.reduce<Row>((a, r) => {
@@ -379,9 +387,8 @@ async function main() {
   const never = DECLARED.filter((n) => !used.has(n));
   console.log(`tools never called in this run (${never.length}/${DECLARED.length}): ${never.join(", ")}`);
 
-  const out = arg("out", "");
   if (out) {
-    fs.writeFileSync(out, JSON.stringify({ model, set: setName, turns, runs, date: new Date().toISOString(), rows, total, never, transcripts }, null, 2));
+    save(true);
     console.log(`wrote ${out}`);
   }
 }
