@@ -19,14 +19,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { GoogleGenAI, type Content, type FunctionDeclaration, type Part } from "@google/genai";
+import { GoogleGenAI, type Content, type Part } from "@google/genai";
 import type { StudentProfile } from "../lib/tutor-prompts";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "../lib/whiteboard-tools";
-import { dispatchWhiteboardTool } from "../lib/whiteboard-tool-dispatch";
-import { TUTOR_TOOL_DECLARATIONS, runTutorTool } from "../lib/tutor-tools";
-import { createPolicy, formatMemory, noteStudentUtterance, rememberNote, takeStateUpdate, type TutorPolicy } from "../lib/tutor-policy";
-import { formatBoardItems, isHeadingItem, itemLabelFrom, resolveItemTarget, type BoardItem } from "../lib/board-items";
-import type { WhiteboardHandle, ItemToken } from "../components/TldrawCore";
+import { createPolicy, noteStudentUtterance, type TutorPolicy } from "../lib/tutor-policy";
+import { createFakeBoard, NON_CREATING_TOOLS, type FakeBoard } from "./eval-board";
+import { EVAL_TOOL_DECLARATIONS, arg, readGeminiKey, runEvalTool, withRetry } from "./eval-tools";
 
 // ── Personas ───────────────────────────────────────────────────────────────
 
@@ -97,85 +95,13 @@ const PERSONAS: Persona[] = [
   },
 ];
 
-// ── Fake board (same behaviour as scripts/board-eval.ts) ───────────────────
+// ── Board tools (the fake board and the tool runner are shared) ────────────
 
-const NON_CREATING = new Set(["point_at", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step", "highlight"]);
-const DRAW_TOOLS = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name).filter((n) => !NON_CREATING.has(n) && n !== "circle_item"));
-
-function fakeBoard(): { handle: WhiteboardHandle } {
-  let items: BoardItem[] = [];
-  let title: string | undefined;
-  let seq = 0;
-  const base: Partial<WhiteboardHandle> = {
-    beginItem: (tool: string): ItemToken => ({ tool, shapes: new Set(), eqs: new Set() }),
-    endItem: (token: ItemToken, label: string | null) => {
-      if (NON_CREATING.has(token.tool)) return null;
-      if (token.tool === "circle_item" && !/orange/.test(label ?? "")) return null;
-      const id = `b${++seq}`;
-      items = [...items, { id, tool: token.tool, label: itemLabelFrom(label, token.tool), shapeIds: [`shape:${id}`], eqItemIds: [], owner: token.tool === "add_student_attempt" ? "student" : "tutor", createdAt: Date.now() }];
-      return id;
-    },
-    getBoardSummary: () => formatBoardItems(items, title),
-    startNewProblem: (t: string) => { items = []; title = t; },
-    clearWhiteboard: () => { items = []; title = undefined; },
-    withDirectMeta: (_meta, fn) => fn(),
-    pointAt: (target: string) => resolveItemTarget(items, target),
-    circleItem: (target: string) => resolveItemTarget(items, target),
-    eraseItems: (targets: string[]) => {
-      const gone: string[] = [];
-      for (const t of targets) {
-        const item = resolveItemTarget(items, t);
-        if (item) { gone.push(item.label); items = items.filter((i) => i.id !== item.id); }
-      }
-      return gone;
-    },
-    eraseOlder: (keep: number) => {
-      const body = items.filter((i) => !isHeadingItem(i));
-      const victims = body.slice(0, Math.max(0, body.length - keep));
-      items = items.filter((i) => !victims.includes(i));
-      return victims.map((v) => v.label);
-    },
-    highlightStep: () => true,
-    crossOutStep: () => true,
-    // The highlighter marks an existing item; the fake board just resolves it.
-    highlight: (target: string) => {
-      const item = resolveItemTarget(items, target);
-      return item ? { item, part: "item" as const } : null;
-    },
-    exportImage: async () => null,
-  };
-  const handle = new Proxy(base as WhiteboardHandle, {
-    get(target, prop) {
-      if (prop in target) return (target as unknown as Record<string | symbol, unknown>)[prop];
-      return () => undefined;
-    },
-  });
-  return { handle };
-}
+const DRAW_TOOLS = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name as string).filter((n) => !NON_CREATING_TOOLS.has(n)));
 
 // ── Model plumbing ─────────────────────────────────────────────────────────
 
 const usage = { calls: 0, prompt: 0, output: 0, thoughts: 0 };
-
-async function withRetry<T>(fn: () => Promise<T>, attempts = 8): Promise<T> {
-  for (let i = 0; ; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // A quota of 0 (a model the key's tier cannot use) never recovers.
-      if (/limit: 0\b/.test(msg)) throw new Error(`No quota for this model on this API key: ${/model: ([\w.-]+)/.exec(msg)?.[1] ?? "unknown"}. Pick another with --tutor/--student/--judge.`);
-      // A per-day quota does not come back by waiting a minute either.
-      if (/PerDay/.test(msg)) throw new Error(`Daily free-tier quota used up for ${/model: ([\w.-]+)/.exec(msg)?.[1] ?? "this model"}. It resets daily; add billing to the key or pick another model.`);
-      const retryable = /429|RESOURCE_EXHAUSTED|503|UNAVAILABLE|overloaded/i.test(msg);
-      if (!retryable || i >= attempts - 1) throw err;
-      const m = /retry in ([\d.]+)s/i.exec(msg);
-      const wait = Math.min(90_000, Math.ceil((m ? Number(m[1]) : 15 * (i + 1)) * 1000) + 1500);
-      process.stdout.write(`    (busy, waiting ${Math.round(wait / 1000)}s)\n`);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-}
 
 type GenArgs = Parameters<GoogleGenAI["models"]["generateContent"]>[0];
 
@@ -192,10 +118,6 @@ function visibleText(parts: Part[] | undefined): string {
   return (parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? "").join(" ").replace(/\s+/g, " ").trim();
 }
 
-function arg(name: string, fallback: string): string {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
-}
 const verbose = process.argv.includes("--verbose");
 
 // ── One tutor turn ─────────────────────────────────────────────────────────
@@ -203,9 +125,9 @@ const verbose = process.argv.includes("--verbose");
 type ToolLog = { name: string; args: Record<string, unknown>; ok: boolean };
 type Turn = { student: string; tutor: string; tools: ToolLog[]; board: string };
 
-const TOOLS = [{ functionDeclarations: [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS] as unknown as FunctionDeclaration[] }];
+const TOOLS = [{ functionDeclarations: EVAL_TOOL_DECLARATIONS }];
 
-async function tutorTurn(ai: GoogleGenAI, model: string, systemInstruction: string, contents: Content[], board: ReturnType<typeof fakeBoard>, policy: TutorPolicy, student: string): Promise<Turn> {
+async function tutorTurn(ai: GoogleGenAI, model: string, systemInstruction: string, contents: Content[], board: FakeBoard, policy: TutorPolicy, student: string): Promise<Turn> {
   contents.push({ role: "user", parts: [{ text: student }] });
   noteStudentUtterance(policy, student);
   const turn: Turn = { student, tutor: "", tools: [], board: "" };
@@ -222,24 +144,10 @@ async function tutorTurn(ai: GoogleGenAI, model: string, systemInstruction: stri
     for (const part of calls) {
       const name = part.functionCall?.name ?? "";
       const args = (part.functionCall?.args ?? {}) as Record<string, unknown>;
-      let message: string;
-      let ok = true;
-      const tutorTool = runTutorTool(name, args, policy, Date.now());
-      if (tutorTool) {
-        ok = tutorTool.success;
-        message = tutorTool.success ? tutorTool.message ?? "Done" : `Error: ${tutorTool.error}`;
-      } else if (name === "remember_about_student") {
-        rememberNote(policy, typeof args.note === "string" ? args.note : "");
-        message = `Noted. ${formatMemory(policy)}`.trim();
-      } else {
-        // Same shape as the app: board result, board summary, then any changed [Tutor state].
-        const result = dispatchWhiteboardTool(name, args, { whiteboard: board.handle });
-        ok = result.success;
-        const update = result.success ? takeStateUpdate(policy, Date.now()) : "";
-        message = result.success ? `${result.message ?? "Done"}.\n[Board: ${board.handle.getBoardSummary()}]${update ? `\n${update}` : ""}` : `Error: ${result.error}`;
-      }
-      turn.tools.push({ name, args, ok });
-      responses.push({ functionResponse: { id: part.functionCall?.id, name, response: { result: message } } });
+      // Same shape as the app: board result, board summary, then any changed [Tutor state].
+      const result = runEvalTool(name, args, { board, policy });
+      turn.tools.push({ name, args, ok: result.ok });
+      responses.push({ functionResponse: { id: part.functionCall?.id, name, response: { result: result.message } } });
     }
     contents.push({ role: "user", parts: responses });
   }
@@ -404,10 +312,7 @@ function printTable(rows: Row[]) {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  const env = fs.readFileSync(".env.local", "utf8");
-  const key = env.split("\n").find((l) => l.startsWith("GEMINI_API_KEY="))?.slice("GEMINI_API_KEY=".length).trim().replace(/^["']|["']$/g, "");
-  if (!key) throw new Error("GEMINI_API_KEY missing in .env.local");
-  const ai = new GoogleGenAI({ apiKey: key });
+  const ai = new GoogleGenAI({ apiKey: readGeminiKey() });
 
   const tutorModel = arg("tutor", "gemini-3.5-flash");
   const studentModel = arg("student", "gemini-3.5-flash-lite");
@@ -431,7 +336,7 @@ async function main() {
       console.log(`\n=== ${p.id} (${p.grade}) run ${r + 1}/${runs}`);
       const profile: StudentProfile = { displayName: "Sam", gradeLevel: p.grade, learningPrefs: {} };
       const systemInstruction = prompts.buildGeminiInstructions(profile, []);
-      const board = fakeBoard();
+      const board = createFakeBoard();
       const policy = createPolicy(Date.now());
       const contents: Content[] = [];
       const turns: Turn[] = [];

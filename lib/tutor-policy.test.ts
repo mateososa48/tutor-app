@@ -7,10 +7,12 @@ import {
   detectSignals,
   formatMemory,
   formatTutorState,
+  looksLikeAnswer,
   noteStudentUtterance,
   parseHelpLevel,
   recordAttempt,
   rememberNote,
+  spokenMath,
   suggestHelp,
   takeStateUpdate,
 } from "./tutor-policy";
@@ -29,6 +31,28 @@ test("detects what the student's words signal", () => {
   assert.ok(detectSignals("4?").includes("unsure"));
   assert.deepEqual(detectSignals("subtract 3 from both sides"), []);
   assert.deepEqual(detectSignals("okay that makes sense"), []);
+});
+
+test("answer-like student lines are told apart from questions, steps and idk", () => {
+  // Lines from the Sept 15 recordings and the eval scenarios.
+  for (const yes of ["7", "10", "3?", "um, 2/5?", "ok thats 100", "so x = 16?", "oh wait, divide by 2. x = 4", "x = 9", "is it 20? probably wrong", "negative 8", "a half?", "18 divided by 3?", "3x - 5 = 7, so x is 4", "I think 7", "vielleicht 7?", "322"]) {
+    assert.ok(looksLikeAnswer(yes), `should be an answer: ${yes}`);
+  }
+  for (const no of ["i dont know", "idk", "what?", "wait what", "ok", "yes", "subtract 3?", "add 10?", "divide by 2", "lets do part c", "can we do number 8", "can you help me with 2x + 3 = 11", "what is 25% of 80", "I have a right triangle with legs 6 and 8, what's the hypotenuse", "how do I add 1/2 and 1/3", "why is negative times negative positive", "for every 2 red marbles there are 3 blue ones and if I have 6 red how many blue are there", "a right triangle has legs 6 and 8 cm, find the hypotenuse", "hours studied and test scores: (1, 60), (2, 65). is there a trend", "the slope is 3 and it crosses at 1. whats the equation", ""]) {
+    assert.ok(!looksLikeAnswer(no), `should not be an answer: ${no}`);
+  }
+});
+
+test("spoken arithmetic is found; ordinary speech with numbers is not", () => {
+  assert.equal(spokenMath("First, six squared is thirty six, and then eight squared."), "six squared is thirty six");
+  assert.equal(spokenMath("because three times six is eighteen."), "three times six is eighteen");
+  assert.equal(spokenMath("What's eighteen divided by three?"), "eighteen divided by three");
+  assert.equal(spokenMath("so 11 - 3 is not it, 11 − 3 = 8"), "11 − 3 = 8");
+  assert.equal(spokenMath("negative three plus five"), "negative three plus five");
+  assert.equal(spokenMath("Let's start with problem number one."), null);
+  assert.equal(spokenMath("Which one is bigger, two or three?"), null);
+  assert.equal(spokenMath("One more thing: for every one unit across, we go up two."), null);
+  assert.equal(spokenMath("So the equation is y equals mx plus b."), null);
 });
 
 test("no attempts and no signals means no state line", () => {

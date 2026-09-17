@@ -3,74 +3,29 @@
 // declarations, executes the tools against a fake board, and scores how the
 // tutor uses the board. No audio, no Live session, a few cents per run.
 //
-//   npx tsx scripts/board-eval.ts [--model gemini-3.5-flash] [--scenario fractions] [--turns 6] [--verbose] [--runs 1]
+//   npx tsx scripts/board-eval.ts [--model gemini-3.1-flash-lite] [--set core|math|icons|sessions|desmos|all]
+//     [--scenario fractions] [--turns 6] [--runs 1] [--out file.json] [--verbose]
+//
+// Sets: core (5 mixed topics), math (12 grade 5–9 topics), icons (real things),
+// sessions (lines lifted from recorded sessions: "put it on the board pls",
+// "what?", "idk", "lets do part c"), desmos (topics that belong on axes).
 
 import fs from "node:fs";
-import { GoogleGenAI, type Content, type FunctionDeclaration, type Part } from "@google/genai";
+import { GoogleGenAI, type Content, type Part } from "@google/genai";
 import { buildGeminiInstructions, type StudentProfile } from "../lib/tutor-prompts";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "../lib/whiteboard-tools";
-import { dispatchWhiteboardTool } from "../lib/whiteboard-tool-dispatch";
-import { formatBoardItems, isHeadingItem, itemLabelFrom, resolveItemTarget, type BoardItem } from "../lib/board-items";
-import type { WhiteboardHandle, ItemToken } from "../components/TldrawCore";
+import { createPolicy, looksLikeAnswer, noteStudentUtterance, spokenMath } from "../lib/tutor-policy";
+import { createFakeBoard, NON_CREATING_TOOLS } from "./eval-board";
+import { EVAL_TOOL_DECLARATIONS, arg, readGeminiKey, runEvalTool, withRetry } from "./eval-tools";
 
-type Scenario = { name: string; student: string[]; profile?: Partial<StudentProfile> };
+type Scenario = { name: string; student: string[]; profile?: Partial<StudentProfile>; worksheet?: string };
 
 const SCENARIOS: Scenario[] = [
-  {
-    name: "fractions",
-    student: [
-      "I don't get fractions at all.",
-      "um, a half?",
-      "I don't know",
-      "two pieces?",
-      "okay",
-      "so two quarters is the same as one half?",
-    ],
-  },
-  {
-    name: "algebra",
-    student: [
-      "can you help me with 2x + 3 = 11",
-      "subtract 3?",
-      "so x = 16?",
-      "oh wait, divide by 2. x = 4",
-      "can I try another one",
-      "3x - 5 = 7, so x is 4",
-    ],
-  },
-  {
-    name: "geometry",
-    student: [
-      "what's the area of a triangle",
-      "base times height?",
-      "why do you divide by 2",
-      "ok I think I get it",
-      "what if it's not a right triangle",
-      "makes sense",
-    ],
-  },
-  {
-    name: "negatives",
-    student: [
-      "why is negative 3 minus negative 5 equal to 2",
-      "I thought two negatives make a plus",
-      "so it's like adding 5?",
-      "ok",
-      "what about negative 3 plus negative 5",
-      "negative 8",
-    ],
-  },
-  {
-    name: "word-problem",
-    student: [
-      "Sam has 12 apples and gives away a quarter of them. how many are left",
-      "3?",
-      "oh, 9",
-      "yes",
-      "what if he gave away a third",
-      "8",
-    ],
-  },
+  { name: "fractions", student: ["I don't get fractions at all.", "um, a half?", "I don't know", "two pieces?", "okay", "so two quarters is the same as one half?"] },
+  { name: "algebra", student: ["can you help me with 2x + 3 = 11", "subtract 3?", "so x = 16?", "oh wait, divide by 2. x = 4", "can I try another one", "3x - 5 = 7, so x is 4"] },
+  { name: "geometry", student: ["what's the area of a triangle", "base times height?", "why do you divide by 2", "ok I think I get it", "what if it's not a right triangle", "makes sense"] },
+  { name: "negatives", student: ["why is negative 3 minus negative 5 equal to 2", "I thought two negatives make a plus", "so it's like adding 5?", "ok", "what about negative 3 plus negative 5", "negative 8"] },
+  { name: "word-problem", student: ["Sam has 12 apples and gives away a quarter of them. how many are left", "3?", "oh, 9", "yes", "what if he gave away a third", "8"] },
 ];
 
 // Math-focused scenarios: the topics a grade 5–9 tutor must draw well.
@@ -99,104 +54,124 @@ const ICON_SCENARIOS: Scenario[] = [
   { name: "analogy-negatives", student: ["I don't understand why 5 minus 8 is negative", "you can't take 8 from 5", "so it's like owing?", "ok so negative 3", "what about 3 minus 10"] },
 ];
 
-const DRAW_TOOLS = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name).filter((n) =>
-  !["point_at", "circle_item", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step"].includes(n)));
+// Lines lifted from recorded sessions (Sept 15), where the tutor talked math
+// without writing it, answered its own question after "what?", closed on
+// "idk", and never re-read the worksheet.
+const WORKSHEET = "Unit 4 review. 1) Solve 3x + 7 = 25. 2) Solve 5(x - 2) = 3x + 8. 5) Find the slope of the line through (2, 3) and (6, 11). 8) A right triangle has legs 6 cm and 8 cm. a) Sketch it. b) Which side is the hypotenuse? c) Find the length of the hypotenuse.";
+const SESSION_SCENARIOS: Scenario[] = [
+  { name: "equation-idk", student: ["can you help me with 3x + 7 = 25", "i dont know", "7", "18 divided by 3?", "ok", "yes"] },
+  { name: "board-please", student: ["a right triangle has legs 6 and 8 cm, find the hypotenuse", "umm idk", "what? put it on the board pls", "ok thats 100", "10", "ok lets do another one"] },
+  { name: "slope-lost", student: ["how do i find the slope between (2, 3) and (6, 11)", "i dont know", "11 is bigger?", "wait what", "i dont understand", "but what does rise over run mean"] },
+  { name: "what-then-idk", student: ["the slope is 3 and the line crosses the y axis at 1. whats the equation", "what?", "idk", "ij", "ok", "bye"] },
+  { name: "worksheet-part", worksheet: WORKSHEET, student: ["i need help on my homework, i uploaded a picture of it", "lets do part c", "idk", "ok", "can we do number 2 now", "not sure"] },
+  { name: "graph-ask", student: ["can u graph a line that has slope 3 so i can see", "yeah", "what if the slope is negative", "ok", "can i change it myself", "cool"] },
+];
 
+// Topics that belong on axes: the Desmos tools should carry most of these.
+const DESMOS_SCENARIOS: Scenario[] = [
+  { name: "slope-graph", student: ["what does a slope of 2 look like", "so it goes up 2 each time?", "what about y = 2x + 3", "it starts at 3?", "ok"] },
+  { name: "system", student: ["how do i solve y = 2x + 1 and y = -x + 7", "set them equal?", "2x + 1 = -x + 7", "x = 2", "so y = 5"] },
+  { name: "inequality", student: ["what does x > 3 mean", "so everything bigger than 3", "is 3 included", "what about y < 2x - 1", "ok"] },
+  { name: "pattern", student: ["a pattern goes 3, 7, 11, 15. whats the 10th term", "add 4 each time?", "so 39?", "is there a rule", "4n - 1"] },
+  { name: "proportional", student: ["a car goes 60 miles every hour. how far in 5 hours", "300", "is that a proportional relationship", "what's the constant", "60"] },
+  { name: "distance-midpoint", student: ["whats the distance between (1, 2) and (4, 6)", "i dont know the formula", "3 and 4?", "so 5", "whats the midpoint"] },
+  { name: "pythagoras-ladder", student: ["a ladder is 13 feet long and its base is 5 feet from the wall. how high does it reach", "13 minus 5?", "oh squares", "169 - 25 = 144", "12"] },
+  { name: "reflection", student: ["how do i reflect the triangle (1,1), (4,1), (4,3) over the y-axis", "make x negative?", "(-1,1), (-4,1), (-4,3)", "what about over the x-axis", "make y negative"] },
+  { name: "exp-vs-linear", student: ["which grows faster, 2x or 2 to the x", "2x?", "when x is 10?", "1024 vs 20", "wow"] },
+  { name: "scatter-fit", student: ["hours studied and test scores: (1, 60), (2, 65), (3, 72), (4, 78), (5, 85). is there a trend", "they go up?", "how much per hour", "about 6?", "what would 6 hours get"] },
+  { name: "box-plot", student: ["the scores were 3, 5, 5, 6, 7, 8, 8, 9, 12. how do i make a box plot", "the median is 7", "what are quartiles", "5 and 8.5?", "ok"] },
+];
+
+const SETS: Record<string, Scenario[]> = {
+  core: SCENARIOS,
+  math: MATH_SCENARIOS,
+  icons: ICON_SCENARIOS,
+  sessions: SESSION_SCENARIOS,
+  desmos: DESMOS_SCENARIOS,
+};
+
+const DECLARED = WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name as string);
+const MARK_TOOLS = new Set(["point_at", "circle_item", "highlight", "highlight_step", "cross_out_step"]);
+const DRAW_TOOLS = new Set(DECLARED.filter((n) => !NON_CREATING_TOOLS.has(n)));
 // Tools that put a picture on the board, as opposed to words in a box.
 const PICTURE_TOOLS = new Set<string>([
   "draw_fraction", "add_number_line", "draw_figure", "draw_angle", "draw_array", "add_area_model",
   "draw_balance", "draw_bar_chart", "add_coordinate_axes", "plot_points", "add_function_graph",
   "draw_tape_diagram", "draw_grid", "write_vertical", "draw_long_division", "draw_transversal",
-  "draw_icons", "draw_sketch", "add_vector_diagram", "add_process_map",
+  "draw_icons", "draw_sketch", "add_table", "draw_desmos", "draw_data_plot",
 ]);
+// Pictures Desmos draws. Grows when number lines, bar charts and flat figures move to Desmos.
+const DESMOS_TOOLS = new Set<string>(["add_function_graph", "plot_points", "add_coordinate_axes", "draw_desmos", "draw_data_plot"]);
+const TEXT_TOOLS = new Set(["add_text_note", "add_callout", "add_worked_example_box", "add_student_attempt", "add_problem_setup"]);
 
 /** The tutor pointing at board content in words: "on the board", "I've drawn", "look at the graph". */
 const CLAIMS_BOARD = /\b(on the board|i(?:'ve| have) drawn|i drew|look at the (?:board|picture|diagram|graph|triangle|table)|as you can see|from the picture)\b/i;
-const NON_CREATING = new Set(["point_at", "erase_items", "erase_older", "look_at_board", "clear_whiteboard", "remember_about_student", "highlight_step", "cross_out_step"]);
+/** A student line that is not an attempt at all. */
+const NON_ANSWER = /^\s*(i ?(do ?n'?t|dont) know|idk|no idea|not sure|um+|uh+|umm+ idk|ok(ay)?|yes|yeah|no|what\??|wait,? what\??|ij|huh\??|i dont understand)\s*[.!?]*\s*$/i;
+const SECOND_PERSON = /^\s*(you|your|du|dein|tú|tu|vous|você)\b/i;
 
-// A board that remembers items and titles but draws nothing.
-function fakeBoard(): { handle: WhiteboardHandle; items: () => BoardItem[] } {
-  let items: BoardItem[] = [];
-  let title: string | undefined;
-  let seq = 0;
-  const base: Partial<WhiteboardHandle> = {
-    beginItem: (tool: string): ItemToken => ({ tool, shapes: new Set(), eqs: new Set() }),
-    endItem: (token: ItemToken, label: string | null) => {
-      if (NON_CREATING.has(token.tool)) return null;
-      if (token.tool === "circle_item" && !/orange/.test(label ?? "")) return null;
-      const id = `b${++seq}`;
-      items = [...items, { id, tool: token.tool, label: itemLabelFrom(label, token.tool), shapeIds: [`shape:${id}`], eqItemIds: [], owner: token.tool === "add_student_attempt" ? "student" : "tutor", createdAt: Date.now() }];
-      return id;
-    },
-    getBoardSummary: () => formatBoardItems(items, title),
-    startNewProblem: (t: string) => { items = []; title = t; },
-    clearWhiteboard: () => { items = []; title = undefined; },
-    withDirectMeta: (_meta, fn) => fn(),
-    pointAt: (target: string) => resolveItemTarget(items, target),
-    circleItem: (target: string) => resolveItemTarget(items, target),
-    eraseItems: (targets: string[]) => {
-      const gone: string[] = [];
-      for (const t of targets) {
-        const item = resolveItemTarget(items, t);
-        if (item) { gone.push(item.label); items = items.filter((i) => i.id !== item.id); }
-      }
-      return gone;
-    },
-    eraseOlder: (keep: number) => {
-      const body = items.filter((i) => !isHeadingItem(i));
-      const victims = body.slice(0, Math.max(0, body.length - keep));
-      items = items.filter((i) => !victims.includes(i));
-      return victims.map((v) => v.label);
-    },
-    highlightStep: () => true,
-    crossOutStep: () => true,
-    exportImage: async () => null,
-  };
-  const handle = new Proxy(base as WhiteboardHandle, {
-    get(target, prop) {
-      if (prop in target) return (target as unknown as Record<string | symbol, unknown>)[prop];
-      return () => undefined;
-    },
-  });
-  return { handle, items: () => items };
+type ToolLog = { name: string; args: Record<string, unknown>; ok: boolean; verdict?: string };
+
+type TurnStats = {
+  student: string;
+  tutor: string;
+  tools: ToolLog[];
+  errors: string[];
+  boardUsed: boolean;
+  pointed: boolean;
+  erased: boolean;
+  asked: boolean;
+  fallback: boolean;
+  drewPicture: boolean;
+  textOnly: boolean;
+  phantom: boolean;
+  answer: boolean;
+  checked: boolean;
+  correct: boolean;
+  marked: boolean;
+  attempts: number;
+  badAttempts: number;
+  pipes: number;
+  duplicates: number;
+  problemsWithNumbers: number;
+  questionsWritten: number;
+  spokenUnwritten: string | null;
+  pictures: number;
+  desmos: number;
+};
+
+function textOf(args: Record<string, unknown>): string {
+  return ["text", "body", "title", "givens", "goal"].map((k) => (typeof args[k] === "string" ? String(args[k]) : "")).filter(Boolean).join(" | ");
 }
 
-// The free tier allows a handful of requests a minute: wait out 429s.
-async function withRetry<T>(fn: () => Promise<T>, attempts = 8): Promise<T> {
-  for (let i = 0; ; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const is429 = /429|RESOURCE_EXHAUSTED/.test(msg);
-      if (!is429 || i >= attempts - 1) throw err;
-      const m = /retry in ([\d.]+)s/i.exec(msg);
-      const wait = Math.min(90_000, Math.ceil((m ? Number(m[1]) : 20 * (i + 1)) * 1000) + 1500);
-      process.stdout.write(`    (rate limited, waiting ${Math.round(wait / 1000)}s)\n`);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
+function normalized(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").replace(/[^\p{L}\p{N}=+\-*/^().,|]/gu, "").trim();
 }
 
-type TurnStats = { student: string; tutor: string; tools: string[]; errors: string[]; boardUsed: boolean; pointed: boolean; erased: boolean; asked: boolean; fallback: boolean; drewPicture: boolean; textOnly: boolean; phantom: boolean };
-
-function arg(name: string, fallback: string): string {
-  const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
-}
 const verbose = process.argv.includes("--verbose");
 
 async function runScenario(ai: GoogleGenAI, model: string, scenario: Scenario, turns: number): Promise<TurnStats[]> {
   const profile: StudentProfile = { displayName: "Sam", gradeLevel: "6th grade", learningPrefs: {}, ...(scenario.profile ?? {}) };
   const systemInstruction = buildGeminiInstructions(profile, []);
-  const board = fakeBoard();
+  const board = createFakeBoard();
+  const policy = createPolicy(Date.now());
   const contents: Content[] = [];
   const stats: TurnStats[] = [];
-  const tools = [{ functionDeclarations: WHITEBOARD_TOOL_DECLARATIONS as unknown as FunctionDeclaration[] }];
-  for (const line of scenario.student.slice(0, turns)) {
-    contents.push({ role: "user", parts: [{ text: line }] });
+  const tools = [{ functionDeclarations: EVAL_TOOL_DECLARATIONS }];
+  const seenText = new Set<string>();
+  let lastLatex = "";
+  for (const [index, line] of scenario.student.slice(0, turns).entries()) {
+    const said = index === 0 && scenario.worksheet ? `[The student uploaded a worksheet. It shows: ${scenario.worksheet}]\n${line}` : line;
+    contents.push({ role: "user", parts: [{ text: said }] });
+    noteStudentUtterance(policy, line);
     await new Promise((r) => setTimeout(r, Number(arg("pace", "0"))));
-    const turn: TurnStats = { student: line, tutor: "", tools: [], errors: [], boardUsed: false, pointed: false, erased: false, asked: false, fallback: false, drewPicture: false, textOnly: false, phantom: false };
+    const turn: TurnStats = {
+      student: line, tutor: "", tools: [], errors: [],
+      boardUsed: false, pointed: false, erased: false, asked: false, fallback: false, drewPicture: false, textOnly: false, phantom: false,
+      answer: looksLikeAnswer(line), checked: false, correct: false, marked: false,
+      attempts: 0, badAttempts: 0, pipes: 0, duplicates: 0, problemsWithNumbers: 0, questionsWritten: 0,
+      spokenUnwritten: null, pictures: 0, desmos: 0,
+    };
     for (let round = 0; round < 6; round++) {
       const res = await withRetry(() => ai.models.generateContent({
         model,
@@ -208,91 +183,207 @@ async function runScenario(ai: GoogleGenAI, model: string, scenario: Scenario, t
       if (!content) break;
       contents.push({ role: "model", parts });
       const calls = parts.filter((p) => p.functionCall);
-      const text = parts.map((p) => p.text ?? "").join(" ").trim();
+      const text = parts.filter((p) => !p.thought).map((p) => p.text ?? "").join(" ").trim();
       if (text) turn.tutor += (turn.tutor ? " " : "") + text;
       if (calls.length === 0) break;
       const responses: Part[] = [];
       for (const part of calls) {
         const name = part.functionCall?.name ?? "";
         const args = (part.functionCall?.args ?? {}) as Record<string, unknown>;
-        turn.tools.push(name);
-        let message: string;
-        if (name === "remember_about_student") {
-          message = "Noted.";
-        } else {
-          const result = dispatchWhiteboardTool(name, args, { whiteboard: board.handle });
-          if (result.success) {
-            message = `${result.message ?? "Done"}.\n[Board: ${board.handle.getBoardSummary()}]`;
-          } else {
-            message = `Error: ${result.error}`;
-            turn.errors.push(`${name}: ${result.error}`);
-          }
+        const result = runEvalTool(name, args, { board, policy, worksheet: scenario.worksheet });
+        turn.tools.push({ name, args, ok: result.ok, verdict: result.verdict });
+        if (!result.ok) turn.errors.push(`${name}: ${result.message}`);
+        if (name === "start_new_problem") { seenText.clear(); lastLatex = ""; }
+        if (result.ok && TEXT_TOOLS.has(name)) {
+          const t = textOf(args);
+          if (/\s\|\s/.test(t)) turn.pipes += 1;
+          const key = normalized(t);
+          if (key && seenText.has(key)) turn.duplicates += 1;
+          if (key) seenText.add(key);
         }
-        if (verbose) console.log(`    ↳ ${name}(${JSON.stringify(args).slice(0, 140)}) → ${message.split("\n")[0].slice(0, 120)}`);
-        responses.push({ functionResponse: { name, response: { result: message } } });
+        if (result.ok && name === "draw_equation_step") {
+          const key = normalized(String(args.latex ?? ""));
+          if (key && key === lastLatex) turn.duplicates += 1;
+          lastLatex = key;
+        }
+        if (verbose) console.log(`    ↳ ${name}(${JSON.stringify(args).slice(0, 140)}) → ${result.message.split("\n")[0].slice(0, 120)}`);
+        responses.push({ functionResponse: { id: part.functionCall?.id, name, response: { result: result.message } } });
       }
       contents.push({ role: "user", parts: responses });
     }
-    turn.boardUsed = turn.tools.some((t) => DRAW_TOOLS.has(t));
-    // A picture, not another box of words: the Sept 15 sessions filled the
-    // board with prose whenever a topic had no obvious diagram.
-    turn.drewPicture = turn.tools.some((t) => PICTURE_TOOLS.has(t));
-    turn.textOnly = turn.boardUsed && !turn.drewPicture;
-    // Talking about board content that was never drawn: two recorded sessions
-    // said "on the board I've drawn a triangle" with no tool call at all.
-    turn.phantom = CLAIMS_BOARD.test(turn.tutor) && !turn.boardUsed && !turn.pointed;
-    turn.pointed = turn.tools.some((t) => t === "point_at" || t === "circle_item" || t === "highlight_step");
-    turn.erased = turn.tools.some((t) => t.startsWith("erase"));
-    turn.asked = /\?/.test(turn.tutor);
-    turn.fallback = turn.tools.some((t) => t === "draw_sketch" || t === "add_text_note");
+    scoreTurn(turn);
     stats.push(turn);
-    if (verbose) console.log(`  student: ${line}\n  tutor:   ${turn.tutor.slice(0, 300)}\n  tools:   ${turn.tools.join(", ") || "(none)"}${turn.errors.length ? `\n  errors:  ${turn.errors.join(" | ")}` : ""}\n`);
+    if (verbose) console.log(`  student: ${line}\n  tutor:   ${turn.tutor.slice(0, 300)}\n  tools:   ${turn.tools.map((t) => t.name).join(", ") || "(none)"}${turn.errors.length ? `\n  errors:  ${turn.errors.join(" | ")}` : ""}\n`);
   }
   if (verbose) console.log(`  board at end: ${board.handle.getBoardSummary()}\n`);
   return stats;
 }
 
+function scoreTurn(turn: TurnStats): void {
+  const ok = turn.tools.filter((t) => t.ok);
+  const names = ok.map((t) => t.name);
+  turn.boardUsed = names.some((n) => DRAW_TOOLS.has(n));
+  turn.pictures = names.filter((n) => PICTURE_TOOLS.has(n)).length;
+  turn.desmos = names.filter((n) => DESMOS_TOOLS.has(n)).length;
+  // A picture, not another box of words: the Sept 15 sessions filled the
+  // board with prose whenever a topic had no obvious diagram.
+  turn.drewPicture = turn.pictures > 0;
+  turn.textOnly = turn.boardUsed && !turn.drewPicture;
+  turn.pointed = names.some((n) => MARK_TOOLS.has(n));
+  // Talking about board content that was never drawn or pointed at: two
+  // recorded sessions said "on the board I've drawn a triangle" with no tool call.
+  turn.phantom = CLAIMS_BOARD.test(turn.tutor) && !turn.boardUsed && !turn.pointed;
+  turn.erased = names.some((n) => n.startsWith("erase"));
+  turn.asked = /\?/.test(turn.tutor);
+  turn.fallback = names.some((n) => n === "draw_sketch" || n === "add_text_note");
+  turn.checked = names.includes("check_answer");
+  turn.correct = ok.some((t) => t.name === "check_answer" && t.verdict === "correct");
+  turn.marked = turn.correct && names.some((n) => n === "circle_item" || n === "highlight");
+  const attempts = ok.filter((t) => t.name === "add_student_attempt");
+  turn.attempts = attempts.length;
+  turn.badAttempts = attempts.filter((t) => NON_ANSWER.test(turn.student) || SECOND_PERSON.test(String(t.args.text ?? ""))).length;
+  // A new problem whose student line has numbers should have them written in the same turn.
+  const start = ok.findIndex((t) => t.name === "start_new_problem" || t.name === "start_board_section");
+  if (start >= 0 && /\d/.test(turn.student)) {
+    turn.problemsWithNumbers = 1;
+    const after = ok.slice(start + 1).filter((t) => DRAW_TOOLS.has(t.name));
+    const written = after.map((t) => Object.entries(t.args).filter(([k]) => k !== "place" && k !== "column"));
+    turn.questionsWritten = after.length > 0 && /\d/.test(JSON.stringify(written)) ? 1 : 0;
+  }
+  // Arithmetic said out loud with nothing written this turn.
+  const wrote = names.some((n) => DRAW_TOOLS.has(n));
+  turn.spokenUnwritten = wrote ? null : spokenMath(turn.tutor);
+}
+
+type Row = {
+  name: string;
+  turns: number;
+  board: number;
+  pictures: number;
+  textOnly: number;
+  phantom: number;
+  pointed: number;
+  erased: number;
+  asked: number;
+  askedWithBoard: number;
+  tools: number;
+  errors: number;
+  fallback: number;
+  answers: number;
+  checked: number;
+  correct: number;
+  marked: number;
+  attempts: number;
+  badAttempts: number;
+  pipes: number;
+  duplicates: number;
+  problemsWithNumbers: number;
+  questionsWritten: number;
+  spokenUnwritten: number;
+  pictureCalls: number;
+  desmosCalls: number;
+};
+
+function rowFor(name: string, stats: TurnStats[]): Row {
+  const count = (f: (t: TurnStats) => boolean) => stats.filter(f).length;
+  const sum = (f: (t: TurnStats) => number) => stats.reduce((s, t) => s + f(t), 0);
+  return {
+    name,
+    turns: stats.length,
+    board: count((t) => t.boardUsed),
+    pictures: count((t) => t.drewPicture),
+    textOnly: count((t) => t.textOnly),
+    phantom: count((t) => t.phantom),
+    pointed: count((t) => t.pointed),
+    erased: count((t) => t.erased),
+    asked: count((t) => t.asked),
+    askedWithBoard: count((t) => t.asked && (t.boardUsed || t.pointed)),
+    tools: sum((t) => t.tools.length),
+    errors: sum((t) => t.errors.length),
+    fallback: count((t) => t.fallback),
+    answers: count((t) => t.answer),
+    checked: count((t) => t.answer && t.checked),
+    correct: count((t) => t.correct),
+    marked: count((t) => t.marked),
+    attempts: sum((t) => t.attempts),
+    badAttempts: sum((t) => t.badAttempts),
+    pipes: sum((t) => t.pipes),
+    duplicates: sum((t) => t.duplicates),
+    problemsWithNumbers: sum((t) => t.problemsWithNumbers),
+    questionsWritten: sum((t) => t.questionsWritten),
+    spokenUnwritten: count((t) => t.spokenUnwritten !== null),
+    pictureCalls: sum((t) => t.pictures),
+    desmosCalls: sum((t) => t.desmos),
+  };
+}
+
+const pct = (n: number, d: number) => (d === 0 ? "–" : `${Math.round((100 * n) / d)}%`);
+
 async function main() {
-  const env = fs.readFileSync(".env.local", "utf8");
-  const key = env.split("\n").find((l) => l.startsWith("GEMINI_API_KEY="))?.slice("GEMINI_API_KEY=".length).trim().replace(/^["']|["']$/g, "");
-  if (!key) throw new Error("GEMINI_API_KEY missing in .env.local");
-  const ai = new GoogleGenAI({ apiKey: key });
+  const ai = new GoogleGenAI({ apiKey: readGeminiKey() });
   const model = arg("model", "gemini-3.5-flash");
   const only = arg("scenario", "");
   const turns = Number(arg("turns", "6"));
   const runs = Number(arg("runs", "1"));
   const setName = arg("set", "core");
-  const set = setName === "math" ? MATH_SCENARIOS : setName === "icons" ? ICON_SCENARIOS : setName === "all" ? [...SCENARIOS, ...MATH_SCENARIOS, ...ICON_SCENARIOS] : SCENARIOS;
+  const set = setName === "all" ? Object.values(SETS).flat() : SETS[setName];
+  if (!set) throw new Error(`Unknown set "${setName}". Options: ${[...Object.keys(SETS), "all"].join(", ")}`);
   const scenarios = set.filter((s) => !only || s.name === only);
-  const rows: Array<{ name: string; turns: number; board: number; pictures: number; textOnly: number; phantom: number; pointed: number; erased: number; asked: number; askedWithBoard: number; tools: number; errors: number; fallback: number }> = [];
+  const rows: Row[] = [];
+  const transcripts: Array<{ scenario: string; run: number; turns: TurnStats[] }> = [];
+  const used = new Set<string>();
   for (const scenario of scenarios) {
     for (let r = 0; r < runs; r++) {
-      if (verbose) console.log(`\n=== ${scenario.name} (${model}) run ${r + 1}`);
+      console.log(`=== ${scenario.name} (${model}) run ${r + 1}/${runs}`);
       const stats = await runScenario(ai, model, scenario, turns);
-      rows.push({
-        name: scenario.name,
-        turns: stats.length,
-        board: stats.filter((t) => t.boardUsed).length,
-        pictures: stats.filter((t) => t.drewPicture).length,
-        textOnly: stats.filter((t) => t.textOnly).length,
-        phantom: stats.filter((t) => t.phantom).length,
-        pointed: stats.filter((t) => t.pointed).length,
-        erased: stats.filter((t) => t.erased).length,
-        asked: stats.filter((t) => t.asked).length,
-        askedWithBoard: stats.filter((t) => t.asked && (t.boardUsed || t.pointed)).length,
-        tools: stats.reduce((s, t) => s + t.tools.length, 0),
-        errors: stats.reduce((s, t) => s + t.errors.length, 0),
-        fallback: stats.filter((t) => t.fallback).length,
-      });
+      for (const t of stats) for (const x of t.tools) used.add(x.name);
+      rows.push(rowFor(scenario.name, stats));
+      transcripts.push({ scenario: scenario.name, run: r + 1, turns: stats });
     }
   }
-  const total = rows.reduce((a, r) => ({ turns: a.turns + r.turns, board: a.board + r.board, pictures: a.pictures + r.pictures, textOnly: a.textOnly + r.textOnly, phantom: a.phantom + r.phantom, pointed: a.pointed + r.pointed, erased: a.erased + r.erased, asked: a.asked + r.asked, askedWithBoard: a.askedWithBoard + r.askedWithBoard, tools: a.tools + r.tools, errors: a.errors + r.errors }), { turns: 0, board: 0, pictures: 0, textOnly: 0, phantom: 0, pointed: 0, erased: 0, asked: 0, askedWithBoard: 0, tools: 0, errors: 0 });
-  console.log(`\nmodel ${model}`);
-  console.log("scenario        turns  board  pointed  erased  asked  asked+board  tools  errors  sketch/text");
-  for (const r of rows) console.log(`${r.name.padEnd(15)} ${String(r.turns).padStart(5)} ${String(r.board).padStart(6)} ${String(r.pointed).padStart(8)} ${String(r.erased).padStart(7)} ${String(r.asked).padStart(6)} ${String(r.askedWithBoard).padStart(12)} ${String(r.tools).padStart(6)} ${String(r.errors).padStart(7)} ${String(r.fallback).padStart(12)}`);
-  console.log(`${"TOTAL".padEnd(15)} ${String(total.turns).padStart(5)} ${String(total.board).padStart(6)} ${String(total.pointed).padStart(8)} ${String(total.erased).padStart(7)} ${String(total.asked).padStart(6)} ${String(total.askedWithBoard).padStart(12)} ${String(total.tools).padStart(6)} ${String(total.errors).padStart(7)}`);
-  console.log(`board-use rate ${(100 * total.board / Math.max(1, total.turns)).toFixed(0)}%  pointing rate ${(100 * total.pointed / Math.max(1, total.turns)).toFixed(0)}%  tools/turn ${(total.tools / Math.max(1, total.turns)).toFixed(2)}  errors ${total.errors}`);
-  console.log(`picture rate ${(100 * total.pictures / Math.max(1, total.turns)).toFixed(0)}%  text-only board turns ${total.textOnly}  phantom board claims ${total.phantom}`);
+  const total = rows.reduce<Row>((a, r) => {
+    const out: Record<string, number | string> = { ...a };
+    for (const k of Object.keys(r) as Array<keyof Row>) if (k !== "name") out[k] = (a[k] as number) + (r[k] as number);
+    return out as Row;
+  }, rowFor("TOTAL", []));
+
+  console.log(`\nmodel ${model} · set ${setName} · ${turns} turns`);
+  console.log("scenario             turns board pics text pointed erased checked marked attempts(bad) pipes dupes q-written spoken desmos errors");
+  const line = (r: Row) => [
+    r.name.padEnd(20),
+    String(r.turns).padStart(5),
+    String(r.board).padStart(5),
+    String(r.pictures).padStart(4),
+    String(r.textOnly).padStart(4),
+    String(r.pointed).padStart(7),
+    String(r.erased).padStart(6),
+    `${r.checked}/${r.answers}`.padStart(7),
+    `${r.marked}/${r.correct}`.padStart(6),
+    `${r.attempts}(${r.badAttempts})`.padStart(13),
+    String(r.pipes).padStart(5),
+    String(r.duplicates).padStart(5),
+    `${r.questionsWritten}/${r.problemsWithNumbers}`.padStart(9),
+    String(r.spokenUnwritten).padStart(6),
+    `${r.desmosCalls}/${r.pictureCalls}`.padStart(6),
+    String(r.errors).padStart(6),
+  ].join(" ");
+  for (const r of rows) console.log(line(r));
+  console.log(line(total));
+  const t = total;
+  console.log(`\nboard-use ${pct(t.board, t.turns)} · pointing ${pct(t.pointed, t.turns)} · tools/turn ${(t.tools / Math.max(1, t.turns)).toFixed(2)} · errors ${t.errors}`);
+  console.log(`picture turns ${pct(t.pictures, t.turns)} · text-only turns ${t.textOnly} · phantom board claims ${t.phantom}`);
+  console.log(`answers checked ${pct(t.checked, t.answers)} (${t.checked}/${t.answers}) · correct answers marked ${pct(t.marked, t.correct)} (${t.marked}/${t.correct})`);
+  console.log(`attempts written ${t.attempts}, on a non-answer or in the tutor's words ${t.badAttempts} · pipes in text ${t.pipes} · duplicates ${t.duplicates}`);
+  console.log(`new problems with numbers written ${pct(t.questionsWritten, t.problemsWithNumbers)} (${t.questionsWritten}/${t.problemsWithNumbers}) · turns with spoken math and nothing written ${t.spokenUnwritten}`);
+  console.log(`Desmos share of pictures ${pct(t.desmosCalls, t.pictureCalls)} (${t.desmosCalls}/${t.pictureCalls})`);
+  const never = DECLARED.filter((n) => !used.has(n));
+  console.log(`tools never called in this run (${never.length}/${DECLARED.length}): ${never.join(", ")}`);
+
+  const out = arg("out", "");
+  if (out) {
+    fs.writeFileSync(out, JSON.stringify({ model, set: setName, turns, runs, date: new Date().toISOString(), rows, total, never, transcripts }, null, 2));
+    console.log(`wrote ${out}`);
+  }
 }
 
 main().catch((err) => {

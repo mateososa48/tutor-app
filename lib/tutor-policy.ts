@@ -87,6 +87,64 @@ export function detectSignals(text: string): StudentSignal[] {
   return found;
 }
 
+// ── Answers and spoken arithmetic ─────────────────────────────────────────
+// Two heuristics the recorded sessions asked for: the tutor judged 20+ answers
+// by eye without check_answer, and did arithmetic out loud that it never wrote
+// ("six squared is thirty six…") until the student said "put it on the board".
+
+const NUMBER_WORD =
+  "zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|half|halves|thirds?|quarters?|fourths?|fifths?|sixths?|sevenths?|eighths?|ninths?|tenths?|negative";
+const HAS_NUMBER = new RegExp(`\\d|[½⅓⅔¼¾²³]|\\b(${NUMBER_WORD})\\b`, "i");
+const FILLER = /^(?:(?:um+|uh+|er+|hmm+|oh|so|wait|ok(?:ay)?|well|like|maybe|i think|i guess|is it|it'?s|that'?s|thats|then)\b[\s,.:!-]*)+/i;
+// Asking the tutor something, or stating a new problem: not an answer to check.
+const ASKS_OR_STATES =
+  /^(can|could|would|how|why|what(?:'s|s| is| are| does| do| about| if| even)?\b|when|where|which|who|help|i need|i have|we have|we're|we are|explain|show me|tell me|let'?s|do i|does|did|is there|are there|wie|warum|was ist|kannst|cómo|por qué|qué es|puedes|comment|pourquoi|peux)\b/i;
+// A proposed move ("subtract 3?", "divide by 2") is not a value to check.
+const STEP_VERB = /^(add|subtract|take away|multiply|divide|distribute|move|plug|put|cross|flip|combine|square|isolate|simplify|factor|expand)\b/i;
+const HAS_VALUE_EQUATION = /\b[a-z]\s*=\s*-?\s*[\d(½⅓¼¾]/i;
+// A problem being posed, anywhere in the line: "…legs 6 and 8, find the hypotenuse".
+const POSES_PROBLEM = /\b(find|solve|calculate|work out|how (?:do|many|much|far|long|high|can)|what(?:'s|s| is| are| would| does)|is there|are there|can you|help me)\b/i;
+
+/** True when the student's words look like an answer worth checking: a short line with a value in it. */
+export function looksLikeAnswer(text: string): boolean {
+  const t = text.trim().replace(FILLER, "").trim();
+  if (!t) return false;
+  if (t.split(/\s+/).length > 14) return false;
+  if (HAS_VALUE_EQUATION.test(t)) return true;
+  if (ASKS_OR_STATES.test(t) || POSES_PROBLEM.test(t)) return false;
+  if (STEP_VERB.test(t) && !t.includes("=")) return false;
+  return HAS_NUMBER.test(t);
+}
+
+const NUMBER_TOKEN = new RegExp(`^(-?\\d[\\d.,/]*|${NUMBER_WORD})$`, "i");
+// "one" is also a pronoun and "is" joins any two words, so a pair of numbers
+// counts only with a real operation between them, or a lone "is"/"equals".
+const STRONG_OPERATION = /^(plus|minus|times|divided|over|squared|cubed|multiplied|add|subtract|×|÷|\+|−)$/i;
+const WEAK_OPERATION = /^(is|equals?|gives|makes|=)$/i;
+
+/** The first stretch of spoken arithmetic ("three times six is eighteen"), or null. */
+export function spokenMath(text: string): string | null {
+  const words = text.replace(/[.,;:!?()"“”]/g, " ").split(/\s+/).filter(Boolean);
+  const isNumber = words.map((w) => NUMBER_TOKEN.test(w));
+  for (let i = 0; i < words.length; i++) {
+    if (!isNumber[i]) continue;
+    // Pair each number with the next one only, at most 5 words later.
+    const j = isNumber.indexOf(true, i + 1);
+    if (j < 0 || j - i > 6) continue;
+    const between = words.slice(i + 1, j);
+    const strong = between.some((w) => STRONG_OPERATION.test(w));
+    const weak = between.length === 1 && WEAK_OPERATION.test(between[0]);
+    if (!strong && !weak) continue;
+    let start = i;
+    while (start > 0 && isNumber[start - 1]) start--; // "negative three", "thirty six"
+    let end = j;
+    while (end + 1 < words.length && end - start < 14 && (isNumber[end + 1] || STRONG_OPERATION.test(words[end + 1]) || WEAK_OPERATION.test(words[end + 1]))) end++;
+    while (end > j && !isNumber[end]) end--;
+    return words.slice(start, end + 1).join(" ");
+  }
+  return null;
+}
+
 export function noteStudentUtterance(p: TutorPolicy, text: string): void {
   const t = text.trim();
   if (!t) return;
