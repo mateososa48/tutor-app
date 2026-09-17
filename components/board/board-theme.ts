@@ -56,7 +56,9 @@ const pencil = color(PENCIL_HEX, "#ececf0", "#cbe7f1", "color(display-p3 0.8163 
 export const CHALK_THEME: TLTheme = {
   ...DEFAULT_THEME,
   colors: {
-    light: { ...DEFAULT_THEME.colors.light, sky, "sky-deep": skyDeep, pencil },
+    // The board is white on screen (PlainBackground); exports used tldraw's
+    // #f9fafb, which framed every white Desmos picture in a faint box.
+    light: { ...DEFAULT_THEME.colors.light, background: "#ffffff", sky, "sky-deep": skyDeep, pencil },
     dark: { ...DEFAULT_THEME.colors.dark, sky, "sky-deep": skyDeep, pencil },
   },
 };

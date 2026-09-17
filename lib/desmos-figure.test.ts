@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { FigureDrawing } from "./board-diagrams";
-import { buildFigureGraph, figureModel, labelLength } from "./desmos-figure";
+import { angleMismatch, buildFigureGraph, figureModel, labelLength } from "./desmos-figure";
 import { isGraphTable, type GraphExpression } from "./desmos-spec";
 
 const draw = (over: Partial<FigureDrawing>): FigureDrawing => ({
@@ -86,4 +86,21 @@ test("the picture: equal units, labels outside the edges, a right-angle mark", (
   assert.equal(grid.spec.settings.showGrid, true);
   assert.equal(grid.spec.settings.xAxisStep, 1);
   assert.ok(grid.spec.source?.kind === "figure");
+});
+
+test("angle labels that the sides contradict are named", () => {
+  // Sides 7, 5, 6: the corners are about 44°, 57° and 78°.
+  const wrong = figureModel(draw({ sideLabels: ["7", "5", "6"], angleLabels: ["?", "44°", "78°"], vertexLabels: ["A", "B", "C"] }));
+  assert.equal(wrong.warning, "with these sides the angle at B is 57°, not 44°");
+  const right = figureModel(draw({ sideLabels: ["7", "5", "6"], angleLabels: ["44°", "57°", "78°"], vertexLabels: ["A", "B", "C"] }));
+  assert.equal(right.warning, undefined, "rounded labels pass");
+  // Legs 6 and 8: 90° at the right angle, 53° and 37° at the others.
+  const rt = figureModel(draw({ figure: "right_triangle", sideLabels: ["6", "8", "x"], angleLabels: ["90°", "37°", "53°"] }));
+  assert.equal(rt.warning, "with these sides the angle at bottom right is 53°, not 37°, and the angle at top is 37°, not 53°");
+  assert.equal(figureModel(draw({ figure: "right_triangle", sideLabels: ["6", "8", "x"], angleLabels: ["90", "53.13", "x"] })).warning, undefined);
+  // Base and height leave the angles open, so they are not checked.
+  assert.equal(figureModel(draw({ sideLabels: ["8"], heightLabel: "h = 5", angleLabels: ["10°", "", ""] })).warning, undefined);
+  // Sides that cannot make the shape are reported once, without guessing angles.
+  assert.doesNotMatch(figureModel(draw({ figure: "right_triangle", sideLabels: ["6", "8", "11"], angleLabels: ["90°", "5°", ""] })).warning ?? "", /the angle at/);
+  assert.equal(angleMismatch([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }], ["x", "", "45 degrees"], []), undefined);
 });

@@ -3,8 +3,12 @@
 // declarations, executes the tools against a fake board, and scores how the
 // tutor uses the board. No audio, no Live session, a few cents per run.
 //
-//   npx tsx scripts/board-eval.ts [--model gemini-3.1-flash-lite] [--set core|math|icons|sessions|desmos|all]
-//     [--scenario fractions] [--turns 6] [--runs 1] [--out file.json] [--verbose]
+//   npx tsx scripts/board-eval.ts [--model gemini-3.5-flash] [--set core|math|icons|sessions|desmos|all]
+//     [--scenario fractions[,system]] [--turns 6] [--runs 1] [--out file.json] [--verbose]
+//
+// The default model is gemini-3.5-flash, whose free tier allows only a few
+// scenarios a day. The Sept 16–17 before/after runs used
+// --model gemini-3.1-flash-lite: compare runs on the same model only.
 //
 // Sets: core (5 mixed topics), math (12 grade 5–9 topics), icons (real things),
 // sessions (lines lifted from recorded sessions: "put it on the board pls",
@@ -330,7 +334,9 @@ async function main() {
   const setName = arg("set", "core");
   const set = setName === "all" ? Object.values(SETS).flat() : SETS[setName];
   if (!set) throw new Error(`Unknown set "${setName}". Options: ${[...Object.keys(SETS), "all"].join(", ")}`);
-  const scenarios = set.filter((s) => !only || s.name === only);
+  // --scenario takes one name or several, comma-separated.
+  const names = only ? only.split(",").map((n) => n.trim()) : [];
+  const scenarios = set.filter((s) => names.length === 0 || names.includes(s.name));
   const rows: Row[] = [];
   const transcripts: Array<{ scenario: string; run: number; turns: TurnStats[] }> = [];
   const used = new Set<string>();

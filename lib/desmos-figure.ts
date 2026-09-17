@@ -33,6 +33,8 @@ export type FigureModel = {
   vertices: XY[];
   circle?: { r: number };
   toScale: boolean;
+  /** The lengths fix every angle (three sides, or a right triangle from two), so angle labels can be checked. */
+  anglesFixed?: boolean;
   /** Numbers that cannot make this shape, in words. */
   warning?: string;
 };
@@ -69,8 +71,43 @@ function regular(n: number, side: number): XY[] {
   return pts.map((p) => ({ x: p.x - minX, y: p.y - minY }));
 }
 
-/** Where the corners go, and whether the labels say how big. */
+const CORNER_NAMES = ["bottom left", "bottom right", "top"];
+
+/**
+ * Angle labels a drawing to scale contradicts, in words: with sides 7, 5
+ * and 6 the corner labelled 44° is really 57° (Sept 17 2026: the picture is
+ * to scale, so a wrong label looks right). Labels that are not a number of
+ * degrees are left alone; a label within 1.5° passes, for rounding.
+ */
+export function angleMismatch(vertices: XY[], angleLabels: string[], vertexLabels: string[]): string | undefined {
+  const n = vertices.length;
+  const wrong: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const m = /^\s*(\d+(?:\.\d+)?)\s*(?:°|º|deg(?:rees)?)?\s*$/i.exec(angleLabels[i] ?? "");
+    if (!m) continue;
+    const said = Number(m[1]);
+    const p = vertices[i];
+    const a = vertices[(i + n - 1) % n];
+    const b = vertices[(i + 1) % n];
+    const cos = ((a.x - p.x) * (b.x - p.x) + (a.y - p.y) * (b.y - p.y)) / (Math.hypot(a.x - p.x, a.y - p.y) * Math.hypot(b.x - p.x, b.y - p.y));
+    const actual = (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+    if (Math.abs(actual - said) <= 1.5) continue;
+    const name = vertexLabels[i]?.trim() || CORNER_NAMES[i] || `corner ${i + 1}`;
+    wrong.push(`the angle at ${name} is ${Math.round(actual)}°, not ${fmt(said)}°`);
+  }
+  return wrong.length > 0 ? `with these sides ${wrong.join(", and ")}` : undefined;
+}
+
+/** Where the corners go, whether the labels say how big, and what in them cannot be right. */
 export function figureModel(d: FigureDrawing): FigureModel {
+  const model = shapeModel(d);
+  if (!model.anglesFixed) return model;
+  const angles = angleMismatch(model.vertices, d.angleLabels, d.vertexLabels);
+  if (!angles) return model;
+  return { ...model, warning: model.warning ? `${model.warning}; ${angles}` : angles };
+}
+
+function shapeModel(d: FigureDrawing): FigureModel {
   const labels = d.sideLabels;
   const L = (i: number) => labelLength(labels[i]);
   const h = labelLength(d.heightLabel);
@@ -97,7 +134,7 @@ export function figureModel(d: FigureDrawing): FigureModel {
       if (!legA && !legB) [legA, legB] = [4, 3];
       else if (!legA) legA = (legB as number) * 1.33;
       else if (!legB) legB = legA * 0.75;
-      return { vertices: [{ x: 0, y: 0 }, { x: legA as number, y: 0 }, { x: 0, y: legB as number }], toScale, warning };
+      return { vertices: [{ x: 0, y: 0 }, { x: legA as number, y: 0 }, { x: 0, y: legB as number }], toScale, anglesFixed: toScale && !warning, warning };
     }
     case "triangle": {
       const base = L(0);
@@ -106,7 +143,7 @@ export function figureModel(d: FigureDrawing): FigureModel {
       if (base && right && left) {
         if (base + right > left && base + left > right && right + left > base) {
           const x = (base * base + left * left - right * right) / (2 * base);
-          return { vertices: [{ x: 0, y: 0 }, { x: base, y: 0 }, { x, y: Math.sqrt(Math.max(0, left * left - x * x)) }], toScale: true };
+          return { vertices: [{ x: 0, y: 0 }, { x: base, y: 0 }, { x, y: Math.sqrt(Math.max(0, left * left - x * x)) }], toScale: true, anglesFixed: true };
         }
         const warning = `sides ${fmt(base)}, ${fmt(right)} and ${fmt(left)} cannot make a triangle (the two shorter sides must add up to more than the longest)`;
         return { vertices: [{ x: 0, y: 0 }, { x: base, y: 0 }, { x: base * 0.38, y: base * 0.74 }], toScale: false, warning };

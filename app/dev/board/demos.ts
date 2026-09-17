@@ -327,7 +327,7 @@ const figures: DemoCall[] = [
   { name: "draw_figure", args: { figure: "circle", radius_label: "r = 5 cm", diameter_label: "d = 10 cm", label: "radius and diameter" } },
   { name: "draw_figure", args: { figure: "trapezoid", side_labels: "10 | | 6", height_label: "h = 4", label: "a trapezoid" } },
   { name: "draw_figure", args: { figure: "rectangle", side_labels: "5 | 3", grid: true, label: "5 × 3 = 15 squares" } },
-  { name: "draw_figure", args: { figure: "triangle", side_labels: "7 | 5 | 6", angle_labels: "? | 44° | 78°", vertex_labels: "A | B | C", label: "three sides" } },
+  { name: "draw_figure", args: { figure: "triangle", side_labels: "7 | 5 | 6", angle_labels: "44° | ? | 78°", vertex_labels: "A | B | C", label: "three sides" } },
   { name: "draw_figure", args: { figure: "cube", side_labels: "3 | 3 | 3", label: "solids stay drawn by hand" } },
   { name: "highlight", args: { target: "b2", text: "x" } },
 ];
