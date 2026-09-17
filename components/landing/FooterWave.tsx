@@ -34,6 +34,7 @@ uniform vec3 u_bg;
 uniform vec3 u_top;
 uniform vec3 u_deep;
 uniform vec3 u_ink;
+uniform float u_ramp;   // fraction of the height over which the blue deepens
 
 const mat4 bayer = mat4(
   0.0, 8.0, 2.0, 10.0,
@@ -77,6 +78,8 @@ void main() {
   float dB = yPx - backPx;
   // About as soft as the dock wave: the edge dithers out over ~55px.
   float fF = smoothstep(u_shape.x, -u_shape.x * 0.65, dF);
+  // The bottom rows stay solid even when a trough dips low.
+  fF = max(fF, smoothstep(10.0, 0.0, yPx));
   float fB = smoothstep(u_shape.x * 1.18, -u_shape.x * 0.65, dB) * 0.5;
 
   int bx = int(mod(gl_FragCoord.x / u_pixel, 4.0));
@@ -87,7 +90,7 @@ void main() {
   float qF = floor(fF * steps + th) / steps;
 
   float floorDepth = keepPx > 0.0 ? smoothstep(keepPx + 24.0, keepPx * 0.4, yPx) : 0.0;
-  float depth = smoothstep(0.0, 1.0, max(clamp(-dF / (hCss * 0.5), 0.0, 1.0), floorDepth));
+  float depth = smoothstep(0.0, 1.0, max(clamp(-dF / (hCss * u_ramp), 0.0, 1.0), floorDepth));
   vec3 wave = mix(u_top, u_deep, depth);
   // Behind the wordmark the blue deepens a little further, so white reads on it.
   wave = mix(wave, u_ink, floorDepth * 0.55);
@@ -120,6 +123,7 @@ export function FooterWave({
   reserve = 60,
   waveScale = 1,
   speed = 1,
+  ramp = 0.5,
 }: {
   className?: string;
   /** The colour the band dithers out into; match whatever sits behind it. */
@@ -137,12 +141,14 @@ export function FooterWave({
   waveScale?: number;
   /** Time multiplier: below 1 moves slower. */
   speed?: number;
+  /** How much of the height the blue takes to deepen, 0 to 1. Larger reads as a longer gradient. */
+  ramp?: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const colors = useRef({ background, top, deep, ink, edge, swing, reserve, waveScale, speed });
+  const colors = useRef({ background, top, deep, ink, edge, swing, reserve, waveScale, speed, ramp });
   // Runs before the setup effect on mount, and after every render.
   useEffect(() => {
-    colors.current = { background, top, deep, ink, edge, swing, reserve, waveScale, speed };
+    colors.current = { background, top, deep, ink, edge, swing, reserve, waveScale, speed, ramp };
   });
 
   useEffect(() => {
@@ -177,6 +183,7 @@ export function FooterWave({
     gl.uniform3fv(u("u_deep"), colors.current.deep);
     gl.uniform3fv(u("u_ink"), colors.current.ink);
     const uShape = u("u_shape");
+    const uRamp = u("u_ramp");
     const uRes = u("u_res");
     const uTime = u("u_time");
     const uPixel = u("u_pixel");
@@ -196,6 +203,7 @@ export function FooterWave({
     const draw = (time: number) => {
       const c = colors.current;
       gl.uniform4f(uShape, c.edge, c.swing, c.reserve, c.waveScale);
+      gl.uniform1f(uRamp, c.ramp);
       gl.uniform1f(uTime, time);
       gl.uniform2f(uPointer, pointerX, pull);
       gl.drawArrays(gl.TRIANGLES, 0, 3);

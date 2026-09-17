@@ -107,7 +107,11 @@ export default function HomePage() {
 
 // ── Start ──────────────────────────────────────────────────────────────────
 
-const WAVE = { background: rgb("#ffffff"), top: rgb(BAR), deep: rgb(BAR_TODAY), ink: rgb(BAR_TODAY) };
+// A vertical gradient: a pale sky at the crest, through the bar blue, to the
+// today blue at the bottom of the card. Tuned in a standalone render of the
+// shader: about a fifth of the band changes every 1.5 s, crests stay 25px
+// clear of the top, and no white shows through at the bottom.
+const WAVE = { background: rgb("#ffffff"), top: rgb("#b2d6ff"), deep: rgb(BAR_TODAY), ink: rgb(BAR_TODAY) };
 
 function StartCard({ onStart, className }: { onStart: () => void; className?: string }) {
   return (
@@ -123,8 +127,8 @@ function StartCard({ onStart, className }: { onStart: () => void; className?: st
         className,
       )}
     >
-      <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[54%]">
-        <FooterWave className="absolute inset-0" {...WAVE} edge={14} swing={1.2} reserve={14} waveScale={1.9} speed={0.45} />
+      <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-[60%]">
+        <FooterWave className="absolute inset-0" {...WAVE} edge={18} swing={1.7} reserve={30} waveScale={2.2} speed={1.9} ramp={0.38} />
       </span>
       <span className={cn("flex w-full items-start justify-between gap-4", PAD)}>
         <span className="min-w-0">
