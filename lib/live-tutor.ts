@@ -23,17 +23,8 @@ import type {
 } from "./live-types";
 import { BackendTurnTracker, TranscriptAssembler } from "./live-events";
 import { buildFilesItemText } from "./tutor-prompts";
-import { runTutorTool } from "./tutor-tools";
 import { toolRole } from "./board-items";
-import {
-  boardResultExtras,
-  createPolicy,
-  noteBoardWrite,
-  noteStudentUtterance,
-  noteTutorTurn,
-  rememberNote,
-  setSessionFiles,
-} from "./tutor-policy";
+import { TutorRuntime } from "./tutor-runtime";
 
 const DATA_CHANNEL_LABEL = "oai-events";
 const SESSION_START_TIMEOUT_MS = 15_000;
@@ -250,8 +241,6 @@ export class LiveTutorSession {
   private reconnectAttempts = 0;
   private notesList: string[] = [];
   private turnDrew = false;
-  // Attempts and student signals behind the [Tutor state] line (lib/tutor-policy.ts).
-  private policy = createPolicy(Date.now());
   private recent: HistoryTurn[] = [];
   private idCounter = 0;
   private eventCounter = 0;
@@ -261,7 +250,7 @@ export class LiveTutorSession {
   private startWaiter: { resolve: () => void; reject: (e: Error) => void } | null = null;
   private generation = 0;
 
-  constructor(private readonly callbacks: LiveTutorCallbacks) {
+  constructor(private readonly callbacks: LiveTutorCallbacks, readonly tutorRuntime = new TutorRuntime()) {
     this.meter = new SpeakingMeter(
       (speaking) => this.callbacks.onSpeakingChange(speaking),
       (analyser) => this.callbacks.onAudioAnalyser?.(analyser),
@@ -269,11 +258,11 @@ export class LiveTutorSession {
     this.assembler = new TranscriptAssembler({
       onFlush: (role, text, at) => {
         if (role === "student") {
-          noteStudentUtterance(this.policy, text);
+          this.tutorRuntime.noteStudentUtterance(text);
           this.turnDrew = false;
         } else {
           // Arithmetic said in a turn that wrote nothing is due on the board.
-          noteTutorTurn(this.policy, text, this.turnDrew);
+          this.tutorRuntime.noteTutorTurn(text, this.turnDrew);
           this.turnDrew = false;
         }
         this.recent.push({ role, text });
@@ -573,7 +562,7 @@ export class LiveTutorSession {
       },
     });
     if (!queued) return false;
-    noteStudentUtterance(this.policy, trimmed);
+    this.tutorRuntime.noteStudentUtterance(trimmed);
     return this.requestBackendTurn();
   }
 
@@ -653,8 +642,7 @@ export class LiveTutorSession {
 
   private pushFilesToBackend(files: UploadedFile[]): boolean {
     for (const f of files) this.sessionFiles.set(f.id, f);
-    setSessionFiles(
-      this.policy,
+    this.tutorRuntime.setSessionFiles(
       [...this.sessionFiles.values()].map((f) => ({ label: f.label, name: f.name, pages: f.pageCount ?? f.pages?.length ?? 1 })),
       Date.now(),
     );
@@ -683,12 +671,12 @@ export class LiveTutorSession {
 
   private async executeTool(name: string, args: Record<string, unknown>, callId?: string): Promise<ToolCallResult> {
     // App-owned: check_answer, answered with the [Tutor state] line.
-    const tutorTool = runTutorTool(name, args, this.policy, Date.now(), callId);
+    const tutorTool = this.tutorRuntime.runTool(name, args, Date.now(), callId);
     if (tutorTool) return tutorTool;
     if (name === "remember_about_student") {
       const note = typeof args.note === "string" ? args.note.trim() : "";
       if (!note) return { success: false, error: "Missing note." };
-      rememberNote(this.policy, note);
+      this.tutorRuntime.rememberNote(note);
       if (!this.notesList.includes(note)) {
         this.notesList.push(note);
         if (this.notesList.length > MAX_NOTES) this.notesList.shift();
@@ -712,10 +700,10 @@ export class LiveTutorSession {
     if (!result.success) return result;
     if (toolRole(name) === "draw") {
       this.turnDrew = true;
-      noteBoardWrite(this.policy);
+      this.tutorRuntime.noteBoardWrite();
     }
     // A changed [Tutor state] and any nudges ride on board results, so the backend sees them this turn.
-    const extra = boardResultExtras(this.policy, Date.now());
+    const extra = this.tutorRuntime.boardResultExtras(Date.now());
     return extra ? { success: true, message: `${result.message ?? "Done"} ${extra}` } : result;
   }
 

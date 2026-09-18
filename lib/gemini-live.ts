@@ -1,22 +1,11 @@
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import type { UploadedFile } from "./file-processor";
-import { TUTOR_TOOL_DECLARATIONS, runTutorTool } from "./tutor-tools";
+import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
 import { toolRole } from "./board-items";
 import { hasBoundarySpace, joinTranscript } from "./live-events";
-import {
-  boardResultExtras,
-  cancelAttempt,
-  createPolicy,
-  formatMemory,
-  formatTutorState,
-  noteBoardWrite,
-  noteStudentUtterance,
-  noteTutorTurn,
-  rememberNote,
-  setSessionFiles,
-  type TutorPolicy,
-} from "./tutor-policy";
+import { formatMemory, formatTutorState } from "./tutor-policy";
+import { TutorRuntime } from "./tutor-runtime";
 
 // The Live models this account can open (checked against the API, Sept 17
 // 2026). Google now calls 3.1 "legacy audio-to-audio" and 3.8 Live "the
@@ -107,8 +96,6 @@ export class GeminiLiveSession {
   // What the student said since the tutor last spoke. Transcripts arrive in
   // fragments, so signals (frustrated, bored, unsure…) are read once the tutor answers.
   private studentUtterance = "";
-  // Attempts, signals, and notes behind the [Tutor state] line (lib/tutor-policy.ts).
-  private policy: TutorPolicy = createPolicy(Date.now());
   private turnTimer: ReturnType<typeof setTimeout> | null = null;
   // Set once a transcript fragment arrives with its own leading or trailing
   // space: from then on fragments are joined exactly as sent.
@@ -127,12 +114,15 @@ export class GeminiLiveSession {
   // Every tool blocks the model until it answers; nothing may hold it longer.
   private static readonly TOOL_TIMEOUT_MS = 3_000;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string }) {
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime }) {
     this.callbacks = callbacks;
     this.systemInstruction = options.systemInstruction;
     this.voiceName = options.voiceName;
     this.model = options.model?.trim() || DEFAULT_LIVE_MODEL;
+    this.tutorRuntime = options.runtime ?? new TutorRuntime();
   }
+
+  readonly tutorRuntime: TutorRuntime;
 
   private debug(kind: string, message: string, payload?: Record<string, unknown>) {
     this.callbacks.onDebugEvent?.({ kind, message, payload });
@@ -267,7 +257,7 @@ export class GeminiLiveSession {
   }
 
   sendText(text: string): boolean {
-    noteStudentUtterance(this.policy, text);
+    this.tutorRuntime.noteStudentUtterance(text);
     return this.sendUserTurn([{ text }]);
   }
 
@@ -398,7 +388,7 @@ export class GeminiLiveSession {
   private flushStudentUtterance() {
     const text = this.studentUtterance.trim();
     this.studentUtterance = "";
-    if (text) noteStudentUtterance(this.policy, text);
+    if (text) this.tutorRuntime.noteStudentUtterance(text);
   }
 
   private noteTutorTranscript(text: string) {
@@ -424,9 +414,9 @@ export class GeminiLiveSession {
     const tutorText = this.tutorTurnText.trim();
     this.tutorTurnText = "";
     if (!tutorText) return;
-    noteTutorTurn(this.policy, tutorText, this.turnDrew);
+    this.tutorRuntime.noteTutorTurn(tutorText, this.turnDrew);
     this.turnDrew = false;
-    const line = formatTutorState(this.policy, Date.now());
+    const line = formatTutorState(this.tutorRuntime.policy, Date.now());
     if (line) this.debug("pacing", "tutor_state", { line });
   }
 
@@ -436,8 +426,7 @@ export class GeminiLiveSession {
     const byId = new Map(this.knownFiles.map((f) => [f.id, f]));
     for (const f of files) byId.set(f.id, f);
     this.knownFiles = [...byId.values()];
-    setSessionFiles(
-      this.policy,
+    this.tutorRuntime.setSessionFiles(
       this.knownFiles.map((f) => ({ label: f.label, name: f.name, pages: f.pageCount ?? f.pages?.length ?? 1 })),
       Date.now(),
     );
@@ -656,7 +645,7 @@ export class GeminiLiveSession {
   private cancelToolCalls(ids: string[]) {
     for (const id of ids) {
       this.cancelledCalls.add(id);
-      const attemptRemoved = cancelAttempt(this.policy, id);
+      const attemptRemoved = this.tutorRuntime.cancelToolCall(id);
       this.debug("tool", "tool_call_cancelled", { id, attemptRemoved });
     }
     this.callbacks.onToolCancelled?.(ids);
@@ -672,7 +661,7 @@ export class GeminiLiveSession {
     let result: ToolCallResult;
     try {
       this.flushStudentUtterance();
-      const tutorTool = runTutorTool(name, args, this.policy, Date.now(), id);
+      const tutorTool = this.tutorRuntime.runTool(name, args, Date.now(), id);
       if (tutorTool) {
         // App-owned: check_answer, answered with the [Tutor state] line.
         result = tutorTool;
@@ -680,7 +669,7 @@ export class GeminiLiveSession {
         // App-owned tool: record a durable student-model fact and echo the
         // full memory back so it refreshes in the model's context.
         const note = typeof args.note === "string" ? args.note.trim() : "";
-        rememberNote(this.policy, note);
+        this.tutorRuntime.rememberNote(note);
         if (note) {
           // Same durable memory the GPT-Live path writes.
           void fetch("/api/profile/notes", {
@@ -689,7 +678,7 @@ export class GeminiLiveSession {
             body: JSON.stringify({ note }),
           }).catch(() => undefined);
         }
-        const mem = formatMemory(this.policy);
+        const mem = formatMemory(this.tutorRuntime.policy);
         result = { success: true, message: mem ? `Noted. ${mem}` : "Noted." };
       } else {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -706,9 +695,9 @@ export class GeminiLiveSession {
         if (result.success) {
           if (toolRole(name) === "draw") {
             this.turnDrew = true;
-            noteBoardWrite(this.policy);
+            this.tutorRuntime.noteBoardWrite();
           }
-          const extra = boardResultExtras(this.policy, Date.now());
+          const extra = this.tutorRuntime.boardResultExtras(Date.now());
           if (extra) result = { ...result, message: `${result.message ?? "Done"} ${extra}` };
         }
       }

@@ -47,6 +47,7 @@ import { desmosFailure, onDesmosStatus, preloadDesmos } from "@/components/board
 import { SessionRecorder } from "@/lib/session-recorder";
 import { compareEvents } from "@/lib/session-recording";
 import { joinTranscript } from "@/lib/live-events";
+import { TutorRuntime } from "@/lib/tutor-runtime";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
 
@@ -159,6 +160,9 @@ function SessionDetailPage({ id }: { id: string }) {
 
   // live tutor refs
   const sessionRef = useRef<TutorClient | null>(null);
+  // One pedagogical runtime survives reconnects and provider replacement.
+  const tutorRuntimeRef = useRef<TutorRuntime | null>(null);
+  if (!tutorRuntimeRef.current) tutorRuntimeRef.current = new TutorRuntime();
   // Which voice stack runs this session (env default, ?provider= override).
   const [provider] = useState(() => resolveTutorProvider(searchParams));
   // Which Gemini Live model this session runs (?live=3.8 for one tab).
@@ -869,7 +873,10 @@ function SessionDetailPage({ id }: { id: string }) {
       },
     };
 
-    const live: TutorClient = provider === "gemini" ? new GeminiTutorSession(callbacks, { model: liveModel }) : new LiveTutorSession(callbacks);
+    const tutorRuntime = tutorRuntimeRef.current ?? (tutorRuntimeRef.current = new TutorRuntime());
+    const live: TutorClient = provider === "gemini"
+      ? new GeminiTutorSession(callbacks, { model: liveModel, runtime: tutorRuntime })
+      : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;
     live.setSpeechRate?.(speechRateRef.current);
     recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });

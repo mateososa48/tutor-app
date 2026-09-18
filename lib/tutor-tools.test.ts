@@ -21,8 +21,9 @@ test("learning tools require an honest help level and a structured teaching move
   assert.ok(move);
   assert.deepEqual(move.parameters.required, ["skill", "help_level", "move"]);
   assert.deepEqual(move.parameters.properties.help_level.enum, ["H0", "H1", "H2", "H3", "H4", "H5"]);
-  assert.ok(move.parameters.properties.move.enum.includes("worked_example"));
-  assert.ok(move.parameters.properties.strategy.enum.includes("counterexample"));
+  const properties = move.parameters.properties as unknown as Record<string, { enum?: readonly string[] }>;
+  assert.ok(properties.move?.enum?.includes("worked_example"));
+  assert.ok(properties.strategy?.enum?.includes("counterexample"));
 });
 
 test("check_answer returns a verdict and validates its arguments", () => {

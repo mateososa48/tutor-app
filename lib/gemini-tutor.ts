@@ -5,6 +5,7 @@ import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
 import type { UploadedFile } from "./file-processor";
 import { clearActiveIntake, getActiveIntake, intakeOpeningMessage } from "./session-intake";
 import { DEFAULT_TUTOR_SPEED, tutorSpeedRate } from "./voice-settings";
+import { TutorRuntime } from "./tutor-runtime";
 
 // Gemini Live behind the same surface as the GPT-Live client, so the session
 // page does not care which one it is talking to. One model both talks and
@@ -62,7 +63,7 @@ export class GeminiTutorSession {
 
   readonly boardFrames = "auto" as const;
 
-  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string } = {}) {}
+  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime } = {}) {}
 
   /** The Live model this session runs, for the recording and the QA chip. */
   get model(): string {
@@ -174,7 +175,7 @@ export class GeminiTutorSession {
         },
         onDebugEvent: (event) => this.callbacks.onDebugEvent?.(event),
       },
-      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model },
+      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime },
     );
     this.session = session;
 
