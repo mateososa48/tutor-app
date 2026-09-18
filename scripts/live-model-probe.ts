@@ -88,7 +88,7 @@ function probe(model: string, thinkingConfig: Record<string, unknown> | null): P
           },
           ...(process.env.AFFECT === "setup" ? { enableAffectiveDialog: true } : {}),
           ...(process.env.PROACTIVE ? { proactivity: { proactiveAudio: true } } : {}),
-          systemInstruction: { parts: [{ text: process.env.SHORTPROMPT ? "You are a friendly math tutor for a 12-year-old. Keep replies short." : instructions }] },
+          systemInstruction: { parts: [{ text: (process.env.SHORTPROMPT ? "You are a friendly math tutor for a 12-year-old. Keep replies short." : instructions) + (process.env.PROMPTADD ? `\n\n${process.env.PROMPTADD}` : "") }] },
           ...(process.env.NOTOOLS ? {} : { tools }),
           ...(process.env.MINIMAL ? { outputAudioTranscription: {} } : {
             inputAudioTranscription: {},
