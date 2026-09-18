@@ -62,12 +62,29 @@ test("what recorded sessions got wrong is now a rule", () => {
   assert.match(text, /their right answer ringed \(circle_item keep=true\)/);
   assert.match(text, /never answer your own question/);
   assert.match(text, /"What\?" usually means they lost the question/);
-  assert.match(text, /Never end on "I don't know"/);
+  assert.doesNotMatch(text, /Never end on "I don't know"/);
+  assert.match(text, /respect that and close warmly/i);
   assert.match(text, /look_at_worksheet first, then copy the problem exactly as printed/);
   assert.match(text, /add_student_attempt with their exact words \(not "I don't know"\)/);
   assert.match(text, /every mark is your one sky pen/);
   assert.match(text, /praise and chat are said, not written/);
   assert.match(text, /Example 9 — "what\?"/);
+});
+
+test("prompt records assistance honestly and treats learner evidence as a soft brief", () => {
+  const brief = "[Learner evidence: Slope: spaced review due. Follow the student's explicit goal.]";
+  for (const text of [
+    buildBackendInstructions(null, [], { learnerBrief: brief }),
+    buildGeminiInstructions(null, [], { learnerBrief: brief }),
+  ]) {
+    assert.match(text, /record_teaching_move/);
+    assert.match(text, /Never call helped work H0/);
+    assert.match(text, /Follow the student's explicit goal/);
+    assert.match(text, /Slope: spaced review due/);
+    for (const call of text.matchAll(/check_answer\(([^)]*)\)/g)) {
+      assert.match(call[1], /help_level="H[0-5]"/, `missing help level in ${call[0]}`);
+    }
+  }
 });
 
 test("routing sends anything on axes to Desmos only where Desmos can draw", () => {
@@ -139,7 +156,7 @@ test("answers are checked by a tool, which records the attempt", () => {
   assert.match(text, /it records the attempt/);
   assert.doesNotMatch(text, /record_attempt/);
   assert.match(text, /\[Tutor state\] line in tool results/);
-  assert.match(text, /check_answer\(problem="1\/2 \+ 1\/3", student_answer="2\/5", skill="adding fractions", kind="misconception"\)/);
+  assert.match(text, /check_answer\(problem="1\/2 \+ 1\/3", student_answer="2\/5", skill="adding fractions with unlike denominators", help_level="H0", kind="misconception"\)/);
 });
 
 test("backend instructions handle a missing profile and empty memory", () => {

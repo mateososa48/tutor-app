@@ -47,6 +47,8 @@ import { desmosFailure, onDesmosStatus, preloadDesmos } from "@/components/board
 import { SessionRecorder } from "@/lib/session-recorder";
 import { compareEvents } from "@/lib/session-recording";
 import { joinTranscript } from "@/lib/live-events";
+import { TutorRuntime } from "@/lib/tutor-runtime";
+import { LearningRecorder, loadSessionLearning } from "@/lib/learning-client";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
 
@@ -159,6 +161,10 @@ function SessionDetailPage({ id }: { id: string }) {
 
   // live tutor refs
   const sessionRef = useRef<TutorClient | null>(null);
+  const learningRecorderRef = useRef<LearningRecorder | null>(null);
+  // One pedagogical runtime survives reconnects and provider replacement.
+  const [tutorRuntime] = useState(() => new TutorRuntime());
+  const learningHydratedRef = useRef(false);
   // Which voice stack runs this session (env default, ?provider= override).
   const [provider] = useState(() => resolveTutorProvider(searchParams));
   // Which Gemini Live model this session runs (?live=3.8 for one tab).
@@ -285,12 +291,18 @@ function SessionDetailPage({ id }: { id: string }) {
   // One recorder per session page; it batches events and board pictures to the server.
   useEffect(() => {
     const recorder = new SessionRecorder(id, () => sessionStartedAtRef.current);
+    const learningRecorder = new LearningRecorder(id);
     recorderRef.current = recorder;
+    learningRecorderRef.current = learningRecorder;
+    tutorRuntime.setEventSink((event) => learningRecorder.record(event));
     return () => {
       recorder.flushBeacon();
+      learningRecorder.flushBeacon();
+      tutorRuntime.setEventSink();
       if (recorderRef.current === recorder) recorderRef.current = null;
+      if (learningRecorderRef.current === learningRecorder) learningRecorderRef.current = null;
     };
-  }, [id]);
+  }, [id, tutorRuntime]);
 
   // Mute: disable the mic track locally and tell the Live session.
   useEffect(() => {
@@ -662,7 +674,7 @@ function SessionDetailPage({ id }: { id: string }) {
         payload: {},
       });
     }
-    await recorderRef.current?.flush();
+    await Promise.all([recorderRef.current?.flush(), learningRecorderRef.current?.flush()]);
     await patchSession(id, {
       status: "ended",
       endedAt,
@@ -823,6 +835,7 @@ function SessionDetailPage({ id }: { id: string }) {
           reason,
         });
         void recorderRef.current?.flush();
+        void learningRecorderRef.current?.flush();
         clearSubtitle();
         cleanupTimers();
         sessionRef.current = null;
@@ -840,6 +853,7 @@ function SessionDetailPage({ id }: { id: string }) {
       onError: (msg) => {
         recordDebug("error", "live_session_error", { message: msg });
         void recorderRef.current?.flush();
+        void learningRecorderRef.current?.flush();
         pauseLiveSession();
         intentionalDisconnectRef.current = true;
         disconnectToErrorRef.current = true;
@@ -869,7 +883,9 @@ function SessionDetailPage({ id }: { id: string }) {
       },
     };
 
-    const live: TutorClient = provider === "gemini" ? new GeminiTutorSession(callbacks, { model: liveModel }) : new LiveTutorSession(callbacks);
+    const live: TutorClient = provider === "gemini"
+      ? new GeminiTutorSession(callbacks, { model: liveModel, runtime: tutorRuntime })
+      : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;
     live.setSpeechRate?.(speechRateRef.current);
     recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
@@ -900,7 +916,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, tutorRuntime]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);
@@ -987,6 +1003,7 @@ function SessionDetailPage({ id }: { id: string }) {
   useEffect(() => {
     function onPageHide() {
       recorderRef.current?.flushBeacon();
+      learningRecorderRef.current?.flushBeacon();
       if ((liveStateRef.current === "active" || liveStateRef.current === "connecting") && !endInFlightRef.current) {
         sendPauseBeacon(id);
       }
@@ -1026,12 +1043,16 @@ function SessionDetailPage({ id }: { id: string }) {
     }
     const isNew = initialIsNewRef.current;
 
-    getSessionById(id).then((data) => {
+    Promise.all([getSessionById(id), loadSessionLearning(id)]).then(([data, learning]) => {
       if (cancelled) return;
       if (liveStateRef.current === "active" || liveStateRef.current === "connecting") return;
       if (!data) {
         setMode("notfound");
         return;
+      }
+      if (!learningHydratedRef.current) {
+        tutorRuntime.hydrate(learning);
+        learningHydratedRef.current = true;
       }
       setSession(data.session);
 
@@ -1112,7 +1133,7 @@ function SessionDetailPage({ id }: { id: string }) {
     return () => {
       cancelled = true;
     };
-  }, [id, mockPreview, searchParams]);
+  }, [id, mockPreview, searchParams, tutorRuntime]);
 
   // Auto-start live mode once mounted (handles new + resume)
   useEffect(() => {

@@ -16,6 +16,7 @@ import {
   type StudentProfile,
 } from "@/lib/tutor-prompts";
 import { DEFAULT_TUTOR_VOICE, isTutorVoiceName } from "@/lib/voice-settings";
+import { loadLearningOverview } from "@/lib/learning-overview";
 
 // Creates a GPT-Live WebRTC session for the signed-in student.
 //
@@ -105,11 +106,10 @@ export async function POST(req: NextRequest) {
   }
   const mode = body.mode === "resume" ? "resume" : "new";
 
-  const [row] = await db
-    .select()
-    .from(userProfiles)
-    .where(eq(userProfiles.userId, session.user.id))
-    .limit(1);
+  const [[row], learning] = await Promise.all([
+    db.select().from(userProfiles).where(eq(userProfiles.userId, session.user.id)).limit(1),
+    loadLearningOverview(session.user.id),
+  ]);
 
   const profile: StudentProfile | null = row
     ? {
@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
       type: "responses",
       responses: {
         model: BACKEND_MODEL,
-        instructions: buildBackendInstructions(profile, notes),
+        instructions: buildBackendInstructions(profile, notes, { learnerBrief: learning.brief }),
         tools: [...WHITEBOARD_FUNCTION_TOOLS, ...TUTOR_FUNCTION_TOOLS, ...SESSION_FUNCTION_TOOLS],
         tool_choice: "auto",
         parallel_tool_calls: false,

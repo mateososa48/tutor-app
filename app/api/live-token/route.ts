@@ -7,6 +7,7 @@ import { userProfiles } from "@/lib/db/schema";
 import { buildGeminiInstructions, buildGreetingLine, buildResumeLine, type StudentProfile } from "@/lib/tutor-prompts";
 import { intakeInstructions, type SessionIntake } from "@/lib/session-intake";
 import { geminiVoiceFor } from "@/lib/voice-settings";
+import { loadLearningOverview } from "@/lib/learning-overview";
 
 // Gemini Live fallback. Returns the composed system prompt and voice for the
 // signed-in student, plus a one-use ephemeral token so the browser can open
@@ -55,11 +56,10 @@ export async function POST(req: NextRequest) {
     // no body: the client is minting a token for a socket
   }
 
-  const [row] = await db
-    .select()
-    .from(userProfiles)
-    .where(eq(userProfiles.userId, session.user.id))
-    .limit(1);
+  const [[row], learning] = await Promise.all([
+    db.select().from(userProfiles).where(eq(userProfiles.userId, session.user.id)).limit(1),
+    loadLearningOverview(session.user.id),
+  ]);
   const profile: StudentProfile | null = row
     ? {
         displayName: row.displayName,
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     ? (row!.tutorNotes as unknown[]).filter((n): n is string => typeof n === "string")
     : [];
 
-  const base = buildGeminiInstructions(profile, notes);
+  const base = buildGeminiInstructions(profile, notes, { learnerBrief: learning.brief });
   const config = {
     // With an intake, the session's own context and language go last, so they
     // win over the general instructions, and the greeting is dropped: the

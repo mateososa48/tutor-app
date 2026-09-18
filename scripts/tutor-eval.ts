@@ -22,7 +22,8 @@ import { pathToFileURL } from "node:url";
 import { GoogleGenAI, type Content, type Part } from "@google/genai";
 import type { StudentProfile } from "../lib/tutor-prompts";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "../lib/whiteboard-tools";
-import { createPolicy, noteStudentUtterance, type TutorPolicy } from "../lib/tutor-policy";
+import { noteStudentUtterance, type TutorPolicy } from "../lib/tutor-policy";
+import { TutorRuntime } from "../lib/tutor-runtime";
 import { createFakeBoard, NON_CREATING_TOOLS, type FakeBoard } from "./eval-board";
 import { EVAL_TOOL_DECLARATIONS, arg, readGeminiKey, runEvalTool, withRetry } from "./eval-tools";
 
@@ -127,7 +128,8 @@ type Turn = { student: string; tutor: string; tools: ToolLog[]; board: string };
 
 const TOOLS = [{ functionDeclarations: EVAL_TOOL_DECLARATIONS }];
 
-async function tutorTurn(ai: GoogleGenAI, model: string, systemInstruction: string, contents: Content[], board: FakeBoard, policy: TutorPolicy, student: string): Promise<Turn> {
+async function tutorTurn(ai: GoogleGenAI, model: string, systemInstruction: string, contents: Content[], board: FakeBoard, runtime: TutorRuntime, student: string): Promise<Turn> {
+  const policy: TutorPolicy = runtime.policy;
   contents.push({ role: "user", parts: [{ text: student }] });
   noteStudentUtterance(policy, student);
   const turn: Turn = { student, tutor: "", tools: [], board: "" };
@@ -145,7 +147,7 @@ async function tutorTurn(ai: GoogleGenAI, model: string, systemInstruction: stri
       const name = part.functionCall?.name ?? "";
       const args = (part.functionCall?.args ?? {}) as Record<string, unknown>;
       // Same shape as the app: board result, board summary, then any changed [Tutor state].
-      const result = runEvalTool(name, args, { board, policy });
+      const result = runEvalTool(name, args, { board, policy, runtime });
       turn.tools.push({ name, args, ok: result.ok });
       responses.push({ functionResponse: { id: part.functionCall?.id, name, response: { result: result.message } } });
     }
@@ -337,12 +339,13 @@ async function main() {
       const profile: StudentProfile = { displayName: "Sam", gradeLevel: p.grade, learningPrefs: {} };
       const systemInstruction = prompts.buildGeminiInstructions(profile, []);
       const board = createFakeBoard();
-      const policy = createPolicy(Date.now());
+      const runtime = new TutorRuntime({ startedAt: Date.now() });
+      const policy = runtime.policy;
       const contents: Content[] = [];
       const turns: Turn[] = [];
       let say = p.opening;
       for (let i = 0; i < turnsPer; i++) {
-        const turn = await tutorTurn(ai, tutorModel, systemInstruction, contents, board, policy, say);
+        const turn = await tutorTurn(ai, tutorModel, systemInstruction, contents, board, runtime, say);
         turns.push(turn);
         if (verbose) console.log(`  student: ${turn.student}\n  tutor:   ${turn.tutor}\n  tools:   ${turn.tools.map((t) => t.name).join(", ") || "(none)"}\n`);
         if (i < turnsPer - 1) say = await studentLine(ai, studentModel, p, turns);
