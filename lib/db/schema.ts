@@ -127,6 +127,87 @@ export const sessionFrames = pgTable(
   ],
 );
 
+// ── Durable learning evidence ─────────────────────────────────────────────
+
+export const skills = pgTable("skills", {
+  key: text("key").primaryKey(),
+  label: text("label").notNull(),
+  domain: text("domain").notNull(),
+  gradeBand: text("grade_band").notNull(),
+  aliases: jsonb("aliases").notNull().default([]),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const teachingMoves = pgTable(
+  "teaching_moves",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => tutorSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    callId: text("call_id"),
+    skillKey: text("skill_key").references(() => skills.key, { onDelete: "set null" }),
+    rawSkill: text("raw_skill").notNull(),
+    helpLevel: integer("help_level").notNull(),
+    move: text("move").notNull(),
+    diagnosis: text("diagnosis"),
+    strategy: text("strategy"),
+    intent: text("intent"),
+    occurredAt: bigint("occurred_at", { mode: "number" }).notNull(),
+    cancelledAt: bigint("cancelled_at", { mode: "number" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("teaching_moves_user_skill_time_idx").on(t.userId, t.skillKey, t.occurredAt),
+    index("teaching_moves_session_call_idx").on(t.sessionId, t.callId),
+  ],
+);
+
+export const learningAttempts = pgTable(
+  "learning_attempts",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id").notNull().references(() => tutorSessions.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    callId: text("call_id"),
+    skillKey: text("skill_key").references(() => skills.key, { onDelete: "set null" }),
+    rawSkill: text("raw_skill").notNull(),
+    problem: text("problem").notNull(),
+    problemFingerprint: text("problem_fingerprint").notNull(),
+    studentAnswer: text("student_answer").notNull(),
+    result: text("result").notNull(),
+    helpLevel: integer("help_level").notNull(),
+    occurredAt: bigint("occurred_at", { mode: "number" }).notNull(),
+    cancelledAt: bigint("cancelled_at", { mode: "number" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("learning_attempts_user_skill_time_idx").on(t.userId, t.skillKey, t.occurredAt),
+    index("learning_attempts_session_time_idx").on(t.sessionId, t.occurredAt),
+    index("learning_attempts_session_call_idx").on(t.sessionId, t.callId),
+  ],
+);
+
+export const learnerSkillStates = pgTable(
+  "learner_skill_states",
+  {
+    userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    skillKey: text("skill_key").notNull().references(() => skills.key, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    attemptCount: integer("attempt_count").notNull(),
+    correctCount: integer("correct_count").notNull(),
+    independentCorrectCount: integer("independent_correct_count").notNull(),
+    distinctIndependentProblemCount: integer("distinct_independent_problem_count").notNull(),
+    latestAttemptAt: bigint("latest_attempt_at", { mode: "number" }).notNull(),
+    lastCorrectAt: bigint("last_correct_at", { mode: "number" }),
+    lastIndependentAt: bigint("last_independent_at", { mode: "number" }),
+    retainedAt: bigint("retained_at", { mode: "number" }),
+    effectiveHelpLevel: integer("effective_help_level"),
+    evidenceNote: text("evidence_note").notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.skillKey] }), index("learner_skill_states_user_status_idx").on(t.userId, t.status)],
+);
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type User = typeof users.$inferSelect;
@@ -138,6 +219,10 @@ export type NewTutorSession = typeof tutorSessions.$inferInsert;
 export type SessionEvent = typeof sessionEvents.$inferSelect;
 export type NewSessionEvent = typeof sessionEvents.$inferInsert;
 export type SessionFrame = typeof sessionFrames.$inferSelect;
+export type Skill = typeof skills.$inferSelect;
+export type TeachingMove = typeof teachingMoves.$inferSelect;
+export type LearningAttempt = typeof learningAttempts.$inferSelect;
+export type LearnerSkillStateRow = typeof learnerSkillStates.$inferSelect;
 
 export type SessionStatus = "active" | "paused" | "ended";
 export type SessionEventKind =
