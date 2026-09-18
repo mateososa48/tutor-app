@@ -340,7 +340,6 @@ async function main() {
       const systemInstruction = prompts.buildGeminiInstructions(profile, []);
       const board = createFakeBoard();
       const runtime = new TutorRuntime({ startedAt: Date.now() });
-      const policy = runtime.policy;
       const contents: Content[] = [];
       const turns: Turn[] = [];
       let say = p.opening;
