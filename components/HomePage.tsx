@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { AnimatePresence, motion } from "motion/react";
@@ -26,6 +26,9 @@ import { deleteSession, loadSessions, type SavedSession } from "@/lib/sessions";
 import { formatWeekTotal, sessionHeadline, sessionMeta, weekStats } from "@/lib/home-stats";
 import { useClientReady } from "@/lib/client-ready";
 import { cn } from "@/lib/utils";
+import { loadLearningOverviewClient } from "@/lib/learning-client";
+import type { LearningOverview } from "@/lib/learning-overview";
+import { homeFocusItems } from "@/lib/home-focus";
 
 // Home (Mateo's Figma, Sept 16): a greeting, a card that starts a session over
 // a slow wave in the chart's blues, the past sessions with a picture of each
@@ -58,11 +61,24 @@ export default function HomePage() {
   const router = useRouter();
   const { data: auth } = useSession();
   const [sessions, setSessions] = useState<SavedSession[] | null>(null);
+  const [learning, setLearning] = useState<LearningOverview | null>(null);
+  const [learningLoaded, setLearningLoaded] = useState(false);
+
+  const reloadLearning = useCallback(async () => {
+    setLearningLoaded(false);
+    const overview = await loadLearningOverviewClient();
+    setLearning(overview);
+    setLearningLoaded(true);
+  }, []);
 
   useEffect(() => {
     if (!mounted) return;
-    // Enough to cover the week's chart as well as the list.
-    loadSessions(60).then(setSessions);
+    // Enough sessions to cover the week's chart; learning evidence loads in parallel.
+    void Promise.all([loadSessions(60), loadLearningOverviewClient()]).then(([nextSessions, overview]) => {
+      setSessions(nextSessions);
+      setLearning(overview);
+      setLearningLoaded(true);
+    });
   }, [mounted]);
 
   async function remove(id: string) {
@@ -90,6 +106,9 @@ export default function HomePage() {
             <SideCard
               className="lg:col-start-2 lg:row-span-2 lg:row-start-1"
               sessions={sessions}
+              learning={learning}
+              learningLoaded={learningLoaded}
+              onRetryLearning={reloadLearning}
               onPractice={(topic) => router.push(`/session?topic=${encodeURIComponent(topic)}`)}
             />
             <PastSessions
@@ -308,10 +327,16 @@ function SessionRow({ session, onOpen, onDelete }: { session: SavedSession; onOp
 
 function SideCard({
   sessions,
+  learning,
+  learningLoaded,
+  onRetryLearning,
   onPractice,
   className,
 }: {
   sessions: SavedSession[] | null;
+  learning: LearningOverview | null;
+  learningLoaded: boolean;
+  onRetryLearning: () => void;
   onPractice: (topic: string) => void;
   className?: string;
 }) {
@@ -319,7 +344,7 @@ function SideCard({
     <aside className={cn(CARD, "flex flex-col overflow-hidden", className)}>
       <WeekSection sessions={sessions} />
       <div aria-hidden className="h-px shrink-0 bg-(--lp-line)" />
-      <FocusSection onPractice={onPractice} />
+      <FocusSection learning={learning} loaded={learningLoaded} onRetry={onRetryLearning} onPractice={onPractice} />
     </aside>
   );
 }
@@ -388,23 +413,35 @@ function WeekSection({ sessions }: { sessions: SavedSession[] | null }) {
   );
 }
 
-// Placeholders until the tutor records skills per student; the shape is what
-// that data should look like: a skill, a plain-language note, and a strength
-// from 1 (needs work) to 3 (nearly solid).
-const FOCUS: { skill: string; note: string; strength: 1 | 2 | 3 }[] = [
-  { skill: "Distributing a negative", note: "The sign flipped the wrong way twice this week.", strength: 1 },
-  { skill: "Common denominators", note: "Almost there: 4 of your last 6 were right.", strength: 2 },
-  { skill: "Checking your answer", note: "Plug it back in before you move on.", strength: 2 },
-];
-
-const STRENGTH_LABEL = { 1: "Needs work", 2: "Getting there", 3: "Nearly solid" } as const;
-
-function FocusSection({ onPractice }: { onPractice: (topic: string) => void }) {
+function FocusSection({ learning, loaded, onRetry, onPractice }: {
+  learning: LearningOverview | null;
+  loaded: boolean;
+  onRetry: () => void;
+  onPractice: (topic: string) => void;
+}) {
+  const items = homeFocusItems(learning?.focus ?? []);
   return (
     <section className={cn(PAD, "flex flex-1 flex-col")}>
-      <h2 className="m-0 text-[15px] font-medium text-(--lp-ink-2)">Things you have to work on</h2>
+      <h2 className="m-0 text-[15px] font-medium text-(--lp-ink-2)">What to work on next</h2>
+      {!loaded ? (
+        <div className="mt-4 flex flex-col gap-4" aria-label="Loading learning focus">
+          <Skeleton className="h-[72px] rounded-[12px]" />
+          <Skeleton className="h-[72px] rounded-[12px]" />
+        </div>
+      ) : learning === null ? (
+        <div className="mt-4 rounded-[14px] bg-(--lp-gray)/55 p-4">
+          <p className="m-0 text-[14.5px] leading-[1.45] text-(--lp-ink-2)">Your learning focus couldn&apos;t load right now.</p>
+          <button type="button" onClick={onRetry} className="mt-3 min-h-11 rounded-[10px] px-2 text-[13px] font-medium text-[#1d72dc] outline-none hover:underline focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)">
+            Try again
+          </button>
+        </div>
+      ) : items.length === 0 ? (
+        <p className="m-0 mt-4 text-[14.5px] leading-[1.5] text-(--lp-ink-2)">
+          Checked work from your tutoring sessions will show up here.
+        </p>
+      ) : (
       <ul className="m-0 mt-3 flex list-none flex-col gap-1 p-0">
-        {FOCUS.map((item) => (
+        {items.map((item) => (
           <li key={item.skill}>
             <button
               type="button"
@@ -419,21 +456,24 @@ function FocusSection({ onPractice }: { onPractice: (topic: string) => void }) {
                   <ArrowRight className="size-3.5 transition-transform duration-150 group-hover/focus:translate-x-0.5" strokeWidth={2.4} />
                 </span>
               </span>
-              <Strength value={item.strength} />
+              <Strength value={item.strength} label={item.label} />
             </button>
           </li>
         ))}
       </ul>
-      <p className="m-0 mt-auto pt-6 text-[12.5px] leading-[1.45] text-(--lp-ink-2)">
-        Your tutor adds to this list as you practise.
-      </p>
+      )}
+      {items.length > 0 && (
+        <p className="m-0 mt-auto pt-6 text-[12.5px] leading-[1.45] text-(--lp-ink-2)">
+          Based on checked answers and the help used.
+        </p>
+      )}
     </section>
   );
 }
 
-function Strength({ value }: { value: 1 | 2 | 3 }) {
+function Strength({ value, label }: { value: 1 | 2 | 3; label: string }) {
   return (
-    <span role="img" aria-label={STRENGTH_LABEL[value]} title={STRENGTH_LABEL[value]} className="mt-1 flex shrink-0 items-end gap-[3px]">
+    <span role="img" aria-label={label} title={label} className="mt-1 flex shrink-0 items-end gap-[3px]">
       {[1, 2, 3].map((n) => (
         <span
           key={n}

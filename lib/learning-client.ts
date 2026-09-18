@@ -1,4 +1,5 @@
 import type { TutorRuntimeHydration, TutoringDomainEvent } from "./tutor-runtime";
+import type { LearningOverview } from "./learning-overview";
 
 const FLUSH_DELAY_MS = 1_200;
 const MAX_BATCH = 100;
@@ -30,6 +31,20 @@ export async function loadSessionLearning(
     };
   } catch {
     return { attempts: [], teachingMoves: [] };
+  }
+}
+
+export async function loadLearningOverviewClient(
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
+): Promise<LearningOverview | null> {
+  try {
+    const response = await fetchImpl("/api/learning/overview");
+    if (!response.ok) return null;
+    const value = await response.json() as Partial<LearningOverview>;
+    if (!Array.isArray(value.states) || !Array.isArray(value.focus) || typeof value.brief !== "string") return null;
+    return { states: value.states, focus: value.focus, brief: value.brief };
+  } catch {
+    return null;
   }
 }
 
@@ -112,4 +127,3 @@ export class LearningRecorder {
     }
   }
 }
-

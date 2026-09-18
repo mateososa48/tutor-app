@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { buildLearningOverview, type StoredSkillState } from "./learning-overview";
 import { DAY_MS } from "./learning-evidence";
+import { homeFocusItems } from "./home-focus";
 
 const NOW = Date.UTC(2026, 8, 17, 18);
 
@@ -43,3 +44,14 @@ test("drops stale or unknown catalog keys rather than inventing a label", () => 
   assert.deepEqual(buildLearningOverview([row({ skillKey: "unknown.client-skill" })], NOW), { states: [], focus: [], brief: "" });
 });
 
+test("home focus labels describe evidence instead of claiming mastery", () => {
+  const overview = buildLearningOverview([
+    row({ status: "supported" }),
+    row({ skillKey: "graphs.slope", status: "needs_revisit", evidenceNote: "Latest evidence was incorrect after earlier success." }),
+  ], NOW);
+  assert.deepEqual(homeFocusItems(overview.focus).map((item) => [item.label, item.strength]), [
+    ["Revisit", 1],
+    ["With support", 2],
+  ]);
+  assert.equal(homeFocusItems([]).length, 0);
+});
