@@ -1,8 +1,8 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, lte } from "drizzle-orm";
 import { checkAnswer } from "../answer-check";
 import { problemFingerprint, projectSkillEvidence, type LearningAttemptEvidence } from "../learning-evidence";
-import { resolveSkill, SKILL_CATALOG } from "../skill-catalog";
-import { attemptFromVerdict, REMEDIATION_STRATEGIES, TEACHING_MOVE_TYPES } from "../tutor-tools";
+import { normalizeSkillLabel, resolveSkill, SKILL_CATALOG } from "../skill-catalog";
+import { attemptFromVerdict, minimumHelpForMove, REMEDIATION_STRATEGIES, TEACHING_MOVE_TYPES } from "../tutor-tools";
 import { ATTEMPT_RESULTS, type AttemptResult } from "../tutor-policy";
 import type { TeachingMoveEvidence } from "../tutor-runtime";
 import { db } from "./client";
@@ -84,7 +84,7 @@ function prepareTeachingMove(raw: Record<string, unknown>): PreparedLearningEven
       ...(text(move.callId, 160) ? { callId: text(move.callId, 160)! } : {}),
       skillKey: resolveSkill(rawSkill)?.key ?? null,
       rawSkill,
-      helpLevel: help,
+      helpLevel: Math.max(help, minimumHelpForMove(moveType)),
       move: moveType,
       diagnosis: text(move.diagnosis, 240),
       strategy,
@@ -93,6 +93,54 @@ function prepareTeachingMove(raw: Record<string, unknown>): PreparedLearningEven
       cancelledAt: timestamp(move.cancelledAt),
     },
   };
+}
+
+type AssistanceMove = Pick<TeachingMoveEvidence, "skillKey" | "rawSkill" | "helpLevel" | "move" | "occurredAt" | "cancelledAt">;
+
+function sameSkill(skillKey: string | null, rawSkill: string, candidateKey: string | null, candidateRaw: string): boolean {
+  if (skillKey) return candidateKey === skillKey || resolveSkill(candidateRaw)?.key === skillKey;
+  if (candidateKey) return resolveSkill(rawSkill)?.key === candidateKey;
+  return normalizeSkillLabel(rawSkill) === normalizeSkillLabel(candidateRaw);
+}
+
+export function effectiveHelpFromMoves(
+  declaredHelp: number,
+  skillKey: string | null,
+  rawSkill: string,
+  attemptAt: number,
+  previousAttemptAt: number,
+  moves: readonly AssistanceMove[],
+): number {
+  let effective = declaredHelp;
+  for (const move of moves) {
+    if (move.cancelledAt !== null || move.occurredAt <= previousAttemptAt || move.occurredAt > attemptAt) continue;
+    if (!sameSkill(skillKey, rawSkill, move.skillKey, move.rawSkill)) continue;
+    effective = Math.max(effective, move.helpLevel, minimumHelpForMove(move.move));
+  }
+  return effective;
+}
+
+async function serverEffectiveHelp(userId: string, sessionId: string, attempt: LearningAttemptEvidence): Promise<number> {
+  const [priorAttempts, moves] = await Promise.all([
+    db.select({ skillKey: learningAttempts.skillKey, rawSkill: learningAttempts.rawSkill, occurredAt: learningAttempts.occurredAt })
+      .from(learningAttempts)
+      .where(and(eq(learningAttempts.userId, userId), eq(learningAttempts.sessionId, sessionId), lte(learningAttempts.occurredAt, attempt.occurredAt))),
+    db.select({
+      skillKey: teachingMoves.skillKey,
+      rawSkill: teachingMoves.rawSkill,
+      helpLevel: teachingMoves.helpLevel,
+      move: teachingMoves.move,
+      occurredAt: teachingMoves.occurredAt,
+      cancelledAt: teachingMoves.cancelledAt,
+    }).from(teachingMoves)
+      .where(and(eq(teachingMoves.userId, userId), eq(teachingMoves.sessionId, sessionId), lte(teachingMoves.occurredAt, attempt.occurredAt))),
+  ]);
+  const previousAttemptAt = priorAttempts
+    .filter((row) => sameSkill(attempt.skillKey, attempt.rawSkill, row.skillKey, row.rawSkill))
+    .reduce((latest, row) => Math.max(latest, row.occurredAt), -Infinity);
+  const typedMoves = moves
+    .filter((move): move is typeof move & { move: TeachingMoveEvidence["move"] } => (TEACHING_MOVE_TYPES as readonly string[]).includes(move.move));
+  return effectiveHelpFromMoves(attempt.helpLevel, attempt.skillKey, attempt.rawSkill, attempt.occurredAt, previousAttemptAt, typedMoves);
 }
 
 /** Validate untrusted browser events and recompute every derivable field server-side. */
@@ -189,6 +237,7 @@ export async function storeLearningEvents(userId: string, sessionId: string, eve
   for (const event of events) {
     if (event.type === "attempt.recorded") {
       const attempt = event.attempt;
+      const effectiveHelp = await serverEffectiveHelp(userId, sessionId, attempt);
       await db.insert(learningAttempts).values({
         id: attempt.id,
         sessionId,
@@ -200,7 +249,7 @@ export async function storeLearningEvents(userId: string, sessionId: string, eve
         problemFingerprint: attempt.problemFingerprint,
         studentAnswer: attempt.studentAnswer,
         result: attempt.result,
-        helpLevel: attempt.helpLevel,
+        helpLevel: effectiveHelp,
         occurredAt: attempt.occurredAt,
         cancelledAt: attempt.cancelledAt,
       }).onConflictDoNothing();
@@ -273,4 +322,3 @@ export async function loadSessionLearning(userId: string, sessionId: string): Pr
     })),
   };
 }
-

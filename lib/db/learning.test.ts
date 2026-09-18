@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { prepareLearningEvents } from "./learning";
+import { effectiveHelpFromMoves, prepareLearningEvents } from "./learning";
 
 test("server recomputes verdict, fingerprint, and canonical skill", () => {
   const prepared = prepareLearningEvents([{
@@ -76,3 +76,11 @@ test("unknown skills stay unresolved and cancellation is a bounded audit event",
   assert.deepEqual(prepared[1], { type: "evidence.cancelled", callId: "call_1", occurredAt: 2 });
 });
 
+test("effective assistance cannot be lower than an observable teaching move", () => {
+  assert.equal(effectiveHelpFromMoves(0, "equations.two-step", "two-step equations", 200, 100, [
+    { skillKey: "equations.two-step", rawSkill: "solving two step equations", helpLevel: 1, move: "shown_step", occurredAt: 150, cancelledAt: null },
+  ]), 4);
+  assert.equal(effectiveHelpFromMoves(1, "equations.two-step", "two-step equations", 200, 100, [
+    { skillKey: "graphs.slope", rawSkill: "slope", helpLevel: 5, move: "worked_example", occurredAt: 150, cancelledAt: null },
+  ]), 1, "help from another skill does not leak");
+});

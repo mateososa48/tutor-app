@@ -46,6 +46,20 @@ export const REMEDIATION_STRATEGIES = [
   "verification",
 ] as const;
 
+const MOVE_MINIMUM_HELP: Record<(typeof TEACHING_MOVE_TYPES)[number], number> = {
+  focusing_question: 1,
+  point: 2,
+  strategy_hint: 3,
+  shown_step: 4,
+  worked_example: 5,
+  counterexample: 3,
+  independent_check: 0,
+};
+
+export function minimumHelpForMove(move: (typeof TEACHING_MOVE_TYPES)[number]): number {
+  return MOVE_MINIMUM_HELP[move];
+}
+
 export const TUTOR_TOOL_DECLARATIONS = [
   {
     name: "check_answer",

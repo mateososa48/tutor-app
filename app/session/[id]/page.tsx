@@ -163,10 +163,7 @@ function SessionDetailPage({ id }: { id: string }) {
   const sessionRef = useRef<TutorClient | null>(null);
   const learningRecorderRef = useRef<LearningRecorder | null>(null);
   // One pedagogical runtime survives reconnects and provider replacement.
-  const tutorRuntimeRef = useRef<TutorRuntime | null>(null);
-  if (!tutorRuntimeRef.current) {
-    tutorRuntimeRef.current = new TutorRuntime({ onEvent: (event) => learningRecorderRef.current?.record(event) });
-  }
+  const [tutorRuntime] = useState(() => new TutorRuntime());
   const learningHydratedRef = useRef(false);
   // Which voice stack runs this session (env default, ?provider= override).
   const [provider] = useState(() => resolveTutorProvider(searchParams));
@@ -297,13 +294,15 @@ function SessionDetailPage({ id }: { id: string }) {
     const learningRecorder = new LearningRecorder(id);
     recorderRef.current = recorder;
     learningRecorderRef.current = learningRecorder;
+    tutorRuntime.setEventSink((event) => learningRecorder.record(event));
     return () => {
       recorder.flushBeacon();
       learningRecorder.flushBeacon();
+      tutorRuntime.setEventSink();
       if (recorderRef.current === recorder) recorderRef.current = null;
       if (learningRecorderRef.current === learningRecorder) learningRecorderRef.current = null;
     };
-  }, [id]);
+  }, [id, tutorRuntime]);
 
   // Mute: disable the mic track locally and tell the Live session.
   useEffect(() => {
@@ -884,7 +883,6 @@ function SessionDetailPage({ id }: { id: string }) {
       },
     };
 
-    const tutorRuntime = tutorRuntimeRef.current ?? (tutorRuntimeRef.current = new TutorRuntime());
     const live: TutorClient = provider === "gemini"
       ? new GeminiTutorSession(callbacks, { model: liveModel, runtime: tutorRuntime })
       : new LiveTutorSession(callbacks, tutorRuntime);
@@ -918,7 +916,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, tutorRuntime]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);
@@ -1053,7 +1051,7 @@ function SessionDetailPage({ id }: { id: string }) {
         return;
       }
       if (!learningHydratedRef.current) {
-        tutorRuntimeRef.current?.hydrate(learning);
+        tutorRuntime.hydrate(learning);
         learningHydratedRef.current = true;
       }
       setSession(data.session);
@@ -1135,7 +1133,7 @@ function SessionDetailPage({ id }: { id: string }) {
     return () => {
       cancelled = true;
     };
-  }, [id, mockPreview, searchParams]);
+  }, [id, mockPreview, searchParams, tutorRuntime]);
 
   // Auto-start live mode once mounted (handles new + resume)
   useEffect(() => {

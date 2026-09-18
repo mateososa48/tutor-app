@@ -4,6 +4,7 @@ import type { ToolCallResult } from "./live-types";
 import {
   REMEDIATION_STRATEGIES,
   TEACHING_MOVE_TYPES,
+  minimumHelpForMove,
   runTutorTool,
 } from "./tutor-tools";
 import {
@@ -69,9 +70,13 @@ function includesValue<T extends readonly string[]>(values: T, value: unknown): 
   return typeof value === "string" && (values as readonly string[]).includes(value);
 }
 
+function assistanceKey(rawSkill: string): string {
+  return resolveSkill(rawSkill)?.key ?? normalizeSkill(rawSkill);
+}
+
 export class TutorRuntime {
   readonly policy: TutorPolicy;
-  private readonly onEvent?: (event: TutoringDomainEvent) => void;
+  private onEvent?: (event: TutoringDomainEvent) => void;
   private attempts: LearningAttemptEvidence[] = [];
   private teachingMoves: TeachingMoveEvidence[] = [];
   private assistance = new Map<string, number>();
@@ -79,6 +84,10 @@ export class TutorRuntime {
   constructor(options: TutorRuntimeOptions = {}) {
     this.policy = options.policy ?? createPolicy(options.startedAt ?? Date.now());
     this.onEvent = options.onEvent;
+  }
+
+  setEventSink(onEvent?: (event: TutoringDomainEvent) => void): void {
+    this.onEvent = onEvent;
   }
 
   noteStudentUtterance(text: string, now = Date.now()): void {
@@ -110,7 +119,7 @@ export class TutorRuntime {
     if (name !== "check_answer") return null;
 
     const rawSkill = typeof args.skill === "string" && args.skill.trim() ? args.skill.trim().slice(0, 120) : this.policy.currentSkill ?? "unnamed skill";
-    const ledgerKey = normalizeSkill(rawSkill);
+    const ledgerKey = assistanceKey(rawSkill);
     const declaredHelp = parseHelpLevel(args.help_level);
     const observedHelp = this.assistance.get(ledgerKey);
     const effectiveHelp = Math.max(declaredHelp ?? 1, observedHelp ?? 0);
@@ -196,12 +205,13 @@ export class TutorRuntime {
     if (args.strategy !== undefined && !includesValue(REMEDIATION_STRATEGIES, args.strategy)) {
       return { success: false, error: "record_teaching_move strategy is not recognized." };
     }
+    const effectiveHelp = Math.max(helpLevel, minimumHelpForMove(args.move));
     const evidence: TeachingMoveEvidence = {
       id: eventId("move", now),
       ...(callId ? { callId } : {}),
       skillKey: resolveSkill(rawSkill)?.key ?? null,
       rawSkill,
-      helpLevel,
+      helpLevel: effectiveHelp,
       move: args.move,
       diagnosis: optionalText(args.diagnosis, 240),
       strategy: includesValue(REMEDIATION_STRATEGIES, args.strategy) ? args.strategy : null,
@@ -210,24 +220,23 @@ export class TutorRuntime {
       cancelledAt: null,
     };
     this.teachingMoves.push(evidence);
-    const key = normalizeSkill(rawSkill);
-    this.assistance.set(key, Math.max(this.assistance.get(key) ?? 0, helpLevel));
+    const key = assistanceKey(rawSkill);
+    this.assistance.set(key, Math.max(this.assistance.get(key) ?? 0, effectiveHelp));
     this.onEvent?.({ type: "teaching_move.recorded", teachingMove: evidence });
-    return { success: true, message: `Teaching move recorded at H${helpLevel}. Continue naturally; do not mention this record.` };
+    return { success: true, message: `Teaching move recorded at H${effectiveHelp}. Continue naturally; do not mention this record.` };
   }
 
   private rebuildAssistance(): void {
     this.assistance.clear();
     const lastAttemptBySkill = new Map<string, number>();
     for (const attempt of this.attempts) {
-      if (attempt.cancelledAt === null) lastAttemptBySkill.set(normalizeSkill(attempt.rawSkill), Math.max(lastAttemptBySkill.get(normalizeSkill(attempt.rawSkill)) ?? 0, attempt.occurredAt));
+      if (attempt.cancelledAt === null) lastAttemptBySkill.set(assistanceKey(attempt.rawSkill), Math.max(lastAttemptBySkill.get(assistanceKey(attempt.rawSkill)) ?? 0, attempt.occurredAt));
     }
     for (const move of this.teachingMoves) {
       if (move.cancelledAt !== null) continue;
-      const key = normalizeSkill(move.rawSkill);
+      const key = assistanceKey(move.rawSkill);
       if (move.occurredAt <= (lastAttemptBySkill.get(key) ?? -Infinity)) continue;
       this.assistance.set(key, Math.max(this.assistance.get(key) ?? 0, move.helpLevel));
     }
   }
 }
-

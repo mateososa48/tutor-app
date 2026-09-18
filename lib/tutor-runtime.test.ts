@@ -7,19 +7,21 @@ test("teaching moves raise effective help and the ledger clears after an answer"
   const events: TutoringDomainEvent[] = [];
   const runtime = new TutorRuntime({ startedAt: 0, onEvent: (event) => events.push(event) });
   const move = runtime.runTool("record_teaching_move", {
-    skill: "two step equations",
-    help_level: "H4",
+    skill: "solving two step equations",
+    help_level: "H1",
     move: "shown_step",
     diagnosis: "subtracts on only one side",
     strategy: "counterexample",
     intent: "make equality visible",
   }, 100, "move-1");
   assert.ok(move?.success);
+  const moveEvent = events.find((event) => event.type === "teaching_move.recorded");
+  assert.equal(moveEvent?.type === "teaching_move.recorded" ? moveEvent.teachingMove.helpLevel : null, 4, "a shown step is H4 even if the model under-reports it");
 
   const checked = runtime.runTool("check_answer", {
     problem: "2x + 3 = 11",
     student_answer: "x = 4",
-    skill: "two step equations",
+    skill: "two-step equations",
     help_level: "H1",
   }, 200, "attempt-1");
   assert.ok(checked?.success);
@@ -86,3 +88,13 @@ test("cancelling a call rolls back active policy and emits an audit event", () =
   assert.ok(emitted.some((event) => event.type === "evidence.cancelled" && event.callId === "attempt-1"));
 });
 
+test("an event sink can be attached after React creates the runtime", () => {
+  const events: TutoringDomainEvent[] = [];
+  const runtime = new TutorRuntime({ startedAt: 0 });
+  runtime.setEventSink((event) => events.push(event));
+  runtime.runTool("record_teaching_move", { skill: "slope", help_level: "H2", move: "point" }, 100, "move-1");
+  assert.equal(events.length, 1);
+  runtime.setEventSink();
+  runtime.runTool("record_teaching_move", { skill: "slope", help_level: "H2", move: "point" }, 200, "move-2");
+  assert.equal(events.length, 1);
+});

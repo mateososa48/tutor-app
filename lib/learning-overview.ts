@@ -79,8 +79,11 @@ export async function loadLearningOverview(userId: string, now = Date.now()): Pr
       effectiveHelpLevel: row.effectiveHelpLevel,
       evidenceNote: row.evidenceNote,
     })), now);
-  } catch (error) {
-    console.warn("[learning] overview unavailable", error instanceof Error ? error.message : String(error));
+  } catch {
+    // Do not log the database error itself: Drizzle includes bound parameters,
+    // which can expose the learner id in server logs before this optional
+    // migration has been applied.
+    console.warn("[learning] overview unavailable; returning an empty overview");
     return { states: [], focus: [], brief: "" };
   }
 }
