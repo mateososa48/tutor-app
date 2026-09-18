@@ -260,8 +260,20 @@ Built by a Codex session on `codex/learning-evidence`, reviewed and merged here.
 - **The home page** shows "What to work on next" from real states (`lib/home-focus.ts`), replacing the fabricated `FOCUS` placeholders. With no evidence it says so plainly.
 - **The prompt changed with it.** The teaching sections were compressed to pay for the new rules (19,597 of the 19,600 ceiling; Gemini 20,695). The closing rule changed on purpose: the tutor offers an exit check and **respects a student who wants to leave**, where it used to be told never to end on "I don't know".
 - **The evals answer tutor tools through the runtime** (`scripts/eval-tools.ts` takes a `runtime`), because `runTutorTool` alone does not know `record_teaching_move`: before that fix a sessions run logged 8 "Unknown whiteboard tool" errors that only existed in the harness.
-- **What the first measurements say.** `board-eval --set sessions` on flash-lite, our Sept 17 branch against this merge: the model calls `record_teaching_move` heavily (12 calls in 36 turns, 2 of them refused for a missing field or an unknown strategy), and the board got quieter in the same run: `add_student_attempt` 4 calls to 0, pointing 22% to 14%, answers checked 80% to 60%, spoken-but-unwritten math 1 to 3. One noisy run each, so treat it as a flag, not a verdict: the plausible mechanism is that a mandatory invisible tool competes with the board for the model's few calls a turn. `record_attempt` was removed in Sept 2026 for the same reason. Watch it in the recordings, and if it holds, make the bookkeeping optional in the prompt rather than required before every hint.
-- **Never run in a live session yet** (as of Sept 18 2026): every tool call blocks Gemini Live until it answers, so the extra call costs the student time as well.
+- **What it costs the board.** `board-eval --set sessions` on flash-lite, 36 turns, the Sept 17 branch against this merge, twice (the first run alone looked much worse; most of it was noise):
+
+  | Measure | Sept 17 | merge run 1 | merge run 2 |
+  |---|---|---|---|
+  | board use | 29/36 | 28/36 | 29/36 |
+  | picture turns | 10 | 11 | 10 |
+  | answers checked | 4/5 | 3/5 | 4/5 |
+  | right answers ringed | 1/1 | 1/1 | 1/1 |
+  | **turns with a pointing move** | **8 (22%)** | **5 (14%)** | **5 (14%)** |
+  | **`add_student_attempt`** | **4** | **0** | **1** |
+  | `record_teaching_move` | — | 12 (2 refused) | 13 |
+
+  Everything the prompt hard-requires held. The two measures down in **both** runs are the two soft ones: pointing at what it just said, and writing the student's words. Those are the calls a turn drops first when something else takes the slot, and `record_teaching_move` is the most-called tool in both runs (one every three turns). `record_attempt` was cut in Sept 2026 for the same competition. Two offline runs on flash-lite is not a verdict; the direction is consistent, the size is about three of each per 36 turns. Watch it in real recordings before changing the prompt, and if it holds, make the bookkeeping optional rather than required before every hint.
+- **It does not stall a live turn.** `TutorRuntime.runTool` answers `record_teaching_move` synchronously from memory; the row is batched to the server by `LearningRecorder`, off the voice path. So the cost is one extra round through the model's tool loop, not the 3 s block a slow tool would be. **Never run in a live session yet** as of Sept 18 2026.
 
 ## Whiteboard layout (Sept 14 2026; sections and pages Sept 16)
 Mateo found the tutor used the board "like a list" (everything stacked in one or two fixed columns) and kept it in the middle. The fixed-column layout is still how tools draw, but the result is moved:
