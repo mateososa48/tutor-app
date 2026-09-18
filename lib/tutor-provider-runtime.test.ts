@@ -4,6 +4,10 @@ import { GeminiLiveSession } from "./gemini-live";
 import { LiveTutorSession, type LiveTutorCallbacks } from "./live-tutor";
 import { TutorRuntime } from "./tutor-runtime";
 
+// The Gemini client checks WebSocket.OPEN before sending, and Node has no
+// WebSocket global until 22. The socket itself is never opened here.
+(globalThis as { WebSocket?: unknown }).WebSocket ??= { OPEN: 1, CLOSED: 3 };
+
 const liveCallbacks: LiveTutorCallbacks = {
   onTranscript: () => undefined,
   onCaption: () => undefined,

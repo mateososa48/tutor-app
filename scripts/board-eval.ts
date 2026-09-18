@@ -19,7 +19,8 @@ import { GoogleGenAI, type Content, type Part } from "@google/genai";
 import { desmosPictureTools } from "../lib/desmos-config";
 import { buildGeminiInstructions, type StudentProfile } from "../lib/tutor-prompts";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "../lib/whiteboard-tools";
-import { createPolicy, looksLikeAnswer, noteStudentUtterance, spokenMath } from "../lib/tutor-policy";
+import { looksLikeAnswer, noteStudentUtterance, spokenMath } from "../lib/tutor-policy";
+import { TutorRuntime } from "../lib/tutor-runtime";
 import { createFakeBoard, NON_CREATING_TOOLS } from "./eval-board";
 import { EVAL_TOOL_DECLARATIONS, arg, readGeminiKey, runEvalTool, withRetry } from "./eval-tools";
 
@@ -160,7 +161,9 @@ async function runScenario(ai: GoogleGenAI, model: string, scenario: Scenario, t
   const profile: StudentProfile = { displayName: "Sam", gradeLevel: "6th grade", learningPrefs: {}, ...(scenario.profile ?? {}) };
   const systemInstruction = buildGeminiInstructions(profile, []);
   const board = createFakeBoard();
-  const policy = createPolicy(Date.now());
+  // One runtime, as a live session has: it owns the policy and answers the tutor tools.
+  const runtime = new TutorRuntime({ startedAt: Date.now() });
+  const policy = runtime.policy;
   const contents: Content[] = [];
   const stats: TurnStats[] = [];
   const tools = [{ functionDeclarations: EVAL_TOOL_DECLARATIONS }];
@@ -196,7 +199,7 @@ async function runScenario(ai: GoogleGenAI, model: string, scenario: Scenario, t
       for (const part of calls) {
         const name = part.functionCall?.name ?? "";
         const args = (part.functionCall?.args ?? {}) as Record<string, unknown>;
-        const result = runEvalTool(name, args, { board, policy, worksheet: scenario.worksheet });
+        const result = runEvalTool(name, args, { board, policy, runtime, worksheet: scenario.worksheet });
         turn.tools.push({ name, args, ok: result.ok, verdict: result.verdict });
         if (!result.ok) turn.errors.push(`${name}: ${result.message}`);
         if (name === "start_new_problem") { seenText.clear(); lastLatex = ""; }

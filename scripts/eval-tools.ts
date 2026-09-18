@@ -6,21 +6,27 @@ import fs from "node:fs";
 import type { FunctionDeclaration } from "@google/genai";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "../lib/whiteboard-tools";
 import { dispatchWhiteboardTool } from "../lib/whiteboard-tool-dispatch";
-import { TUTOR_TOOL_DECLARATIONS, runTutorTool } from "../lib/tutor-tools";
+import { TUTOR_TOOL_DECLARATIONS } from "../lib/tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "../lib/session-tools";
 import { toolRole } from "../lib/board-items";
 import { boardResultExtras, formatMemory, noteBoardWrite, rememberNote, type TutorPolicy } from "../lib/tutor-policy";
+import { TutorRuntime } from "../lib/tutor-runtime";
 import type { FakeBoard } from "./eval-board";
 
 export const EVAL_TOOL_DECLARATIONS = [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS] as unknown as FunctionDeclaration[];
 
 export type EvalToolResult = { ok: boolean; message: string; verdict?: string };
 
-export type EvalToolContext = { board: FakeBoard; policy: TutorPolicy; worksheet?: string; now?: number };
+/**
+ * `runtime` answers the tutor tools exactly as the live clients do, so the
+ * eval sees check_answer and record_teaching_move the way a session does.
+ * Its own policy is the one to pass as `policy`.
+ */
+export type EvalToolContext = { board: FakeBoard; policy: TutorPolicy; runtime: TutorRuntime; worksheet?: string; now?: number };
 
 export function runEvalTool(name: string, args: Record<string, unknown>, ctx: EvalToolContext): EvalToolResult {
   const now = ctx.now ?? Date.now();
-  const tutor = runTutorTool(name, args, ctx.policy, now);
+  const tutor = ctx.runtime.runTool(name, args, now);
   if (tutor) {
     if (!tutor.success) return { ok: false, message: `Error: ${tutor.error}` };
     const message = tutor.message ?? "Done";
