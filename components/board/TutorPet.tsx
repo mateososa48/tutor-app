@@ -89,7 +89,7 @@ mat2 rot(float a) { float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 // The body's distance field in its own space, with the wobble.
 float body(vec2 q, float r, float t) {
   float a = atan(q.y, q.x);
-  float w = 0.5 * sin(2.0 * a + t * 1.1) + 0.35 * sin(3.0 * a - t * 0.8 + 1.7) + 0.15 * sin(5.0 * a + t * 0.5 + 0.4);
+  float w = 0.5 * sin(2.0 * a + t * 0.6) + 0.35 * sin(3.0 * a - t * 0.45 + 1.7) + 0.15 * sin(5.0 * a + t * 0.3 + 0.4);
   float d;
   if (u_shape == 0) {
     d = sdCircle(q, r);
@@ -99,7 +99,7 @@ float body(vec2 q, float r, float t) {
     // Wider than tall, with a soft top: the rounding grows a small triangle outward.
     d = sdTriangle(vec2(q.x, q.y + 0.18 * r), 0.66 * r) - 0.3 * r;
   }
-  return d - u_wobble * 0.045 * r * w;
+  return d - u_wobble * 0.02 * r * w;
 }
 
 void main() {
@@ -133,20 +133,20 @@ void main() {
   // Eyes, in body space so they lean and squash with it.
   for (int i = 0; i < 2; i++) {
     float s = i == 0 ? -1.0 : 1.0;
-    vec2 ec = vec2(s * 0.27, u_eyeY) * r + u_look * vec2(0.06, 0.05) * r;
+    vec2 ec = vec2(s * (u_shape == 2 ? 0.27 : 0.31), u_eyeY) * r + u_look * vec2(0.07, 0.06) * r;
     vec2 e = q - ec;
     if (u_happy > 0.5) {
       // A closed, smiling eye: the top of a ring.
-      float ring = abs(length(e) - 0.11 * r) - 0.035 * r;
+      float ring = abs(length(e) - 0.14 * r) - 0.04 * r;
       if (ring < 0.0 && e.y > -0.01 * r) col = vec3(0.07, 0.07, 0.08);
     } else {
-      vec2 he = vec2(0.105, 0.15) * r;
+      vec2 he = vec2(0.16, 0.22) * r;
       he.y *= (1.0 - 0.7 * u_squint) * max(0.12, 1.0 - u_blink);
-      float ed = sdRoundBox(e, he, min(he.x, he.y) * 0.6);
+      float ed = sdRoundBox(e, he, min(he.x, he.y) * 0.45);
       if (ed < 0.0) {
         col = vec3(0.07, 0.07, 0.08);
         // The glint is exactly one block, whatever the size.
-        vec2 hc = e - vec2(-0.04, 0.07) * r;
+        vec2 hc = e - vec2(-0.05, 0.08) * r;
         if (u_blink < 0.5 && max(abs(hc.x), abs(hc.y)) < ow * 0.55) col = vec3(1.0);
       }
     }
@@ -220,6 +220,7 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
     const live: Live = { sx: 1, sy: 1, lean: 0, wobble: 0.45, lookX: 0, lookY: 0, squint: 0, happy: 0, offX: 0, offY: 0, level: 0 };
     // The hop, for "happy": a little jump with a squash on landing.
     let vy = 0;
+    let hop = 0;
     let lastHop = -Infinity;
     // Blinks every few seconds; a glance somewhere else now and then while idle.
     let nextBlink = 2500 + Math.random() * 3000;
@@ -253,7 +254,7 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       gl.uniform1f(U.wobble, live.wobble);
       gl.uniform1f(U.level, live.level);
       gl.uniform2f(U.look, live.lookX, live.lookY);
-      const b = blinkStart < 0 ? 0 : Math.sin(Math.min(1, (clock * 1000 - blinkStart) / 140) * Math.PI);
+      const b = blinkStart < 0 ? 0 : Math.sin(Math.min(1, (clock * 1000 - blinkStart) / 220) * Math.PI);
       gl.uniform1f(U.blink, b);
       gl.uniform1f(U.squint, live.squint);
       gl.uniform1f(U.happy, live.happy);
@@ -274,12 +275,12 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       const lookY = c.look?.y ?? 0;
 
       // Targets per state.
-      let sx = 1, sy = 1, lean = 0, wobble = 0.45, lx = lookX * 0.6, ly = lookY * 0.6, squint = 0, happy = 0;
+      let sx = 1, sy = 1, lean = 0, wobble = 0.45, lx = lookX * 0.6, ly = lookY * 0.6, squint = 0, happy = 0, bob = 0;
       switch (c.state) {
         case "idle":
-          sx = 1 + 0.025 * Math.sin(t * 1.1);
-          sy = 1 - 0.025 * Math.sin(t * 1.1);
-          lean = 0.04 * Math.sin(t * 0.5);
+          sx = 1 + 0.03 * Math.sin(t * 1.0);
+          sy = 1 - 0.03 * Math.sin(t * 1.0);
+          bob = 0.025 * (0.5 + 0.5 * Math.sin(t * 1.0));
           if (ms > glance.next) {
             glance = { x: (Math.random() - 0.5) * 1.6, y: (Math.random() - 0.3) * 1.2, until: ms + 700 + Math.random() * 600, next: ms + 4000 + Math.random() * 5000 };
           }
@@ -304,16 +305,17 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       }
 
       // The hop: simple gravity, a bounce with squash on the floor.
-      if (vy !== 0 || live.offY > 0) {
+      if (vy !== 0 || hop > 0) {
         vy -= 9.5 * dt;
-        live.offY = Math.max(0, live.offY + vy * dt);
-        if (live.offY === 0 && vy < 0) {
+        hop = Math.max(0, hop + vy * dt);
+        if (hop === 0 && vy < 0) {
           sx = 1.18; sy = 0.82; // the landing squash
           vy = 0;
-        } else if (live.offY > 0) {
+        } else if (hop > 0) {
           sx = 0.94; sy = 1.08;
         }
       }
+      live.offY = hop + ease(live.offY - hop, bob, 6, dt);
 
       live.level = ease(live.level, c.state === "speaking" ? c.level : 0, c.level > live.level ? 18 : 7, dt);
       live.sx = ease(live.sx, sx, 9, dt);
@@ -329,17 +331,23 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       if (blinkStart < 0 && now >= nextBlink) {
         blinkStart = ms;
       }
-      if (blinkStart >= 0 && ms - blinkStart > 140) {
+      if (blinkStart >= 0 && ms - blinkStart > 220) {
         blinkStart = -1;
         nextBlink = now + 2500 + Math.random() * 3500;
       }
     };
 
+    // The simulation runs every frame; the body is drawn twelve times a
+    // second, the pace of pixel art, so the outline steps instead of crawling.
+    let lastDraw = -Infinity;
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       if (!visible) return;
       step(now);
-      draw();
+      if (now - lastDraw >= 1000 / 12) {
+        lastDraw = now;
+        draw();
+      }
     };
     kick.current = () => {
       resize();
