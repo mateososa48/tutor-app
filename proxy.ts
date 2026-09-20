@@ -51,11 +51,16 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Already onboarded, don't let them re-enter onboarding
+  // Already onboarded, don't let them re-enter onboarding. In development,
+  // /onboarding?preview=1 walks it again from an onboarded account without
+  // saving anything (the page skips the write), so the flow can be reviewed.
   if (token.onboarded && pathname === "/onboarding") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/";
-    return NextResponse.redirect(url);
+    const preview = process.env.NODE_ENV === "development" && request.nextUrl.searchParams.get("preview") === "1";
+    if (!preview) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/";
+      return NextResponse.redirect(url);
+    }
   }
 
   return NextResponse.next();

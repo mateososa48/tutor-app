@@ -187,3 +187,13 @@ test("register scales with grade", () => {
   assert.match(registerForGrade("College / University"), /Precise/);
   assert.match(registerForGrade(null), /Plain, concrete/);
 });
+
+test("a parent's signup answer reaches the prompt as a lead; a student's signup adds nothing", () => {
+  const parent = profileLines({ displayName: "Ana", gradeLevel: "9th grade", onboarding: { by: "parent", concern: "test" } }).join("\n");
+  assert.match(parent, /A parent set this up and said a test is coming up/);
+  assert.match(parent, /never repeat it to the student/);
+  const student = profileLines({ displayName: "Ana", gradeLevel: "9th grade", onboarding: { by: "student" } }).join("\n");
+  assert.doesNotMatch(student, /parent/i);
+  const older = profileLines({ displayName: "Ana", gradeLevel: "9th grade", onboarding: {} }).join("\n");
+  assert.doesNotMatch(older, /parent/i);
+});

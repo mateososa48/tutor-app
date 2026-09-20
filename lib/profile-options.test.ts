@@ -4,9 +4,14 @@ import { LEARNING_PREFS, levelPhrase, matchLevel, normalizePref, STUDENT_LEVELS 
 import { registerForGrade } from "./tutor-prompts";
 
 test("levels keep the strings onboarding stores and the prompts understand", () => {
-  assert.deepEqual(STUDENT_LEVELS.map((l) => l.value), ["Middle school (6–8)", "High school (9–12)", "College / University", "Self-learner"]);
+  assert.deepEqual(
+    STUDENT_LEVELS.map((l) => l.value),
+    ["5th grade", "6th grade", "7th grade", "8th grade", "9th grade", "10th grade", "11th grade", "12th grade", "College / University", "Self-learner"],
+  );
   const generic = registerForGrade("");
-  for (const level of STUDENT_LEVELS.slice(0, 3)) assert.notEqual(registerForGrade(level.value), generic, level.value);
+  // Every level but "not in school" lands in a specific register.
+  for (const level of STUDENT_LEVELS.slice(0, -1)) assert.notEqual(registerForGrade(level.value), generic, level.value);
+  assert.equal(levelPhrase("7th grade"), "in 7th grade");
 });
 
 test("stored levels match loosely and read naturally in a sentence", () => {

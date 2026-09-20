@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
+import { sanitizeOnboarding } from "@/lib/onboarding";
 
 // GET /api/onboarding — fetch current user's profile
 export async function GET() {
@@ -20,7 +21,10 @@ export async function GET() {
   return NextResponse.json(profile ?? null);
 }
 
-// PUT /api/onboarding — upsert user profile (create or update)
+// PUT /api/onboarding — upsert user profile (create or update). Onboarding
+// sends the name, the grade and the onboarding record; the settings page
+// sends everything but that record, and must not erase it, so `onboarding`
+// is only written when the body carries one.
 export async function PUT(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -28,7 +32,12 @@ export async function PUT(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { displayName, gradeLevel, learningPrefs, extraContext, voiceName } = body;
+  const { displayName, gradeLevel, learningPrefs, extraContext, voiceName, onboarding } = body;
+
+  const record = onboarding === undefined ? undefined : sanitizeOnboarding(onboarding);
+  if (onboarding !== undefined && !record) {
+    return NextResponse.json({ error: "Bad onboarding record" }, { status: 400 });
+  }
 
   const now = new Date();
 
@@ -41,6 +50,7 @@ export async function PUT(req: NextRequest) {
       learningPrefs: learningPrefs ?? {},
       extraContext: extraContext ?? null,
       voiceName: voiceName ?? "marin",
+      onboarding: record ?? {},
       onboardedAt: now,
       updatedAt: now,
     })
@@ -52,6 +62,7 @@ export async function PUT(req: NextRequest) {
         learningPrefs: learningPrefs ?? {},
         extraContext: extraContext ?? null,
         voiceName: voiceName ?? "marin",
+        ...(record ? { onboarding: record } : {}),
         // preserve original onboardedAt — don't overwrite on profile edits
         updatedAt: now,
       },

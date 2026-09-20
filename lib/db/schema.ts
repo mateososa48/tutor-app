@@ -56,6 +56,7 @@ export const userProfiles = pgTable("user_profiles", {
   extraContext: text("extra_context"),
   voiceName: text("voice_name").default("marin"),
   tutorNotes: jsonb("tutor_notes").default([]), // string[] — durable facts recorded by the tutor
+  onboarding: jsonb("onboarding").notNull().default({}), // { by, concern?, note? } — lib/onboarding.ts; '{}' for older profiles
   onboardedAt: timestamp("onboarded_at"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

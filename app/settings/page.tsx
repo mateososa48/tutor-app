@@ -29,6 +29,7 @@ import {
   type PrefValue,
 } from "@/lib/profile-options";
 import { profileLines } from "@/lib/tutor-prompts";
+import { BOARD_DOTS } from "@/components/app/board-dots";
 import {
   DEFAULT_TUTOR_VOICE,
   isTutorVoiceName,
@@ -500,11 +501,6 @@ function Blank<T extends string | number>({
 
 // ── What the tutor reads ────────────────────────────────────────────────────
 
-const BOARD_DOTS = {
-  backgroundImage: "radial-gradient(rgba(18,18,21,0.11) 1px, transparent 1.2px)",
-  backgroundSize: "18px 18px",
-  backgroundPosition: "9px 9px",
-} as const;
 const UI_FONT = { fontFamily: "var(--lp-font-body), system-ui, sans-serif" } as const;
 
 function TutorNotes({

@@ -20,6 +20,7 @@
 // app/api/live-token).
 
 import { desmosConfigured } from "./desmos-config";
+import { onboardingProfileLine } from "./onboarding";
 
 export type LearningPrefs = {
   hintVsAnswer?: number;    // -1 hints, 0 balanced, 1 direct answers
@@ -34,6 +35,8 @@ export type StudentProfile = {
   learningPrefs?: LearningPrefs | null;
   extraContext?: string | null;
   voiceName?: string | null;
+  /** The raw onboarding jsonb ({ by, concern?, note? }); `onboardingProfileLine` reads it. */
+  onboarding?: unknown;
 };
 
 // ── Profile helpers ────────────────────────────────────────────────────────
@@ -81,6 +84,10 @@ export function profileLines(profile: StudentProfile | null): string[] {
   if (stated.length > 0) lines.push(`Stated preferences (a soft default; trust what you see them do over this): ${stated.join("; ")}`);
   lines.push(`Register: ${registerForGrade(profile.gradeLevel)}`);
   if (profile.extraContext?.trim()) lines.push(`Context from the student: ${profile.extraContext.trim()}`);
+  // A parent's answer at signup is a lead to check quietly, never a fact
+  // and never something to say back to the student (lib/onboarding.ts).
+  const parentLine = onboardingProfileLine(profile.onboarding);
+  if (parentLine) lines.push(parentLine);
   return lines;
 }
 

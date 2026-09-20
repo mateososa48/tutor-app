@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
         learningPrefs: (row.learningPrefs ?? {}) as StudentProfile["learningPrefs"],
         extraContext: row.extraContext,
         voiceName: row.voiceName,
+        onboarding: row.onboarding,
       }
     : null;
   const notes = Array.isArray(row?.tutorNotes)

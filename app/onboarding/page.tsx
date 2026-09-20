@@ -1,622 +1,481 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useSession } from "next-auth/react";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { TUTOR_VOICES } from "@/lib/voice-settings";
+import { useSession } from "next-auth/react";
+import { AnimatePresence, motion, type Variants } from "motion/react";
+import { ArrowRight, ChevronLeft, GraduationCap, LoaderCircle, Plus, Users, type LucideIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { DitherWave } from "@/components/landing/DitherWave";
+import { SWIRL } from "@/components/landing/swirl";
+import { ChalkMark } from "@/components/app/ChalkMark";
+import { OptionGrid } from "@/components/onboarding/OptionGrid";
+import { TutorNotesBoard } from "@/components/onboarding/TutorNotesBoard";
+import { useReduce } from "@/lib/reduced-motion";
+import {
+  CONCERNS,
+  GRADE_OPTIONS,
+  NOTE_MAX,
+  onboardingNotes,
+  type ConcernKey,
+  type OnboardedBy,
+  type OnboardingDraft,
+} from "@/lib/onboarding";
 
-const GRADES = [
-  "Middle school (6–8)",
-  "High school (9–12)",
-  "College / University",
-  "Self-learner",
-];
+// The first thing a new account sees. One question a screen, in the sign-in
+// page's frame (a narrow column beside the swirl panel), so signing up and
+// setting up read as one thing. The first screen asks who is here: a student
+// answers a name and a grade and goes straight into a session, where the
+// intake dialog asks what they are working on; a parent answers the child's
+// name and grade, then what is going on, and hands the device over. Nothing
+// is a preference or an ability rating (lib/onboarding.ts says why).
+//
+// On the panel the tutor takes notes as the answers come in, in the same
+// handwriting the settings page uses for "what your tutor reads". For a
+// parent's answer the note is the rule the tutor will follow: check it
+// myself. That is the whole idea of the flow, made visible.
 
-const VOICES = TUTOR_VOICES.map((v) => ({ name: v.name, label: v.label, desc: v.tone }));
+type Step = "who" | "name" | "grade" | "concern" | "handoff";
 
-const CONTEXT_PLACEHOLDERS = [
-  "I'm preparing for the AP Calculus exam next month…",
-  "I struggle with story problems but love algebra…",
-  "I learn best when I can see diagrams and examples…",
-  "I'm trying to understand derivatives from scratch…",
-  "I mix up when to flip the fraction when dividing…",
-];
+const BACK: Partial<Record<Step, Step>> = { name: "who", grade: "name", concern: "grade" };
 
-type Prefs = {
-  hintVsAnswer: number;   // -1 hints, 0 balanced, 1 answers
-  pace: number;            // -1 slow, 0 medium, 1 fast
-  examplesVsTheory: number;
-  tone: number;           // -1 strict, 0 balanced, 1 casual
+// The sign-in page's constants: the panel shader only runs where it shows,
+// and the corner behind the white wordmark stays blue.
+const WIDE = "(min-width: 1024px)";
+const subscribeWide = (onChange: () => void) => {
+  const mq = window.matchMedia(WIDE);
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
 };
+const CALM_SPOT = { x: 0, y: 0, rx: 420, ry: 230, cap: 0.55 };
 
-type FormState = {
-  displayName: string;
-  gradeLevel: string;
-  prefs: Prefs;
-  extraContext: string;
-  voiceName: string;
-};
+const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
-const STEP_COUNT = 5;
+// A screen rises out of a slight blur and its pieces follow each other; it
+// leaves faster and softer than it came. Under reduced motion only opacity.
+function stepVariants(reduce: boolean): Variants {
+  return {
+    hidden: reduce ? { opacity: 0 } : { opacity: 0, y: 10, filter: "blur(4px)" },
+    show: {
+      opacity: 1,
+      y: 0,
+      filter: "blur(0px)",
+      transition: reduce ? { duration: 0.15 } : { type: "spring", duration: 0.34, bounce: 0, staggerChildren: 0.07 },
+    },
+    exit: reduce
+      ? { opacity: 0, transition: { duration: 0.1 } }
+      : { opacity: 0, y: -6, filter: "blur(2px)", transition: { duration: 0.14, ease: EASE_OUT } },
+  };
+}
+
+function itemVariants(reduce: boolean): Variants {
+  return {
+    hidden: reduce ? { opacity: 0 } : { opacity: 0, y: 8, filter: "blur(3px)" },
+    show: {
+      opacity: 1,
+      y: 0,
+      filter: "blur(0px)",
+      transition: reduce ? { duration: 0.15 } : { type: "spring", duration: 0.34, bounce: 0 },
+    },
+  };
+}
+
+const GRADE_CHIPS = GRADE_OPTIONS.map((g) => ({ value: g.value, label: g.label, wide: !/grade$/.test(g.value) }));
+const CONCERN_CHIPS = CONCERNS.map((c) => ({ value: c.key, label: c.label }));
 
 export default function OnboardingPage() {
-  const { update } = useSession();
   const router = useRouter();
-  const [step, setStep] = useState(0);
+  const { update } = useSession();
+  const reduce = useReduce() ?? false;
+  const wide = useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE).matches, () => false);
+
+  // In development, /onboarding?preview=1 walks the flow from an onboarded
+  // account without writing anything (proxy.ts lets the page through).
+  const [preview] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      process.env.NODE_ENV === "development" &&
+      new URLSearchParams(window.location.search).get("preview") === "1",
+  );
+  const [step, setStep] = useState<Step>("who");
+  const [draft, setDraft] = useState<OnboardingDraft>({ by: null, name: "", grade: "", concern: null, note: "" });
+  const [noteOpen, setNoteOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<FormState>({
-    displayName: "",
-    gradeLevel: "",
-    prefs: { hintVsAnswer: 0, pace: 0, examplesVsTheory: 0, tone: 0 },
-    extraContext: "",
-    voiceName: "marin",
-  });
+  const [error, setError] = useState<string | null>(null);
 
-  function canAdvance(): boolean {
-    if (step === 0) return form.displayName.trim().length > 0;
-    if (step === 1) return form.gradeLevel.length > 0;
-    return true;
-  }
+  const parent = draft.by === "parent";
+  const first = draft.name.trim().split(/\s+/)[0] || "";
+  const notes = onboardingNotes(draft);
+  const item = itemVariants(reduce);
 
-  function next() {
-    if (step < STEP_COUNT - 1) setStep((s) => s + 1);
+  // Switching roles changes what every later question means ("your name"
+  // becomes "your child's name"), so the answers start over; re-picking the
+  // same role keeps them.
+  function choose(by: OnboardedBy) {
+    setDraft((d) => (d.by === by ? d : { by, name: "", grade: "", concern: null, note: "" }));
+    setNoteOpen((open) => (draft.by === by ? open : false));
+    setStep("name");
   }
 
   function back() {
-    if (step > 0) setStep((s) => s - 1);
+    const to = BACK[step];
+    if (!to || saving) return;
+    setError(null);
+    setStep(to);
   }
 
-  async function finish() {
+  // The profile: a name, a grade, and who answered. A parent's answer rides
+  // along as a record the prompt reads as a lead, never as a fact.
+  async function save(): Promise<boolean> {
     setSaving(true);
+    setError(null);
+    if (preview) return true;
     try {
       const res = await fetch("/api/onboarding", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          displayName: form.displayName,
-          gradeLevel: form.gradeLevel,
-          learningPrefs: form.prefs,
-          extraContext: form.extraContext,
-          voiceName: form.voiceName,
+          displayName: draft.name.trim(),
+          gradeLevel: draft.grade,
+          onboarding: parent
+            ? { by: "parent", concern: draft.concern ?? undefined, note: draft.note.trim() || undefined }
+            : { by: "student" },
         }),
       });
-      if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      if (!res.ok) throw new Error(`save ${res.status}`);
       await update({ onboarded: true });
-      router.push("/");
-    } catch (err) {
-      console.error("[onboarding] finish error:", err);
+      return true;
+    } catch {
+      setError("Couldn't save that. Check your connection and try again.");
       setSaving(false);
+      return false;
     }
   }
 
-  const progress = ((step + 1) / STEP_COUNT) * 100;
+  function submitName(event?: FormEvent) {
+    event?.preventDefault();
+    if (!draft.name.trim()) return;
+    setStep("grade");
+  }
+
+  async function submitGrade() {
+    if (!draft.grade || saving) return;
+    if (parent) {
+      setStep("concern");
+      return;
+    }
+    // A student goes straight in; the session's intake asks what they are working on.
+    if (await save()) router.push("/session");
+  }
+
+  async function submitConcern() {
+    if (!draft.concern || saving) return;
+    if (await save()) {
+      setSaving(false);
+      setStep("handoff");
+    }
+  }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#FFFFFF",
-        padding: 20,
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 480,
-          background: "#fff",
-          borderRadius: 18,
-          boxShadow: "0 2px 6px rgba(18,18,21,0.06), 0 8px 32px rgba(18,18,21,0.08)",
-          overflow: "hidden",
-          animation: "card-in 0.3s cubic-bezier(0.22,1,0.36,1) both",
-        }}
-      >
-        {/* Progress bar */}
-        <div style={{ height: 3, background: "#f0f0f0" }}>
-          <div
-            style={{
-              height: "100%",
-              width: `${progress}%`,
-              background: "#121215",
-              transition: "width 0.4s cubic-bezier(0.22,1,0.36,1)",
-            }}
+    <div className="flex min-h-[100dvh] bg-white p-3 text-(--lp-ink) sm:p-4">
+      <main className="flex flex-1 justify-center px-4 pt-[clamp(28px,11vh,112px)] pb-10">
+        <div className="w-full max-w-[400px]">
+          <ChalkMark size={28} />
+
+          {/* A fixed slot for Back, so the question sits at the same height on every screen. */}
+          <div className="mt-4 flex h-11 items-center">
+            {BACK[step] && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={back}
+                disabled={saving}
+                className="-ml-2.5 h-11 gap-1 rounded-[10px] px-2.5 text-[13.5px] font-medium text-(--lp-ink-2) hover:text-(--lp-ink)"
+              >
+                <ChevronLeft className="size-4" strokeWidth={2.25} aria-hidden />
+                Back
+              </Button>
+            )}
+          </div>
+
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div key={step} variants={stepVariants(reduce)} initial="hidden" animate="show" exit="exit" className="mt-2">
+              {step === "who" && (
+                <StepFrame item={item} title="Who's setting this up?" sub="So your tutor knows who it's talking to.">
+                  <motion.div variants={item} className="mt-7 flex flex-col gap-3">
+                    <ChoiceTile
+                      icon={GraduationCap}
+                      title="I'm the student"
+                      detail="I'll be the one talking to the tutor."
+                      onClick={() => choose("student")}
+                    />
+                    <ChoiceTile
+                      icon={Users}
+                      title="I'm a parent"
+                      detail="I'm setting this up for my child."
+                      onClick={() => choose("parent")}
+                    />
+                  </motion.div>
+                </StepFrame>
+              )}
+
+              {step === "name" && (
+                <StepFrame
+                  item={item}
+                  focusHeading={false}
+                  title={parent ? "What's your child's name?" : "What should your tutor call you?"}
+                  sub={parent ? "What their tutor should call them." : "Just a first name is perfect."}
+                >
+                  <motion.form variants={item} noValidate onSubmit={submitName} className="mt-7">
+                    <Input
+                      id="onboarding-name"
+                      name="name"
+                      autoFocus
+                      autoComplete={parent ? "off" : "given-name"}
+                      autoCapitalize="words"
+                      spellCheck={false}
+                      maxLength={40}
+                      placeholder="First name"
+                      aria-labelledby="onboarding-question"
+                      value={draft.name}
+                      onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                      className="h-12 rounded-[10px] border-(--lp-line-strong) bg-white px-4 text-[17px] md:text-[17px]"
+                    />
+                    <Continue disabled={!draft.name.trim()} onClick={() => submitName()} />
+                  </motion.form>
+                </StepFrame>
+              )}
+
+              {step === "grade" && (
+                <StepFrame
+                  item={item}
+                  title={parent ? `What grade is ${first} in?` : "What grade are you in?"}
+                  sub="This shapes how your tutor explains things."
+                >
+                  <motion.div variants={item} className="mt-7">
+                    <OptionGrid
+                      labelledBy="onboarding-question"
+                      columns={4}
+                      options={GRADE_CHIPS}
+                      value={draft.grade || null}
+                      onChange={(grade) => setDraft((d) => ({ ...d, grade }))}
+                    />
+                  </motion.div>
+                  <motion.div variants={item}>
+                    <Continue
+                      label={parent ? "Continue" : "Start a session"}
+                      busyLabel="Starting…"
+                      disabled={!draft.grade}
+                      busy={saving}
+                      onClick={() => void submitGrade()}
+                    />
+                    <ErrorLine error={error} />
+                  </motion.div>
+                </StepFrame>
+              )}
+
+              {step === "concern" && (
+                <StepFrame
+                  item={item}
+                  title="What's going on with math right now?"
+                  sub="Your tutor will find out for itself. This just tells it where to look first."
+                >
+                  <motion.div variants={item} className="mt-7">
+                    <OptionGrid
+                      labelledBy="onboarding-question"
+                      options={CONCERN_CHIPS}
+                      value={draft.concern}
+                      onChange={(concern) => setDraft((d) => ({ ...d, concern: concern as ConcernKey }))}
+                    />
+                  </motion.div>
+                  <motion.div variants={item} className="mt-3">
+                    {noteOpen ? (
+                      <Textarea
+                        id="onboarding-note"
+                        autoFocus
+                        rows={2}
+                        maxLength={NOTE_MAX}
+                        placeholder="Anything that would help. Optional."
+                        aria-label="A note for the tutor"
+                        value={draft.note}
+                        onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
+                        className="min-h-[72px] resize-none rounded-[10px] border-(--lp-line-strong) bg-white px-4 py-3 text-[15px] leading-[1.5]"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setNoteOpen(true)}
+                        className="-ml-2 inline-flex h-9 items-center gap-1.5 rounded-[8px] px-2 text-[13.5px] font-medium text-(--lp-ink-2) outline-none transition-colors duration-150 hover:text-(--lp-ink) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
+                      >
+                        <Plus className="size-4" strokeWidth={2.25} aria-hidden />
+                        Add a note
+                      </button>
+                    )}
+                  </motion.div>
+                  <motion.div variants={item}>
+                    <Continue busyLabel="Saving…" disabled={!draft.concern} busy={saving} onClick={() => void submitConcern()} />
+                    <ErrorLine error={error} />
+                  </motion.div>
+                </StepFrame>
+              )}
+
+              {step === "handoff" && (
+                <StepFrame
+                  item={item}
+                  title={`${first} is all set.`}
+                  sub={`Hand this to ${first} when they're ready. Your tutor will ask what they're working on.`}
+                >
+                  {/* Below the panel's breakpoint the notepad is the content of this screen. */}
+                  <motion.div variants={item} className="mt-6 lg:hidden">
+                    <TutorNotesBoard notes={notes} />
+                  </motion.div>
+                  <motion.div variants={item} className="mt-7 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Button
+                      type="button"
+                      onClick={() => router.push("/session")}
+                      className="btn-gloss-lift h-11 gap-2 rounded-[10px] px-5 text-[14px] font-semibold"
+                    >
+                      Start a session now
+                      <ArrowRight className="size-4" strokeWidth={2.25} aria-hidden />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => router.push("/")}
+                      className="h-11 rounded-[10px] px-4 text-[14px] font-medium text-(--lp-ink-2) hover:text-(--lp-ink)"
+                    >
+                      I&apos;ll do it later
+                    </Button>
+                  </motion.div>
+                </StepFrame>
+              )}
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </main>
+
+      {/* The sign-in page's panel, with the tutor's notepad on it. */}
+      <aside className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-[#4696f7] lg:block">
+        {wide && <DitherWave {...SWIRL} calmSpot={CALM_SPOT} animate={!reduce} className="absolute inset-0" />}
+        <div className="absolute inset-0 flex items-center justify-center p-10">
+          <TutorNotesBoard
+            notes={notes}
+            className="w-full max-w-[360px] shadow-[0_1px_2px_rgba(18,18,21,0.06),0_16px_40px_rgba(18,40,80,0.18)]"
           />
         </div>
-
-        <div style={{ padding: "36px 36px 32px" }}>
-          {/* Step counter */}
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: "#909090",
-              letterSpacing: "0.09em",
-              textTransform: "uppercase",
-              marginBottom: 24,
-            }}
-          >
-            {step + 1} of {STEP_COUNT}
-          </div>
-
-          {/* Steps */}
-          <div
-            key={step}
-            style={{ animation: "step-in 0.22s cubic-bezier(0.22,1,0.36,1) both" }}
-          >
-            {step === 0 && (
-              <StepName
-                value={form.displayName}
-                onChange={(v) => setForm((f) => ({ ...f, displayName: v }))}
-              />
-            )}
-            {step === 1 && (
-              <StepGrade
-                value={form.gradeLevel}
-                onChange={(v) => setForm((f) => ({ ...f, gradeLevel: v }))}
-              />
-            )}
-            {step === 2 && (
-              <StepPrefs
-                value={form.prefs}
-                onChange={(v) => setForm((f) => ({ ...f, prefs: v }))}
-              />
-            )}
-            {step === 3 && (
-              <StepContext
-                value={form.extraContext}
-                onChange={(v) => setForm((f) => ({ ...f, extraContext: v }))}
-              />
-            )}
-            {step === 4 && (
-              <StepVoice
-                value={form.voiceName}
-                onChange={(v) => setForm((f) => ({ ...f, voiceName: v }))}
-              />
-            )}
-          </div>
-
-          {/* Navigation */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginTop: 32,
-            }}
-          >
-            {step > 0 ? (
-              <button onClick={back} style={backBtnStyle}>
-                Back
-              </button>
-            ) : (
-              <div />
-            )}
-
-            {step < STEP_COUNT - 1 ? (
-              <button
-                onClick={next}
-                disabled={!canAdvance()}
-                style={nextBtnStyle(!canAdvance())}
-                onMouseOver={(e) =>
-                  canAdvance() && (e.currentTarget.style.background = "#2a2a2a")
-                }
-                onMouseOut={(e) => (e.currentTarget.style.background = "#121215")}
-              >
-                Continue
-                <ArrowRight />
-              </button>
-            ) : (
-              <button
-                onClick={finish}
-                disabled={saving}
-                style={nextBtnStyle(saving)}
-                onMouseOver={(e) =>
-                  !saving && (e.currentTarget.style.background = "#2a2a2a")
-                }
-                onMouseOut={(e) => (e.currentTarget.style.background = "#121215")}
-              >
-                {saving ? "Saving…" : "Start learning"}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <style>{`
-        @keyframes card-in {
-          from { opacity: 0; transform: translateY(12px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes step-in {
-          from { opacity: 0; transform: translateX(8px); }
-          to   { opacity: 1; transform: translateX(0); }
-        }
-      `}</style>
+        <p aria-hidden className="absolute bottom-6 left-6 m-0 flex items-center gap-2">
+          <ChalkMark size={28} color="var(--paper)" />
+          <span className="lp-brand text-[28px] leading-none text-(--paper)">chalk</span>
+        </p>
+      </aside>
     </div>
   );
 }
 
-// ── Step 0: Name ─────────────────────────────────────────────────────────────
+// ── Pieces ──────────────────────────────────────────────────────────────────
 
-function StepName({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  useEffect(() => { ref.current?.focus(); }, []);
-
-  return (
-    <div>
-      <h1 style={headingStyle}>What should we call you?</h1>
-      <p style={subStyle}>Your tutor will use this name to greet you each session.</p>
-      <input
-        ref={ref}
-        type="text"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && value.trim() && (e.currentTarget.blur())}
-        placeholder="Your first name"
-        style={largeInputStyle}
-        onFocus={(e) =>
-          Object.assign(e.currentTarget.style, {
-            ...largeInputStyle,
-            borderColor: "#121215",
-            boxShadow: "0 0 0 3px rgba(10,10,10,0.08)",
-          })
-        }
-        onBlur={(e) => Object.assign(e.currentTarget.style, largeInputStyle)}
-      />
-    </div>
-  );
-}
-
-// ── Step 1: Grade ─────────────────────────────────────────────────────────────
-
-function StepGrade({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div>
-      <h1 style={headingStyle}>What level are you at?</h1>
-      <p style={subStyle}>This helps your tutor pitch explanations at the right depth.</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 20 }}>
-        {GRADES.map((g) => (
-          <button
-            key={g}
-            onClick={() => onChange(g)}
-            style={{
-              height: 48,
-              padding: "0 18px",
-              border: value === g ? "1.5px solid #121215" : "1px solid #d0d0d0",
-              borderRadius: 10,
-              background: value === g ? "#121215" : "#fff",
-              color: value === g ? "#fff" : "#121215",
-              fontSize: 14,
-              fontWeight: value === g ? 600 : 400,
-              cursor: "pointer",
-              textAlign: "left",
-              transition: "all 0.12s",
-              fontFamily: "inherit",
-            }}
-          >
-            {g}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ── Step 2: Learning prefs (sliders) ─────────────────────────────────────────
-
-function StepPrefs({ value, onChange }: { value: Prefs; onChange: (v: Prefs) => void }) {
-  function set(key: keyof Prefs, val: number) {
-    onChange({ ...value, [key]: val });
-  }
-
-  return (
-    <div>
-      <h1 style={headingStyle}>How do you learn best?</h1>
-      <p style={subStyle}>These shape how your tutor explains things. Adjust anytime in settings.</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 28, marginTop: 24 }}>
-        <Slider
-          label="Hints vs. Direct answers"
-          left="More hints"
-          right="Give me answers"
-          value={value.hintVsAnswer}
-          onChange={(v) => set("hintVsAnswer", v)}
-        />
-        <Slider
-          label="Pace"
-          left="Slow & thorough"
-          right="Fast & concise"
-          value={value.pace}
-          onChange={(v) => set("pace", v)}
-        />
-        <Slider
-          label="Style"
-          left="Lots of examples"
-          right="Theory first"
-          value={value.examplesVsTheory}
-          onChange={(v) => set("examplesVsTheory", v)}
-        />
-        <Slider
-          label="Tone"
-          left="Formal & rigorous"
-          right="Casual & friendly"
-          value={value.tone}
-          onChange={(v) => set("tone", v)}
-        />
-      </div>
-    </div>
-  );
-}
-
-function Slider({
-  label,
-  left,
-  right,
-  value,
-  onChange,
+// The question and its one line of help. Focus moves to the question when a
+// screen opens, so a screen reader hears where it is; the name screen focuses
+// its input instead.
+function StepFrame({
+  item,
+  title,
+  sub,
+  focusHeading = true,
+  children,
 }: {
-  label: string;
-  left: string;
-  right: string;
-  value: number;
-  onChange: (v: number) => void;
+  item: Variants;
+  title: string;
+  sub: string;
+  focusHeading?: boolean;
+  children: ReactNode;
 }) {
-  const steps = [-1, 0, 1];
-  return (
-    <div>
-      <div
-        style={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: "#121215",
-          marginBottom: 10,
-          letterSpacing: "0.01em",
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        {steps.map((s) => (
-          <button
-            key={s}
-            onClick={() => onChange(s)}
-            title={s === -1 ? left : s === 1 ? right : "Balanced"}
-            style={{
-              flex: 1,
-              height: 36,
-              border: value === s ? "1.5px solid #121215" : "1px solid #d8d8d8",
-              borderRadius: 8,
-              background: value === s ? "#121215" : "#f8f8f8",
-              cursor: "pointer",
-              transition: "all 0.1s",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                background: value === s ? "#fff" : "#c0c0c0",
-              }}
-            />
-          </button>
-        ))}
-      </div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginTop: 6,
-        }}
-      >
-        <span style={{ fontSize: 11, color: "#909090" }}>{left}</span>
-        <span style={{ fontSize: 11, color: "#909090" }}>{right}</span>
-      </div>
-    </div>
-  );
-}
-
-// ── Step 3: Extra context ─────────────────────────────────────────────────────
-
-function StepContext({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [phIdx, setPhIdx] = useState(0);
-  const [displayed, setDisplayed] = useState("");
-  const [typing, setTyping] = useState(true);
-  const typerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  const ref = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    if (!typing) return;
-    const target = CONTEXT_PLACEHOLDERS[phIdx];
-    if (displayed.length < target.length) {
-      typerRef.current = setTimeout(() => {
-        setDisplayed(target.slice(0, displayed.length + 1));
-      }, 28);
-    } else {
-      typerRef.current = setTimeout(() => {
-        setTyping(false);
-        setTimeout(() => {
-          setDisplayed("");
-          setPhIdx((i) => (i + 1) % CONTEXT_PLACEHOLDERS.length);
-          setTyping(true);
-        }, 1800);
-      }, 1200);
-    }
-    return () => { if (typerRef.current) clearTimeout(typerRef.current); };
-  }, [displayed, typing, phIdx]);
-
+    if (focusHeading) ref.current?.focus({ preventScroll: true });
+  }, [focusHeading]);
   return (
-    <div>
-      <h1 style={headingStyle}>Anything else to know?</h1>
-      <p style={subStyle}>
-        Share what you&apos;re working toward, what you find hard, or how you like to study. Optional — skip if you prefer.
-      </p>
-      <div style={{ position: "relative", marginTop: 20 }}>
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={value ? "" : displayed}
-          rows={5}
-          style={{
-            width: "100%",
-            padding: "14px 16px",
-            border: "1px solid #d0d0d0",
-            borderRadius: 10,
-            fontSize: 14,
-            color: "#121215",
-            background: "#fff",
-            resize: "none",
-            outline: "none",
-            fontFamily: "inherit",
-            lineHeight: 1.6,
-            boxSizing: "border-box",
-            transition: "border-color 0.12s, box-shadow 0.12s",
-          }}
-          onFocus={(e) => {
-            e.currentTarget.style.borderColor = "#121215";
-            e.currentTarget.style.boxShadow = "0 0 0 3px rgba(10,10,10,0.08)";
-          }}
-          onBlur={(e) => {
-            e.currentTarget.style.borderColor = "#d0d0d0";
-            e.currentTarget.style.boxShadow = "none";
-          }}
-        />
-      </div>
-      <p style={{ fontSize: 12, color: "#909090", marginTop: 8 }}>
-        Your tutor reads this before each session to personalize how they help you.
-      </p>
-    </div>
-  );
-}
-
-// ── Step 4: Voice ─────────────────────────────────────────────────────────────
-
-function StepVoice({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  return (
-    <div>
-      <h1 style={headingStyle}>Choose your tutor&apos;s voice</h1>
-      <p style={subStyle}>Pick the voice you&apos;d enjoy listening to during sessions.</p>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 1fr",
-          gap: 10,
-          marginTop: 20,
-        }}
+    <>
+      <motion.h1
+        ref={ref}
+        id="onboarding-question"
+        tabIndex={-1}
+        variants={item}
+        className="lp-display m-0 text-[28px] leading-[1.15] tracking-[-0.02em] text-balance outline-none sm:text-[31px]"
       >
-        {VOICES.map((v) => (
-          <button
-            key={v.name}
-            onClick={() => onChange(v.name)}
-            style={{
-              padding: "14px 16px",
-              border: value === v.name ? "1.5px solid #121215" : "1px solid #d0d0d0",
-              borderRadius: 10,
-              background: value === v.name ? "#121215" : "#fff",
-              cursor: "pointer",
-              textAlign: "left",
-              transition: "all 0.12s",
-              fontFamily: "inherit",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 600,
-                color: value === v.name ? "#fff" : "#121215",
-                marginBottom: 3,
-              }}
-            >
-              {v.label}
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: value === v.name ? "rgba(255,255,255,0.65)" : "#909090",
-              }}
-            >
-              {v.desc}
-            </div>
-          </button>
-        ))}
-      </div>
-    </div>
+        {title}
+      </motion.h1>
+      <motion.p variants={item} className="m-0 mt-2.5 text-[15px] leading-[1.5] text-(--lp-ink-2)">
+        {sub}
+      </motion.p>
+      {children}
+    </>
   );
 }
 
-// ── Shared styles ─────────────────────────────────────────────────────────────
-
-const headingStyle: React.CSSProperties = {
-  fontSize: 22,
-  fontWeight: 600,
-  color: "#121215",
-  letterSpacing: "-0.02em",
-  marginBottom: 6,
-};
-
-const subStyle: React.CSSProperties = {
-  fontSize: 14,
-  color: "#5a5a5a",
-  lineHeight: 1.5,
-};
-
-const largeInputStyle: React.CSSProperties = {
-  width: "100%",
-  height: 52,
-  padding: "0 18px",
-  border: "1px solid #d0d0d0",
-  borderRadius: 10,
-  fontSize: 16,
-  color: "#121215",
-  background: "#fff",
-  outline: "none",
-  fontFamily: "inherit",
-  boxSizing: "border-box",
-  marginTop: 20,
-  transition: "border-color 0.12s, box-shadow 0.12s",
-};
-
-const backBtnStyle: React.CSSProperties = {
-  height: 40,
-  paddingLeft: 16,
-  paddingRight: 16,
-  background: "transparent",
-  color: "#5a5a5a",
-  border: "1px solid #d0d0d0",
-  borderRadius: 8,
-  fontSize: 14,
-  fontWeight: 500,
-  cursor: "pointer",
-  fontFamily: "inherit",
-};
-
-function nextBtnStyle(disabled: boolean): React.CSSProperties {
-  return {
-    height: 44,
-    paddingLeft: 22,
-    paddingRight: 22,
-    background: disabled ? "#9a9a9a" : "#121215",
-    color: "#fff",
-    border: "none",
-    borderRadius: 10,
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: disabled ? "not-allowed" : "pointer",
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    fontFamily: "inherit",
-    transition: "background 0.15s",
-  };
+function ChoiceTile({ icon: Icon, title, detail, onClick }: { icon: LucideIcon; title: string; detail: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex w-full items-center gap-4 rounded-[14px] border border-(--lp-line-strong) bg-white px-5 py-4 text-left outline-none transition-[border-color,scale] duration-150 ease-out hover:border-(--lp-ink)/30 focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+    >
+      <Icon className="size-6 shrink-0 text-(--lp-sky-deep)" strokeWidth={2} aria-hidden />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="text-[16px] font-semibold leading-[1.3] text-(--lp-ink)">{title}</span>
+        <span className="mt-0.5 text-[13.5px] leading-[1.4] text-(--lp-ink-2)">{detail}</span>
+      </span>
+      <ArrowRight
+        className="size-4 shrink-0 text-(--lp-ink-3) transition-[translate,color] duration-150 ease-out group-hover:translate-x-0.5 group-hover:text-(--lp-ink) motion-reduce:transition-none"
+        strokeWidth={2.25}
+        aria-hidden
+      />
+    </button>
+  );
 }
 
-function ArrowRight() {
+function Continue({
+  label = "Continue",
+  busyLabel = "Saving…",
+  disabled,
+  busy = false,
+  onClick,
+}: {
+  label?: string;
+  busyLabel?: string;
+  disabled?: boolean;
+  busy?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-      <path d="M3 7h8M7.5 3.5L11 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <Button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || busy}
+      className="btn-gloss-lift mt-6 h-11 w-full gap-2 rounded-[10px] text-[14px] font-semibold sm:w-auto sm:min-w-[164px] sm:px-5"
+    >
+      {busy ? (
+        <>
+          <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
+          {busyLabel}
+        </>
+      ) : (
+        <>
+          {label}
+          <ArrowRight className="size-4" strokeWidth={2.25} aria-hidden />
+        </>
+      )}
+    </Button>
+  );
+}
+
+function ErrorLine({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <p role="alert" className="m-0 mt-3 text-[13.5px] leading-[1.45] text-(--danger)">
+      {error}
+    </p>
   );
 }

@@ -5,10 +5,23 @@
 // the settings page's sentences ("I'm in high school", "keep it casual").
 
 export const STUDENT_LEVELS = [
+  { value: "5th grade", label: "5th grade", detail: "Elementary", phrase: "in 5th grade" },
+  { value: "6th grade", label: "6th grade", detail: "Middle school", phrase: "in 6th grade" },
+  { value: "7th grade", label: "7th grade", detail: "Middle school", phrase: "in 7th grade" },
+  { value: "8th grade", label: "8th grade", detail: "Middle school", phrase: "in 8th grade" },
+  { value: "9th grade", label: "9th grade", detail: "High school", phrase: "in 9th grade" },
+  { value: "10th grade", label: "10th grade", detail: "High school", phrase: "in 10th grade" },
+  { value: "11th grade", label: "11th grade", detail: "High school", phrase: "in 11th grade" },
+  { value: "12th grade", label: "12th grade", detail: "High school", phrase: "in 12th grade" },
+  { value: "College / University", label: "College", detail: "Or university", phrase: "in college" },
+  { value: "Self-learner", label: "Not in school", detail: "Learning on my own", phrase: "learning on my own" },
+] as const;
+
+// What onboarding stored before Sept 20 2026: a school band instead of a
+// grade. Still matched so those profiles read correctly; not offered again.
+const LEGACY_LEVELS = [
   { value: "Middle school (6–8)", label: "Middle school", detail: "Grades 6–8", phrase: "in middle school" },
   { value: "High school (9–12)", label: "High school", detail: "Grades 9–12", phrase: "in high school" },
-  { value: "College / University", label: "College", detail: "Or university", phrase: "in college" },
-  { value: "Self-learner", label: "Self-learner", detail: "On your own", phrase: "learning on my own" },
 ] as const;
 
 export type LearningPrefKey = "hintVsAnswer" | "pace" | "examplesVsTheory" | "tone";
@@ -69,7 +82,12 @@ const squash = (text: string) => text.replace(/[‐‑‒–—-]/g, "-").replac
 /** The option a stored level means, tolerating hyphen and case differences. */
 export function matchLevel(value: string | null | undefined) {
   if (!value) return null;
-  return STUDENT_LEVELS.find((level) => squash(level.value) === squash(value)) ?? null;
+  const wanted = squash(value);
+  return (
+    STUDENT_LEVELS.find((level) => squash(level.value) === wanted) ??
+    LEGACY_LEVELS.find((level) => squash(level.value) === wanted) ??
+    null
+  );
 }
 
 /** How a stored level reads in "I'm …": an option's phrase, "in grade 11", or the text as stored. */
