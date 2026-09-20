@@ -99,7 +99,7 @@ float body(vec2 q, float r, float t) {
     // Wider than tall, with a soft top: the rounding grows a small triangle outward.
     d = sdTriangle(vec2(q.x, q.y + 0.18 * r), 0.66 * r) - 0.3 * r;
   }
-  return d - u_wobble * 0.02 * r * w;
+  return d - u_wobble * 0.025 * r * w;
 }
 
 void main() {
@@ -142,12 +142,12 @@ void main() {
     } else {
       vec2 he = vec2(0.16, 0.22) * r;
       he.y *= (1.0 - 0.7 * u_squint) * max(0.12, 1.0 - u_blink);
-      float ed = sdRoundBox(e, he, min(he.x, he.y) * 0.45);
+      float ed = sdRoundBox(e, he, min(he.x, he.y) * 0.65);
       if (ed < 0.0) {
         col = vec3(0.07, 0.07, 0.08);
-        // The glint is exactly one block, whatever the size.
-        vec2 hc = e - vec2(-0.05, 0.08) * r;
-        if (u_blink < 0.5 && max(abs(hc.x), abs(hc.y)) < ow * 0.55) col = vec3(1.0);
+        // The glint is two blocks square, whatever the size.
+        vec2 hc = e - vec2(-0.055, 0.085) * r;
+        if (u_blink < 0.5 && max(abs(hc.x), abs(hc.y)) < ow * 1.05) col = vec3(1.0);
       }
     }
   }
@@ -241,8 +241,8 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       }
       gl.viewport(0, 0, w, w);
       gl.uniform2f(U.res, w, w);
-      // About 30 blocks across whatever the size, so the look stays the same.
-      gl.uniform1f(U.pixel, Math.max(2, Math.round(css / 30)) * dpr);
+      // About 48 blocks across whatever the size, so the look stays the same.
+      gl.uniform1f(U.pixel, Math.max(2, Math.round((css * dpr) / 48)));
     };
 
     const draw = () => {
@@ -337,14 +337,14 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       }
     };
 
-    // The simulation runs every frame; the body is drawn twelve times a
-    // second, the pace of pixel art, so the outline steps instead of crawling.
+    // The simulation runs every frame; the body is drawn 24 times a second,
+    // so it still reads as drawn frames rather than a crawling outline.
     let lastDraw = -Infinity;
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
       if (!visible) return;
       step(now);
-      if (now - lastDraw >= 1000 / 12) {
+      if (now - lastDraw >= 1000 / 24) {
         lastDraw = now;
         draw();
       }
