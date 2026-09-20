@@ -4,14 +4,27 @@ import { useEffect, useRef } from "react";
 import { VOICE_BLUE } from "@/components/session/VoiceWave";
 
 // The tutor's pet: a small dithered blob in the voice wave's blues with two
-// pixel eyes, drawn in raw WebGL from a signed distance field. The outline is
-// one of three shapes (circle, rounded square, squat triangle), wobbled by a
-// slow sine on the angle so it never sits still, squashed and leaned by the
-// state machine below, and pixelated with the same Bayer dither as the wave.
-// The canvas is transparent, so it can sit over the board or any surface.
+// pixel eyes, drawn in raw WebGL from a signed distance field. Mateo picked
+// the rounded square (Sept 20); the circle and the squat triangle stay
+// selectable for the lab. The outline is wobbled by a slow sine on the angle
+// so it never sits still, squashed and leaned by the state machine below on
+// springs (so every change of pose overshoots a little and settles), and
+// pixelated with the same Bayer dither as the wave. The canvas is transparent,
+// so it can sit over the board or any surface.
 
 export type PetShape = "circle" | "square" | "triangle";
-export type PetState = "idle" | "listening" | "thinking" | "speaking" | "writing" | "happy";
+export type PetState =
+  | "idle"
+  | "listening"
+  | "thinking"
+  | "speaking"
+  | "writing"
+  | "happy"
+  | "hello"
+  | "puzzled"
+  | "surprised"
+  | "sleepy"
+  | "arrive";
 
 type Props = {
   shape?: PetShape;
@@ -45,7 +58,7 @@ uniform float u_wobble;
 uniform float u_level;
 uniform vec2 u_look;
 uniform float u_blink;
-uniform float u_squint;
+uniform vec2 u_squint;   // left, right: closes the eye (positive) or widens it (negative)
 uniform float u_happy;
 uniform vec2 u_offset;
 uniform float u_eyeY;
@@ -141,7 +154,11 @@ void main() {
       if (ring < 0.0 && e.y > -0.01 * r) col = vec3(0.07, 0.07, 0.08);
     } else {
       vec2 he = vec2(0.16, 0.22) * r;
-      he.y *= (1.0 - 0.7 * u_squint) * max(0.12, 1.0 - u_blink);
+      float sq = i == 0 ? u_squint.x : u_squint.y;
+      float full = he.y;
+      he.y *= clamp(1.0 - 0.7 * sq, 0.25, 1.35) * max(0.12, 1.0 - u_blink);
+      // A narrowed eye is a lid coming down: the bottom edge stays put.
+      e.y += max(0.0, full - he.y);
       float ed = sdRoundBox(e, he, min(he.x, he.y) * 0.65);
       if (ed < 0.0) {
         col = vec3(0.07, 0.07, 0.08);
@@ -168,13 +185,18 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
 }
 
 type Live = {
-  sx: number; sy: number; lean: number; wobble: number; lookX: number; lookY: number;
-  squint: number; happy: number; offX: number; offY: number; level: number;
+  sx: number; vsx: number; sy: number; vsy: number; lean: number; wobble: number; lookX: number; lookY: number;
+  squintL: number; squintR: number; happy: number; offX: number; offY: number; level: number;
 };
 
 const ease = (cur: number, target: number, k: number, dt: number) => cur + (target - cur) * (1 - Math.exp(-k * dt));
+// A slightly underdamped spring: the pose overshoots and settles.
+const spring = (cur: number, vel: number, target: number, dt: number, k = 150, c = 15): [number, number] => {
+  const v = vel + (k * (target - cur) - c * vel) * dt;
+  return [cur + v * dt, v];
+};
 
-export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, size = 56, reduceMotion = false, className }: Props) {
+export function TutorPet({ shape = "square", state = "idle", level = 0, look, size = 56, reduceMotion = false, className }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const props = useRef({ shape, state, level, look, size, reduceMotion });
   const kick = useRef<(() => void) | null>(null);
@@ -217,15 +239,22 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       eyeY: u("u_eyeY"),
     };
 
-    const live: Live = { sx: 1, sy: 1, lean: 0, wobble: 0.45, lookX: 0, lookY: 0, squint: 0, happy: 0, offX: 0, offY: 0, level: 0 };
+    const live: Live = { sx: 1, vsx: 0, sy: 1, vsy: 0, lean: 0, wobble: 0.45, lookX: 0, lookY: 0, squintL: 0, squintR: 0, happy: 0, offX: 0, offY: 0, level: 0 };
     // The hop, for "happy": a little jump with a squash on landing.
     let vy = 0;
     let hop = 0;
     let lastHop = -Infinity;
-    // Blinks every few seconds; a glance somewhere else now and then while idle.
+    // Blinks every few seconds, sometimes twice; a glance somewhere else now
+    // and then while idle; a stretch once in a long while.
     let nextBlink = 2500 + Math.random() * 3000;
     let blinkStart = -1;
+    let blinkMs = 220;
+    let doubleBlink = false;
     let glance = { x: 0, y: 0, until: 0, next: 4000 + Math.random() * 4000 };
+    let nextStretch = 15000 + Math.random() * 12000;
+    let stretchUntil = 0;
+    let prevState: PetState | null = null;
+    let enteredAt = 0;
     let clock = 0;
     let last = performance.now();
     let raf = 0;
@@ -254,9 +283,9 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       gl.uniform1f(U.wobble, live.wobble);
       gl.uniform1f(U.level, live.level);
       gl.uniform2f(U.look, live.lookX, live.lookY);
-      const b = blinkStart < 0 ? 0 : Math.sin(Math.min(1, (clock * 1000 - blinkStart) / 220) * Math.PI);
+      const b = blinkStart < 0 ? 0 : Math.sin(Math.min(1, (clock * 1000 - blinkStart) / blinkMs) * Math.PI);
       gl.uniform1f(U.blink, b);
-      gl.uniform1f(U.squint, live.squint);
+      gl.uniform2f(U.squint, live.squintL, live.squintR);
       gl.uniform1f(U.happy, live.happy);
       gl.uniform2f(U.offset, live.offX, live.offY);
       // The triangle's wide part is low, so its eyes sit lower.
@@ -274,10 +303,22 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
       const lookX = c.look?.x ?? 0;
       const lookY = c.look?.y ?? 0;
 
+      if (c.state !== prevState) {
+        prevState = c.state;
+        enteredAt = ms;
+        // Entrances that start from a pose: the pop-in and the startle.
+        if (c.state === "arrive") { live.sx = 0.2; live.sy = 0.2; live.vsx = 0; live.vsy = 0; }
+        if (c.state === "surprised") { live.vsy = 3.5; live.vsx = -2.5; }
+        if (c.state === "happy") lastHop = -Infinity;
+      }
+      const since = (ms - enteredAt) / 1000;
+
       // Targets per state.
-      let sx = 1, sy = 1, lean = 0, wobble = 0.45, lx = lookX * 0.6, ly = lookY * 0.6, squint = 0, happy = 0, bob = 0;
+      let sx = 1, sy = 1, lean = 0, wobble = 0.45, lx = lookX * 0.6, ly = lookY * 0.6, sqL = 0, sqR = 0, happy = 0, bob = 0, offX = 0;
+      let blinkSpeed = 220;
       switch (c.state) {
         case "idle":
+        case "arrive":
           sx = 1 + 0.03 * Math.sin(t * 1.0);
           sy = 1 - 0.03 * Math.sin(t * 1.0);
           bob = 0.025 * (0.5 + 0.5 * Math.sin(t * 1.0));
@@ -285,55 +326,83 @@ export function TutorPet({ shape = "triangle", state = "idle", level = 0, look, 
             glance = { x: (Math.random() - 0.5) * 1.6, y: (Math.random() - 0.3) * 1.2, until: ms + 700 + Math.random() * 600, next: ms + 4000 + Math.random() * 5000 };
           }
           if (ms < glance.until) { lx = glance.x; ly = glance.y; }
+          if (ms > nextStretch) { stretchUntil = ms + 450; nextStretch = ms + 15000 + Math.random() * 15000; }
+          if (ms < stretchUntil) { sy = 1.14; sx = 0.9; sqL = sqR = 0.5; }
           break;
         case "listening":
-          sx = 0.96; sy = 1.05; lean = -0.14 * lookX; wobble = 0.3; lx = lookX; ly = lookY; squint = -0.15;
+          sx = 0.96; sy = 1.05; lean = -0.14 * lookX; wobble = 0.3; lx = lookX; ly = lookY; sqL = sqR = -0.15;
           break;
         case "thinking":
-          lean = 0.14 * Math.sin(t * 1.4); wobble = 0.7; lx = -0.55; ly = 0.75; squint = 0.1; sy = 1 + 0.02 * Math.sin(t * 2.8);
+          lean = 0.14 * Math.sin(t * 1.4); wobble = 0.7;
+          // The eyes scan slowly from one side to the other.
+          lx = -0.2 + 0.5 * Math.sin(t * 0.9); ly = 0.75; sqL = sqR = 0.1; sy = 1 + 0.02 * Math.sin(t * 2.8);
           break;
         case "speaking":
           sx = 1 + 0.06 * live.level; sy = 1 + 0.04 * live.level; wobble = 0.5 + 0.9 * live.level; lx = lookX; ly = lookY;
+          sqL = sqR = 0.2 * live.level;
+          bob = 0.015 * live.level;   // a syllable bounce
           break;
         case "writing":
-          sx = 1.04; sy = 0.96; lean = 0.16; lx = 0.7; ly = -0.55; squint = 0.45; wobble = 0.35;
+          sx = 1.04; sy = 0.96 + 0.012 * Math.sin(t * 22); lean = 0.16; lx = 0.7; ly = -0.55; sqL = sqR = 0.45; wobble = 0.35;
+          offX = 0.01 * Math.sin(t * 22);   // scribbling
           break;
         case "happy":
           happy = 1; wobble = 0.6; lx = 0; ly = 0.2;
           if (!c.reduceMotion && ms - lastHop > 1400) { vy = 1.9; lastHop = ms; }
+          if (hop > 0) lean = 0.12 * Math.sin(t * 14);   // a wiggle in the air
+          break;
+        case "hello":
+          // A wave: rocks side to side for a moment, then breathes.
+          lean = since < 1.3 ? 0.22 * Math.sin(t * 7) : 0;
+          sy = since < 1.3 ? 1.04 : 1 - 0.03 * Math.sin(t);
+          sx = since < 1.3 ? 0.97 : 1 + 0.03 * Math.sin(t);
+          sqL = sqR = -0.1; lx = lookX * 0.4; ly = lookY * 0.4 + 0.1;
+          break;
+        case "puzzled":
+          lean = 0.22 + 0.03 * Math.sin(t * 1.2); sqL = 0.55; sqR = -0.1; lx = 0.35; ly = 0.35; wobble = 0.4;
+          break;
+        case "surprised":
+          sqL = sqR = -0.4; lx = 0; ly = 0.05; lean = -0.04; wobble = 0.25;
+          break;
+        case "sleepy":
+          sqL = sqR = 0.6; lean = 0.08; ly = -0.35; lx = 0.1; wobble = 0.25;
+          sx = 1 + 0.04 * Math.sin(t * 0.5); sy = 1 - 0.04 * Math.sin(t * 0.5); bob = 0.008 * (0.5 + 0.5 * Math.sin(t * 0.5));
+          blinkSpeed = 520;
           break;
       }
+      blinkMs = blinkSpeed;
 
       // The hop: simple gravity, a bounce with squash on the floor.
       if (vy !== 0 || hop > 0) {
         vy -= 9.5 * dt;
         hop = Math.max(0, hop + vy * dt);
         if (hop === 0 && vy < 0) {
-          sx = 1.18; sy = 0.82; // the landing squash
+          live.vsx = 3.2; live.vsy = -3.2;   // the landing squash, as an impulse
           vy = 0;
         } else if (hop > 0) {
           sx = 0.94; sy = 1.08;
         }
       }
       live.offY = hop + ease(live.offY - hop, bob, 6, dt);
+      live.offX = ease(live.offX, offX, 30, dt);
 
       live.level = ease(live.level, c.state === "speaking" ? c.level : 0, c.level > live.level ? 18 : 7, dt);
-      live.sx = ease(live.sx, sx, 9, dt);
-      live.sy = ease(live.sy, sy, 9, dt);
-      live.lean = ease(live.lean, c.shape === "triangle" ? lean * 0.55 : lean, 6, dt);
+      [live.sx, live.vsx] = spring(live.sx, live.vsx, sx, dt);
+      [live.sy, live.vsy] = spring(live.sy, live.vsy, sy, dt);
+      live.lean = ease(live.lean, c.shape === "triangle" ? lean * 0.55 : lean, 7, dt);
       live.wobble = ease(live.wobble, wobble, 5, dt);
       live.lookX = ease(live.lookX, lx, 10, dt);
       live.lookY = ease(live.lookY, ly, 10, dt);
-      live.squint = ease(live.squint, squint, 8, dt);
+      live.squintL = ease(live.squintL, sqL, 9, dt);
+      live.squintR = ease(live.squintR, sqR, 9, dt);
       live.happy = ease(live.happy, happy, 14, dt);
 
       // Blinks run on the wall clock so they still happen under reduced motion.
-      if (blinkStart < 0 && now >= nextBlink) {
-        blinkStart = ms;
-      }
-      if (blinkStart >= 0 && ms - blinkStart > 220) {
+      if (blinkStart < 0 && now >= nextBlink) blinkStart = ms;
+      if (blinkStart >= 0 && ms - blinkStart > blinkMs) {
         blinkStart = -1;
-        nextBlink = now + 2500 + Math.random() * 3500;
+        if (doubleBlink) { doubleBlink = false; nextBlink = now + 160; }
+        else { doubleBlink = Math.random() < 0.25; nextBlink = now + 2500 + Math.random() * 3500; }
       }
     };
 

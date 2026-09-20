@@ -5,12 +5,12 @@ import { TutorPet, type PetShape, type PetState } from "@/components/board/Tutor
 import { cn } from "@/lib/utils";
 
 const SHAPES: PetShape[] = ["circle", "square", "triangle"];
-const STATES: PetState[] = ["idle", "listening", "thinking", "speaking", "writing", "happy"];
+const STATES: PetState[] = ["idle", "listening", "thinking", "speaking", "writing", "happy", "hello", "puzzled", "surprised", "sleepy", "arrive"];
 const SIZES = [40, 56, 80, 120];
 
 // What the bubble says per state. Captions carry the tutor's words, so the
 // bubble only ever shows state: dots while thinking, a short word otherwise.
-const BUBBLE: Partial<Record<PetState, "dots" | string>> = { thinking: "dots", listening: "Your turn", happy: "Nice!" };
+const BUBBLE: Partial<Record<PetState, "dots" | string>> = { thinking: "dots", listening: "Your turn", happy: "Nice!", hello: "Hi!", puzzled: "Hmm?", surprised: "Oh!", sleepy: "zzz" };
 
 const DOTS = {
   backgroundImage: "radial-gradient(rgba(18,18,21,0.11) 1px, transparent 1.2px)",
@@ -19,7 +19,7 @@ const DOTS = {
 } as const;
 
 export default function PetLab() {
-  const [shape, setShape] = useState<PetShape>("triangle");
+  const [shape, setShape] = useState<PetShape>("square");
   const [state, setState] = useState<PetState>("idle");
   const [size, setSize] = useState(80);
   const [reduce, setReduce] = useState(false);
