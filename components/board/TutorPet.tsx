@@ -143,29 +143,34 @@ void main() {
     col = mix(col, u_bg, step(0.99, qn) * 0.7);
   }
 
-  // Eyes, in body space so they lean and squash with it.
+  // Eyes, in body space so they lean and squash with it. One drawing in every
+  // state: a pill with a glint in its top corner. Moods only move two lids: the
+  // top lid comes down for squints, sleepiness and blinks, the bottom lid rises
+  // for a smile, and wide eyes are a small uniform scale, never a taller pill.
   for (int i = 0; i < 2; i++) {
     float s = i == 0 ? -1.0 : 1.0;
-    vec2 ec = vec2(s * (u_shape == 2 ? 0.27 : 0.31), u_eyeY) * r + u_look * vec2(0.07, 0.06) * r;
+    vec2 ec = vec2(s * (u_shape == 2 ? 0.27 : 0.31), u_eyeY) * r + u_look * vec2(0.05, 0.045) * r;
     vec2 e = q - ec;
-    if (u_happy > 0.5) {
-      // A closed, smiling eye: the top of a ring.
-      float ring = abs(length(e) - 0.14 * r) - 0.04 * r;
-      if (ring < 0.0 && e.y > -0.01 * r) col = vec3(0.07, 0.07, 0.08);
-    } else {
-      vec2 he = vec2(0.16, 0.22) * r;
-      float sq = i == 0 ? u_squint.x : u_squint.y;
-      float full = he.y;
-      he.y *= clamp(1.0 - 0.7 * sq, 0.25, 1.35) * max(0.12, 1.0 - u_blink);
-      // A narrowed eye is a lid coming down: the bottom edge stays put.
-      e.y += max(0.0, full - he.y);
-      float ed = sdRoundBox(e, he, min(he.x, he.y) * 0.65);
-      if (ed < 0.0) {
-        col = vec3(0.07, 0.07, 0.08);
-        // The glint is two blocks square, whatever the size.
-        vec2 hc = e - vec2(-0.055, 0.085) * r;
-        if (u_blink < 0.5 && max(abs(hc.x), abs(hc.y)) < ow * 1.05) col = vec3(1.0);
-      }
+    float sq = i == 0 ? u_squint.x : u_squint.y;
+    vec2 he = vec2(0.16, 0.22) * r * (1.0 + 0.2 * clamp(-sq, 0.0, 0.4));
+    // The full pill, always; the lids are clipping lines across it, so a
+    // lowered top lid keeps the round bottom and a raised bottom lid keeps the
+    // round top, which is what makes the smile read as the same eye.
+    // While smiling the pill's ends go fully round, so the cap left above the
+    // raised bottom lid is a true arch.
+    float ed = sdRoundBox(e, he, mix(min(he.x, he.y) * 0.65, he.x, u_happy));
+    float closed = max(clamp(sq, 0.0, 0.6), u_blink * 0.94);
+    float topLid = he.y - 2.0 * he.y * closed;
+    ed = max(ed, e.y - topLid);
+    float smile = u_happy * 0.5;
+    float bottomLid = -he.y + 2.0 * he.y * smile;
+    ed = max(ed, bottomLid - e.y);
+    if (ed < 0.0) {
+      col = vec3(0.07, 0.07, 0.08);
+      // The glint sits in the pill's top corner, two blocks square, whatever the size.
+      vec2 hc = e - vec2(-0.055 * r, he.y - 0.055 * r);
+      // No glint on a smiling eye: it is mostly lid.
+      if (smile < 0.25 && max(abs(hc.x), abs(hc.y)) < ow * 1.05) col = vec3(1.0);
     }
   }
   outColor = vec4(col, 1.0);
@@ -308,7 +313,7 @@ export function TutorPet({ shape = "square", state = "idle", level = 0, look, si
         enteredAt = ms;
         // Entrances that start from a pose: the pop-in and the startle.
         if (c.state === "arrive") { live.sx = 0.2; live.sy = 0.2; live.vsx = 0; live.vsy = 0; }
-        if (c.state === "surprised") { live.vsy = 3.5; live.vsx = -2.5; }
+        if (c.state === "surprised" || c.state === "hello") { live.vsy = 3.5; live.vsx = -2.5; blinkStart = -1; nextBlink = now + 1800; }
         if (c.state === "happy") lastHop = -Infinity;
       }
       const since = (ms - enteredAt) / 1000;
@@ -327,10 +332,10 @@ export function TutorPet({ shape = "square", state = "idle", level = 0, look, si
           }
           if (ms < glance.until) { lx = glance.x; ly = glance.y; }
           if (ms > nextStretch) { stretchUntil = ms + 450; nextStretch = ms + 15000 + Math.random() * 15000; }
-          if (ms < stretchUntil) { sy = 1.14; sx = 0.9; sqL = sqR = 0.5; }
+          if (ms < stretchUntil) { sy = 1.14; sx = 0.9; sqL = sqR = 0.35; }
           break;
         case "listening":
-          sx = 0.96; sy = 1.05; lean = -0.14 * lookX; wobble = 0.3; lx = lookX; ly = lookY; sqL = sqR = -0.15;
+          sx = 0.96; sy = 1.05; lean = -0.14 * lookX; wobble = 0.3; lx = lookX; ly = lookY; sqL = sqR = -0.2;
           break;
         case "thinking":
           lean = 0.14 * Math.sin(t * 1.4); wobble = 0.7;
@@ -343,7 +348,7 @@ export function TutorPet({ shape = "square", state = "idle", level = 0, look, si
           bob = 0.015 * live.level;   // a syllable bounce
           break;
         case "writing":
-          sx = 1.04; sy = 0.96 + 0.012 * Math.sin(t * 22); lean = 0.16; lx = 0.7; ly = -0.55; sqL = sqR = 0.45; wobble = 0.35;
+          sx = 1.04; sy = 0.96 + 0.012 * Math.sin(t * 22); lean = 0.16; lx = 0.7; ly = -0.55; sqL = sqR = 0.4; wobble = 0.35;
           offX = 0.01 * Math.sin(t * 22);   // scribbling
           break;
         case "happy":
@@ -359,13 +364,13 @@ export function TutorPet({ shape = "square", state = "idle", level = 0, look, si
           sqL = sqR = -0.1; lx = lookX * 0.4; ly = lookY * 0.4 + 0.1;
           break;
         case "puzzled":
-          lean = 0.22 + 0.03 * Math.sin(t * 1.2); sqL = 0.55; sqR = -0.1; lx = 0.35; ly = 0.35; wobble = 0.4;
+          lean = 0.22 + 0.03 * Math.sin(t * 1.2); sqL = 0.5; sqR = -0.2; lx = 0.35; ly = 0.35; wobble = 0.4;
           break;
         case "surprised":
           sqL = sqR = -0.4; lx = 0; ly = 0.05; lean = -0.04; wobble = 0.25;
           break;
         case "sleepy":
-          sqL = sqR = 0.6; lean = 0.08; ly = -0.35; lx = 0.1; wobble = 0.25;
+          sqL = sqR = 0.55; lean = 0.08; ly = -0.35; lx = 0.1; wobble = 0.25;
           sx = 1 + 0.04 * Math.sin(t * 0.5); sy = 1 - 0.04 * Math.sin(t * 0.5); bob = 0.008 * (0.5 + 0.5 * Math.sin(t * 0.5));
           blinkSpeed = 520;
           break;
