@@ -19,6 +19,8 @@ export type CloudOptions = {
 };
 
 export type Lobe = { x: number; y: number; r: number };
+/** The oval the scallops sit on: centre and half-axes. */
+export type Body = { cx: number; cy: number; a: number; b: number };
 
 // A repeatable 0..1 from an integer: the same box always draws the same cloud.
 function wobble(i: number, seed: number): number {
@@ -26,21 +28,31 @@ function wobble(i: number, seed: number): number {
   return x - Math.floor(x);
 }
 
-// A cumulus billows on top and is nearly flat underneath, which is most of
-// what makes a drawn cloud read as a cloud.
-const TOP = 1.12;
-const BASE = 0.74;
+// Slightly fuller on top than underneath, the way a cloud sits. Kept subtle:
+// the cloud reads from clean geometry, not from randomness.
+const TOP = 1.08;
+const BASE = 0.86;
+
+/** The oval body for a box. */
+export function cloudBody(w: number, h: number, { lobe }: CloudOptions = {}): Body {
+  const r0 = lobe ?? scallop(w, h);
+  return { cx: w / 2, cy: h / 2, a: Math.max(1, w / 2 - r0), b: Math.max(1, h / 2 - r0) };
+}
+
+function scallop(w: number, h: number): number {
+  return Math.max(5, Math.min(h * 0.3, w * 0.2, 36));
+}
 
 /** Where the billows sit and how big each one is. Exported for the tests. */
-export function cloudLobes(w: number, h: number, { lobe, vary = 0.12, seed = 1 }: CloudOptions = {}): Lobe[] {
-  // Big billows, not a frill. Capped against the width so a short wide bubble
-  // still gets several across, and against the height so the ring they sit on
-  // keeps some depth.
-  const r0 = lobe ?? Math.max(5, Math.min(h * 0.4, w * 0.3, 44));
-  const a = Math.max(1, w / 2 - r0);
-  const b = Math.max(1, h / 2 - r0);
-  const cx = w / 2;
-  const cy = h / 2;
+export function cloudLobes(w: number, h: number, { lobe, vary = 0.08, seed = 1 }: CloudOptions = {}): Lobe[] {
+  // A cloud is an oval body with scallops round its edge, and the scallops
+  // have to be clearly smaller than the body: at 0.4 of the height a small
+  // bubble came out as two big circles glued together, a peanut with a dent
+  // (Mateo, Sept 21). About 0.3 of the height leaves a real oval for them to
+  // sit on; the width cap keeps a short wide bubble from getting one scallop
+  // the size of its whole end.
+  const r0 = lobe ?? scallop(w, h);
+  const { cx, cy, a, b } = cloudBody(w, h, { lobe });
 
   // Walk the ring by arc length, not by angle. A flat ellipse covers far more
   // ground per degree along its sides than round its ends, so billows placed
@@ -80,11 +92,12 @@ export function cloudLobes(w: number, h: number, { lobe, vary = 0.12, seed = 1 }
       return Math.hypot(o.x - l.x, o.y - l.y) < (l.r + o.r) * 0.92;
     });
 
-  // Start from the size that reads best and add billows until the ring is
-  // continuous, so the cloud is always one piece.
-  let n = Math.max(6, Math.min(14, Math.round(round / (1.45 * r0))));
+  // Spaced about 1.5 radii apart: closer and the notches between scallops
+  // go shallow and the edge reads as lumpy, further and they gap. Then add
+  // scallops until the ring is continuous, so the cloud is always one piece.
+  let n = Math.max(5, Math.min(18, Math.round(round / (1.5 * r0))));
   let lobes = build(n);
-  while (!touching(lobes) && n < 26) {
+  while (!touching(lobes) && n < 30) {
     n += 1;
     lobes = build(n);
   }
@@ -102,10 +115,15 @@ const norm = (a: number) => ((a % TAU) + TAU) % TAU;
  * invariant — no kept arc may lie inside another billow, which is what draws
  * a ring across the middle of the cloud when it goes wrong.
  */
-export function cloudArcs(lobes: Lobe[]): Arc[] {
+export function cloudArcs(lobes: Lobe[], body?: Body): Arc[] {
   const kept: Arc[] = [];
+  // Covered by another scallop, or by the body. Without the body, once the
+  // scallops are small enough to leave the middle of the oval uncovered, the
+  // union has a hole and the hole's rim gets traced as outline.
+  const inBody = (x: number, y: number) =>
+    body ? ((x - body.cx) / body.a) ** 2 + ((y - body.cy) / body.b) ** 2 < 1 - 1e-6 : false;
   const inside = (l: Lobe, x: number, y: number) =>
-    lobes.some((o) => o !== l && Math.hypot(x - o.x, y - o.y) < o.r - 1e-6);
+    inBody(x, y) || lobes.some((o) => o !== l && Math.hypot(x - o.x, y - o.y) < o.r - 1e-6);
 
   for (const l of lobes) {
     // Every angle at which another circle cuts this one.
@@ -174,7 +192,7 @@ export function cloudArcs(lobes: Lobe[]): Arc[] {
  */
 export function cloudPath(w: number, h: number, opts: CloudOptions = {}): string {
   if (!(w > 0) || !(h > 0)) return "";
-  const arcs = cloudArcs(cloudLobes(w, h, opts));
+  const arcs = cloudArcs(cloudLobes(w, h, opts), cloudBody(w, h, opts));
   if (arcs.length === 0) return "";
 
   const parts: string[] = [];

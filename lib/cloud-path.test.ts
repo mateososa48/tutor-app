@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cloudArcs, cloudLobes, cloudPath } from "./cloud-path";
+import { cloudArcs, cloudBody, cloudLobes, cloudPath } from "./cloud-path";
 
 const SIZES: [number, number][] = [[160, 60], [56, 40], [320, 120], [40, 26], [90, 90], [210, 96], [300, 72]];
 
@@ -27,7 +27,7 @@ test("every billow stays inside the box", () => {
 test("no part of the outline lies inside another billow", () => {
   for (const [w, h] of SIZES) {
     const lobes = cloudLobes(w, h);
-    for (const arc of cloudArcs(lobes)) {
+    for (const arc of cloudArcs(lobes, cloudBody(w, h))) {
       for (const f of [0.02, 0.25, 0.5, 0.75, 0.98]) {
         const a = arc.from + (arc.to - arc.from) * f;
         const x = arc.lobe.x + Math.cos(a) * arc.lobe.r;
@@ -41,9 +41,24 @@ test("no part of the outline lies inside another billow", () => {
   }
 });
 
+test("no part of the outline lies inside the body", () => {
+  for (const [w, h] of SIZES) {
+    const body = cloudBody(w, h);
+    for (const arc of cloudArcs(cloudLobes(w, h), body)) {
+      for (const f of [0.1, 0.5, 0.9]) {
+        const a = arc.from + (arc.to - arc.from) * f;
+        const x = arc.lobe.x + Math.cos(a) * arc.lobe.r;
+        const y = arc.lobe.y + Math.sin(a) * arc.lobe.r;
+        const d = ((x - body.cx) / body.a) ** 2 + ((y - body.cy) / body.b) ** 2;
+        assert.ok(d > 1 - 0.02, `${w}x${h}: outline runs through the body (a hole's rim)`);
+      }
+    }
+  }
+});
+
 test("the outline closes: every arc starts where the last one ended", () => {
   for (const [w, h] of SIZES) {
-    const arcs = cloudArcs(cloudLobes(w, h));
+    const arcs = cloudArcs(cloudLobes(w, h), cloudBody(w, h));
     assert.ok(arcs.length >= 4, `${w}x${h}: only ${arcs.length} arcs`);
     const at = (arc: (typeof arcs)[number], angle: number) => ({
       x: arc.lobe.x + Math.cos(angle) * arc.lobe.r,
@@ -71,9 +86,9 @@ test("neighbouring billows always touch, so the cloud is one piece", () => {
 test("the billows are few and big, not a frill", () => {
   for (const [w, h] of SIZES) {
     const lobes = cloudLobes(w, h);
-    assert.ok(lobes.length >= 6 && lobes.length <= 26, `${w}x${h}: ${lobes.length} billows`);
+    assert.ok(lobes.length >= 5 && lobes.length <= 30, `${w}x${h}: ${lobes.length} billows`);
     const mean = lobes.reduce((s, l) => s + l.r, 0) / lobes.length;
-    assert.ok(mean > Math.min(w, h) * 0.22, `${w}x${h}: billows only ${mean.toFixed(1)}px`);
+    assert.ok(mean > Math.min(w, h) * 0.17, `${w}x${h}: billows only ${mean.toFixed(1)}px`);
   }
 });
 
