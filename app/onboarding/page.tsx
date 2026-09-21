@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { AnimatePresence, motion, type Variants } from "motion/react";
@@ -8,14 +8,14 @@ import { ArrowRight, ChevronLeft, GraduationCap, LoaderCircle, Plus, Users, type
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { DitherWave } from "@/components/landing/DitherWave";
-import { SWIRL } from "@/components/landing/swirl";
-import { ChalkMark } from "@/components/app/ChalkMark";
+import { OnboardingFrame } from "@/components/onboarding/OnboardingFrame";
 import { OptionGrid } from "@/components/onboarding/OptionGrid";
 import { TutorNotesBoard } from "@/components/onboarding/TutorNotesBoard";
 import { useReduce } from "@/lib/reduced-motion";
 import {
   CONCERNS,
+  EMPTY_DRAFT,
+  FREE_LINE,
   GRADE_OPTIONS,
   NOTE_MAX,
   onboardingNotes,
@@ -24,13 +24,12 @@ import {
   type OnboardingDraft,
 } from "@/lib/onboarding";
 
-// The first thing a new account sees. One question a screen, in the sign-in
-// page's frame (a narrow column beside the swirl panel), so signing up and
-// setting up read as one thing. The first screen asks who is here: a student
-// answers a name and a grade and goes straight into a session, where the
-// intake dialog asks what they are working on; a parent answers the child's
-// name and grade, then what is going on, and hands the device over. Nothing
-// is a preference or an ability rating (lib/onboarding.ts says why).
+// The first thing a new account sees. One question a screen, in the frame the
+// sign-in page and /welcome share. The first screen asks who is here: a
+// student answers a name and a grade and goes on to /welcome, the brief
+// before a first session; a parent answers the child's name and grade, then
+// what is going on, and hands the device over. Nothing is a preference or an
+// ability rating (lib/onboarding.ts says why).
 //
 // On the panel the tutor takes notes as the answers come in, in the same
 // handwriting the settings page uses for "what your tutor reads". For a
@@ -40,16 +39,6 @@ import {
 type Step = "who" | "name" | "grade" | "concern" | "handoff";
 
 const BACK: Partial<Record<Step, Step>> = { name: "who", grade: "name", concern: "grade" };
-
-// The sign-in page's constants: the panel shader only runs where it shows,
-// and the corner behind the white wordmark stays blue.
-const WIDE = "(min-width: 1024px)";
-const subscribeWide = (onChange: () => void) => {
-  const mq = window.matchMedia(WIDE);
-  mq.addEventListener("change", onChange);
-  return () => mq.removeEventListener("change", onChange);
-};
-const CALM_SPOT = { x: 0, y: 0, rx: 420, ry: 230, cap: 0.55 };
 
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
@@ -89,7 +78,6 @@ export default function OnboardingPage() {
   const router = useRouter();
   const { update } = useSession();
   const reduce = useReduce() ?? false;
-  const wide = useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE).matches, () => false);
 
   // In development, /onboarding?preview=1 walks the flow from an onboarded
   // account without writing anything (proxy.ts lets the page through).
@@ -100,7 +88,7 @@ export default function OnboardingPage() {
       new URLSearchParams(window.location.search).get("preview") === "1",
   );
   const [step, setStep] = useState<Step>("who");
-  const [draft, setDraft] = useState<OnboardingDraft>({ by: null, name: "", grade: "", concern: null, note: "" });
+  const [draft, setDraft] = useState<OnboardingDraft>(EMPTY_DRAFT);
   const [noteOpen, setNoteOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +102,7 @@ export default function OnboardingPage() {
   // becomes "your child's name"), so the answers start over; re-picking the
   // same role keeps them.
   function choose(by: OnboardedBy) {
-    setDraft((d) => (d.by === by ? d : { by, name: "", grade: "", concern: null, note: "" }));
+    setDraft((d) => (d.by === by ? d : { ...EMPTY_DRAFT, by }));
     setNoteOpen((open) => (draft.by === by ? open : false));
     setStep("name");
   }
@@ -166,8 +154,8 @@ export default function OnboardingPage() {
       setStep("concern");
       return;
     }
-    // A student goes straight in; the session's intake asks what they are working on.
-    if (await save()) router.push("/session");
+    // A student goes on to the brief before their first session.
+    if (await save()) router.push(preview ? "/welcome?preview=1" : "/welcome");
   }
 
   async function submitConcern() {
@@ -179,198 +167,174 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="flex min-h-[100dvh] bg-white p-3 text-(--lp-ink) sm:p-4">
-      <main className="flex flex-1 justify-center px-4 pt-[clamp(28px,11vh,112px)] pb-10">
-        <div className="w-full max-w-[400px]">
-          <ChalkMark size={28} />
+    <OnboardingFrame notes={notes}>
+      {/* A fixed slot for Back, so the question sits at the same height on every screen. */}
+      <div className="mt-4 flex h-11 items-center">
+        {BACK[step] && (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={back}
+            disabled={saving}
+            className="-ml-2.5 h-11 gap-1 rounded-[10px] px-2.5 text-[13.5px] font-medium text-(--lp-ink-2) hover:text-(--lp-ink)"
+          >
+            <ChevronLeft className="size-4" strokeWidth={2.25} aria-hidden />
+            Back
+          </Button>
+        )}
+      </div>
 
-          {/* A fixed slot for Back, so the question sits at the same height on every screen. */}
-          <div className="mt-4 flex h-11 items-center">
-            {BACK[step] && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={back}
-                disabled={saving}
-                className="-ml-2.5 h-11 gap-1 rounded-[10px] px-2.5 text-[13.5px] font-medium text-(--lp-ink-2) hover:text-(--lp-ink)"
-              >
-                <ChevronLeft className="size-4" strokeWidth={2.25} aria-hidden />
-                Back
-              </Button>
-            )}
-          </div>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.div key={step} variants={stepVariants(reduce)} initial="hidden" animate="show" exit="exit" className="mt-2">
+          {step === "who" && (
+            <StepFrame item={item} title="Who's setting this up?" sub="So your tutor knows who it's talking to.">
+              <motion.div variants={item} className="mt-7 flex flex-col gap-3">
+                <ChoiceTile
+                  icon={GraduationCap}
+                  title="I'm the student"
+                  detail="I'll be the one talking to the tutor."
+                  onClick={() => choose("student")}
+                />
+                <ChoiceTile
+                  icon={Users}
+                  title="I'm a parent"
+                  detail="I'm setting this up for my child."
+                  onClick={() => choose("parent")}
+                />
+              </motion.div>
+            </StepFrame>
+          )}
 
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div key={step} variants={stepVariants(reduce)} initial="hidden" animate="show" exit="exit" className="mt-2">
-              {step === "who" && (
-                <StepFrame item={item} title="Who's setting this up?" sub="So your tutor knows who it's talking to.">
-                  <motion.div variants={item} className="mt-7 flex flex-col gap-3">
-                    <ChoiceTile
-                      icon={GraduationCap}
-                      title="I'm the student"
-                      detail="I'll be the one talking to the tutor."
-                      onClick={() => choose("student")}
-                    />
-                    <ChoiceTile
-                      icon={Users}
-                      title="I'm a parent"
-                      detail="I'm setting this up for my child."
-                      onClick={() => choose("parent")}
-                    />
-                  </motion.div>
-                </StepFrame>
-              )}
+          {step === "name" && (
+            <StepFrame
+              item={item}
+              focusHeading={false}
+              title={parent ? "What's your child's name?" : "What should your tutor call you?"}
+              sub={parent ? "What their tutor should call them." : "Just a first name is perfect."}
+            >
+              <motion.form variants={item} noValidate onSubmit={submitName} className="mt-7">
+                <Input
+                  id="onboarding-name"
+                  name="name"
+                  autoFocus
+                  autoComplete={parent ? "off" : "given-name"}
+                  autoCapitalize="words"
+                  spellCheck={false}
+                  maxLength={40}
+                  placeholder="First name"
+                  aria-labelledby="onboarding-question"
+                  value={draft.name}
+                  onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
+                  className="h-12 rounded-[10px] border-(--lp-line-strong) bg-white px-4 text-[17px] md:text-[17px]"
+                />
+                <Continue disabled={!draft.name.trim()} onClick={() => submitName()} />
+              </motion.form>
+            </StepFrame>
+          )}
 
-              {step === "name" && (
-                <StepFrame
-                  item={item}
-                  focusHeading={false}
-                  title={parent ? "What's your child's name?" : "What should your tutor call you?"}
-                  sub={parent ? "What their tutor should call them." : "Just a first name is perfect."}
+          {step === "grade" && (
+            <StepFrame
+              item={item}
+              title={parent ? `What grade is ${first} in?` : "What grade are you in?"}
+              sub="This shapes how your tutor explains things."
+            >
+              <motion.div variants={item} className="mt-7">
+                <OptionGrid
+                  labelledBy="onboarding-question"
+                  columns={4}
+                  options={GRADE_CHIPS}
+                  value={draft.grade || null}
+                  onChange={(grade) => setDraft((d) => ({ ...d, grade }))}
+                />
+              </motion.div>
+              <motion.div variants={item}>
+                <Continue busyLabel="Saving…" disabled={!draft.grade} busy={saving} onClick={() => void submitGrade()} />
+                <ErrorLine error={error} />
+              </motion.div>
+            </StepFrame>
+          )}
+
+          {step === "concern" && (
+            <StepFrame
+              item={item}
+              title="What's going on with math right now?"
+              sub="Your tutor will find out for itself. This just tells it where to look first."
+            >
+              <motion.div variants={item} className="mt-7">
+                <OptionGrid
+                  labelledBy="onboarding-question"
+                  options={CONCERN_CHIPS}
+                  value={draft.concern}
+                  onChange={(concern) => setDraft((d) => ({ ...d, concern: concern as ConcernKey }))}
+                />
+              </motion.div>
+              <motion.div variants={item} className="mt-3">
+                {noteOpen ? (
+                  <Textarea
+                    id="onboarding-note"
+                    autoFocus
+                    rows={2}
+                    maxLength={NOTE_MAX}
+                    placeholder="Anything that would help. Optional."
+                    aria-label="A note for the tutor"
+                    value={draft.note}
+                    onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
+                    className="min-h-[72px] resize-none rounded-[10px] border-(--lp-line-strong) bg-white px-4 py-3 text-[15px] leading-[1.5]"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setNoteOpen(true)}
+                    className="-ml-2 inline-flex h-9 items-center gap-1.5 rounded-[8px] px-2 text-[13.5px] font-medium text-(--lp-ink-2) outline-none transition-colors duration-150 hover:text-(--lp-ink) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
+                  >
+                    <Plus className="size-4" strokeWidth={2.25} aria-hidden />
+                    Add a note
+                  </button>
+                )}
+              </motion.div>
+              <motion.div variants={item}>
+                <Continue busyLabel="Saving…" disabled={!draft.concern} busy={saving} onClick={() => void submitConcern()} />
+                <ErrorLine error={error} />
+              </motion.div>
+            </StepFrame>
+          )}
+
+          {step === "handoff" && (
+            <StepFrame
+              item={item}
+              title={`${first} is all set.`}
+              sub={`Hand this to ${first} when they're ready, or try a session yourself first to see how it teaches.`}
+            >
+              {/* Below the panel's breakpoint the notepad is the content of this screen. */}
+              <motion.div variants={item} className="mt-6 lg:hidden">
+                <TutorNotesBoard notes={notes} />
+              </motion.div>
+              <motion.div variants={item} className="mt-7 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Button
+                  type="button"
+                  onClick={() => router.push(preview ? "/welcome?preview=1" : "/session")}
+                  className="btn-gloss-lift h-11 gap-2 rounded-[10px] px-5 text-[14px] font-semibold"
                 >
-                  <motion.form variants={item} noValidate onSubmit={submitName} className="mt-7">
-                    <Input
-                      id="onboarding-name"
-                      name="name"
-                      autoFocus
-                      autoComplete={parent ? "off" : "given-name"}
-                      autoCapitalize="words"
-                      spellCheck={false}
-                      maxLength={40}
-                      placeholder="First name"
-                      aria-labelledby="onboarding-question"
-                      value={draft.name}
-                      onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-                      className="h-12 rounded-[10px] border-(--lp-line-strong) bg-white px-4 text-[17px] md:text-[17px]"
-                    />
-                    <Continue disabled={!draft.name.trim()} onClick={() => submitName()} />
-                  </motion.form>
-                </StepFrame>
-              )}
-
-              {step === "grade" && (
-                <StepFrame
-                  item={item}
-                  title={parent ? `What grade is ${first} in?` : "What grade are you in?"}
-                  sub="This shapes how your tutor explains things."
+                  Start a session now
+                  <ArrowRight className="size-4" strokeWidth={2.25} aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => router.push("/")}
+                  className="h-11 rounded-[10px] px-4 text-[14px] font-medium text-(--lp-ink-2) hover:text-(--lp-ink)"
                 >
-                  <motion.div variants={item} className="mt-7">
-                    <OptionGrid
-                      labelledBy="onboarding-question"
-                      columns={4}
-                      options={GRADE_CHIPS}
-                      value={draft.grade || null}
-                      onChange={(grade) => setDraft((d) => ({ ...d, grade }))}
-                    />
-                  </motion.div>
-                  <motion.div variants={item}>
-                    <Continue
-                      label={parent ? "Continue" : "Start a session"}
-                      busyLabel="Starting…"
-                      disabled={!draft.grade}
-                      busy={saving}
-                      onClick={() => void submitGrade()}
-                    />
-                    <ErrorLine error={error} />
-                  </motion.div>
-                </StepFrame>
-              )}
-
-              {step === "concern" && (
-                <StepFrame
-                  item={item}
-                  title="What's going on with math right now?"
-                  sub="Your tutor will find out for itself. This just tells it where to look first."
-                >
-                  <motion.div variants={item} className="mt-7">
-                    <OptionGrid
-                      labelledBy="onboarding-question"
-                      options={CONCERN_CHIPS}
-                      value={draft.concern}
-                      onChange={(concern) => setDraft((d) => ({ ...d, concern: concern as ConcernKey }))}
-                    />
-                  </motion.div>
-                  <motion.div variants={item} className="mt-3">
-                    {noteOpen ? (
-                      <Textarea
-                        id="onboarding-note"
-                        autoFocus
-                        rows={2}
-                        maxLength={NOTE_MAX}
-                        placeholder="Anything that would help. Optional."
-                        aria-label="A note for the tutor"
-                        value={draft.note}
-                        onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
-                        className="min-h-[72px] resize-none rounded-[10px] border-(--lp-line-strong) bg-white px-4 py-3 text-[15px] leading-[1.5]"
-                      />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setNoteOpen(true)}
-                        className="-ml-2 inline-flex h-9 items-center gap-1.5 rounded-[8px] px-2 text-[13.5px] font-medium text-(--lp-ink-2) outline-none transition-colors duration-150 hover:text-(--lp-ink) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
-                      >
-                        <Plus className="size-4" strokeWidth={2.25} aria-hidden />
-                        Add a note
-                      </button>
-                    )}
-                  </motion.div>
-                  <motion.div variants={item}>
-                    <Continue busyLabel="Saving…" disabled={!draft.concern} busy={saving} onClick={() => void submitConcern()} />
-                    <ErrorLine error={error} />
-                  </motion.div>
-                </StepFrame>
-              )}
-
-              {step === "handoff" && (
-                <StepFrame
-                  item={item}
-                  title={`${first} is all set.`}
-                  sub={`Hand this to ${first} when they're ready. Your tutor will ask what they're working on.`}
-                >
-                  {/* Below the panel's breakpoint the notepad is the content of this screen. */}
-                  <motion.div variants={item} className="mt-6 lg:hidden">
-                    <TutorNotesBoard notes={notes} />
-                  </motion.div>
-                  <motion.div variants={item} className="mt-7 flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <Button
-                      type="button"
-                      onClick={() => router.push("/session")}
-                      className="btn-gloss-lift h-11 gap-2 rounded-[10px] px-5 text-[14px] font-semibold"
-                    >
-                      Start a session now
-                      <ArrowRight className="size-4" strokeWidth={2.25} aria-hidden />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => router.push("/")}
-                      className="h-11 rounded-[10px] px-4 text-[14px] font-medium text-(--lp-ink-2) hover:text-(--lp-ink)"
-                    >
-                      I&apos;ll do it later
-                    </Button>
-                  </motion.div>
-                </StepFrame>
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </div>
-      </main>
-
-      {/* The sign-in page's panel, with the tutor's notepad on it. */}
-      <aside className="relative hidden w-[min(46%,720px)] shrink-0 overflow-hidden rounded-[20px] bg-[#4696f7] lg:block">
-        {wide && <DitherWave {...SWIRL} calmSpot={CALM_SPOT} animate={!reduce} className="absolute inset-0" />}
-        <div className="absolute inset-0 flex items-center justify-center p-10">
-          <TutorNotesBoard
-            notes={notes}
-            className="w-full max-w-[360px] shadow-[0_1px_2px_rgba(18,18,21,0.06),0_16px_40px_rgba(18,40,80,0.18)]"
-          />
-        </div>
-        <p aria-hidden className="absolute bottom-6 left-6 m-0 flex items-center gap-2">
-          <ChalkMark size={28} color="var(--paper)" />
-          <span className="lp-brand text-[28px] leading-none text-(--paper)">chalk</span>
-        </p>
-      </aside>
-    </div>
+                  I&apos;ll do it later
+                </Button>
+              </motion.div>
+              <motion.p variants={item} className="m-0 mt-5 text-[13px] text-(--lp-ink-3)">
+                {FREE_LINE}
+              </motion.p>
+            </StepFrame>
+          )}
+        </motion.div>
+      </AnimatePresence>
+    </OnboardingFrame>
   );
 }
 

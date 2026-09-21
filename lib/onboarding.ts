@@ -1,14 +1,18 @@
 // What onboarding asks, what it stores, and what the tutor is told about it.
 //
 // Two branches, chosen on the first screen. A student answers a name and a
-// grade, then goes straight into a session (the intake dialog asks what they
-// are working on). A parent answers the child's name and grade, then what is
-// going on, and hands the device over. Nothing here is a preference or an
-// ability rating: self-report on those is close to noise for this age group,
-// and the tutor reads far more from one problem than from a page of answers.
+// grade; a parent answers the child's name and grade, then what is going on,
+// and hands the device over. Before anyone's first session, /welcome says how
+// the tutor works, checks the mic, and asks what they are into. Nothing here
+// is a preference or an ability rating: self-report on those is close to
+// noise for this age group, and the tutor reads far more from one problem
+// than from a page of answers.
 //
 // A parent's answer is a lead, never a fact. It reaches the prompt as
 // something to check quietly, and the student never hears it repeated.
+// Interests reach the prompt as material for examples, used lightly and
+// never announced: the effect runs through a mechanism students do not
+// notice, and asking them to notice it optimises the wrong thing.
 
 export type OnboardedBy = "student" | "parent";
 
@@ -22,15 +26,39 @@ export const CONCERNS = [
 
 export type ConcernKey = (typeof CONCERNS)[number]["key"];
 
+// Offered as chips on /welcome; anything else comes through the free text.
+export const INTERESTS = [
+  "Sports",
+  "Music",
+  "Video games",
+  "Art",
+  "Animals",
+  "Space",
+  "Cooking",
+  "Movies",
+  "Books",
+  "Building things",
+] as const;
+
+export const INTERESTS_MAX = 6;
+export const INTEREST_MAX_LEN = 24;
+
 export type OnboardingRecord = {
   by: OnboardedBy;
   /** Only when a parent set the account up. */
   concern?: ConcernKey;
   /** The parent's own words, if they added any. */
   note?: string;
+  /** What the student is into, for examples. */
+  interests?: string[];
 };
 
 export const NOTE_MAX = 300;
+
+// What the app says about cost before the first session. The alternative
+// Mateo floated is "Your first 5 sessions are free.": switching to it needs
+// the landing's Free plan to say the same and a session count behind it.
+export const FREE_LINE = "Free while Chalk is in beta.";
 
 // Stored values are what `registerForGrade` in tutor-prompts parses: "7th
 // grade" reads as middle school, "5th grade" as elementary, "11th grade" as
@@ -57,6 +85,23 @@ export function gradeLabel(value: string | null | undefined): string {
 const BY = new Set<OnboardedBy>(["student", "parent"]);
 const CONCERN_KEYS = new Set<string>(CONCERNS.map((c) => c.key));
 
+/** Trimmed, deduplicated (case-insensitive), capped in length and count. */
+export function sanitizeInterests(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== "string") continue;
+    const text = raw.replace(/\s+/g, " ").trim().slice(0, INTEREST_MAX_LEN);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+    if (out.length >= INTERESTS_MAX) break;
+  }
+  return out;
+}
+
 /** The stored record, or null when the input is not one (an empty jsonb is the usual case). */
 export function sanitizeOnboarding(input: unknown): OnboardingRecord | null {
   if (!input || typeof input !== "object") return null;
@@ -70,10 +115,12 @@ export function sanitizeOnboarding(input: unknown): OnboardingRecord | null {
       if (note) record.note = note;
     }
   }
+  const interests = sanitizeInterests(raw.interests);
+  if (interests.length) record.interests = interests;
   return record;
 }
 
-/** The line the prompt gets. Nothing for a student's own signup. */
+/** The line the prompt gets about who set the account up. Nothing for a student's own signup. */
 export function onboardingProfileLine(input: unknown): string | null {
   const record = sanitizeOnboarding(input);
   if (!record || record.by !== "parent") return null;
@@ -85,11 +132,18 @@ export function onboardingProfileLine(input: unknown): string | null {
   return "A parent set this up for them.";
 }
 
+/** The line the prompt gets about interests: material for examples, used lightly, never announced. */
+export function interestsProfileLine(input: unknown): string | null {
+  const record = sanitizeOnboarding(input);
+  if (!record?.interests?.length) return null;
+  return `Likes: ${record.interests.join(", ")}. Use these for examples when the math has a story, lightly (names and settings, not statistics), and never say that you are doing it.`;
+}
+
 // ── The tutor's notepad ──────────────────────────────────────────────────────
-// The onboarding screen shows the tutor taking notes as the answers come in,
-// in the same handwriting the settings page uses for "what your tutor reads".
-// These are those notes: short, honest, and for a parent's answer, the rule
-// the tutor will follow made visible.
+// The onboarding and welcome screens show the tutor taking notes as the
+// answers come in, in the same handwriting the settings page uses for "what
+// your tutor reads". These are those notes: short, honest, and for a
+// parent's answer, the rule the tutor will follow made visible.
 
 export type BoardNote = { label: string; text: string };
 
@@ -99,7 +153,23 @@ export type OnboardingDraft = {
   grade: string;
   concern: ConcernKey | null;
   note: string;
+  interests: string[];
 };
+
+export const EMPTY_DRAFT: OnboardingDraft = { by: null, name: "", grade: "", concern: null, note: "", interests: [] };
+
+/** A draft rebuilt from a saved profile, for the notepad on later screens. */
+export function draftFromProfile(profile: { displayName?: string | null; gradeLevel?: string | null; onboarding?: unknown } | null): OnboardingDraft {
+  const record = sanitizeOnboarding(profile?.onboarding);
+  return {
+    by: record?.by ?? (profile ? "student" : null),
+    name: profile?.displayName ?? "",
+    grade: profile?.gradeLevel ?? "",
+    concern: record?.concern ?? null,
+    note: record?.note ?? "",
+    interests: record?.interests ?? [],
+  };
+}
 
 export function onboardingNotes(draft: OnboardingDraft): BoardNote[] {
   if (!draft.by) return [];
@@ -107,6 +177,7 @@ export function onboardingNotes(draft: OnboardingDraft): BoardNote[] {
   const name = draft.name.trim();
   if (name) notes.push({ label: "Name", text: name });
   if (draft.grade) notes.push({ label: "Grade", text: gradeLabel(draft.grade) });
+  if (draft.interests.length) notes.push({ label: "Likes", text: draft.interests.join(", ") });
   if (draft.by === "parent") {
     const concern = CONCERNS.find((c) => c.key === draft.concern);
     if (concern) {

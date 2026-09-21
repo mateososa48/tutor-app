@@ -20,7 +20,7 @@
 // app/api/live-token).
 
 import { desmosConfigured } from "./desmos-config";
-import { onboardingProfileLine } from "./onboarding";
+import { interestsProfileLine, onboardingProfileLine } from "./onboarding";
 
 export type LearningPrefs = {
   hintVsAnswer?: number;    // -1 hints, 0 balanced, 1 direct answers
@@ -88,6 +88,9 @@ export function profileLines(profile: StudentProfile | null): string[] {
   // and never something to say back to the student (lib/onboarding.ts).
   const parentLine = onboardingProfileLine(profile.onboarding);
   if (parentLine) lines.push(parentLine);
+  // What they are into: material for examples, used lightly and never announced.
+  const likes = interestsProfileLine(profile.onboarding);
+  if (likes) lines.push(likes);
   return lines;
 }
 

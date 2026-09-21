@@ -11,6 +11,7 @@ import { FilesPanel } from "@/components/session/FilesPopover";
 import { useFileIntake } from "@/components/session/useFileIntake";
 import type { UploadedFile } from "@/lib/file-processor";
 import { EMPTY_INTAKE, SESSION_LANGUAGES, type LanguageCode, type SessionIntake } from "@/lib/session-intake";
+import type { StarterTopic } from "@/lib/starter-topics";
 import { cn } from "@/lib/utils";
 
 // Two questions and nothing else: what they're stuck on, and a photo if they
@@ -30,6 +31,7 @@ export function SessionIntakeDialog({
   starting = false,
   error,
   initialTopic = "",
+  starters = [],
 }: {
   onStart: (intake: SessionIntake, files: UploadedFile[]) => void;
   onCancel: () => void;
@@ -37,6 +39,8 @@ export function SessionIntakeDialog({
   error?: string | null;
   /** Prefills the text box, e.g. from a "practice this" link on the home page. */
   initialTopic?: string;
+  /** Problems to start on when the box is empty (lib/starter-topics.ts, picked for the grade). */
+  starters?: readonly StarterTopic[];
 }) {
   const [intake, setIntake] = useState<SessionIntake>({ ...EMPTY_INTAKE, topic: initialTopic });
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -94,6 +98,25 @@ export function SessionIntakeDialog({
               }}
               className="mt-4 min-h-[84px] resize-none rounded-[14px] text-[15px] leading-[1.5]"
             />
+
+            {/* Nothing in mind, or a parent seeing how it teaches: a problem to start on. Shown while the box is empty. */}
+            {starters.length > 0 && intake.topic.trim() === "" && (
+              <div className="mt-3">
+                <p className="m-0 text-[12.5px] text-(--lp-ink-3)">Nothing in mind? Try one of these.</p>
+                <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {starters.map((s) => (
+                    <button
+                      key={s.skillKey}
+                      type="button"
+                      onClick={() => setIntake((prev) => ({ ...prev, topic: s.problem }))}
+                      className="flex min-h-11 items-center rounded-[10px] border border-(--lp-line-strong) bg-white px-3 text-left text-[13.5px] font-medium text-(--lp-ink) outline-none transition-[border-color,scale] duration-150 ease-out hover:border-(--lp-ink)/30 focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
+                    >
+                      {s.problem}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="mt-4">
               <FilesPanel

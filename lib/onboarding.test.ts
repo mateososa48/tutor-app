@@ -2,11 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CONCERNS,
+  draftFromProfile,
+  EMPTY_DRAFT,
   GRADE_OPTIONS,
   gradeLabel,
+  INTERESTS_MAX,
+  interestsProfileLine,
   NOTE_MAX,
   onboardingNotes,
   onboardingProfileLine,
+  sanitizeInterests,
   sanitizeOnboarding,
 } from "./onboarding";
 import { registerForGrade } from "./tutor-prompts";
@@ -33,6 +38,15 @@ test("a note is capped", () => {
   assert.equal(record?.note?.length, NOTE_MAX);
 });
 
+test("interests are trimmed, deduplicated and capped, for either role", () => {
+  assert.deepEqual(sanitizeInterests(["Sports", " sports ", "Video  games", "", 7, "Art"]), ["Sports", "Video games", "Art"]);
+  assert.equal(sanitizeInterests(Array.from({ length: 12 }, (_, i) => `thing ${i}`)).length, INTERESTS_MAX);
+  assert.equal(sanitizeInterests(["x".repeat(60)])[0].length, 24);
+  assert.deepEqual(sanitizeInterests("Sports"), []);
+  assert.deepEqual(sanitizeOnboarding({ by: "student", interests: ["Space", "space"] }), { by: "student", interests: ["Space"] });
+  assert.deepEqual(sanitizeOnboarding({ by: "parent", interests: [] }), { by: "parent" });
+});
+
 test("the prompt line is a lead to check, never a fact, and only for a parent", () => {
   assert.equal(onboardingProfileLine({ by: "student" }), null);
   assert.equal(onboardingProfileLine({}), null);
@@ -45,6 +59,15 @@ test("the prompt line is a lead to check, never a fact, and only for a parent", 
   const noteOnly = onboardingProfileLine({ by: "parent", concern: "unsure", note: "he says it's boring" }) ?? "";
   assert.match(noteOnly, /wrote: "he says it's boring"/);
   assert.equal(onboardingProfileLine({ by: "parent" }), "A parent set this up for them.");
+});
+
+test("interests reach the prompt as material for examples, used lightly and never announced", () => {
+  assert.equal(interestsProfileLine({ by: "student" }), null);
+  assert.equal(interestsProfileLine({}), null);
+  const line = interestsProfileLine({ by: "student", interests: ["Sports", "Space"] }) ?? "";
+  assert.match(line, /^Likes: Sports, Space\./);
+  assert.match(line, /lightly/);
+  assert.match(line, /never say that you are doing it/);
 });
 
 test("every grade option lands in the register the prompt expects", () => {
@@ -66,16 +89,20 @@ test("every grade option lands in the register the prompt expects", () => {
 });
 
 test("the notepad follows the answers, and makes the parent rule visible", () => {
-  assert.deepEqual(onboardingNotes({ by: null, name: "Mateo", grade: "7th grade", concern: null, note: "" }), []);
-  assert.deepEqual(onboardingNotes({ by: "student", name: "Mateo", grade: "", concern: null, note: "" }), [
-    { label: "Name", text: "Mateo" },
-  ]);
-  assert.deepEqual(onboardingNotes({ by: "student", name: "Mateo", grade: "7th grade", concern: null, note: "" }), [
+  assert.deepEqual(onboardingNotes({ ...EMPTY_DRAFT, name: "Mateo", grade: "7th grade" }), []);
+  assert.deepEqual(onboardingNotes({ ...EMPTY_DRAFT, by: "student", name: "Mateo" }), [{ label: "Name", text: "Mateo" }]);
+  assert.deepEqual(onboardingNotes({ ...EMPTY_DRAFT, by: "student", name: "Mateo", grade: "7th grade" }), [
     { label: "Name", text: "Mateo" },
     { label: "Grade", text: "7th" },
     { label: "Next", text: "Ask what they're working on" },
   ]);
-  const parent = onboardingNotes({ by: "parent", name: "Ana", grade: "9th grade", concern: "test", note: " finals " });
+  assert.deepEqual(onboardingNotes({ ...EMPTY_DRAFT, by: "student", name: "Mateo", grade: "7th grade", interests: ["Sports", "Space"] }), [
+    { label: "Name", text: "Mateo" },
+    { label: "Grade", text: "7th" },
+    { label: "Likes", text: "Sports, Space" },
+    { label: "Next", text: "Ask what they're working on" },
+  ]);
+  const parent = onboardingNotes({ ...EMPTY_DRAFT, by: "parent", name: "Ana", grade: "9th grade", concern: "test", note: " finals " });
   assert.deepEqual(parent, [
     { label: "Name", text: "Ana" },
     { label: "Grade", text: "9th" },
@@ -83,7 +110,14 @@ test("the notepad follows the answers, and makes the parent rule visible", () =>
     { label: "Parent's note", text: "finals" },
     { label: "Note to self", text: "Check this for myself" },
   ]);
-  const unsure = onboardingNotes({ by: "parent", name: "Ana", grade: "9th grade", concern: "unsure", note: "" });
+  const unsure = onboardingNotes({ ...EMPTY_DRAFT, by: "parent", name: "Ana", grade: "9th grade", concern: "unsure" });
   assert.equal(unsure.at(-1)?.text, "Find out what's going on");
   assert.equal(CONCERNS.length, 5);
+});
+
+test("a draft rebuilt from a saved profile carries what was stored, and defaults an older profile to a student", () => {
+  const draft = draftFromProfile({ displayName: "Ana", gradeLevel: "9th grade", onboarding: { by: "parent", concern: "test", interests: ["Art"] } });
+  assert.deepEqual(draft, { by: "parent", name: "Ana", grade: "9th grade", concern: "test", note: "", interests: ["Art"] });
+  assert.equal(draftFromProfile({ displayName: "Old", gradeLevel: "High school (9–12)", onboarding: {} }).by, "student");
+  assert.equal(draftFromProfile(null).by, null);
 });

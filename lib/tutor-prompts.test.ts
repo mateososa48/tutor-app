@@ -197,3 +197,11 @@ test("a parent's signup answer reaches the prompt as a lead; a student's signup 
   const older = profileLines({ displayName: "Ana", gradeLevel: "9th grade", onboarding: {} }).join("\n");
   assert.doesNotMatch(older, /parent/i);
 });
+
+test("interests reach the prompt as material for examples, and only when set", () => {
+  const withLikes = profileLines({ displayName: "Ana", gradeLevel: "9th grade", onboarding: { by: "student", interests: ["Sports", "Space"] } }).join("\n");
+  assert.match(withLikes, /Likes: Sports, Space\./);
+  assert.match(withLikes, /never say that you are doing it/);
+  const without = profileLines({ displayName: "Ana", gradeLevel: "9th grade", onboarding: { by: "student" } }).join("\n");
+  assert.doesNotMatch(without, /Likes:/);
+});

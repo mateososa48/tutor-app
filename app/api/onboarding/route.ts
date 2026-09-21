@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
-import { sanitizeOnboarding } from "@/lib/onboarding";
+import { sanitizeInterests, sanitizeOnboarding } from "@/lib/onboarding";
 
 // GET /api/onboarding — fetch current user's profile
 export async function GET() {
@@ -69,4 +69,40 @@ export async function PUT(req: NextRequest) {
     });
 
   return NextResponse.json({ ok: true });
+}
+
+// PATCH /api/onboarding — merge into the onboarding record without touching
+// the rest of the profile. /welcome uses it for interests. A profile from
+// before the record existed (onboarding = {}) is treated as a student's.
+export async function PATCH(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await req.json();
+  if (!("interests" in body)) {
+    return NextResponse.json({ error: "Nothing to change" }, { status: 400 });
+  }
+
+  const [row] = await db
+    .select({ onboarding: userProfiles.onboarding })
+    .from(userProfiles)
+    .where(eq(userProfiles.userId, session.user.id))
+    .limit(1);
+  if (!row) {
+    return NextResponse.json({ error: "No profile yet" }, { status: 404 });
+  }
+
+  const current = sanitizeOnboarding(row.onboarding) ?? { by: "student" as const };
+  const interests = sanitizeInterests(body.interests);
+  const next = { ...current, ...(interests.length ? { interests } : {}) };
+  if (!interests.length) delete next.interests;
+
+  await db
+    .update(userProfiles)
+    .set({ onboarding: next, updatedAt: new Date() })
+    .where(eq(userProfiles.userId, session.user.id));
+
+  return NextResponse.json({ ok: true, onboarding: next });
 }
