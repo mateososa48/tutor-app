@@ -259,15 +259,13 @@ export function TutorPet({ shape = "square", state = "idle", level = 0, look, si
     let vy = 0;
     let hop = 0;
     let lastHop = -Infinity;
-    // Blinks every few seconds, sometimes twice; a glance somewhere else now
-    // and then while idle; a stretch once in a long while.
+    // Blinks every few seconds, sometimes twice, and a glance somewhere else
+    // now and then while idle. (The idle stretch went with the idle motion.)
     let nextBlink = 2500 + Math.random() * 3000;
     let blinkStart = -1;
     let blinkMs = 220;
     let doubleBlink = false;
     let glance = { x: 0, y: 0, until: 0, next: 4000 + Math.random() * 4000 };
-    let nextStretch = 15000 + Math.random() * 12000;
-    let stretchUntil = 0;
     let prevState: PetState | null = null;
     let enteredAt = 0;
     let clock = 0;
@@ -334,15 +332,13 @@ export function TutorPet({ shape = "square", state = "idle", level = 0, look, si
       switch (c.state) {
         case "idle":
         case "arrive":
-          sx = 1 + 0.03 * Math.sin(t * 1.0);
-          sy = 1 - 0.03 * Math.sin(t * 1.0);
-          bob = 0.025 * (0.5 + 0.5 * Math.sin(t * 1.0));
+          // Idle holds still: no breath, no bob, no wobble (Mateo, Sept 20).
+          // Only the eyes are alive — glances, and the blinks below.
+          wobble = 0;
           if (ms > glance.next) {
             glance = { x: (Math.random() - 0.5) * 1.6, y: (Math.random() - 0.3) * 1.2, until: ms + 700 + Math.random() * 600, next: ms + 4000 + Math.random() * 5000 };
           }
           if (ms < glance.until) { lx = glance.x; ly = glance.y; }
-          if (ms > nextStretch) { stretchUntil = ms + 450; nextStretch = ms + 15000 + Math.random() * 15000; }
-          if (ms < stretchUntil) { sy = 1.14; sx = 0.9; sqL = sqR = 0.35; }
           break;
         case "listening":
           sx = 0.96; sy = 1.05; lean = -0.14 * lookX; wobble = 0.3; lx = lookX; ly = lookY; sqL = sqR = -0.2;
