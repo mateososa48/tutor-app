@@ -135,13 +135,20 @@ void main() {
   if (d > -bw) {
     col = vec3(0.07, 0.07, 0.08);
   } else {
-    float n = fbm(p * 3.2 + vec2(t * 0.06, -t * 0.04));
-    int bx = int(mod(gl_FragCoord.x / u_pixel, 4.0));
-    int by = int(mod(gl_FragCoord.y / u_pixel, 4.0));
+    // The blue inside runs on its own grid, two blocks wide (Mateo, Sept 20),
+    // so the gradient reads chunky while the outline and the eyes stay crisp.
+    // It churns rather than slides: a slow fbm warps the one that's drawn.
+    float fp = u_pixel * 2.0;
+    vec2 cp = (floor(gl_FragCoord.xy / fp) * fp + fp * 0.5 - 0.5 * u_res) / hf;
+    float warp = fbm(cp * 1.9 - vec2(t * 0.14, t * 0.10));
+    float n = fbm(cp * 3.0 + vec2(t * 0.26, -t * 0.19) + warp * 0.9);
+    n = clamp((n - 0.5) * 1.5 + 0.5, 0.0, 1.0);   // fbm bunches in the middle: spread it over the ramp
+    int bx = int(mod(gl_FragCoord.x / fp, 4.0));
+    int by = int(mod(gl_FragCoord.y / fp, 4.0));
     float th = bayer[by][bx];
     float qn = floor(n * 5.0 + th) / 5.0;
     col = mix(u_deep, u_top, clamp(qn * 1.25, 0.0, 1.0));
-    col = mix(col, u_bg, step(0.99, qn) * 0.7);
+    col = mix(col, u_bg, step(0.99, qn) * 0.32);   // a pale highlight; near-white read as a smudge
   }
 
   // Eyes. Pixel-art eyes stay upright and on the grid while the body moves:
