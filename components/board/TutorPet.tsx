@@ -177,8 +177,10 @@ void main() {
   }
 
   // Eyes. Pixel-art eyes stay upright and on the grid while the body moves:
-  // each eye is a fixed 6 by 8 block pill in screen space, snapped to whole
-  // blocks, so it rasterizes identically every frame. Only its anchor follows
+  // each eye is a fixed 6 by 6 block pill in screen space, snapped to whole
+  // blocks, so it rasterizes identically every frame. Eight blocks tall read
+  // too tall (Mateo, Sept 20); the anchor sits on a block corner, so the
+  // height only moves in twos. Only its anchor follows
   // the body's lean and squash. Moods move two lids as clipping lines in
   // whole blocks (the top lid down for squints, sleepiness and blinks, the
   // bottom lid up for a smile), looks shift it by whole blocks, and wide
@@ -192,7 +194,7 @@ void main() {
     anchor = floor(anchor / ow + 0.5) * ow;   // a block corner: even sizes rasterize symmetric
     vec2 e = p - anchor;
     float wide = step(0.2, -sq);
-    vec2 he = vec2(3.0, 4.0 + wide) * ow;
+    vec2 he = vec2(3.0, 3.0 + wide) * ow;
     float rounding = mix(2.0 * ow, he.x, u_happy);
     float ed = sdRoundBox(e, he, rounding);
     float closed = max(clamp(sq, 0.0, 0.6), u_blink * 0.94);
