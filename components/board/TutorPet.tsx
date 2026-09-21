@@ -130,7 +130,7 @@ void main() {
   if (d > 0.0) { outColor = vec4(0.0); return; }
 
   float ow = u_pixel / hf;   // one block, in these units
-  float bw = 2.0 * ow;         // the outline: two blocks (Mateo, Sept 20)
+  float bw = 1.5 * ow;         // the outline: between one block (too thin, it broke at the corners) and two (too fat) — Mateo, Sept 20
   vec3 col;
   if (d > -bw) {
     col = vec3(0.07, 0.07, 0.08);
