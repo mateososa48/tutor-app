@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { TutorPet, type PetShape, type PetState } from "@/components/board/TutorPet";
+import { PetBubble } from "@/components/board/PetBubble";
 import { cn } from "@/lib/utils";
 
 const SHAPES: PetShape[] = ["circle", "square", "triangle"];
@@ -83,23 +84,16 @@ export default function PetLab() {
           style={DOTS}
         >
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-            <TutorPet shape={shape} state={state} level={state === "speaking" ? level : 0} look={look} size={size} reduceMotion={reduce} />
-            {bubble && (
-              <div
-                className="absolute bottom-[calc(100%-6px)] left-[calc(100%-10px)] whitespace-nowrap rounded-[12px] border border-(--lp-line) bg-white px-3 py-1.5 text-[13.5px] text-(--lp-ink) shadow-[0_1px_2px_rgba(18,18,21,0.06),0_6px_16px_rgba(18,18,21,0.08)]"
-              >
-                {bubble === "dots" ? (
-                  <span className="flex h-[18px] items-center gap-1" aria-label="thinking">
-                    {[0, 1, 2].map((i) => (
-                      <span key={i} className="size-1.5 animate-pulse rounded-full bg-(--lp-ink-2)" style={{ animationDelay: `${i * 180}ms` }} />
-                    ))}
-                  </span>
-                ) : (
-                  bubble
-                )}
-                <span aria-hidden className="absolute -bottom-[5px] left-2.5 size-2.5 rotate-45 border-r border-b border-(--lp-line) bg-white" />
-              </div>
-            )}
+            <span className="relative block" style={{ width: size, height: size }}>
+              <TutorPet shape={shape} state={state} level={state === "speaking" ? level : 0} look={look} size={size} reduceMotion={reduce} />
+              <PetBubble
+                open={Boolean(bubble)}
+                text={bubble === "dots" ? undefined : bubble}
+                kind={bubble === "dots" ? "thought" : "speech"}
+                side="right"
+                align="start"
+              />
+            </span>
           </div>
         </div>
 

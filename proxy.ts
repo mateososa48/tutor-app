@@ -4,7 +4,7 @@ import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/signin", "/api/auth"];
 const DEV_PUBLIC_PATHS = process.env.NODE_ENV === "development"
-  ? ["/api/dev/qa-login", "/dev/board", "/dev/voice", "/dev/desmos-probe", "/dev/pdf", "/dev/pet"]
+  ? ["/api/dev/qa-login", "/dev/board", "/dev/voice", "/dev/desmos-probe", "/dev/pdf", "/dev/pet", "/dev/pet-places"]
   : [];
 // Files in public/ are served from the root: the landing page's board photos live under /landing,
 // vendored browser modules (the voice speed engine) under /vendor.
