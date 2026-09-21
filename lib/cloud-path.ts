@@ -1,21 +1,24 @@
 // A cloud outline for a box of any size.
 //
-// Not a stretched picture and not a row of half circles: lobes are laid out
-// around the inside of the box and the path traced is the *union* of them, so
-// where two lobes overlap the outline runs smoothly from one into the next
-// and never cusps. The lobes keep their own size whatever the box does, so a
-// wide bubble grows more puffs rather than longer ones, and their radii vary
-// a little (the same way every time for the same box) so the edge reads as
-// weather rather than as a pattern.
+// A handful of big circles sit round an ellipse inside the box and the path
+// is the true union of them: each circle contributes the run of itself that
+// no other circle covers, so the outline is real circular arcs meeting in
+// real notches. The notches are the point. An earlier version sampled the
+// union and smoothed the samples into one curve, which rounded the notches
+// away and came out as a melted blob (Mateo, Sept 21); another traced circle
+// to circle assuming neighbours, which self-intersected once the circles
+// differed in size and drew rings inside the cloud.
 
 export type CloudOptions = {
-  /** Roughly how big one puff is, in px. Scales with the box by default. */
+  /** Roughly how big one billow is, in px. Scales with the box by default. */
   lobe?: number;
-  /** How much the puffs vary in size, 0 to 1. */
+  /** How much the billows vary in size, 0 to 1. */
   vary?: number;
-  /** Changes which puff is which size, without changing the look. */
+  /** Changes which billow is which size, without changing the look. */
   seed?: number;
 };
+
+export type Lobe = { x: number; y: number; r: number };
 
 // A repeatable 0..1 from an integer: the same box always draws the same cloud.
 function wobble(i: number, seed: number): number {
@@ -23,105 +26,146 @@ function wobble(i: number, seed: number): number {
   return x - Math.floor(x);
 }
 
-type Lobe = { x: number; y: number; r: number };
+// A cumulus billows on top and is nearly flat underneath, which is most of
+// what makes a drawn cloud read as a cloud.
+const TOP = 1.12;
+const BASE = 0.74;
 
-// A cumulus has a billowing top and a base that is nearly flat, which is most
-// of what makes a drawn cloud read as a cloud rather than as bumps. So the
-// puff size runs from big at the top of the box to small at the bottom.
-const TOP = 1.3;
-const BASE = 0.62;
+/** Where the billows sit and how big each one is. Exported for the tests. */
+export function cloudLobes(w: number, h: number, { lobe, vary = 0.12, seed = 1 }: CloudOptions = {}): Lobe[] {
+  // Big billows, not a frill. Capped against the width so a short wide bubble
+  // still gets several across, and against the height so the ring they sit on
+  // keeps some depth.
+  const r0 = lobe ?? Math.max(5, Math.min(h * 0.4, w * 0.3, 44));
+  const a = Math.max(1, w / 2 - r0);
+  const b = Math.max(1, h / 2 - r0);
+  const cx = w / 2;
+  const cy = h / 2;
 
-/** Where the puffs sit and how big each one is. Exported for the tests. */
-export function cloudLobes(w: number, h: number, { lobe, vary = 0.22, seed = 1 }: CloudOptions = {}): Lobe[] {
-  // A big cloud has big billows. Left fixed, a wide bubble came out frilly,
-  // like a torn edge rather than weather, so the puff scales with the box's
-  // short side and the long side only ever grows the count.
-  // Also capped against the width, or a small bubble comes out as one fat
-  // blob instead of a cloud with a few billows across it.
-  const size = lobe ?? Math.max(6, Math.min(Math.min(w, h) * 0.26, w / 4.5, 24));
-  const most = size * TOP * (1 + vary);
-  // Keep every puff inside the box: the rail they sit on is inset by the
-  // largest one can get, which is a top one.
-  const widest = 2 * TOP * (1 + vary);
-  const r0 = Math.max(2, Math.min(size, (w - 2) / widest, (h - 2) / (TOP * (1 + vary) + BASE * (1 + vary))));
-  const insetX = r0 * TOP * (1 + vary);
-  const insetTop = r0 * TOP * (1 + vary);
-  const insetBase = r0 * BASE * (1 + vary);
-  const x0 = insetX;
-  const y0 = insetTop;
-  const x1 = Math.max(x0, w - insetX);
-  const y1 = Math.max(y0, h - insetBase);
-  const across = x1 - x0;
-  const down = y1 - y0;
-  const round = across + down;
-  if (round < 0.5) return [{ x: w / 2, y: h / 2, r: Math.max(2, Math.min(w, h) / 2) }];
-
-  const rail = 2 * round;
-  const walk = (t: number) => {
-    const u = ((t % rail) + rail) % rail;
-    if (u < across) return { x: x0 + u, y: y0 };
-    if (u < across + down) return { x: x1, y: y0 + (u - across) };
-    if (u < 2 * across + down) return { x: x1 - (u - across - down), y: y1 };
-    return { x: x0, y: y1 - (u - 2 * across - down) };
-  };
-  // A puff's size where it sits: big at the top rail, small at the base.
-  const sizeAt = (y: number) => {
-    const fall = down < 0.5 ? 0 : (y - y0) / down;
-    return TOP + (BASE - TOP) * fall;
-  };
-
-  // Spacing follows each puff's own size — about 1.3 of its radius — so the
-  // big ones along the top stand apart and read as separate billows while the
-  // small ones along the base stay tight enough never to leave a gap. Even
-  // spacing cannot do both: wide enough for the top leaves holes at the base,
-  // tight enough for the base smooths the top into a rounded rectangle.
-  // Walking in "phase" (distance over local radius) closes the loop exactly.
-  const fine = 512;
-  const phase: number[] = [0];
+  // Walk the ring by arc length, not by angle. A flat ellipse covers far more
+  // ground per degree along its sides than round its ends, so billows placed
+  // at equal angles bunch at the ends and leave gaps along the top, and the
+  // union falls into pieces.
+  const fine = 720;
+  const step: number[] = [0];
+  const pointAt = (t: number) => ({ x: cx + a * Math.cos(t), y: cy + b * Math.sin(t) });
   for (let i = 1; i <= fine; i++) {
-    const t = (i / fine) * rail;
-    const p = walk(t - rail / (2 * fine));
-    phase.push(phase[i - 1] + rail / fine / (r0 * sizeAt(p.y)));
+    const p = pointAt(-Math.PI / 2 + ((i - 1) / fine) * TAU);
+    const q = pointAt(-Math.PI / 2 + (i / fine) * TAU);
+    step.push(step[i - 1] + Math.hypot(q.x - p.x, q.y - p.y));
   }
-  const total = phase[fine];
-  const steps = Math.max(7, Math.round(total / 1.3));
-  const lobes: Lobe[] = [];
-  let cursor = 0;
-  for (let i = 0; i < steps; i++) {
-    const want = (i / steps) * total;
-    while (cursor < fine - 1 && phase[cursor + 1] < want) cursor += 1;
-    const { x, y } = walk((cursor / fine) * rail);
-    let r = Math.min(r0 * sizeAt(y) * (1 - vary + 2 * vary * wobble(i, seed)), most);
-    // A tall puff on a short box would hang out of the bottom.
-    r = Math.min(r, x, y, w - x, h - y);
-    lobes.push({ x, y, r: Math.max(r, 1.5) });
+  const round = step[fine];
+
+  const build = (n: number): Lobe[] => {
+    const lobes: Lobe[] = [];
+    let cursor = 0;
+    for (let i = 0; i < n; i++) {
+      const want = (i / n) * round;
+      while (cursor < fine - 1 && step[cursor + 1] < want) cursor += 1;
+      const t = -Math.PI / 2 + (cursor / fine) * TAU;
+      const { x, y } = pointAt(t);
+      // Straight up is 1, straight down is 0.
+      const up = (1 - Math.sin(t)) / 2;
+      const size = BASE + (TOP - BASE) * up;
+      let r = r0 * size * (1 - vary + 2 * vary * wobble(i, seed));
+      r = Math.min(r, x, y, w - x, h - y);
+      lobes.push({ x, y, r: Math.max(r, 1.5) });
+    }
+    return lobes;
+  };
+
+  const touching = (ls: Lobe[]) =>
+    ls.every((l, i) => {
+      const o = ls[(i + 1) % ls.length];
+      return Math.hypot(o.x - l.x, o.y - l.y) < (l.r + o.r) * 0.92;
+    });
+
+  // Start from the size that reads best and add billows until the ring is
+  // continuous, so the cloud is always one piece.
+  let n = Math.max(6, Math.min(14, Math.round(round / (1.45 * r0))));
+  let lobes = build(n);
+  while (!touching(lobes) && n < 26) {
+    n += 1;
+    lobes = build(n);
   }
   return lobes;
 }
 
+export type Arc = { lobe: Lobe; from: number; to: number };
+
+const TAU = Math.PI * 2;
+const norm = (a: number) => ((a % TAU) + TAU) % TAU;
+
 /**
- * How far the union of the puffs reaches from the middle of the box, along a
- * ray at `angle`. The puffs sit on a rect, so the shape is star-shaped around
- * the middle and a ray crosses it exactly once: taking the furthest puff the
- * ray reaches gives the outline with no bookkeeping, and a puff swallowed by
- * its neighbours simply never wins. Tracing circle-to-circle instead looked
- * right until the puffs differed in size, and then the path crossed itself
- * and drew rings inside the cloud.
+ * The runs of each circle that no other circle covers: the union's outline,
+ * as arcs, in order round the shape. Exported so a test can check the
+ * invariant — no kept arc may lie inside another billow, which is what draws
+ * a ring across the middle of the cloud when it goes wrong.
  */
-function reach(lobes: Lobe[], cx: number, cy: number, angle: number): number {
-  const ux = Math.cos(angle);
-  const uy = Math.sin(angle);
-  let far = 0;
+export function cloudArcs(lobes: Lobe[]): Arc[] {
+  const kept: Arc[] = [];
+  const inside = (l: Lobe, x: number, y: number) =>
+    lobes.some((o) => o !== l && Math.hypot(x - o.x, y - o.y) < o.r - 1e-6);
+
   for (const l of lobes) {
-    const px = l.x - cx;
-    const py = l.y - cy;
-    const along = px * ux + py * uy;
-    const gap = along * along - (px * px + py * py) + l.r * l.r;
-    if (gap < 0) continue;
-    const t = along + Math.sqrt(gap);
-    if (t > far) far = t;
+    // Every angle at which another circle cuts this one.
+    const cuts: number[] = [];
+    for (const o of lobes) {
+      if (o === l) continue;
+      const dx = o.x - l.x;
+      const dy = o.y - l.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 1e-9 || d >= l.r + o.r || d <= Math.abs(l.r - o.r)) continue;
+      const mid = Math.atan2(dy, dx);
+      const half = Math.acos(Math.min(1, Math.max(-1, (d * d + l.r * l.r - o.r * o.r) / (2 * d * l.r))));
+      cuts.push(norm(mid - half), norm(mid + half));
+    }
+
+    if (cuts.length === 0) {
+      // Untouched, so either the whole circle is the outline or it is buried.
+      if (!inside(l, l.x + l.r, l.y)) kept.push({ lobe: l, from: 0, to: TAU });
+      continue;
+    }
+    cuts.sort((p, q) => p - q);
+    for (let i = 0; i < cuts.length; i++) {
+      const from = cuts[i];
+      const to = i + 1 < cuts.length ? cuts[i + 1] : cuts[0] + TAU;
+      if (to - from < 1e-9) continue;
+      const mid = (from + to) / 2;
+      if (inside(l, l.x + Math.cos(mid) * l.r, l.y + Math.sin(mid) * l.r)) continue;
+      kept.push({ lobe: l, from, to });
+    }
   }
-  return far;
+  if (kept.length === 0) return [];
+
+  // Chain them end to start. Screen coordinates run y down, so walking each
+  // arc from its smaller angle to its larger one goes clockwise, and the
+  // whole outline comes out clockwise.
+  const at = (arc: Arc, angle: number) => ({
+    x: arc.lobe.x + Math.cos(angle) * arc.lobe.r,
+    y: arc.lobe.y + Math.sin(angle) * arc.lobe.r,
+  });
+  const order: Arc[] = [kept[0]];
+  const left = kept.slice(1);
+  while (left.length) {
+    const tail = order[order.length - 1];
+    const end = at(tail, tail.to);
+    let best = 0;
+    let bestGap = Infinity;
+    for (let i = 0; i < left.length; i++) {
+      const start = at(left[i], left[i].from);
+      const gap = Math.hypot(start.x - end.x, start.y - end.y);
+      if (gap < bestGap) {
+        bestGap = gap;
+        best = i;
+      }
+    }
+    // A jump means the union is in more than one piece, and the rest is not
+    // part of this outline.
+    if (bestGap > 0.75) break;
+    order.push(left.splice(best, 1)[0]);
+  }
+  return order;
 }
 
 /**
@@ -130,42 +174,28 @@ function reach(lobes: Lobe[], cx: number, cy: number, angle: number): number {
  */
 export function cloudPath(w: number, h: number, opts: CloudOptions = {}): string {
   if (!(w > 0) || !(h > 0)) return "";
-  const lobes = cloudLobes(w, h, opts);
-  const cx = w / 2;
-  const cy = h / 2;
+  const arcs = cloudArcs(cloudLobes(w, h, opts));
+  if (arcs.length === 0) return "";
 
-  // Enough samples that a puff carries several, capped so the path stays small.
-  const steps = Math.max(72, Math.min(240, Math.round((w + h) / 1.6)));
-  const pts: { x: number; y: number }[] = [];
-  for (let i = 0; i < steps; i++) {
-    const a = (i / steps) * 2 * Math.PI;
-    const d = reach(lobes, cx, cy, a);
-    if (!(d > 0)) continue;
-    pts.push({ x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d });
-  }
-  if (pts.length < 8) return "";
-
-  // Through the samples as one closed Catmull-Rom, written as cubics: the
-  // curve rounds the joins between puffs a touch, which is what keeps the
-  // edge from looking like a row of circles.
-  const n = pts.length;
-  const at = (i: number) => pts[((i % n) + n) % n];
-  const parts = [`M ${round2(pts[0].x)} ${round2(pts[0].y)}`];
-  for (let i = 0; i < n; i++) {
-    const p0 = at(i - 1);
-    const p1 = at(i);
-    const p2 = at(i + 1);
-    const p3 = at(i + 2);
-    const c1x = p1.x + (p2.x - p0.x) / 6;
-    const c1y = p1.y + (p2.y - p0.y) / 6;
-    const c2x = p2.x - (p3.x - p1.x) / 6;
-    const c2y = p2.y - (p3.y - p1.y) / 6;
-    parts.push(`C ${round2(c1x)} ${round2(c1y)} ${round2(c2x)} ${round2(c2y)} ${round2(p2.x)} ${round2(p2.y)}`);
+  const parts: string[] = [];
+  for (let i = 0; i < arcs.length; i++) {
+    const { lobe: l, from, to } = arcs[i];
+    const p0 = { x: l.x + Math.cos(from) * l.r, y: l.y + Math.sin(from) * l.r };
+    const p1 = { x: l.x + Math.cos(to) * l.r, y: l.y + Math.sin(to) * l.r };
+    if (i === 0) parts.push(`M ${r2(p0.x)} ${r2(p0.y)}`);
+    const swept = to - from;
+    if (swept >= TAU - 1e-9) {
+      // A whole circle takes two arcs; SVG cannot draw it in one.
+      parts.push(`A ${r2(l.r)} ${r2(l.r)} 0 1 1 ${r2(l.x - l.r)} ${r2(l.y)}`);
+      parts.push(`A ${r2(l.r)} ${r2(l.r)} 0 1 1 ${r2(p1.x)} ${r2(p1.y)}`);
+      continue;
+    }
+    parts.push(`A ${r2(l.r)} ${r2(l.r)} 0 ${swept > Math.PI ? 1 : 0} 1 ${r2(p1.x)} ${r2(p1.y)}`);
   }
   parts.push("Z");
   return parts.join(" ");
 }
 
-function round2(n: number): number {
+function r2(n: number): number {
   return Math.round(n * 100) / 100;
 }
