@@ -129,9 +129,10 @@ void main() {
   float d = body(q, r, t) * min(u_squash.x, u_squash.y);
   if (d > 0.0) { outColor = vec4(0.0); return; }
 
-  float ow = u_pixel / hf;   // a one-block outline
+  float ow = u_pixel / hf;   // one block, in these units
+  float bw = 2.0 * ow;         // the outline: two blocks (Mateo, Sept 20)
   vec3 col;
-  if (d > -ow) {
+  if (d > -bw) {
     col = vec3(0.07, 0.07, 0.08);
   } else {
     float n = fbm(p * 3.2 + vec2(t * 0.06, -t * 0.04));
@@ -168,7 +169,7 @@ void main() {
     float smile = u_happy * 0.5;
     float bottomLid = -he.y + floor(2.0 * he.y * smile / ow + 0.5) * ow;
     ed = max(ed, bottomLid - e.y);
-    if (d < -ow && ed < 0.0) {
+    if (d < -bw && ed < 0.0) {
       col = vec3(0.07, 0.07, 0.08);
       // A two-block glint in the top corner, gone while the eye is mostly lid.
       vec2 hc = e - vec2(-he.x + 2.0 * ow, he.y - 2.0 * ow);
