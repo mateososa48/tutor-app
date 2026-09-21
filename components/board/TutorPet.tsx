@@ -143,34 +143,36 @@ void main() {
     col = mix(col, u_bg, step(0.99, qn) * 0.7);
   }
 
-  // Eyes, in body space so they lean and squash with it. One drawing in every
-  // state: a pill with a glint in its top corner. Moods only move two lids: the
-  // top lid comes down for squints, sleepiness and blinks, the bottom lid rises
-  // for a smile, and wide eyes are a small uniform scale, never a taller pill.
+  // Eyes. Pixel-art eyes stay upright and on the grid while the body moves:
+  // each eye is a fixed 6 by 8 block pill in screen space, snapped to whole
+  // blocks, so it rasterizes identically every frame. Only its anchor follows
+  // the body's lean and squash. Moods move two lids as clipping lines in
+  // whole blocks (the top lid down for squints, sleepiness and blinks, the
+  // bottom lid up for a smile), looks shift it by whole blocks, and wide
+  // eyes gain one block of height.
   for (int i = 0; i < 2; i++) {
     float s = i == 0 ? -1.0 : 1.0;
-    vec2 ec = vec2(s * (u_shape == 2 ? 0.27 : 0.31), u_eyeY) * r + u_look * vec2(0.05, 0.045) * r;
-    vec2 e = q - ec;
     float sq = i == 0 ? u_squint.x : u_squint.y;
-    vec2 he = vec2(0.16, 0.22) * r * (1.0 + 0.2 * clamp(-sq, 0.0, 0.4));
-    // The full pill, always; the lids are clipping lines across it, so a
-    // lowered top lid keeps the round bottom and a raised bottom lid keeps the
-    // round top, which is what makes the smile read as the same eye.
-    // While smiling the pill's ends go fully round, so the cap left above the
-    // raised bottom lid is a true arch.
-    float ed = sdRoundBox(e, he, mix(min(he.x, he.y) * 0.65, he.x, u_happy));
+    vec2 ecBody = vec2(s * (u_shape == 2 ? 0.27 : 0.31), u_eyeY) * r;
+    vec2 anchor = rot(-u_lean) * (ecBody * u_squash) + u_offset;
+    anchor += vec2(floor(u_look.x * 1.5 + 0.5), floor(u_look.y * 1.5 + 0.5)) * ow;
+    anchor = floor(anchor / ow + 0.5) * ow;   // a block corner: even sizes rasterize symmetric
+    vec2 e = p - anchor;
+    float wide = step(0.2, -sq);
+    vec2 he = vec2(3.0, 4.0 + wide) * ow;
+    float rounding = mix(2.0 * ow, he.x, u_happy);
+    float ed = sdRoundBox(e, he, rounding);
     float closed = max(clamp(sq, 0.0, 0.6), u_blink * 0.94);
-    float topLid = he.y - 2.0 * he.y * closed;
+    float topLid = he.y - floor(2.0 * he.y * closed / ow + 0.5) * ow;
     ed = max(ed, e.y - topLid);
     float smile = u_happy * 0.5;
-    float bottomLid = -he.y + 2.0 * he.y * smile;
+    float bottomLid = -he.y + floor(2.0 * he.y * smile / ow + 0.5) * ow;
     ed = max(ed, bottomLid - e.y);
-    if (ed < 0.0) {
+    if (d < -ow && ed < 0.0) {
       col = vec3(0.07, 0.07, 0.08);
-      // The glint sits in the pill's top corner, two blocks square, whatever the size.
-      vec2 hc = e - vec2(-0.055 * r, he.y - 0.055 * r);
-      // No glint on a smiling eye: it is mostly lid.
-      if (smile < 0.25 && max(abs(hc.x), abs(hc.y)) < ow * 1.05) col = vec3(1.0);
+      // A two-block glint in the top corner, gone while the eye is mostly lid.
+      vec2 hc = e - vec2(-he.x + 2.0 * ow, he.y - 2.0 * ow);
+      if (smile < 0.25 && max(abs(hc.x), abs(hc.y)) < ow * 1.0) col = vec3(1.0);
     }
   }
   outColor = vec4(col, 1.0);
