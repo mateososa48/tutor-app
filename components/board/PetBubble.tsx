@@ -1,6 +1,8 @@
 "use client";
 
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { cloudPath } from "@/lib/cloud-path";
 import { useReduce } from "@/lib/reduced-motion";
 import { cn } from "@/lib/utils";
 
@@ -67,6 +69,21 @@ export function PetBubble({
   const still = reduce === true;
   const place = PLACE[side](align, gap);
   const thinking = kind === "thought" && !text;
+  const cloud = kind === "thought";
+
+  // The cloud is drawn for the size the bubble actually ends up, so its puffs
+  // are the same size in a two-word bubble and a two-line one. Measured in a
+  // ResizeObserver rather than an effect body: it runs after layout and
+  // before paint, so the shape is there on the first frame.
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el || !cloud) return;
+    const ro = new ResizeObserver(() => setBox({ w: el.offsetWidth, h: el.offsetHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [cloud]);
 
   return (
     <AnimatePresence>
@@ -81,21 +98,51 @@ export function PetBubble({
           animate={still ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0, x: 0, filter: "blur(0px)" }}
           exit={still ? { opacity: 0 } : { opacity: 0, scale: 0.94, filter: "blur(2px)" }}
           transition={still ? { duration: 0.12 } : { ...POP, filter: { duration: 0.18 }, layout: SETTLE }}
+          ref={boxRef}
           style={{ ...place.style, transformOrigin: place.origin, maxWidth }}
           className={cn(
             "pointer-events-none absolute z-10 w-max",
-            kind === "thought" ? "rounded-[18px]" : "rounded-[14px]",
-            "border border-(--lp-line-strong) bg-white px-3 py-2",
             "text-[13.5px] leading-[1.35] text-(--lp-ink)",
-            "shadow-[0_1px_2px_rgba(18,18,21,0.05),0_8px_20px_rgba(18,18,21,0.07)]",
+            cloud
+              ? "px-5 py-4"
+              : "rounded-[14px] border border-(--lp-line-strong) bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,18,21,0.05),0_8px_20px_rgba(18,18,21,0.07)]",
             className,
           )}
         >
-          {thinking ? <Dots still={still} /> : <Words text={text ?? ""} still={still} />}
+          {cloud && <Cloud box={box} />}
+          <span className="relative block">{thinking ? <Dots still={still} /> : <Words text={text ?? ""} still={still} />}</span>
           {kind === "speech" ? <Tail side={side} align={align} /> : <ThoughtTail side={side} align={align} still={still} />}
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+// The cloud itself: one path, filled white with a hair of shading toward the
+// bottom so it has a little volume, the hairline drawn on the shape rather
+// than around a box, and a shadow that follows the puffs.
+function Cloud({ box }: { box: { w: number; h: number } | null }) {
+  const id = useId();
+  if (!box || box.w < 4 || box.h < 4) return null;
+  const d = cloudPath(box.w, box.h);
+  if (!d) return null;
+  return (
+    <svg
+      aria-hidden
+      width={box.w}
+      height={box.h}
+      viewBox={`0 0 ${box.w} ${box.h}`}
+      className="absolute inset-0"
+      style={{ filter: "drop-shadow(0 1px 1px rgba(18,18,21,0.05)) drop-shadow(0 8px 16px rgba(18,18,21,0.07))" }}
+    >
+      <defs>
+        <linearGradient id={`cloud-${id}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0.5" stopColor="#ffffff" />
+          <stop offset="1" stopColor="#f2f4f7" />
+        </linearGradient>
+      </defs>
+      <path d={d} fill={`url(#cloud-${id})`} stroke="rgba(18,18,21,0.14)" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+    </svg>
   );
 }
 

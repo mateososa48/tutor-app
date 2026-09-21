@@ -141,17 +141,20 @@ const LINES = [
   "Let's put that on the board and look at it together.",
 ];
 
+type Show = "speech" | "thought" | "dots";
+
 function Bubbles() {
   const [i, setI] = useState(0);
-  const [kind, setKind] = useState<BubbleKind>("speech");
+  const [show, setShow] = useState<Show>("speech");
+  const kind: BubbleKind = show === "speech" ? "speech" : "thought";
   const [open, setOpen] = useState(true);
   const [auto, setAuto] = useState(true);
 
   useEffect(() => {
-    if (!auto || kind === "thought") return;
+    if (!auto || show === "dots") return;
     const id = setInterval(() => setI((v) => (v + 1) % LINES.length), 2600);
     return () => clearInterval(id);
-  }, [auto, kind]);
+  }, [auto, show]);
 
   return (
     <section className="mt-8 rounded-[20px] border border-(--lp-line) bg-white p-6">
@@ -160,8 +163,9 @@ function Bubbles() {
         It grows out of the pet, the words arrive one at a time, and it resizes on a spring when the line changes.
       </p>
       <div className="mt-5 flex flex-wrap items-center gap-2">
-        <Chip active={kind === "speech"} onClick={() => setKind("speech")}>speech</Chip>
-        <Chip active={kind === "thought"} onClick={() => setKind("thought")}>thought</Chip>
+        <Chip active={show === "speech"} onClick={() => setShow("speech")}>speech</Chip>
+        <Chip active={show === "thought"} onClick={() => setShow("thought")}>thought cloud</Chip>
+        <Chip active={show === "dots"} onClick={() => setShow("dots")}>thinking</Chip>
         <span className="mx-2 h-4 w-px bg-(--lp-line)" />
         <Chip active={auto} onClick={() => setAuto((v) => !v)}>cycle lines</Chip>
         <Chip active={false} onClick={() => setI((v) => (v + 1) % LINES.length)}>next line</Chip>
@@ -173,9 +177,9 @@ function Bubbles() {
           <div key={side} className="flex min-h-[230px] items-center justify-center">
             <Pet
               size={120}
-              state={kind === "thought" ? "thinking" : "speaking"}
+              state={show === "speech" ? "speaking" : "thinking"}
               level={0.45}
-              text={kind === "thought" ? undefined : LINES[i]}
+              text={show === "dots" ? undefined : LINES[i]}
               kind={kind}
               side={side}
               align={side === "left" ? "end" : "start"}
