@@ -116,8 +116,14 @@ test("the notepad follows the answers, and makes the parent rule visible", () =>
 });
 
 test("a draft rebuilt from a saved profile carries what was stored, and defaults an older profile to a student", () => {
-  const draft = draftFromProfile({ displayName: "Ana", gradeLevel: "9th grade", onboarding: { by: "parent", concern: "test", interests: ["Art"] } });
-  assert.deepEqual(draft, { by: "parent", name: "Ana", grade: "9th grade", concern: "test", note: "", interests: ["Art"] });
+  const draft = draftFromProfile({
+    displayName: "Ana",
+    gradeLevel: "9th grade",
+    onboarding: { by: "parent", concern: "test", interests: ["Art"], topic: "slope" },
+  });
+  assert.deepEqual(draft, { by: "parent", name: "Ana", grade: "9th grade", concern: "test", note: "", interests: ["Art"], topic: "slope" });
+  // A topic that is not a lesson we stage is dropped, not carried.
+  assert.equal(draftFromProfile({ onboarding: { by: "student", topic: "astrophysics" } }).topic, null);
   assert.equal(draftFromProfile({ displayName: "Old", gradeLevel: "High school (9–12)", onboarding: {} }).by, "student");
   assert.equal(draftFromProfile(null).by, null);
 });

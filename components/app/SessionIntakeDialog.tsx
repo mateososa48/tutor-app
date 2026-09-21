@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { Select } from "@base-ui/react/select";
-import { Check, ChevronDown, Languages, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Languages, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { FooterWave } from "@/components/landing/FooterWave";
@@ -11,7 +11,8 @@ import { FilesPanel } from "@/components/session/FilesPopover";
 import { useFileIntake } from "@/components/session/useFileIntake";
 import type { UploadedFile } from "@/lib/file-processor";
 import { EMPTY_INTAKE, SESSION_LANGUAGES, type LanguageCode, type SessionIntake } from "@/lib/session-intake";
-import type { StarterTopic } from "@/lib/starter-topics";
+import { TopicTiles } from "@/components/onboarding/TopicTiles";
+import { lessonTopic, type StagedLesson } from "@/lib/staged-lessons";
 import { cn } from "@/lib/utils";
 
 // Two questions and nothing else: what they're stuck on, and a photo if they
@@ -31,7 +32,8 @@ export function SessionIntakeDialog({
   starting = false,
   error,
   initialTopic = "",
-  starters = [],
+  initialLessonKey,
+  lessons = [],
 }: {
   onStart: (intake: SessionIntake, files: UploadedFile[]) => void;
   onCancel: () => void;
@@ -39,10 +41,27 @@ export function SessionIntakeDialog({
   error?: string | null;
   /** Prefills the text box, e.g. from a "practice this" link on the home page. */
   initialTopic?: string;
-  /** Problems to start on when the box is empty (lib/starter-topics.ts, picked for the grade). */
-  starters?: readonly StarterTopic[];
+  /** A lesson already picked during onboarding, so the session stays staged. */
+  initialLessonKey?: string;
+  /** Lessons to offer when the box is empty (lib/staged-lessons.ts, picked for the grade). */
+  lessons?: readonly StagedLesson[];
 }) {
-  const [intake, setIntake] = useState<SessionIntake>({ ...EMPTY_INTAKE, topic: initialTopic });
+  const [intake, setIntake] = useState<SessionIntake>({
+    ...EMPTY_INTAKE,
+    topic: initialTopic,
+    ...(initialLessonKey ? { lessonKey: initialLessonKey } : {}),
+  });
+  const [open, setOpen] = useState(false);
+  const empty = intake.topic.trim() === "";
+
+  // Picking fills the box with the lesson's real first problem and keeps the
+  // key, which is what turns the session into the staged one.
+  const pick = (key: string) => {
+    const lesson = lessons.find((l) => l.key === key);
+    if (!lesson) return;
+    setIntake((prev) => ({ ...prev, topic: lessonTopic(lesson), lessonKey: lesson.key }));
+    setOpen(false);
+  };
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [dragging, setDragging] = useState(false);
   const addFiles = (added: UploadedFile[]) => setFiles((prev) => [...prev, ...added]);
@@ -92,29 +111,37 @@ export function SessionIntakeDialog({
               rows={3}
               value={intake.topic}
               placeholder="Adding fractions, question 4"
-              onChange={(e) => setIntake((prev) => ({ ...prev, topic: e.target.value }))}
+              onChange={(e) => setIntake((prev) => ({ ...prev, topic: e.target.value, lessonKey: undefined }))}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
               }}
               className="mt-4 min-h-[84px] resize-none rounded-[14px] text-[15px] leading-[1.5]"
             />
 
-            {/* Nothing in mind, or a parent seeing how it teaches: a problem to start on. Shown while the box is empty. */}
-            {starters.length > 0 && intake.topic.trim() === "" && (
-              <div className="mt-3">
-                <p className="m-0 text-[12.5px] text-(--lp-ink-3)">Nothing in mind? Try one of these.</p>
-                <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                  {starters.map((s) => (
-                    <button
-                      key={s.skillKey}
-                      type="button"
-                      onClick={() => setIntake((prev) => ({ ...prev, topic: s.problem }))}
-                      className="flex min-h-11 items-center rounded-[10px] border border-(--lp-line-strong) bg-white px-3 text-left text-[13.5px] font-medium text-(--lp-ink) outline-none transition-[border-color,scale] duration-150 ease-out hover:border-(--lp-ink)/30 focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) active:scale-[0.96] motion-reduce:transition-none motion-reduce:active:scale-100"
-                    >
-                      {s.problem}
-                    </button>
-                  ))}
-                </div>
+            {/* The suggestions live outside the window (below). Under its
+                breakpoint there is nowhere to put them, so they stay one tap
+                away rather than sitting in the way. */}
+            {lessons.length > 0 && empty && (
+              <div className="mt-2.5 lg:hidden">
+                {open ? (
+                  <TopicTiles
+                    labelledBy="intake-suggest-label"
+                    columns={1}
+                    lessons={lessons.slice(0, 4)}
+                    value={intake.lessonKey ?? null}
+                    onChange={pick}
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    id="intake-suggest-label"
+                    onClick={() => setOpen(true)}
+                    className="-ml-1 inline-flex h-9 items-center gap-1.5 rounded-[8px] px-1 text-[13px] font-medium text-(--lp-ink-2) outline-none transition-colors duration-150 hover:text-(--lp-ink) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
+                  >
+                    <Sparkles className="size-3.5" strokeWidth={2.25} aria-hidden />
+                    Nothing in mind?
+                  </button>
+                )}
               </div>
             )}
 
@@ -165,6 +192,39 @@ export function SessionIntakeDialog({
             </div>
           </div>
         </Dialog.Popup>
+
+        {/* Outside the window, not in it: a bubble beside the dialog, its tail
+            pointing back at it. The dialog is 440px at most and centred, so
+            220px clears its right edge. Hidden where there is no room. */}
+        {lessons.length > 0 && empty && (
+          <div
+            className={cn(
+              "fixed top-1/2 left-1/2 z-50 hidden w-[292px] -translate-y-1/2 translate-x-[236px] lg:block",
+              "transition-[opacity,translate] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]",
+              "starting:translate-x-[220px] starting:opacity-0 motion-reduce:transition-none",
+            )}
+          >
+            <div className="relative rounded-[18px] bg-(--lp-surface) p-4 shadow-[0_1px_2px_rgba(18,18,21,0.06),0_12px_32px_rgba(18,18,21,0.12)] ring-1 ring-[rgba(18,18,21,0.07)]">
+              <div aria-hidden className="absolute top-8 -left-[5px] size-2.5 rotate-45 rounded-[2px] bg-(--lp-surface) ring-1 ring-[rgba(18,18,21,0.07)]" />
+              <div className="relative rounded-[2px] bg-(--lp-surface)">
+                <h3 id="intake-bubble-label" className="lp-display m-0 text-[17px] leading-[1.25] text-(--lp-ink)">
+                  Nothing in mind?
+                </h3>
+                <p className="m-0 mt-1 text-[13px] leading-[1.45] text-(--lp-ink-2)">
+                  Pick one and your tutor has it planned out already.
+                </p>
+              </div>
+              <TopicTiles
+                labelledBy="intake-bubble-label"
+                columns={1}
+                lessons={lessons.slice(0, 4)}
+                value={intake.lessonKey ?? null}
+                onChange={pick}
+                className="mt-3"
+              />
+            </div>
+          </div>
+        )}
       </Dialog.Portal>
     </Dialog.Root>
   );

@@ -1,4 +1,5 @@
 import type { UploadedFile } from "./file-processor";
+import { lessonByKey, lessonPlan, lessonTopic } from "./staged-lessons";
 
 // What the student tells us before a session starts, so the tutor can open on
 // the actual problem instead of "what are we working on today?".
@@ -34,6 +35,8 @@ export type SessionIntake = {
   topic: string;
   language: LanguageCode;
   fileNames: string[];
+  /** A staged lesson they picked rather than a problem they brought (lib/staged-lessons.ts). */
+  lessonKey?: string;
 };
 
 export const EMPTY_INTAKE: SessionIntake = {
@@ -118,7 +121,10 @@ export function intakeTitle(intake: SessionIntake): string {
 export function intakeOpeningMessage(intake: SessionIntake, fileCount: number): string {
   const parts: string[] = [];
   const topic = intake.topic.trim();
-  parts.push(topic ? `I need help with: ${topic}` : "I need help with the work I just uploaded.");
+  const lesson = lessonByKey(intake.lessonKey);
+  // A picked lesson is not something they are stuck on, so they do not say so.
+  if (lesson && topic === lessonTopic(lesson)) parts.push(`I want to work on ${lesson.label.toLowerCase()}.`);
+  else parts.push(topic ? `I need help with: ${topic}` : "I need help with the work I just uploaded.");
   if (fileCount > 0) {
     parts.push(fileCount === 1 ? "I uploaded a picture of it." : `I uploaded ${fileCount} pictures of it.`);
   }
@@ -138,7 +144,9 @@ export function intakeInstructions(intake: SessionIntake, fileCount: number): st
     `Language: speak and write on the board in ${language}. Everything you say and every label, heading and note you draw is in ${language}, whatever language the student writes in. Keep the student's own notation for numbers and symbols.`,
   );
   const topic = intake.topic.trim();
-  if (topic) lines.push(`The student said what they need before starting: "${topic}"`);
+  const lesson = lessonByKey(intake.lessonKey);
+  if (lesson && topic === lessonTopic(lesson)) lines.push(lessonPlan(lesson));
+  else if (topic) lines.push(`The student said what they need before starting: "${topic}"`);
   if (fileCount > 0) {
     lines.push(
       `They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence.`,

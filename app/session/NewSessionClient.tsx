@@ -7,7 +7,8 @@ import { TopBar } from "@/components/app/TopBar";
 import { SessionIntakeDialog } from "@/components/app/SessionIntakeDialog";
 import { createSession } from "@/lib/sessions";
 import { intakeTitle, storeIntake, type SessionIntake } from "@/lib/session-intake";
-import { starterTopics } from "@/lib/starter-topics";
+import { lessonByKey, lessonTopic, lessonsForGrade } from "@/lib/staged-lessons";
+import { sanitizeOnboarding } from "@/lib/onboarding";
 import type { UploadedFile } from "@/lib/file-processor";
 
 // "New session" lands here. It asks what the student needs before the board
@@ -17,7 +18,7 @@ import type { UploadedFile } from "@/lib/file-processor";
 // ?ready=1. The QA and preview entry points (?debug=1, ?qa=1, ?mock=1) skip
 // all of it and start straight away.
 
-type Profile = { gradeLevel: string | null } | null;
+type Profile = { gradeLevel: string | null; onboarding?: unknown } | null;
 
 /** How long the two lookups get before the intake opens without them. */
 const OPEN_ANYWAY_MS = 5000;
@@ -106,6 +107,9 @@ export default function NewSessionClient() {
   }, [skipIntake, ready, router]);
 
   const showIntake = !skipIntake && firstEver !== null;
+  // A lesson chosen during onboarding opens the box already filled in, so the
+  // first session starts on the staged one. A ?topic= link still wins.
+  const picked = lessonByKey(sanitizeOnboarding(profile?.onboarding)?.topic);
 
   return (
     <AppShell defaultOpen={false}>
@@ -117,8 +121,9 @@ export default function NewSessionClient() {
       </div>
       {showIntake && (
         <SessionIntakeDialog
-          initialTopic={initialTopic}
-          starters={starterTopics(profile?.gradeLevel)}
+          initialTopic={initialTopic || (picked ? lessonTopic(picked) : "")}
+          initialLessonKey={picked?.key}
+          lessons={lessonsForGrade(profile?.gradeLevel)}
           starting={starting}
           error={error}
           onStart={(intake, files) => void go(intake, files)}

@@ -14,6 +14,8 @@
 // never announced: the effect runs through a mechanism students do not
 // notice, and asking them to notice it optimises the wrong thing.
 
+import { lessonByKey } from "./staged-lessons";
+
 export type OnboardedBy = "student" | "parent";
 
 export const CONCERNS = [
@@ -51,6 +53,8 @@ export type OnboardingRecord = {
   note?: string;
   /** What the student is into, for examples. */
   interests?: string[];
+  /** A staged lesson picked to start on (lib/staged-lessons.ts). */
+  topic?: string;
 };
 
 export const NOTE_MAX = 300;
@@ -117,6 +121,7 @@ export function sanitizeOnboarding(input: unknown): OnboardingRecord | null {
   }
   const interests = sanitizeInterests(raw.interests);
   if (interests.length) record.interests = interests;
+  if (typeof raw.topic === "string" && lessonByKey(raw.topic)) record.topic = raw.topic;
   return record;
 }
 
@@ -154,9 +159,10 @@ export type OnboardingDraft = {
   concern: ConcernKey | null;
   note: string;
   interests: string[];
+  topic: string | null;
 };
 
-export const EMPTY_DRAFT: OnboardingDraft = { by: null, name: "", grade: "", concern: null, note: "", interests: [] };
+export const EMPTY_DRAFT: OnboardingDraft = { by: null, name: "", grade: "", concern: null, note: "", interests: [], topic: null };
 
 /** A draft rebuilt from a saved profile, for the notepad on later screens. */
 export function draftFromProfile(profile: { displayName?: string | null; gradeLevel?: string | null; onboarding?: unknown } | null): OnboardingDraft {
@@ -168,6 +174,7 @@ export function draftFromProfile(profile: { displayName?: string | null; gradeLe
     concern: record?.concern ?? null,
     note: record?.note ?? "",
     interests: record?.interests ?? [],
+    topic: record?.topic ?? null,
   };
 }
 
@@ -177,6 +184,8 @@ export function onboardingNotes(draft: OnboardingDraft): BoardNote[] {
   const name = draft.name.trim();
   if (name) notes.push({ label: "Name", text: name });
   if (draft.grade) notes.push({ label: "Grade", text: gradeLabel(draft.grade) });
+  const lesson = lessonByKey(draft.topic);
+  if (lesson) notes.push({ label: "Starting on", text: lesson.label });
   if (draft.interests.length) notes.push({ label: "Likes", text: draft.interests.join(", ") });
   if (draft.by === "parent") {
     const concern = CONCERNS.find((c) => c.key === draft.concern);
@@ -186,7 +195,7 @@ export function onboardingNotes(draft: OnboardingDraft): BoardNote[] {
       if (note) notes.push({ label: "Parent's note", text: note });
       notes.push({ label: "Note to self", text: concern.lead ? "Check this for myself" : "Find out what's going on" });
     }
-  } else if (draft.grade) {
+  } else if (draft.grade && !lesson) {
     notes.push({ label: "Next", text: "Ask what they're working on" });
   }
   return notes;

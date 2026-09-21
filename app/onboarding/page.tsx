@@ -10,8 +10,10 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { OnboardingFrame } from "@/components/onboarding/OnboardingFrame";
 import { OptionGrid } from "@/components/onboarding/OptionGrid";
+import { TopicTiles } from "@/components/onboarding/TopicTiles";
 import { TutorNotesBoard } from "@/components/onboarding/TutorNotesBoard";
 import { useReduce } from "@/lib/reduced-motion";
+import { lessonsForGrade } from "@/lib/staged-lessons";
 import {
   CONCERNS,
   EMPTY_DRAFT,
@@ -36,9 +38,7 @@ import {
 // parent's answer the note is the rule the tutor will follow: check it
 // myself. That is the whole idea of the flow, made visible.
 
-type Step = "who" | "name" | "grade" | "concern" | "handoff";
-
-const BACK: Partial<Record<Step, Step>> = { name: "who", grade: "name", concern: "grade" };
+type Step = "who" | "name" | "grade" | "concern" | "topic" | "handoff";
 
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
@@ -98,6 +98,17 @@ export default function OnboardingPage() {
   const first = draft.name.trim().split(/\s+/)[0] || "";
   const notes = onboardingNotes(draft);
   const item = itemVariants(reduce);
+  // Four, in one column. Two columns at this width wrapped every blurb onto
+  // three lines and left the tiles uneven.
+  const lessons = lessonsForGrade(draft.grade, 4);
+  // The concern screen only exists on the parent's path, so the way back from
+  // the topic screen differs.
+  const back: Partial<Record<Step, Step>> = {
+    name: "who",
+    grade: "name",
+    concern: "grade",
+    topic: parent ? "concern" : "grade",
+  };
 
   // Switching roles changes what every later question means ("your name"
   // becomes "your child's name"), so the answers start over; re-picking the
@@ -108,8 +119,8 @@ export default function OnboardingPage() {
     setStep("name");
   }
 
-  function back() {
-    const to = BACK[step];
+  function goBack() {
+    const to = back[step];
     if (!to || saving) return;
     setError(null);
     setStep(to);
@@ -129,8 +140,8 @@ export default function OnboardingPage() {
           displayName: draft.name.trim(),
           gradeLevel: draft.grade,
           onboarding: parent
-            ? { by: "parent", concern: draft.concern ?? undefined, note: draft.note.trim() || undefined }
-            : { by: "student" },
+            ? { by: "parent", concern: draft.concern ?? undefined, note: draft.note.trim() || undefined, topic: draft.topic ?? undefined }
+            : { by: "student", topic: draft.topic ?? undefined },
         }),
       });
       if (!res.ok) throw new Error(`save ${res.status}`);
@@ -149,33 +160,38 @@ export default function OnboardingPage() {
     setStep("grade");
   }
 
-  async function submitGrade() {
+  function submitGrade() {
     if (!draft.grade || saving) return;
-    if (parent) {
-      setStep("concern");
-      return;
-    }
-    // A student goes on to the brief before their first session.
-    if (await save()) router.push(preview ? "/welcome?preview=1" : "/welcome");
+    setStep(parent ? "concern" : "topic");
   }
 
-  async function submitConcern() {
+  function submitConcern() {
     if (!draft.concern || saving) return;
-    if (await save()) {
+    setStep("topic");
+  }
+
+  // The last screen for both paths, so the profile is written once. The topic
+  // is optional: skipping is a real answer, and the intake asks anyway.
+  async function submitTopic() {
+    if (saving) return;
+    if (!(await save())) return;
+    if (parent) {
       setSaving(false);
       setStep("handoff");
+      return;
     }
+    router.push(preview ? "/welcome?preview=1" : "/welcome");
   }
 
   return (
     <OnboardingFrame notes={notes}>
       {/* A fixed slot for Back, so the question sits at the same height on every screen. */}
       <div className="mt-4 flex h-11 items-center">
-        {BACK[step] && (
+        {back[step] && (
           <Button
             type="button"
             variant="ghost"
-            onClick={back}
+            onClick={goBack}
             disabled={saving}
             className="-ml-2.5 h-11 gap-1 rounded-[10px] px-2.5 text-[13.5px] font-medium text-(--lp-ink-2) hover:text-(--lp-ink)"
           >
@@ -249,8 +265,7 @@ export default function OnboardingPage() {
                 />
               </motion.div>
               <motion.div variants={item}>
-                <Continue busyLabel="Saving…" disabled={!draft.grade} busy={saving} onClick={() => void submitGrade()} />
-                <ErrorLine error={error} />
+                <Continue disabled={!draft.grade} onClick={submitGrade} />
               </motion.div>
             </StepFrame>
           )}
@@ -294,7 +309,37 @@ export default function OnboardingPage() {
                 )}
               </motion.div>
               <motion.div variants={item}>
-                <Continue busyLabel="Saving…" disabled={!draft.concern} busy={saving} onClick={() => void submitConcern()} />
+                <Continue disabled={!draft.concern} onClick={submitConcern} />
+              </motion.div>
+            </StepFrame>
+          )}
+
+          {step === "topic" && (
+            <StepFrame
+              item={item}
+              title={parent ? `What should ${first} start with?` : "What do you want to start with?"}
+              sub={
+                parent
+                  ? "Your tutor will have this one ready and planned. They can change it."
+                  : "Your tutor will have this one ready and planned. You can change it."
+              }
+            >
+              <motion.div variants={item} className="mt-6">
+                <TopicTiles
+                  labelledBy="onboarding-question"
+                  columns={1}
+                  lessons={lessons}
+                  value={draft.topic}
+                  onChange={(topic) => setDraft((d) => ({ ...d, topic: d.topic === topic ? null : topic }))}
+                />
+              </motion.div>
+              <motion.div variants={item}>
+                <Continue
+                  label={draft.topic ? "Continue" : "Skip for now"}
+                  busyLabel="Saving…"
+                  busy={saving}
+                  onClick={() => void submitTopic()}
+                />
                 <ErrorLine error={error} />
               </motion.div>
             </StepFrame>
