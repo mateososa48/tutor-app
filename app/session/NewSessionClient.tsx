@@ -19,6 +19,9 @@ import type { UploadedFile } from "@/lib/file-processor";
 
 type Profile = { gradeLevel: string | null } | null;
 
+/** How long the two lookups get before the intake opens without them. */
+const OPEN_ANYWAY_MS = 5000;
+
 export default function NewSessionClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -61,10 +64,20 @@ export default function NewSessionClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [skipIntake]);
 
-  // The grade picks the starter topics; an empty session list means the brief comes first.
+  // The grade picks the starter topics; an empty session list means the brief
+  // comes first. Neither request may leave the student on "Setting up your
+  // session…" forever: if one is slow or blocked, the intake opens anyway
+  // after OPEN_ANYWAY_MS, and a late answer no longer redirects.
   useEffect(() => {
     if (skipIntake) return;
     let live = true;
+    let opened = false;
+    const openAnyway = setTimeout(() => {
+      if (!live) return;
+      opened = true;
+      setFirstEver((current) => current ?? false);
+    }, OPEN_ANYWAY_MS);
+
     Promise.all([
       fetch("/api/onboarding").then((r) => (r.ok ? r.json() : null)),
       fetch("/api/sessions").then((r) => (r.ok ? r.json() : [])),
@@ -73,7 +86,7 @@ export default function NewSessionClient() {
         if (!live) return;
         setProfile(p);
         const none = Array.isArray(sessions) && sessions.length === 0;
-        if (none && !ready) {
+        if (none && !ready && !opened) {
           router.replace("/welcome");
           return;
         }
@@ -83,9 +96,12 @@ export default function NewSessionClient() {
         if (!live) return;
         setProfile(null);
         setFirstEver(false);
-      });
+      })
+      .finally(() => clearTimeout(openAnyway));
+
     return () => {
       live = false;
+      clearTimeout(openAnyway);
     };
   }, [skipIntake, ready, router]);
 

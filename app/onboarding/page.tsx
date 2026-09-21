@@ -91,6 +91,7 @@ export default function OnboardingPage() {
   const [draft, setDraft] = useState<OnboardingDraft>(EMPTY_DRAFT);
   const [noteOpen, setNoteOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const parent = draft.by === "parent";
@@ -310,17 +311,34 @@ export default function OnboardingPage() {
                 <TutorNotesBoard notes={notes} />
               </motion.div>
               <motion.div variants={item} className="mt-7 flex flex-col gap-2 sm:flex-row sm:items-center">
+                {/* Straight to the brief. Going through /session would only
+                    bounce back here, and a click has to show something at
+                    once, so the button holds a pending state. */}
                 <Button
                   type="button"
-                  onClick={() => router.push(preview ? "/welcome?preview=1" : "/session")}
+                  disabled={leaving}
+                  onClick={() => {
+                    setLeaving(true);
+                    router.push(preview ? "/welcome?preview=1" : "/welcome");
+                  }}
                   className="btn-gloss-lift h-11 gap-2 rounded-[10px] px-5 text-[14px] font-semibold"
                 >
-                  Start a session now
-                  <ArrowRight className="size-4" strokeWidth={2.25} aria-hidden />
+                  {leaving ? (
+                    <>
+                      <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden />
+                      Opening…
+                    </>
+                  ) : (
+                    <>
+                      Start a session now
+                      <ArrowRight className="size-4" strokeWidth={2.25} aria-hidden />
+                    </>
+                  )}
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
+                  disabled={leaving}
                   onClick={() => router.push("/")}
                   className="h-11 rounded-[10px] px-4 text-[14px] font-medium text-(--lp-ink-2) hover:text-(--lp-ink)"
                 >

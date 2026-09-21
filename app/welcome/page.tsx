@@ -97,7 +97,8 @@ export default function WelcomePage() {
         // The session starts anyway.
       }
     }
-    router.push(preview ? "/" : "/session?ready=1");
+    // Preview goes the same way; /session only creates one on submit.
+    router.push("/session?ready=1");
   }
 
   const list = listVariants(reduce);
