@@ -115,6 +115,13 @@ float body(vec2 q, float r, float t) {
   return d - u_wobble * 0.025 * r * w;
 }
 
+// The same field at any point on screen, so a block can ask about its neighbours.
+float bodyAt(vec2 sp, float r, float t) {
+  vec2 q = rot(u_lean) * (sp - u_offset);
+  q /= u_squash;
+  return body(q, r, t) * min(u_squash.x, u_squash.y);
+}
+
 void main() {
   // Pixel blocks: everything below is computed once per block, so the edges
   // and the eyes are as blocky as the fill.
@@ -124,16 +131,33 @@ void main() {
   float t = u_time;
   float r = 0.72 * (1.0 + 0.08 * u_level);
 
-  vec2 q = rot(u_lean) * (p - u_offset);
-  q /= u_squash;
-  float d = body(q, r, t) * min(u_squash.x, u_squash.y);
+  float d = bodyAt(p, r, t);
   if (d > 0.0) { outColor = vec4(0.0); return; }
 
   float ow = u_pixel / hf;   // one block, in these units
-  float bw = 1.5 * ow;         // the outline: between one block (too thin, it broke at the corners) and two (too fat) — Mateo, Sept 20
+
+  // The outline is counted in whole blocks, not measured as a distance: a
+  // block is the edge when a block next to it is outside the body. Measuring
+  // the distance instead made the ink flip between one and two blocks as the
+  // wobble crossed the grid, and the edge pulsed (Mateo, Sept 20). Deep
+  // inside, skip the neighbours. Ring 1 is ink, ring 2 a dark shade of the
+  // blue, so the edge weighs about a block and a half without ever breaking.
+  float ring1 = 0.0, ring2 = 0.0;
+  if (d > -3.0 * ow) {
+    for (int j = -2; j <= 2; j++) {
+      for (int i = -2; i <= 2; i++) {
+        if (i == 0 && j == 0) continue;
+        float o = step(0.0, bodyAt(p + vec2(float(i), float(j)) * ow, r, t));   // 'out' is reserved
+        ring2 = max(ring2, o);
+        if (max(abs(i), abs(j)) == 1) ring1 = max(ring1, o);
+      }
+    }
+  }
+
+  vec3 ink = vec3(0.07, 0.07, 0.08);
   vec3 col;
-  if (d > -bw) {
-    col = vec3(0.07, 0.07, 0.08);
+  if (ring1 > 0.0) {
+    col = ink;
   } else {
     // The blue inside runs on its own grid, two blocks wide (Mateo, Sept 20),
     // so the gradient reads chunky while the outline and the eyes stay crisp.
@@ -149,6 +173,7 @@ void main() {
     float qn = floor(n * 5.0 + th) / 5.0;
     col = mix(u_deep, u_top, clamp(qn * 1.25, 0.0, 1.0));
     col = mix(col, u_bg, step(0.99, qn) * 0.32);   // a pale highlight; near-white read as a smudge
+    col = mix(col, ink, ring2 * 0.3);              // the second ring: weight at the edge, not a second line
   }
 
   // Eyes. Pixel-art eyes stay upright and on the grid while the body moves:
@@ -176,7 +201,7 @@ void main() {
     float smile = u_happy * 0.5;
     float bottomLid = -he.y + floor(2.0 * he.y * smile / ow + 0.5) * ow;
     ed = max(ed, bottomLid - e.y);
-    if (d < -bw && ed < 0.0) {
+    if (ring1 == 0.0 && ring2 == 0.0 && ed < 0.0) {   // the eyes keep clear of both rings
       col = vec3(0.07, 0.07, 0.08);
       // A two-block glint in the top corner, gone while the eye is mostly lid.
       vec2 hc = e - vec2(-he.x + 2.0 * ow, he.y - 2.0 * ow);
