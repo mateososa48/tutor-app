@@ -28,22 +28,33 @@ export const CONCERNS = [
 
 export type ConcernKey = (typeof CONCERNS)[number]["key"];
 
-// Offered as chips on /welcome; anything else comes through the free text.
+// Offered as chips during onboarding. The record stores plain labels, so one
+// the student typed themselves is worth exactly as much as one we suggested;
+// the emoji is decoration looked up at render time.
 export const INTERESTS = [
-  "Sports",
-  "Music",
-  "Video games",
-  "Art",
-  "Animals",
-  "Space",
-  "Cooking",
-  "Movies",
-  "Books",
-  "Building things",
+  { label: "Sports", emoji: "⚽" },
+  { label: "Music", emoji: "🎵" },
+  { label: "Video games", emoji: "🎮" },
+  { label: "Art", emoji: "🎨" },
+  { label: "Animals", emoji: "🐾" },
+  { label: "Space", emoji: "🚀" },
+  { label: "Cooking", emoji: "🍳" },
+  { label: "Movies", emoji: "🎬" },
+  { label: "Books", emoji: "📚" },
+  { label: "Building things", emoji: "🔧" },
+  { label: "Dance", emoji: "💃" },
+  { label: "Cars", emoji: "🚗" },
 ] as const;
 
 export const INTERESTS_MAX = 6;
 export const INTEREST_MAX_LEN = 24;
+
+const EMOJI_BY_LABEL = new Map(INTERESTS.map((i) => [i.label.toLowerCase(), i.emoji]));
+
+/** The chip's emoji: ours where we know it, a neutral one for their own. */
+export function interestEmoji(label: string): string {
+  return EMOJI_BY_LABEL.get(label.trim().toLowerCase()) ?? "✨";
+}
 
 export type OnboardingRecord = {
   by: OnboardedBy;

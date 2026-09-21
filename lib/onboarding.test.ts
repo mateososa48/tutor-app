@@ -6,6 +6,9 @@ import {
   EMPTY_DRAFT,
   GRADE_OPTIONS,
   gradeLabel,
+  INTERESTS,
+  INTEREST_MAX_LEN,
+  interestEmoji,
   INTERESTS_MAX,
   interestsProfileLine,
   NOTE_MAX,
@@ -126,4 +129,21 @@ test("a draft rebuilt from a saved profile carries what was stored, and defaults
   assert.equal(draftFromProfile({ onboarding: { by: "student", topic: "astrophysics" } }).topic, null);
   assert.equal(draftFromProfile({ displayName: "Old", gradeLevel: "High school (9–12)", onboarding: {} }).by, "student");
   assert.equal(draftFromProfile(null).by, null);
+});
+
+test("interest chips carry our emoji, and one they typed gets a neutral one", () => {
+  assert.equal(interestEmoji("Sports"), "⚽");
+  assert.equal(interestEmoji("  video games  "), "🎮");
+  assert.equal(interestEmoji("Skateboarding"), "✨");
+  assert.equal(interestEmoji(""), "✨");
+  // Every suggestion has an emoji and a label short enough for a chip.
+  for (const { label, emoji } of INTERESTS) {
+    assert.ok(emoji.length > 0 && emoji.length <= 4, label);
+    assert.ok(label.length <= INTEREST_MAX_LEN, label);
+    assert.equal(interestEmoji(label), emoji);
+  }
+  // What a typed interest becomes in the record, and in the prompt.
+  const record = sanitizeOnboarding({ by: "student", interests: ["Sports", "Skateboarding"] });
+  assert.deepEqual(record?.interests, ["Sports", "Skateboarding"]);
+  assert.match(interestsProfileLine(record) ?? "", /Likes: Sports, Skateboarding\./);
 });

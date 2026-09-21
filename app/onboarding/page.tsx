@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { OnboardingFrame } from "@/components/onboarding/OnboardingFrame";
+import { InterestChips } from "@/components/onboarding/InterestChips";
 import { OptionGrid } from "@/components/onboarding/OptionGrid";
 import { TopicTiles } from "@/components/onboarding/TopicTiles";
 import { TutorNotesBoard } from "@/components/onboarding/TutorNotesBoard";
@@ -38,7 +39,7 @@ import {
 // parent's answer the note is the rule the tutor will follow: check it
 // myself. That is the whole idea of the flow, made visible.
 
-type Step = "who" | "name" | "grade" | "concern" | "topic" | "handoff";
+type Step = "who" | "name" | "grade" | "concern" | "topic" | "interests" | "handoff";
 
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
@@ -108,6 +109,7 @@ export default function OnboardingPage() {
     grade: "name",
     concern: "grade",
     topic: parent ? "concern" : "grade",
+    interests: "topic",
   };
 
   // Switching roles changes what every later question means ("your name"
@@ -140,8 +142,14 @@ export default function OnboardingPage() {
           displayName: draft.name.trim(),
           gradeLevel: draft.grade,
           onboarding: parent
-            ? { by: "parent", concern: draft.concern ?? undefined, note: draft.note.trim() || undefined, topic: draft.topic ?? undefined }
-            : { by: "student", topic: draft.topic ?? undefined },
+            ? {
+                by: "parent",
+                concern: draft.concern ?? undefined,
+                note: draft.note.trim() || undefined,
+                topic: draft.topic ?? undefined,
+                interests: draft.interests,
+              }
+            : { by: "student", topic: draft.topic ?? undefined, interests: draft.interests },
         }),
       });
       if (!res.ok) throw new Error(`save ${res.status}`);
@@ -170,9 +178,14 @@ export default function OnboardingPage() {
     setStep("topic");
   }
 
-  // The last screen for both paths, so the profile is written once. The topic
-  // is optional: skipping is a real answer, and the intake asks anyway.
-  async function submitTopic() {
+  function submitTopic() {
+    if (saving) return;
+    setStep("interests");
+  }
+
+  // The last screen for both paths, so the profile is written once. Both this
+  // and the topic are optional: skipping is a real answer.
+  async function submitInterests() {
     if (saving) return;
     if (!(await save())) return;
     if (parent) {
@@ -334,11 +347,30 @@ export default function OnboardingPage() {
                 />
               </motion.div>
               <motion.div variants={item}>
+                <Continue label={draft.topic ? "Continue" : "Skip for now"} onClick={submitTopic} />
+              </motion.div>
+            </StepFrame>
+          )}
+
+          {step === "interests" && (
+            <StepFrame
+              item={item}
+              title={parent ? `What is ${first} into?` : "What are you into?"}
+              sub={
+                parent
+                  ? "Your tutor uses these for examples, so the problems sound like their life."
+                  : "Your tutor uses these for examples, so the problems sound like your life."
+              }
+            >
+              <motion.div variants={item} className="mt-6">
+                <InterestChips value={draft.interests} onChange={(interests) => setDraft((d) => ({ ...d, interests }))} />
+              </motion.div>
+              <motion.div variants={item}>
                 <Continue
-                  label={draft.topic ? "Continue" : "Skip for now"}
+                  label={draft.interests.length ? "Continue" : "Skip for now"}
                   busyLabel="Saving…"
                   busy={saving}
-                  onClick={() => void submitTopic()}
+                  onClick={() => void submitInterests()}
                 />
                 <ErrorLine error={error} />
               </motion.div>

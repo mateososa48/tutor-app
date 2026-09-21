@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/button";
 import { OnboardingFrame } from "@/components/onboarding/OnboardingFrame";
 import { MicCheck } from "@/components/onboarding/MicCheck";
 import { useReduce } from "@/lib/reduced-motion";
-import { cn } from "@/lib/utils";
-import { draftFromProfile, FREE_LINE, INTERESTS, INTERESTS_MAX, onboardingNotes, type OnboardingDraft } from "@/lib/onboarding";
+import { draftFromProfile, FREE_LINE, onboardingNotes } from "@/lib/onboarding";
 
 // The brief before someone's first session, whoever presses start: the
 // student who just signed up, the child a parent set up who opens it later,
@@ -48,55 +47,27 @@ const POINTS: { icon: LucideIcon; lead: string; text: string }[] = [
 export default function WelcomePage() {
   const router = useRouter();
   const reduce = useReduce() ?? false;
-  const [preview] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      process.env.NODE_ENV === "development" &&
-      new URLSearchParams(window.location.search).get("preview") === "1",
-  );
   const [profile, setProfile] = useState<Profile | undefined>(undefined);
-  const [interests, setInterests] = useState<string[]>([]);
   const [starting, setStarting] = useState(false);
 
   useEffect(() => {
     let live = true;
     fetch("/api/onboarding")
       .then((r) => (r.ok ? r.json() : null))
-      .then((p: Profile) => {
-        if (!live) return;
-        setProfile(p);
-        setInterests(draftFromProfile(p).interests);
-      })
+      .then((p: Profile) => live && setProfile(p))
       .catch(() => live && setProfile(null));
     return () => {
       live = false;
     };
   }, []);
 
-  const draft: OnboardingDraft = { ...draftFromProfile(profile ?? null), interests };
-  const notes = onboardingNotes(draft);
+  // The notepad shows what onboarding already collected; this screen asks for
+  // nothing, so there is nothing to save before the session.
+  const notes = onboardingNotes(draftFromProfile(profile ?? null));
 
-  function toggle(interest: string) {
-    setInterests((list) =>
-      list.includes(interest) ? list.filter((i) => i !== interest) : list.length >= INTERESTS_MAX ? list : [...list, interest],
-    );
-  }
-
-  async function start() {
+  function start() {
     if (starting) return;
     setStarting(true);
-    // Interests are nice to have; a failed save must not hold the session up.
-    if (!preview) {
-      try {
-        await fetch("/api/onboarding", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ interests }),
-        });
-      } catch {
-        // The session starts anyway.
-      }
-    }
     // Preview goes the same way; /session only creates one on submit.
     router.push("/session?ready=1");
   }
@@ -133,35 +104,9 @@ export default function WelcomePage() {
         </motion.div>
 
         <motion.div variants={item} className="mt-7">
-          <h2 className="m-0 text-[16px] font-semibold leading-[1.3] text-(--lp-ink)">What are you into?</h2>
-          <p className="m-0 mt-1 text-[13.5px] leading-[1.5] text-(--lp-ink-2)">Optional. It keeps the examples from being boring.</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {INTERESTS.map((interest) => {
-              const on = interests.includes(interest);
-              return (
-                <button
-                  key={interest}
-                  type="button"
-                  aria-pressed={on}
-                  onClick={() => toggle(interest)}
-                  className={cn(
-                    "inline-flex h-11 items-center rounded-[10px] border px-3.5 text-[14px] font-medium outline-none",
-                    "transition-[background-color,border-color,scale] duration-150 ease-out active:scale-[0.96]",
-                    "focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) motion-reduce:transition-none motion-reduce:active:scale-100",
-                    on ? "border-(--lp-sky) bg-(--lp-sky-soft) text-(--lp-ink)" : "border-(--lp-line-strong) bg-white text-(--lp-ink) hover:border-(--lp-ink)/30",
-                  )}
-                >
-                  {interest}
-                </button>
-              );
-            })}
-          </div>
-        </motion.div>
-
-        <motion.div variants={item} className="mt-7">
           <Button
             type="button"
-            onClick={() => void start()}
+            onClick={start}
             disabled={starting}
             className="btn-gloss-lift h-11 w-full gap-2 rounded-[10px] text-[14px] font-semibold sm:w-auto sm:px-5"
           >
