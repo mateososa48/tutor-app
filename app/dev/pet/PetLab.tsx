@@ -22,7 +22,7 @@ const DOTS = {
 export default function PetLab() {
   const [shape, setShape] = useState<PetShape>("square");
   const [state, setState] = useState<PetState>("idle");
-  const [size, setSize] = useState(80);
+  const [size, setSize] = useState(120);
   const [reduce, setReduce] = useState(false);
   const [level, setLevel] = useState(0);
   const [look, setLook] = useState({ x: 0, y: 0 });

@@ -75,7 +75,7 @@ export default function Places() {
           <Board>
             <div className="absolute right-4 bottom-4 w-[380px]">
               <div className="relative">
-                <Pet size={52} state="speaking" level={0.5} className="absolute -top-[38px] left-4 z-10" open={false} />
+                <Pet size={120} state="speaking" level={0.5} className="absolute -top-[96px] left-3 z-10" open={false} />
                 <Dock badge="Speaking" />
               </div>
             </div>
@@ -89,7 +89,7 @@ export default function Places() {
         >
           <Board>
             <BoardWork />
-            <Pet size={56} state="writing" look={{ x: 0.8, y: -0.4 }} className="absolute bottom-5 left-5" open={false} />
+            <Pet size={120} state="writing" look={{ x: 0.8, y: -0.4 }} className="absolute bottom-3 left-4" open={false} />
             <div className="absolute right-4 bottom-4 w-[380px] opacity-90">
               <Dock badge="Writing on the board" />
             </div>
@@ -109,7 +109,7 @@ export default function Places() {
         <Stage n={4} title="Landing, in the hero demo" verdict="Free reach: the demo already replays a lesson, so the pet reacts to it. It also shows the collision to settle first — the tutor already has a presence on the board, the pen and its name tag.">
           <div className="relative w-full max-w-[640px] overflow-hidden rounded-[16px] border border-(--lp-line) bg-white">
             <Image src="/landing/session-board.png" alt="" width={1200} height={760} className="block h-auto w-full" />
-            <Pet size={48} state="thinking" kind="thought" side="left" align="end" className="absolute right-[6%] bottom-[10%]" />
+            <Pet size={120} state="thinking" kind="thought" side="left" align="end" className="absolute right-[3%] bottom-[4%]" />
           </div>
         </Stage>
 
@@ -120,10 +120,10 @@ export default function Places() {
         <Stage n={6} title="Waiting and empty states" verdict="Cheap and kind. A held pose plus one line beats a spinner or a grey box.">
           <div className="flex flex-wrap gap-4">
             <Panel label="Opening a session">
-              <Pet size={56} state="thinking" kind="thought" side="right" align="start" />
+              <Pet size={120} state="thinking" kind="thought" side="right" align="start" />
             </Panel>
             <Panel label="No past sessions yet">
-              <Pet size={56} state="hello" text="Nothing here yet. Want to start?" side="right" align="start" />
+              <Pet size={120} state="hello" text="Nothing here yet. Want to start?" side="top" align="start" maxWidth={190} />
             </Panel>
           </div>
         </Stage>
@@ -170,9 +170,9 @@ function Bubbles() {
 
       <div className="mt-6 grid gap-6 rounded-[16px] border border-(--lp-line) p-8 sm:grid-cols-3" style={DOTS}>
         {(["top", "right", "left"] as BubbleSide[]).map((side) => (
-          <div key={side} className="flex min-h-[170px] items-center justify-center">
+          <div key={side} className="flex min-h-[230px] items-center justify-center">
             <Pet
-              size={64}
+              size={120}
               state={kind === "thought" ? "thinking" : "speaking"}
               level={0.45}
               text={kind === "thought" ? undefined : LINES[i]}
@@ -254,13 +254,13 @@ function StartCard() {
         </span>
       </div>
       <Pet
-        size={54}
+        size={120}
         state={hover ? "hello" : "idle"}
         text="Ready when you are."
         side="left"
         align="start"
         open={hover}
-        className="absolute right-[52px] bottom-[58px]"
+        className="absolute right-[18px] bottom-[26px]"
       />
     </div>
   );
@@ -306,9 +306,9 @@ function MicCheck() {
     <div className="flex flex-wrap items-center gap-8 rounded-[16px] border border-(--lp-line) bg-white p-8 pt-16">
       {/* The bubble sits above the pet in its own column, or it reaches across
           the copy beside it. */}
-      <div className="flex w-[210px] justify-start">
+      <div className="flex w-[230px] justify-start">
         <Pet
-          size={72}
+          size={120}
           state={on ? (level > 0.12 ? "listening" : "idle") : "hello"}
           level={level}
           text={on ? (level > 0.12 ? "I can hear you." : "Say something.") : "Let's check your mic."}
@@ -350,7 +350,7 @@ function Stage({ n, title, verdict, children }: { n: number; title: string; verd
 
 function Panel({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex min-h-[150px] min-w-[280px] flex-1 flex-col items-start justify-center gap-3 rounded-[16px] border border-dashed border-(--lp-line-strong) bg-white px-8 py-6">
+    <div className="flex min-h-[150px] min-w-[280px] flex-1 flex-col items-start justify-center gap-3 rounded-[16px] border border-dashed border-(--lp-line-strong) bg-white px-8 py-6 pt-16">
       {children}
       <span className="text-[12.5px] text-(--lp-ink-3)">{label}</span>
     </div>
