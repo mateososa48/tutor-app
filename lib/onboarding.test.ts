@@ -122,11 +122,12 @@ test("a draft rebuilt from a saved profile carries what was stored, and defaults
   const draft = draftFromProfile({
     displayName: "Ana",
     gradeLevel: "9th grade",
-    onboarding: { by: "parent", concern: "test", interests: ["Art"], topic: "slope" },
+    onboarding: { by: "parent", concern: "test", interests: ["Art"] },
   });
-  assert.deepEqual(draft, { by: "parent", name: "Ana", grade: "9th grade", concern: "test", note: "", interests: ["Art"], topic: "slope" });
-  // A topic that is not a lesson we stage is dropped, not carried.
-  assert.equal(draftFromProfile({ onboarding: { by: "student", topic: "astrophysics" } }).topic, null);
+  assert.deepEqual(draft, { by: "parent", name: "Ana", grade: "9th grade", concern: "test", note: "", interests: ["Art"] });
+  // Onboarding does not pick a lesson, so nothing it stores can prefill the
+  // intake and hide the "Nothing in mind?" bubble.
+  assert.equal("topic" in draft, false);
   assert.equal(draftFromProfile({ displayName: "Old", gradeLevel: "High school (9–12)", onboarding: {} }).by, "student");
   assert.equal(draftFromProfile(null).by, null);
 });

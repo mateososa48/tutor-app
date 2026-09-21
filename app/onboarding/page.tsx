@@ -11,10 +11,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { OnboardingFrame } from "@/components/onboarding/OnboardingFrame";
 import { InterestChips } from "@/components/onboarding/InterestChips";
 import { OptionGrid } from "@/components/onboarding/OptionGrid";
-import { TopicTiles } from "@/components/onboarding/TopicTiles";
 import { TutorNotesBoard } from "@/components/onboarding/TutorNotesBoard";
 import { useReduce } from "@/lib/reduced-motion";
-import { lessonsForGrade } from "@/lib/staged-lessons";
 import {
   CONCERNS,
   EMPTY_DRAFT,
@@ -39,7 +37,7 @@ import {
 // parent's answer the note is the rule the tutor will follow: check it
 // myself. That is the whole idea of the flow, made visible.
 
-type Step = "who" | "name" | "grade" | "concern" | "topic" | "interests" | "handoff";
+type Step = "who" | "name" | "grade" | "concern" | "interests" | "handoff";
 
 const EASE_OUT = [0.23, 1, 0.32, 1] as const;
 
@@ -99,17 +97,13 @@ export default function OnboardingPage() {
   const first = draft.name.trim().split(/\s+/)[0] || "";
   const notes = onboardingNotes(draft);
   const item = itemVariants(reduce);
-  // Four, in one column. Two columns at this width wrapped every blurb onto
-  // three lines and left the tiles uneven.
-  const lessons = lessonsForGrade(draft.grade, 4);
   // The concern screen only exists on the parent's path, so the way back from
-  // the topic screen differs.
+  // the last question differs.
   const back: Partial<Record<Step, Step>> = {
     name: "who",
     grade: "name",
     concern: "grade",
-    topic: parent ? "concern" : "grade",
-    interests: "topic",
+    interests: parent ? "concern" : "grade",
   };
 
   // Switching roles changes what every later question means ("your name"
@@ -146,10 +140,9 @@ export default function OnboardingPage() {
                 by: "parent",
                 concern: draft.concern ?? undefined,
                 note: draft.note.trim() || undefined,
-                topic: draft.topic ?? undefined,
                 interests: draft.interests,
               }
-            : { by: "student", topic: draft.topic ?? undefined, interests: draft.interests },
+            : { by: "student", interests: draft.interests },
         }),
       });
       if (!res.ok) throw new Error(`save ${res.status}`);
@@ -170,21 +163,16 @@ export default function OnboardingPage() {
 
   function submitGrade() {
     if (!draft.grade || saving) return;
-    setStep(parent ? "concern" : "topic");
+    setStep(parent ? "concern" : "interests");
   }
 
   function submitConcern() {
     if (!draft.concern || saving) return;
-    setStep("topic");
-  }
-
-  function submitTopic() {
-    if (saving) return;
     setStep("interests");
   }
 
-  // The last screen for both paths, so the profile is written once. Both this
-  // and the topic are optional: skipping is a real answer.
+  // The last screen for both paths, so the profile is written once. Skipping
+  // is a real answer.
   async function submitInterests() {
     if (saving) return;
     if (!(await save())) return;
@@ -323,31 +311,6 @@ export default function OnboardingPage() {
               </motion.div>
               <motion.div variants={item}>
                 <Continue disabled={!draft.concern} onClick={submitConcern} />
-              </motion.div>
-            </StepFrame>
-          )}
-
-          {step === "topic" && (
-            <StepFrame
-              item={item}
-              title={parent ? `What should ${first} start with?` : "What do you want to start with?"}
-              sub={
-                parent
-                  ? "Your tutor will have this one ready and planned. They can change it."
-                  : "Your tutor will have this one ready and planned. You can change it."
-              }
-            >
-              <motion.div variants={item} className="mt-6">
-                <TopicTiles
-                  labelledBy="onboarding-question"
-                  columns={1}
-                  lessons={lessons}
-                  value={draft.topic}
-                  onChange={(topic) => setDraft((d) => ({ ...d, topic: d.topic === topic ? null : topic }))}
-                />
-              </motion.div>
-              <motion.div variants={item}>
-                <Continue label={draft.topic ? "Continue" : "Skip for now"} onClick={submitTopic} />
               </motion.div>
             </StepFrame>
           )}

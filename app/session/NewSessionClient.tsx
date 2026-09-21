@@ -7,8 +7,7 @@ import { TopBar } from "@/components/app/TopBar";
 import { SessionIntakeDialog } from "@/components/app/SessionIntakeDialog";
 import { createSession } from "@/lib/sessions";
 import { intakeTitle, storeIntake, type SessionIntake } from "@/lib/session-intake";
-import { lessonByKey, lessonTopic, lessonsForGrade } from "@/lib/staged-lessons";
-import { sanitizeOnboarding } from "@/lib/onboarding";
+import { lessonsForGrade } from "@/lib/staged-lessons";
 import type { UploadedFile } from "@/lib/file-processor";
 
 // "New session" lands here. It asks what the student needs before the board
@@ -107,9 +106,6 @@ export default function NewSessionClient() {
   }, [skipIntake, ready, router]);
 
   const showIntake = !skipIntake && firstEver !== null;
-  // A lesson chosen during onboarding opens the box already filled in, so the
-  // first session starts on the staged one. A ?topic= link still wins.
-  const picked = lessonByKey(sanitizeOnboarding(profile?.onboarding)?.topic);
 
   return (
     <AppShell defaultOpen={false}>
@@ -121,8 +117,7 @@ export default function NewSessionClient() {
       </div>
       {showIntake && (
         <SessionIntakeDialog
-          initialTopic={initialTopic || (picked ? lessonTopic(picked) : "")}
-          initialLessonKey={picked?.key}
+          initialTopic={initialTopic}
           lessons={lessonsForGrade(profile?.gradeLevel)}
           starting={starting}
           error={error}
