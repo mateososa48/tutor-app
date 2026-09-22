@@ -18,6 +18,8 @@ export type SavedSession = {
   createdAt: string;
   /** Set by the list endpoint: the session has at least one board picture. */
   hasPicture?: boolean;
+  /** The note written after the session ended; `readSummary` validates it. */
+  summary?: unknown;
 };
 
 export type SessionEvent = {

@@ -114,7 +114,9 @@ export default function HomePage() {
             <PastSessions
               className="lg:col-start-1 lg:row-start-2"
               sessions={sessions}
-              onOpen={(id) => router.push(`/session/${id}`)}
+              // A finished session opens on its summary; the board is one
+              // click further in, from there.
+              onOpen={(id, ended) => router.push(ended ? `/session/${id}/summary` : `/session/${id}`)}
               onDelete={remove}
             />
           </div>
@@ -184,7 +186,7 @@ function PastSessions({
   className,
 }: {
   sessions: SavedSession[] | null;
-  onOpen: (id: string) => void;
+  onOpen: (id: string, ended: boolean) => void;
   onDelete: (id: string) => void;
   className?: string;
 }) {
@@ -206,7 +208,7 @@ function PastSessions({
         <ul className="m-0 mt-2 flex list-none flex-col p-0">
           <AnimatePresence initial={false}>
             {shown.map((s) => (
-              <SessionRow key={s.id} session={s} onOpen={() => onOpen(s.id)} onDelete={() => onDelete(s.id)} />
+              <SessionRow key={s.id} session={s} onOpen={() => onOpen(s.id, s.status === "ended")} onDelete={() => onDelete(s.id)} />
             ))}
           </AnimatePresence>
         </ul>

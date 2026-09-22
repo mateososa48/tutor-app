@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { tutorSessions, sessionEvents } from "@/lib/db/schema";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 
 type RouteCtx = { params: Promise<{ id: string }> };
@@ -99,6 +99,11 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx) {
   }
   if (body.status === "paused") {
     patch.pausedAt = Date.now();
+  }
+  // Ending queues the summary here rather than in the browser, so a closed
+  // tab still leaves the job for the sweeper (app/api/cron/summaries).
+  if (body.status === "ended") {
+    patch.summaryState = sql`case when ${tutorSessions.summaryState} = 'done' then 'done' else 'pending' end`;
   }
 
   if (Object.keys(patch).length === 0) {

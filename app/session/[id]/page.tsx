@@ -686,10 +686,12 @@ function SessionDetailPage({ id }: { id: string }) {
     liveStateRef.current = "idle";
     setLiveState("idle");
     setMode("review");
-    // Refresh session record
-    const fresh = await getSessionById(id);
-    if (fresh) setSession(fresh.session);
-  }, [cleanupTimers, clearSubtitle, id, persistSnapshot]);
+    // The summary is queued by the PATCH above; this only asks for it to be
+    // written now rather than on the sweeper's next pass. It is deliberately
+    // not awaited: the student goes to the summary screen, which waits for it.
+    void fetch(`/api/sessions/${encodeURIComponent(id)}/summary`, { method: "POST" }).catch(() => {});
+    router.push(`/session/${encodeURIComponent(id)}/summary`);
+  }, [cleanupTimers, clearSubtitle, id, persistSnapshot, router]);
 
   // ── Start (or resume) live session ───────────────────────────────────
   const startSession = useCallback(async () => {

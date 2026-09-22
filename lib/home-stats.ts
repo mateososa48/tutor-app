@@ -1,3 +1,4 @@
+import { readSummary } from "./session-summary";
 import type { SavedSession, TranscriptEntry } from "./sessions";
 
 // Pure helpers behind the home page: the week's practice time, the short dates
@@ -72,14 +73,15 @@ function studentAsk(text: string): string {
 }
 
 /**
- * What the list shows for a session. Sessions don't store a recap yet, so the
- * second line is the tutor's last sentence; untitled sessions are named after
- * what the student asked first.
+ * What the list shows for a session. A session that has been summarised uses
+ * the note written for it; one that has not falls back to a guess, the
+ * tutor's last sentence, with untitled sessions named after the first ask.
  */
-export function sessionHeadline(session: Pick<SavedSession, "title"> & { transcript?: TranscriptEntry[] | null }): {
-  title: string;
-  recap: string;
-} {
+export function sessionHeadline(
+  session: Pick<SavedSession, "title"> & { transcript?: TranscriptEntry[] | null; summary?: unknown },
+): { title: string; recap: string } {
+  const summary = readSummary(session.summary);
+  if (summary) return { title: summary.headline, recap: firstSentence(summary.recap, 90) };
   const transcript = Array.isArray(session.transcript) ? session.transcript : [];
   const firstStudent = transcript.find((e) => e.role === "student" && e.text?.trim());
   const lastTutor = [...transcript].reverse().find((e) => e.role === "tutor" && e.text?.trim());

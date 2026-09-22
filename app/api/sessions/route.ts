@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
       lastActiveAt: tutorSessions.lastActiveAt,
       pausedAt: tutorSessions.pausedAt,
       transcript: tutorSessions.transcript,
+      summary: tutorSessions.summary,
       createdAt: tutorSessions.createdAt,
     })
     .from(tutorSessions)

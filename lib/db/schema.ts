@@ -79,6 +79,12 @@ export const tutorSessions = pgTable("tutor_sessions", {
   // Highest session_events.seq handed out; lib/db/session-events.ts bumps it in
   // the same statement as the insert (lib/db/sql/2026-09-16-event-seq.sql).
   eventSeq: integer("event_seq").notNull().default(0),
+  // The note the student reads afterwards, and the worker's queue for writing
+  // it (lib/session-summary.ts, lib/db/sql/2026-09-21-session-summary.sql).
+  summary: jsonb("summary"),
+  summaryState: text("summary_state").notNull().default("none"), // none | pending | done | failed
+  summaryError: text("summary_error"),
+  summaryTries: integer("summary_tries").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
