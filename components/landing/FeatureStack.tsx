@@ -40,7 +40,12 @@ const CARD_H = 520;
 // sticks just under it, and the cards park just under the heading, wherever
 // its height lands (Mateo, Sept 22: keep the title in view while the deck runs).
 const HEADER = 60;
-const UNDER_HEADING = 32;
+// The space between the heading and the cards: 56px (Mateo, Sept 22: "more
+// space here, bigger gap"), shrinking toward 32 only on a screen too short to
+// hold the heading, the gap and the front card, so the card never runs off
+// the bottom of a 1280x800 laptop.
+const UNDER_MAX = 56;
+const UNDER_MIN = 32;
 // Where the first card parks when the heading has not been measured yet.
 const TOP_FALLBACK = 236;
 // Each card parks this much lower, which is the sliver of the one beneath that
@@ -331,8 +336,12 @@ function useAtLeastLg() {
 /* Where the deck starts in the document. The cards are `sticky`, so their own
    rects report the parked position rather than the one in flow; the container
    is not sticky, so it is the honest thing to measure. */
-function useDeckTop(ref: React.RefObject<HTMLDivElement | null>) {
+function useDeckTop(ref: React.RefObject<HTMLDivElement | null>, layoutKey: unknown) {
   const [top, setTop] = useState(0);
+  // `layoutKey` re-measures when the space above the deck changes (the
+  // heading's height, the gap under it). A resize of the page did not always
+  // report it: on a short screen the gap shrank by 17px, the deck moved up with
+  // it, and the stale number made the heading leave 17px late.
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -341,7 +350,7 @@ function useDeckTop(ref: React.RefObject<HTMLDivElement | null>) {
     const observer = new ResizeObserver(measure);
     observer.observe(document.documentElement);
     return () => observer.disconnect();
-  }, [ref]);
+  }, [ref, layoutKey]);
   return top;
 }
 
@@ -414,15 +423,16 @@ function Card({
       <motion.div style={sinking ? { scale, transformOrigin: "50% 0%" } : undefined} className="lp-railspan relative">
         <article ref={ref} data-last={last || undefined} className="lp-deck-card grid overflow-hidden lg:h-[520px] lg:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)]">
           <div className="lp-deck-copy order-2 flex flex-col justify-center gap-6 lg:order-1">
-            {/* The card's mark: a big line icon from the Math Only wall's own
-                family (Hugeicons Stroke Rounded), in that wall's blue and its
-                1.75 stroke, replacing the Fluent emoji (Mateo, Sept 22). */}
+            {/* The card's mark: a line icon from the Math Only wall's own family
+                (Hugeicons Stroke Rounded) in that wall's blue, replacing the
+                Fluent emoji (Mateo, Sept 22). 48px at a 1.5 stroke: at 64px and
+                1.75 it read too big and too heavy. */}
             <svg
               viewBox="0 0 24 24"
-              width={64}
-              height={64}
+              width={48}
+              height={48}
               aria-hidden
-              className="-ml-1 text-[#2f8ef7] [&_*]:[stroke-width:1.75]"
+              className="-ml-0.5 text-[#2f8ef7] [&_*]:[stroke-width:1.5]"
               dangerouslySetInnerHTML={{ __html: DECK_ICONS[feature.icon] }}
             />
             <div>
@@ -461,6 +471,17 @@ function Card({
 }
 
 /* The heading's height, so the cards can park right under it. */
+function useViewportHeight() {
+  return useSyncExternalStore(
+    (cb) => {
+      window.addEventListener("resize", cb);
+      return () => window.removeEventListener("resize", cb);
+    },
+    () => window.innerHeight,
+    () => 900,
+  );
+}
+
 function useHeight(ref: React.RefObject<HTMLDivElement | null>) {
   const [h, setH] = useState(0);
   useLayoutEffect(() => {
@@ -476,11 +497,16 @@ function useHeight(ref: React.RefObject<HTMLDivElement | null>) {
 export function FeatureStack() {
   const deckRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
-  const deckTop = useDeckTop(deckRef);
   const headH = useHeight(headRef);
   const stacked = useAtLeastLg();
   const { scrollY } = useScroll();
-  const top = headH ? HEADER + headH + UNDER_HEADING : TOP_FALLBACK;
+  const vh = useViewportHeight();
+  // What is left under the front card (the fourth parks three steps lower),
+  // keeping 8px of air above the screen's edge.
+  const room = vh - (HEADER + headH + CARD_H + (FEATURES.length - 1) * STEP + 8);
+  const under = Math.max(UNDER_MIN, Math.min(UNDER_MAX, room));
+  const top = headH ? HEADER + headH + under : TOP_FALLBACK;
+  const deckTop = useDeckTop(deckRef, `${headH}:${under}`);
   // The scroll at which the last card's top reaches the first card's spot:
   // from there the whole pile moves as one, and the heading leaves with it,
   // 1:1 with the scroll, holding the same gap. Left pinned until the section
@@ -522,9 +548,9 @@ export function FeatureStack() {
         </Container>
       </motion.div>
       {/* Full width, not a Container: each card sizes itself to the rails.
-          32px from lg, the same as UNDER_HEADING, so the first card reaches its
+          The same space as the cards park under the heading (`under`), so the first card reaches its
           parking spot at the moment the heading sticks and no gap opens. */}
-      <div className="mt-12 lg:mt-8">
+      <div className="mt-12 lg:mt-0" style={stacked ? { marginTop: under } : undefined}>
         <div ref={deckRef} className="flex flex-col" style={{ gap: stacked ? 0 : 32 }}>
           {FEATURES.map((feature, i) => (
             <Card key={feature.id} feature={feature} index={i} last={i === FEATURES.length - 1} scrollY={scrollY} deckTop={deckTop} top={top} stacked={stacked} />
