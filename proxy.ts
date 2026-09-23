@@ -2,7 +2,8 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/signin", "/api/auth"];
+// /api/faq answers the landing page's "ask anything" row, which anyone can see.
+const PUBLIC_PATHS = ["/signin", "/api/auth", "/api/faq"];
 const DEV_PUBLIC_PATHS = process.env.NODE_ENV === "development"
   ? ["/api/dev/qa-login", "/dev/board", "/dev/voice", "/dev/desmos-probe", "/dev/pdf", "/dev/pet", "/dev/pet-places"]
   : [];

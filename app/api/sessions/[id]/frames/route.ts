@@ -64,10 +64,12 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   return raced.length ? NextResponse.json({ frameId: raced[0].id }) : NextResponse.json({ error: "not stored" }, { status: 500 });
 }
 
-// GET /api/sessions/[id]/frames — the newest board picture of the student's own
-// session, as an image, for the thumbnails on the home page. 404 when the
-// session has no picture yet (older sessions), so the page shows a placeholder.
-export async function GET(_req: NextRequest, ctx: RouteCtx) {
+// GET /api/sessions/[id]/frames — a board picture of the student's own
+// session, as an image. With no query, the newest one (the home page's
+// thumbnails); with ?frame=<id>, that picture, which is how the summary page
+// shows one board per problem (the ids come from /boards). 404 when there is
+// no such picture, so the page shows a placeholder.
+export async function GET(req: NextRequest, ctx: RouteCtx) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -77,15 +79,21 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
+  // The frame id is scoped to the session, so one student can never name
+  // another's picture.
+  const wanted = Number(req.nextUrl.searchParams.get("frame"));
+  const which = Number.isInteger(wanted) && wanted > 0 ? and(eq(sessionFrames.sessionId, id), eq(sessionFrames.id, wanted)) : eq(sessionFrames.sessionId, id);
+
   const [frame] = await db
     .select({ data: sessionFrames.data, mime: sessionFrames.mime })
     .from(sessionFrames)
-    .where(eq(sessionFrames.sessionId, id))
+    .where(which)
     .orderBy(desc(sessionFrames.offsetMs))
     .limit(1);
   if (!frame) return NextResponse.json({ error: "no picture" }, { status: 404 });
 
   return new NextResponse(new Uint8Array(Buffer.from(frame.data, "base64")), {
-    headers: { "Content-Type": frame.mime, "Cache-Control": "private, max-age=300" },
+    // A picture never changes once recorded, so a named one can be kept longer.
+    headers: { "Content-Type": frame.mime, "Cache-Control": wanted > 0 ? "private, max-age=86400, immutable" : "private, max-age=300" },
   });
 }

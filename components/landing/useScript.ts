@@ -5,8 +5,9 @@ export { useReduce } from "@/lib/reduced-motion";
 
 export type ScriptStep<K extends string> = { at: number; key: K };
 
-// Plays a timed script while `active`, restarting at `loopAt`. Under reduced
-// motion every step counts as fired so the final frame renders statically.
+// Plays a timed script while `active`, restarting at `loopAt` (0 plays it once
+// and holds the last frame). Under reduced motion every step counts as fired so
+// the final frame renders statically.
 export function useScript<K extends string>(
   steps: readonly ScriptStep<K>[],
   loopAt: number,
@@ -29,11 +30,13 @@ export function useScript<K extends string>(
           if (!cancelled) setPhase(i + 1);
         }, s.at),
       );
-      timers.push(
-        setTimeout(() => {
-          if (!cancelled) run();
-        }, loopAt),
-      );
+      if (loopAt > 0) {
+        timers.push(
+          setTimeout(() => {
+            if (!cancelled) run();
+          }, loopAt),
+        );
+      }
     };
     const kickoff = setTimeout(run, 0);
     return () => {

@@ -2,7 +2,6 @@
 
 import type { ComponentProps, ReactNode } from "react";
 import { MotionConfig, motion } from "motion/react";
-import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useReduce } from "./useScript";
 
@@ -26,25 +25,25 @@ export function Container({ className, ...props }: ComponentProps<"div">) {
 /* A section with the page's vertical rhythm (80px, 112px from sm) and, by
    default, a dashed rule across the viewport at its top. */
 export function Section({ rule = true, className, ...props }: ComponentProps<"section"> & { rule?: boolean }) {
-  return <section className={cn("relative scroll-mt-24 py-20 sm:py-28", rule && "lp-rule", className)} {...props} />;
+  return <section className={cn("relative scroll-mt-24 pt-14 pb-20 sm:pt-16 sm:pb-28", rule && "lp-rule", className)} {...props} />;
 }
 
-/* The small sky label above a heading. A link, with a chevron, only when it
-   points somewhere; a plain label otherwise, so the chevron always means "go". */
-export function Label({ href, className, children }: { href?: string; className?: string; children: ReactNode }) {
-  const cls = cn("inline-flex items-center gap-0.5 text-[14px] font-medium text-(--lp-sky-deep)", className);
-  return href ? (
-    <a href={href} className={cn(cls, "rounded-[6px] outline-none transition-colors hover:text-(--lp-sky) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)")}>
+/* The label above a heading: the heading's own face and size, in the blue,
+   so a section opens on two display lines, the blue one naming the section and
+   the ink one saying the thing. Mateo asked for exactly this on Sept 21 after
+   a pill version ("same font and size but in the blue color"). */
+export function Label({ className, children }: { className?: string; children: ReactNode }) {
+  // Weight set inline: `.lp-title` fixes 500 from outside Tailwind's layers,
+  // where a `font-normal` utility on the same element loses the cascade.
+  return (
+    <p className={cn("lp-title m-0 text-[clamp(2rem,3.8vw,3.125rem)] leading-[1.06] text-(--lp-sky-deep)", className)} style={{ fontWeight: 400 }}>
       {children}
-      <ChevronRight size={14} strokeWidth={2.2} aria-hidden className="mt-px" />
-    </a>
-  ) : (
-    <span className={cls}>{children}</span>
+    </p>
   );
 }
 
 export function Title({ as: Tag = "h2", className, children }: { as?: "h1" | "h2" | "h3"; className?: string; children: ReactNode }) {
-  return <Tag className={cn("lp-title mt-4 text-[clamp(2rem,3.8vw,3.125rem)] leading-[1.06] text-(--lp-ink)", className)}>{children}</Tag>;
+  return <Tag className={cn("lp-title mt-1 text-[clamp(2rem,3.8vw,3.125rem)] leading-[1.06] text-(--lp-ink)", className)}>{children}</Tag>;
 }
 
 export function Lede({ className, children }: { className?: string; children: ReactNode }) {

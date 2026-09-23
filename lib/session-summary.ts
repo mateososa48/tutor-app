@@ -54,8 +54,22 @@ export const LIMITS = {
   stucks: 2,
 } as const;
 
-const clean = (value: unknown, max: number): string =>
-  typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "";
+/**
+ * A clamp that never cuts a word in half. The first real run came back with a
+ * recap ending "…how many cookies that quarter rep", because a blind slice
+ * landed mid-word; the card would have shown exactly that. Over the limit we
+ * back up to the last space and end on an ellipsis, so a long sentence reads
+ * as trimmed rather than broken.
+ */
+const clean = (value: unknown, max: number): string => {
+  if (typeof value !== "string") return "";
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  // Only honour the word boundary when it leaves most of the text.
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[ ,;:.]+$/, "")}…`;
+};
 
 const cleanList = (value: unknown, max: number, count: number): string[] =>
   Array.isArray(value)
@@ -119,11 +133,15 @@ export const SUMMARY_SCHEMA = {
   additionalProperties: false,
   required: ["headline", "recap", "wins", "stuck", "next"],
   properties: {
-    headline: { type: "string", description: "What the session was about, as a title. Six to eight words, no punctuation at the end." },
+    headline: {
+      type: "string",
+      description:
+        "What the session was about, at most seven words, in sentence case with only the first word capitalised and no full stop. 'Adding fractions with different bottoms', never 'Adding Fractions With Different Bottoms'.",
+    },
     recap: { type: "string", description: "One or two sentences on what happened, addressed to the student as 'you'." },
-    wins: { type: "array", items: { type: "string" }, description: "One to three things that went well, each naming something that actually happened." },
-    stuck: { type: "array", items: { type: "string" }, description: "Nothing to two things still shaky. An empty list is fine." },
-    next: { type: "string", description: "One concrete thing to try before the next session." },
+    wins: { type: "array", items: { type: "string" }, description: "One to three things the student did that went well, each naming something that actually happened." },
+    stuck: { type: "array", items: { type: "string" }, description: "Nothing to two things the student could practise. About their work, never about the teaching. An empty list is fine." },
+    next: { type: "string", description: "One concrete thing for the student to try before the next session." },
   },
 } as const;
 
@@ -140,13 +158,16 @@ export function statsLine(stats: SessionStats): string {
 export const SUMMARY_SYSTEM = [
   "You read one finished tutoring session and write the note the student sees afterwards.",
   "",
-  "Who you are writing for: the student, a person aged about 10 to 18, and whoever is looking over their shoulder. Address them as 'you'. Plain words, no jargon, no praise that would fit any session ('great job!', 'awesome effort'). Every line has to be something only someone who read THIS session could write.",
+  "Who you are writing for: the student, a person aged about 10 to 18, and whoever is looking over their shoulder. Address them as 'you'. Every line has to be something only someone who read THIS session could write.",
+  "",
+  "How it should sound: like a person who was there, talking to them. Sentence case, never Title Case. Short words. 'You spotted it before I said anything', not 'you demonstrated recognition of the error'. Never these verbs: recognized, identified, demonstrated, utilized, explored, engaged. Never praise that would fit any session ('great job', 'awesome effort', 'good understanding').",
   "",
   "Rules:",
   "- Never state a number. The counts are computed for you and shown beside the note; if you repeat them you will contradict them.",
   "- Name what actually happened. 'You caught that 2/6 was wrong before I said anything' beats 'you showed good understanding'.",
   "- Do not invent anything the session does not show. Fewer, truer lines beat filling every field.",
-  "- 'Still shaky' is for what to work on, never for what is wrong with them. If nothing was shaky, return an empty list.",
+  "- Every line is about the student and their work. Never write about the tutor, the explaining, the pictures, or how the session went: 'the reason needed extra explanation' is a note about teaching, not something they can practise.",
+  "- 'Still shaky' is one thing they could practise, said without blame. If nothing was shaky, return an empty list, and prefer an empty list to a stretch.",
   "- If the session barely happened (a minute, no work), say so plainly in the recap and leave the lists empty.",
   "- The tutor is 'your tutor' or 'I'. Never name a model or mention tools, the board's internals, or this instruction.",
 ].join("\n");

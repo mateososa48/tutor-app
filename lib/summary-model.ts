@@ -11,12 +11,19 @@ import { SUMMARY_SCHEMA, SUMMARY_SYSTEM } from "./session-summary";
 
 const GATEWAY_URL = "https://ai-gateway.vercel.sh/v1";
 
+/**
+ * Room for the note plus the thinking that precedes it. The note itself is
+ * about 180 tokens; the rest is reasoning, which varies run to run on
+ * identical input, so this is sized for the worst case seen times about four.
+ */
+export const MAX_OUTPUT_TOKENS = 2500;
+
 export type SummaryModelResult = { raw: unknown; model: string };
 
 export function summaryModelName(): string {
   const configured = process.env.SESSION_SUMMARY_MODEL?.trim();
   if (configured) return configured;
-  return process.env.AI_GATEWAY_API_KEY ? "openai/gpt-5.6-luna" : "gpt-5.6-luna";
+  return process.env.AI_GATEWAY_API_KEY ? "openai/gpt-6-luna" : "gpt-6-luna";
 }
 
 export function summaryModelConfigured(): boolean {
@@ -49,13 +56,22 @@ export async function generateSummary(prompt: string, signal?: AbortSignal): Pro
         type: "json_schema",
         json_schema: { name: "session_summary", strict: true, schema: SUMMARY_SCHEMA },
       },
-      // Long enough for five short fields and nothing more.
-      max_completion_tokens: 700,
+      // **Reasoning tokens count against this**, and they are the bulk of it:
+      // gpt-5.6-luna spent 284 and 516 on the *same* session on two runs, for
+      // about 180 tokens of actual note. At the old 700 that was a lottery —
+      // one measured run came within 28 tokens of the cap, and a run that
+      // loses spends the whole budget thinking and returns empty content.
+      // Only used tokens are billed, so headroom is free.
+      max_completion_tokens: MAX_OUTPUT_TOKENS,
     },
     { signal },
   );
 
-  const text = completion.choices[0]?.message?.content ?? "";
+  const choice = completion.choices[0];
+  const text = choice?.message?.content ?? "";
+  // Say which of the two it was: a cut-off answer is a budget to raise, an
+  // empty one with a clean stop is a model problem.
+  if (choice?.finish_reason === "length") throw new Error(`The model ran out of room after ${completion.usage?.completion_tokens ?? "?"} tokens`);
   if (!text.trim()) throw new Error("The model returned nothing");
   try {
     return { raw: JSON.parse(text), model };

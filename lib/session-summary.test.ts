@@ -7,6 +7,7 @@ import {
   parseSummary,
   readSummary,
   statsLine,
+  SUMMARY_SCHEMA,
   SUMMARY_SYSTEM,
   SUMMARY_VERSION,
   type SessionStats,
@@ -66,10 +67,23 @@ test("long, messy and over-long answers are trimmed rather than thrown away", ()
   assert.equal(summary.headline.length, LIMITS.headline);
   assert.equal(summary.recap, "line one line two");
   // Blanks dropped, duplicates dropped, capped at three.
-  assert.deepEqual(summary.wins, ["a".repeat(LIMITS.win), "b", "c"]);
+  // One long word has no space to back up to, so it is cut and marked.
+  assert.deepEqual(summary.wins, [`${"a".repeat(LIMITS.win - 1)}…`, "b", "c"]);
   assert.equal(summary.stuck.length, LIMITS.stucks);
   assert.equal(summary.next.length, LIMITS.next);
   assert.equal("somethingElse" in summary, false);
+});
+
+test("a clamped line ends on a whole word, never mid-word", () => {
+  // The first real run produced a recap ending "…how many cookies that quarter rep".
+  const recap = `${"word ".repeat(60)}before the session ended`;
+  const summary = parseSummary({ ...good, recap }, stats, { model: "m" });
+  assert.ok(summary);
+  assert.ok(summary.recap.length <= LIMITS.recap);
+  assert.ok(summary.recap.endsWith("…"), summary.recap);
+  assert.ok(summary.recap.endsWith("word…"), `cut mid-word: ${summary.recap.slice(-12)}`);
+  // Under the limit nothing is added.
+  assert.equal(parseSummary(good, stats, { model: "m" })?.recap, good.recap);
 });
 
 test("an empty shaky list is a real answer, not a missing one", () => {
@@ -119,6 +133,17 @@ test("the prompt carries the counts and the session, and keeps both ends when it
 test("the instructions forbid the things that make a summary generic or wrong", () => {
   assert.match(SUMMARY_SYSTEM, /Never state a number/);
   assert.match(SUMMARY_SYSTEM, /Do not invent/);
-  assert.match(SUMMARY_SYSTEM, /never for what is wrong with them/);
+  assert.match(SUMMARY_SYSTEM, /said without blame/);
   assert.match(SUMMARY_SYSTEM, /great job/);
+});
+
+test("the instructions rule out the voice the first real run produced", () => {
+  // Title Case headlines, report verbs, and notes about the teaching rather
+  // than the student all came back from gpt-5.6-luna on Sept 21.
+  assert.match(SUMMARY_SYSTEM, /Sentence case, never Title Case/);
+  assert.match(SUMMARY_SYSTEM, /recognized, identified, demonstrated/);
+  assert.match(SUMMARY_SYSTEM, /Every line is about the student and their work/);
+  assert.match(SUMMARY_SYSTEM, /prefer an empty list to a stretch/);
+  assert.match(SUMMARY_SCHEMA.properties.headline.description, /sentence case/);
+  assert.match(SUMMARY_SCHEMA.properties.stuck.description, /never about the teaching/);
 });

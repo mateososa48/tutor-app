@@ -3,22 +3,23 @@ import { body, brand, display, hand } from "./fonts";
 import { Header } from "./Header";
 import { Hero } from "./Hero";
 import { Intro } from "./Intro";
-import { AskBoard } from "./AskBoard";
-import { Trio } from "./Trio";
-import { Showcase } from "./Showcase";
+import { HowItWorks } from "./how";
+import { FeatureStack } from "./FeatureStack";
 import { Keycaps } from "./Keycaps";
-import { Statement } from "./Statement";
 import { ForParents } from "./ForParents";
+import { Reviews } from "./Reviews";
+import { Pricing } from "./Pricing";
 import { Faq } from "./Faq";
-import { Closing } from "./Closing";
-import { Footer } from "./Footer";
+import { Ending } from "./Ending";
 import { LandingMotion } from "./Section";
+import { LineTuner } from "./LineTuner";
 
 // The hero, then the page's frame: everything below runs between two hairline
 // rails (`.lp-rails`), each section opening on a dashed rule. The order is
 // the argument: what it is, how one question goes, the three things at once,
 // the rest of what it does, what it covers, why it exists, what parents get,
-// questions, and the same button the page opened with.
+// what people say, what it costs, questions, and the same button the page
+// opened with.
 export default function LandingPage() {
   return (
     <LandingMotion>
@@ -28,17 +29,20 @@ export default function LandingPage() {
           <Hero />
           <div className="lp-rails">
             <Intro />
-            <AskBoard />
-            <Trio />
-            <Showcase />
+            <HowItWorks />
+            <FeatureStack />
             <Keycaps />
-            <Statement />
             <ForParents />
+            <Reviews />
+            <Pricing />
             <Faq />
-            <Closing />
           </div>
         </main>
-        <Footer />
+        {/* The page's footer landmark: it carries its own rails, which pick up
+            exactly where main's stop. */}
+        <Ending />
+        {/* Development instrument, not a product surface: Shift+L or ?lines. */}
+        <LineTuner />
       </div>
     </LandingMotion>
   );

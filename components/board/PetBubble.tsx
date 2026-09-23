@@ -83,7 +83,10 @@ export function PetBubble({
     const ro = new ResizeObserver(() => setBox({ w: el.offsetWidth, h: el.offsetHeight }));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [cloud]);
+    // `open` too: the box only exists while the bubble is open, so a thought
+    // bubble that started closed never measured and drew no cloud, only its
+    // dots (found on the landing FAQ, Sept 22).
+  }, [cloud, open]);
 
   return (
     <AnimatePresence>

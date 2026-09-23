@@ -50,6 +50,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
       summary: tutorSessions.summary,
       state: tutorSessions.summaryState,
       status: tutorSessions.status,
+      title: tutorSessions.title,
       startedAt: tutorSessions.startedAt,
       durationSec: tutorSessions.durationSec,
     })
@@ -63,6 +64,8 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     summary: readSummary(row?.summary),
     state: row?.state ?? "none",
     sessionStatus: row?.status ?? "active",
+    // The session's own name, for the heading when no summary could be written.
+    title: row?.title ?? "",
     startedAt: row?.startedAt ?? 0,
     durationSec: row?.durationSec ?? 0,
   });

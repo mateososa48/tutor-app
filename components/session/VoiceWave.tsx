@@ -11,6 +11,9 @@ type Props = {
   analyser: AnalyserNode | null;
   speaking: boolean;
   className?: string;
+  /** The colour the wave rises out of. The dock's own by default; a page
+      surface passes its own so the canvas has no visible edge. */
+  background?: [number, number, number];
 };
 
 const PIXEL = 3;
@@ -84,7 +87,7 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
   return sh;
 }
 
-export function VoiceWave({ analyser, speaking, className }: Props) {
+export function VoiceWave({ analyser, speaking, className, background = BG }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analyserRef = useRef(analyser);
   const speakingRef = useRef(speaking);
@@ -122,7 +125,7 @@ export function VoiceWave({ analyser, speaking, className }: Props) {
     gl.enableVertexAttribArray(aPos);
     gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
     const u = (name: string) => gl.getUniformLocation(program, name);
-    gl.uniform3fv(u("u_bg"), BG);
+    gl.uniform3fv(u("u_bg"), background);
     gl.uniform3fv(u("u_top"), TOP);
     gl.uniform3fv(u("u_deep"), DEEP);
     const uRes = u("u_res");
@@ -211,7 +214,7 @@ export function VoiceWave({ analyser, speaking, className }: Props) {
       gl.deleteShader(vs);
       gl.deleteShader(fs);
     };
-  }, []);
+  }, [background]);
 
   return <canvas ref={canvasRef} aria-hidden className={className} style={{ display: "block", width: "100%", height: "100%" }} />;
 }

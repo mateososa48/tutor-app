@@ -593,8 +593,8 @@ body {
   --lp-ink: #121215;
   --lp-ink-2: #5b5b66;
   --lp-ink-3: #9a9aa4;
-  --lp-line: rgba(18, 18, 21, 0.08);
-  --lp-line-strong: rgba(18, 18, 21, 0.14);
+  --lp-line: rgba(18, 18, 21, 0.09);
+  --lp-line-strong: rgba(18, 18, 21, 0.09);
   --lp-sky: #3d9cff;
   --lp-sky-deep: #1d7ee6;
   --lp-sky-soft: #e9f3ff;
@@ -669,28 +669,122 @@ body {
 /* The page's frame below the hero: two hairlines standing at the container's
    outer edges (1180px), only once the viewport has room for a margin outside
    them. Sections draw a dashed rule across the whole viewport at their top. */
+/* The page's structural grid, after AgentLab (one of Mateo's references):
+   two vertical rails on the container's edges and a rule at the top of each
+   white section, all of them dashed, all of them crawling slowly, with a small
+   square node wherever a rule crosses a rail. Every part is a variable so the
+   line tuner (LineTuner.tsx, Shift+L in development or on any build loaded
+   with ?lines) can change it live and hand back a block to paste here. */
+.lp {
+  --lp-rail-w: 1px;
+  /* Wider than the 1180px container on purpose: the rails frame the page with
+     air rather than tracing the content's edge. The breakpoint below has to
+     clear twice this plus a margin, or the left rail lands off screen. */
+  --lp-rail-inset: 636px;
+  --lp-rail-bg: repeating-linear-gradient(180deg, rgba(18, 18, 21, 0.3) 0 12px, transparent 12px 18px);
+  --lp-rail-period: 18px;
+  --lp-rule-h: 1px;
+  --lp-rule-bg: repeating-linear-gradient(90deg, rgba(18, 18, 21, 0.3) 0 12px, transparent 12px 18px);
+  --lp-rule-period: 18px;
+  /* Seconds for a dash to travel one whole period: the crawl's only dial. */
+  --lp-dash-speed: 4s;
+  --lp-node-size: 11px;
+  --lp-node-color: rgba(18, 18, 21, 0.3);
+  /* The same ink the dashes are drawn in, as a flat colour, for anything that
+     has to draw a SOLID line belonging to this grid (the feature deck's top
+     and bottom edges). One name, so the tuner moves them together. */
+  --lp-rail-ink: rgba(18, 18, 21, 0.3);
+  --lp-node-fill: var(--lp-bg);
+  /* How far the rails reach above the grid's first rule, fading in from
+     nothing. The first rule sits exactly where the rails' box begins, so
+     without this the top crossing had a line going down and nothing above it. */
+  --lp-rail-lead: 120px;
+  /* Solid dividers inside a section's own grid (the three-up under "One
+     conversation"): a step darker than the card hairlines, a step lighter
+     than the dashed structure, so the three read as one system. */
+  --lp-grid: rgba(18, 18, 21, 0.16);
+}
+
+/* Moving the background by exactly one period lands the pattern back on
+   itself, so the loop has no seam wherever it restarts. */
+@keyframes lp-rail-crawl {
+  to { background-position-y: var(--lp-rail-period); }
+}
+@keyframes lp-rule-crawl {
+  to { background-position-x: var(--lp-rule-period); }
+}
+
 .lp-rails { position: relative; }
-@media (min-width: 1240px) {
+@media (min-width: 1320px) {
   .lp-rails::before,
   .lp-rails::after {
     content: "";
     position: absolute;
-    top: 0;
+    top: calc(-1 * var(--lp-rail-lead));
     bottom: 0;
-    width: 1px;
-    background: var(--lp-line);
+    width: var(--lp-rail-w);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--lp-rail-lead));
+    mask-image: linear-gradient(to bottom, transparent, #000 var(--lp-rail-lead));
+    background: var(--lp-rail-bg);
+    animation: lp-rail-crawl var(--lp-dash-speed) linear infinite;
     pointer-events: none;
+    /* ::before paints before this container's children and ::after paints
+       after them, so without a level of their own the right rail drew over its
+       own nodes while the left rail sat behind them. */
+    z-index: 0;
   }
-  .lp-rails::before { left: calc(50% - 590px); }
-  .lp-rails::after { right: calc(50% - 590px); }
+  .lp-rails::before { left: calc(50% - var(--lp-rail-inset)); }
+  .lp-rails::after { right: calc(50% - var(--lp-rail-inset)); }
+
+  /* The node: a small filled square with a hairline, sitting on each crossing.
+     Four background layers, an outer square and an inner fill for each rail,
+     because one pseudo-element has to draw both. `calc(50% ± inset)` centres a
+     fixed-size layer on the rail whatever the viewport is. */
+  .lp-rails .lp-rule::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: var(--lp-node-size);
+    transform: translateY(calc(var(--lp-rule-h) / 2 - var(--lp-node-size) / 2));
+    background-image:
+      linear-gradient(var(--lp-node-fill), var(--lp-node-fill)),
+      linear-gradient(var(--lp-node-color), var(--lp-node-color)),
+      linear-gradient(var(--lp-node-fill), var(--lp-node-fill)),
+      linear-gradient(var(--lp-node-color), var(--lp-node-color));
+    background-size:
+      calc(var(--lp-node-size) - 2px) calc(var(--lp-node-size) - 2px),
+      var(--lp-node-size) var(--lp-node-size),
+      calc(var(--lp-node-size) - 2px) calc(var(--lp-node-size) - 2px),
+      var(--lp-node-size) var(--lp-node-size);
+    background-position:
+      calc(50% - var(--lp-rail-inset)) center,
+      calc(50% - var(--lp-rail-inset)) center,
+      calc(50% + var(--lp-rail-inset)) center,
+      calc(50% + var(--lp-rail-inset)) center;
+    background-repeat: no-repeat;
+    pointer-events: none;
+    /* Above both rails, so a node always covers the dash rather than the other
+       way round. Well under the header's z-40. */
+    z-index: 1;
+  }
 }
+
 .lp-rule::before {
   content: "";
   position: absolute;
   inset: 0 0 auto 0;
-  height: 1px;
-  background: repeating-linear-gradient(90deg, var(--lp-line-strong) 0 4px, transparent 4px 10px);
+  height: var(--lp-rule-h);
+  background: var(--lp-rule-bg);
+  animation: lp-rule-crawl var(--lp-dash-speed) linear infinite;
   pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-rails::before,
+  .lp-rails::after,
+  .lp-rule::before { animation: none; }
 }
 
 /* The tabbed showcase: a sky line that fills under the open tab for one turn. */
@@ -824,6 +918,95 @@ body {
   border: 1px solid var(--lp-line);
   border-radius: 20px;
   box-shadow: var(--lp-shadow-card);
+}
+
+/* A box that reaches the page's vertical rails instead of the 1180px text
+   container, so the dashed rails become its own left and right edges. It stops
+   1px short of each rail (the rails are 1px wide at 50% ± the inset), which
+   keeps it strictly BETWEEN them: a box sitting exactly on the rails covers the
+   left one, because `::before` paints under positioned content, and is covered
+   by the right one, because `::after` paints over it.
+   Below the rails' own breakpoint there are no rails to attach to, so it falls
+   back to the container's TEXT column: 1116px is the 1180px container less its
+   two 32px gutters, so the box lines up exactly with the heading above it at
+   every width in between, and keeps the container's own 20/32px gutters once
+   the viewport is narrower than that. */
+.lp-railspan {
+  width: min(100% - 40px, 1116px);
+  margin-inline: auto;
+}
+@media (min-width: 640px) {
+  .lp-railspan { width: min(100% - 64px, 1116px); }
+}
+@media (min-width: 1320px) {
+  .lp-railspan { width: calc(2 * var(--lp-rail-inset) - 2 * var(--lp-rail-w)); }
+}
+
+/* The feature deck's card: a row of the page's grid rather than a card on it.
+   Its sides are the rails, so it draws none of its own; its top and bottom are
+   the same ink and width as the rails, solid rather than dashed (Mateo,
+   Sept 21). No radius and no shadow: both belong to the floating-card
+   language this replaces. Narrower than the rails' breakpoint it keeps
+   hairline sides, because there is nothing else to close the box. */
+.lp-deck-card {
+  /* The page's own white, not the surface white: the card is a row of the
+     page's grid, so its fill should be the page and only its borders and its
+     dither panel should draw. #ffffff on the #fbfbfc page was two whites a
+     few points apart, which is exactly the thing Mateo catches. It also means
+     a fully sunk card hazes to precisely the page colour, since the haze
+     overlay is the same token. */
+  background: var(--lp-bg);
+  border: var(--lp-rail-w) solid var(--lp-rail-ink);
+  border-left-color: var(--lp-line);
+  border-right-color: var(--lp-line);
+}
+@media (min-width: 1320px) {
+  .lp-deck-card {
+    border-left: 0;
+    border-right: 0;
+  }
+}
+
+/* The last card draws no bottom of its own: the section ends on its bottom
+   edge, so the next section's dashed rule lands exactly there and becomes it
+   (Mateo, Sept 22, "the border should be that horizontal dashed line"). */
+.lp-deck-card[data-last] { border-bottom: 0; }
+
+/* The sides a card grows once it has gone back. At rest it has none, because
+   the rails are its sides; the moment it recedes it leaves them behind and the
+   fill just stops, which reads as unfinished. So this fades in exactly as the
+   card pulls away. It sits under the haze, so the edge recedes with the rest of
+   the card rather than staying lit at the back of the pile. Only where there
+   are rails to leave: below that the card has its own hairline sides already. */
+.lp-deck-edge {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-left: var(--lp-rail-w) solid var(--lp-rail-ink);
+  border-right: var(--lp-rail-w) solid var(--lp-rail-ink);
+}
+@media (min-width: 1320px) {
+  .lp-deck-edge { display: block; }
+}
+
+/* The copy column. At rail widths its text starts exactly where the section's
+   heading does, so the card's words and the words above it share a left edge:
+   the heading's text sits 558px from the centre (the 1180px container's 590px
+   half-width, less its 32px gutter) and the card's edge sits at the rail less
+   its own 1px, so the padding is the 77px between them. */
+.lp-deck-copy { padding: 28px; }
+@media (min-width: 640px) {
+  .lp-deck-copy { padding: 36px; }
+}
+@media (min-width: 1024px) {
+  .lp-deck-copy { padding: 40px; }
+}
+@media (min-width: 1320px) {
+  .lp-deck-copy {
+    padding-left: calc(var(--lp-rail-inset) - var(--lp-rail-w) - 558px);
+    padding-right: 48px;
+  }
 }
 
 @keyframes lp-live-pulse {

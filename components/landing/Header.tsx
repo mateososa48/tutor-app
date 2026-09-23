@@ -12,6 +12,7 @@ const NAV = [
   ["How it works", "#how-it-works"],
   ["What it does", "#capabilities"],
   ["For parents", "#parents"],
+  ["Pricing", "#pricing"],
   ["FAQ", "#faq"],
 ] as const;
 
