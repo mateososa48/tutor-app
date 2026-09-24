@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { tutorSessions } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
@@ -43,7 +43,8 @@ function internal(req: NextRequest): boolean {
 
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
   const { id } = await ctx.params;
-  if (!(await owns(id)).ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const who = await owns(id);
+  if (!who.ok || !who.userId) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const [row] = await db
     .select({
@@ -58,6 +59,15 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     .where(eq(tutorSessions.id, id))
     .limit(1);
 
+  // Which session this was for the student, counting it: "your 12th". True of
+  // every session, where an answer count exists only when answers were checked.
+  const [nth] = row
+    ? await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(tutorSessions)
+        .where(and(eq(tutorSessions.userId, who.userId), lte(tutorSessions.startedAt, row.startedAt)))
+    : [{ n: 0 }];
+
   // The session's own facts come back whether or not a summary was written,
   // so a failed one still shows when it was and how long it ran.
   return NextResponse.json({
@@ -68,6 +78,7 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
     title: row?.title ?? "",
     startedAt: row?.startedAt ?? 0,
     durationSec: row?.durationSec ?? 0,
+    sessionNumber: nth?.n ?? 0,
   });
 }
 

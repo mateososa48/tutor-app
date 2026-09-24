@@ -4,13 +4,15 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, MotionConfig } from "motion/react";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, LoaderCircle } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronLeft, ChevronRight, MessagesSquare, Target } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { ChalkMark } from "@/components/app/ChalkMark";
+import { PetSays } from "@/components/board/PetSays";
 import { TranscriptList } from "@/components/session/TranscriptPanel";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SKILL_CATALOG } from "@/lib/skill-catalog";
-import { formatDuration, formatRelativeDate } from "@/lib/sessions";
+import { formatRelativeDate } from "@/lib/sessions";
 import { useClientReady } from "@/lib/client-ready";
 import type { TranscriptEntry } from "@/lib/live-types";
 import type { SessionSummary } from "@/lib/session-summary";
@@ -19,17 +21,20 @@ import { SUMMARY_MOCKS, type MockPayload } from "./mock";
 
 // What you see when a session ends, and when you open a past one.
 //
-// The note and the record. One column in the home page's language (its
-// container, its hairlines, its one 20px surface, its type) but not its grid:
-// this is a note from the tutor with the evidence beside it, not a dashboard.
-// The boards are the student's own work in the order it happened, one per
-// problem; the note is prose on the page, the way Settings is a note to the
-// tutor; the conversation is at the bottom for whoever wants the whole thing.
+// Read top to bottom it answers, in order: how did it go (the headline, and
+// the pet saying the recap), the numbers in one strip, what went well and
+// what didn't (two titled cards), what to do now (one card, one button), and
+// the work itself (the boards, one per problem). The conversation is a button
+// in the header that opens a side panel: one click away, never a section.
+//
+// Every section has a real title (22px, the home page's "Past sessions") and
+// one plain sentence under it saying what it is, rather than a 13px grey
+// label. Tokens, cards and radii are the home page's.
 
 const CARD = "rounded-[20px] border border-(--lp-line) bg-(--lp-surface)";
 const EASE = [0.16, 1, 0.3, 1] as const;
-/** One measure for every block of prose on the page. */
-const PROSE = "max-w-[62ch]";
+const TITLE = "lp-display m-0 text-[22px] leading-tight text-(--lp-ink)";
+const SUBTITLE = "m-0 mt-1 text-[15px] leading-[1.45] text-(--lp-ink-2)";
 
 const DOTS = {
   backgroundImage: "radial-gradient(rgba(18,18,21,0.10) 1px, transparent 1.2px)",
@@ -39,7 +44,7 @@ const DOTS = {
 
 const SKILL_LABEL = new Map(SKILL_CATALOG.map((s) => [s.key, s.label]));
 
-type Payload = { summary: SessionSummary | null; state: string; sessionStatus: string; title: string; startedAt: number; durationSec: number };
+type Payload = { summary: SessionSummary | null; state: string; sessionStatus: string; title: string; startedAt: number; durationSec: number; sessionNumber?: number };
 type Board = { index: number; title: string; src: string };
 type Turn = { role: "tutor" | "student"; text: string; at: number };
 
@@ -60,6 +65,12 @@ export function SummaryClient({ id }: { id: string }) {
   const [failed, setFailed] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [boards, setBoards] = useState<Board[] | null>(() => mock?.boards ?? null);
+  const [talkOpen, setTalkOpen] = useState(false);
+  const transcript = useTranscript(id, mock);
+  const openTalk = () => {
+    setTalkOpen(true);
+    if (transcript.state === "idle") void transcript.load();
+  };
   const polls = useRef(0);
 
   const load = useCallback(async (): Promise<Payload | null> => {
@@ -135,6 +146,9 @@ export function SummaryClient({ id }: { id: string }) {
   // An ended session from before summaries existed: nothing queued, nothing failed.
   const unwritten = !waiting && !broken && !summary;
 
+  const skill = summary?.stats.skills[0];
+  const skillLabel = skill ? (SKILL_LABEL.get(skill) ?? skill) : null;
+
   return (
     <AppShell defaultOpen>
       <MotionConfig reducedMotion="user">
@@ -142,26 +156,35 @@ export function SummaryClient({ id }: { id: string }) {
           <div className="mx-auto max-w-[1080px] px-6 pt-10 pb-24 sm:px-10 lg:px-14 lg:pt-14">
             <Link
               href="/"
-              className="-ml-2 inline-flex h-9 items-center gap-1.5 rounded-[8px] px-2 text-[13px] font-medium text-(--lp-ink-2) outline-none transition-colors duration-150 hover:text-(--lp-ink) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
+              className="-ml-2 inline-flex h-10 items-center gap-1.5 rounded-[8px] px-2 text-[14px] font-medium text-(--lp-ink-2) outline-none transition-colors duration-150 hover:text-(--lp-ink) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
             >
               <ArrowLeft className="size-4" strokeWidth={2.25} aria-hidden />
               Home
             </Link>
 
-            <Header data={data} summary={summary} waiting={waiting} mounted={mounted} />
+            <Header
+              data={data}
+              summary={summary}
+              waiting={waiting}
+              missing={broken ? "failed" : unwritten ? "none" : null}
+              busy={retrying}
+              onWrite={write}
+              mounted={mounted}
+              onConversation={openTalk}
+            />
 
-            {/* What it means first, then the work it came from. */}
-            {broken || unwritten ? (
-              <Unwritten kind={broken ? "failed" : "none"} onWrite={write} busy={retrying} />
-            ) : (
-              <Note summary={summary} waiting={waiting} onPractice={(topic) => router.push(`/session?topic=${encodeURIComponent(topic)}`)} />
+            <Stats data={data} boards={boards} />
+
+            <Notes summary={summary} waiting={waiting} />
+
+            {summary?.next && (
+              <Next text={summary.next} onPractice={skillLabel ? () => router.push(`/session?topic=${encodeURIComponent(skillLabel)}`) : undefined} />
             )}
 
             <Boards id={id} boards={boards} />
-
-            <Conversation id={id} mock={mock} />
           </div>
         </div>
+        <Conversation transcript={transcript} open={talkOpen} onOpenChange={setTalkOpen} />
       </MotionConfig>
     </AppShell>
   );
@@ -169,103 +192,237 @@ export function SummaryClient({ id }: { id: string }) {
 
 // ── Header ─────────────────────────────────────────────────────────────────
 
-function Header({ data, summary, waiting, mounted }: { data: Payload | null; summary: SessionSummary | null; waiting: boolean; mounted: boolean }) {
+function Header({
+  data,
+  summary,
+  waiting,
+  missing,
+  busy,
+  onWrite,
+  mounted,
+  onConversation,
+}: {
+  data: Payload | null;
+  summary: SessionSummary | null;
+  waiting: boolean;
+  /** No note to show: writing it failed, or it was never written. */
+  missing: "failed" | "none" | null;
+  busy: boolean;
+  onWrite: () => void;
+  mounted: boolean;
+  onConversation: () => void;
+}) {
   const when = data?.startedAt && mounted ? formatRelativeDate(data.startedAt) : "";
-  const long = data?.durationSec ? formatDuration(data.durationSec) : "";
-  const meta = [when, long].filter(Boolean).join(" · ");
   // With no note, the heading is the session's own name.
   const fallback = data?.title && data.title !== "Session" ? data.title : "Your session";
 
+  // What the pet says. The recap is written to the student ("You worked
+  // through..."), so it reads as the tutor talking to them. When there is no
+  // recap it says why, in its own words, and the button that fixes it sits
+  // under its bubble.
+  const said = busy ? undefined : summary ? summary.recap : missing === "failed" ? "I couldn't write this one. Your boards and the conversation are all still here." : missing === "none" ? "I didn't write a summary for this session. Want me to write one now?" : undefined;
+  const thinking = busy || waiting ? "Writing your summary" : undefined;
+
   return (
-    <header className="mt-5">
-      <p className="m-0 min-h-5 text-[13px] text-(--lp-ink-3)">{meta || " "}</p>
-      {!data ? (
-        <Skeleton className="mt-4 h-[42px] w-4/5 max-w-[520px] rounded-[10px]" />
-      ) : (
-        <motion.h1
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, ease: EASE }}
-          className="lp-display m-0 mt-4 max-w-[22ch] text-[clamp(2rem,3.4vw,2.6rem)] leading-[1.05] text-balance text-(--lp-ink)"
-        >
-          {summary?.headline ?? fallback}
-        </motion.h1>
-      )}
-      {waiting ? (
-        <p className="m-0 mt-3 flex items-center gap-2 text-[15px] text-(--lp-ink-2)">
-          <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />
-          Writing your summary
-        </p>
-      ) : (
-        summary && (
-          <>
-            <motion.p
+    <header className="mt-6">
+      <div className="flex flex-col gap-5 md:flex-row md:items-end md:justify-between md:gap-10">
+        <div className="min-w-0">
+          <p className="m-0 min-h-5 text-[14px] text-(--lp-ink-2)">{when || " "}</p>
+          {!data ? (
+            <Skeleton className="mt-3 h-[42px] w-4/5 max-w-[520px] rounded-[10px]" />
+          ) : (
+            <motion.h1
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45, delay: 0.06, ease: EASE }}
-              className={cn(PROSE, "m-0 mt-2.5 text-[16px] leading-[1.55] text-(--lp-ink-2)")}
+              transition={{ duration: 0.45, ease: EASE }}
+              className="lp-display m-0 mt-2 max-w-[22ch] text-[clamp(2rem,3.4vw,2.6rem)] leading-[1.06] text-balance text-(--lp-ink)"
             >
-              {summary.recap}
-            </motion.p>
-            <Facts stats={summary.stats} />
-          </>
-        )
+              {summary?.headline ?? fallback}
+            </motion.h1>
+          )}
+        </div>
+
+        {/* The conversation's home: one click away from anywhere on the page,
+            and out of the way of everyone who only wants the note. */}
+        <button type="button" onClick={onConversation} className={cn(PILL, "self-start md:self-end")}>
+          <MessagesSquare className="size-4" strokeWidth={2} aria-hidden />
+          Read the conversation
+        </button>
+      </div>
+
+      {data && (
+        <PetSays className="mt-8 max-w-[780px]" text={said} thinking={thinking} puzzled={missing === "failed"}>
+          {missing && (
+            <button type="button" onClick={onWrite} disabled={busy} className={PILL}>
+              {missing === "failed" ? "Try again" : "Write one"}
+            </button>
+          )}
+        </PetSays>
       )}
     </header>
   );
 }
 
-/** The counts we computed, as one quiet line. Only what exists is said. */
-function Facts({ stats }: { stats: SessionSummary["stats"] }) {
-  const parts: ReactNode[] = [];
-  if (stats.checked > 0) {
-    parts.push(
-      <span key="right" className="font-medium text-(--lp-ink)">
-        {stats.correct} of {stats.checked} answers right
-      </span>,
-    );
-  }
-  if (stats.independent > 0) {
-    parts.push(
-      <span key="alone" className="font-medium text-(--lp-ink)">
-        {stats.independent} with no hints
-      </span>,
-    );
-  }
-  // The skills as a clause, not a list: on their own, two bare labels under
-  // the recap said nothing about what they were. They come from checked
-  // answers, so "worked on" is what they mean.
-  if (stats.skills.length > 0) parts.push(<span key="skills">Worked on {skillsClause(stats.skills)}</span>);
-  if (parts.length === 0) return null;
+/** The quiet secondary button: the conversation, try again, open the board. */
+const PILL =
+  "inline-flex h-10 shrink-0 cursor-pointer items-center gap-2 rounded-full border border-(--lp-line) bg-(--lp-surface) px-4 text-[14px] font-medium text-(--lp-ink) outline-none transition-[background-color,transform] duration-150 hover:bg-(--lp-gray) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) active:scale-[0.97] disabled:cursor-default disabled:opacity-60";
+
+// ── The numbers ────────────────────────────────────────────────────────────
+
+/** One cell: a value, `null` while it loads, `undefined` when there is nothing to say. */
+type Cell = { label: string; value: ReactNode | null | undefined };
+
+const COLS: Record<number, string> = { 1: "md:grid-cols-1", 2: "md:grid-cols-2", 3: "md:grid-cols-3", 4: "md:grid-cols-4" };
+
+/**
+ * The counts as a strip: one bordered row, each cell a small label over a big
+ * number. Only numbers every session has: an answer count exists only when
+ * the tutor checked answers, which most sessions so far never did, so it is
+ * not here (Mateo, Sept 22). A cell with nothing to say is dropped.
+ */
+function Stats({ data, boards }: { data: Payload | null; boards: Board[] | null }) {
+  const seconds = data?.durationSec ?? 0;
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  const nth = data?.sessionNumber ?? 0;
+
+  const cells: Cell[] = [
+    {
+      label: "Time",
+      value: !data ? null : seconds ? (
+        <>
+          {minutes}
+          <Unit>min</Unit>
+        </>
+      ) : undefined,
+    },
+    { label: "Problems", value: boards === null ? null : boards.length > 0 ? String(boards.length) : undefined },
+    { label: "Sessions so far", value: !data ? null : nth > 0 ? String(nth) : undefined },
+  ];
+  const shown = cells.filter((c) => c.value !== undefined);
+  if (shown.length === 0) return null;
+  const odd = shown.length % 2 === 1;
+
   return (
-    <motion.p
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.4, delay: 0.12 }}
-      className="m-0 mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[14px] leading-[1.5] text-(--lp-ink-2) tabular-nums"
-    >
-      {parts.map((part, i) => (
-        <span key={i} className="inline-flex items-baseline gap-x-2">
-          {i > 0 && (
-            <span aria-hidden className="text-(--lp-ink-3)">
-              ·
-            </span>
-          )}
-          {part}
-        </span>
+    <dl className={cn(CARD, "m-0 mt-10 grid grid-cols-2 gap-px overflow-hidden bg-(--lp-line)", COLS[shown.length])}>
+      {shown.map((cell, i) => (
+        <div key={cell.label} className={cn("bg-(--lp-surface) px-5 py-5 sm:px-6", odd && i === shown.length - 1 && "max-md:col-span-2")}>
+          <dt className="text-[14px] font-medium text-(--lp-ink-2)">{cell.label}</dt>
+          <dd className="lp-display m-0 mt-2.5 text-[32px] leading-none text-(--lp-ink) tabular-nums sm:text-[34px]">
+            {cell.value === null ? <Skeleton className="h-8 w-16 rounded-[8px]" /> : cell.value}
+          </dd>
+        </div>
       ))}
-    </motion.p>
+    </dl>
   );
 }
 
-/** "equations with variables on both sides and the distributive property" */
-function skillsClause(keys: string[]): string {
-  const names = keys.map((key) => {
-    const label = SKILL_LABEL.get(key) ?? key;
-    return label.charAt(0).toLowerCase() + label.slice(1);
-  });
-  if (names.length === 1) return names[0];
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+function Unit({ children }: { children: ReactNode }) {
+  return <span className="ml-1 text-[18px] text-(--lp-ink-2)">{children}</span>;
+}
+
+// ── What clicked, what's still shaky ───────────────────────────────────────
+
+function Notes({ summary, waiting }: { summary: SessionSummary | null; waiting: boolean }) {
+  if (waiting) {
+    return (
+      <div className="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4 md:grid-cols-2" aria-hidden>
+        {[0, 1].map((n) => (
+          <div key={n} className={cn(CARD, "flex flex-col gap-3 p-6 sm:p-7")}>
+            <Skeleton className="h-6 w-36 rounded-[8px]" />
+            <Skeleton className="h-4 w-48 rounded-[6px]" />
+            <Skeleton className="mt-3 h-5 w-full rounded-[8px]" />
+            <Skeleton className="h-5 w-11/12 rounded-[8px]" />
+            <Skeleton className="h-5 w-4/5 rounded-[8px]" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (!summary) return null;
+
+  const cards = [
+    summary.wins.length > 0 && { title: "What clicked", sub: "Things you did well this session.", items: summary.wins, mark: "check" as const },
+    summary.stuck.length > 0 && { title: "Still shaky", sub: "Worth another look next time.", items: summary.stuck, mark: "ring" as const },
+  ].filter(Boolean) as Array<{ title: string; sub: string; items: string[]; mark: "check" | "ring" }>;
+  if (cards.length === 0) return null;
+
+  return (
+    <div className={cn("mt-4 grid grid-cols-[minmax(0,1fr)] gap-4", cards.length === 2 && "md:grid-cols-2")}>
+      {cards.map((card, i) => (
+        <motion.section
+          key={card.title}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, delay: 0.1 + i * 0.06, ease: EASE }}
+          className={cn(CARD, "p-6 sm:p-7")}
+        >
+          <h2 className={TITLE}>{card.title}</h2>
+          <p className={SUBTITLE}>{card.sub}</p>
+          <Items items={card.items} mark={card.mark} />
+        </motion.section>
+      ))}
+    </div>
+  );
+}
+
+/** A check for what clicked; an empty ring, "not yet", for what is still shaky. */
+function Items({ items, mark }: { items: string[]; mark: "check" | "ring" }) {
+  return (
+    <ul className="m-0 mt-5 flex list-none flex-col gap-4 p-0">
+      {items.map((item) => (
+        <li key={item} className="flex gap-3">
+          {mark === "check" ? (
+            <span aria-hidden className="mt-px grid size-6 shrink-0 place-items-center rounded-full bg-(--lp-sky-soft)">
+              <Check className="size-3.5 text-(--lp-sky-deep)" strokeWidth={2.5} />
+            </span>
+          ) : (
+            <span aria-hidden className="mt-px grid size-6 shrink-0 place-items-center">
+              <span className="size-3 rounded-full border-2 border-(--lp-ink-3)" />
+            </span>
+          )}
+          <span className="min-w-0 text-[16px] leading-[1.5] text-(--lp-ink)">{item}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ── What to do next ────────────────────────────────────────────────────────
+
+/**
+ * The page's one action, as a card in the same family as the two above it:
+ * the title, the sentence at reading size, and the app's black button. It was
+ * a pale-sky banner with the sentence at display size, which shouted.
+ */
+function Next({ text, onPractice }: { text: string; onPractice?: () => void }) {
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.45, delay: 0.22, ease: EASE }}
+      className={cn(CARD, "mt-4 flex flex-col gap-5 p-6 sm:p-7 md:flex-row md:items-center md:justify-between md:gap-10")}
+    >
+      <div className="flex min-w-0 gap-4">
+        <span aria-hidden className="grid size-11 shrink-0 place-items-center rounded-[12px] bg-(--lp-sky-soft)">
+          <Target className="size-5 text-(--lp-sky-deep)" strokeWidth={2} />
+        </span>
+        <div className="min-w-0">
+          <h2 className={TITLE}>Try this next</h2>
+          <p className="m-0 mt-1.5 max-w-[60ch] text-[16px] leading-[1.55] text-(--lp-ink)">{text}</p>
+        </div>
+      </div>
+      {onPractice && (
+        <button
+          type="button"
+          onClick={onPractice}
+          className="btn-gloss btn-gloss-lift ml-15 inline-flex h-11 shrink-0 cursor-pointer items-center gap-2 self-start rounded-[12px] px-5 text-[15px] font-medium outline-none focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) md:ml-0 md:self-center"
+        >
+          Start practice
+          <ArrowRight className="size-4" strokeWidth={2.25} aria-hidden />
+        </button>
+      )}
+    </motion.section>
+  );
 }
 
 // ── The boards, one per problem ────────────────────────────────────────────
@@ -299,17 +456,21 @@ function Boards({ id, boards }: { id: string; boards: Board[] | null }) {
 
   const count = boards?.length ?? 0;
   const scrollable = edges.left || edges.right;
+  const sub =
+    boards === null ? " " : count === 0 ? "Nothing was drawn in this one." : count === 1 ? "The board from this session." : `One for each problem, in the order you did them.`;
 
   return (
     <section className="mt-16" aria-labelledby="boards-heading">
-      <div className="flex items-center justify-between gap-4">
-        <h2 id="boards-heading" className="m-0 flex items-baseline gap-2 text-[15px] font-medium text-(--lp-ink-2)">
-          {count === 1 ? "Your board" : "Your boards"}
-          {count > 1 && <span className="text-[13px] text-(--lp-ink-3) tabular-nums">{count}</span>}
-        </h2>
-        <div className="flex items-center gap-1">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h2 id="boards-heading" className={TITLE}>
+            {count === 1 ? "Your board" : "Your boards"}
+          </h2>
+          <p className={SUBTITLE}>{sub}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
           {scrollable && (
-            <span className="mr-2 hidden items-center gap-1 md:flex">
+            <span className="hidden items-center gap-1.5 md:flex">
               <Arrow dir={-1} disabled={!edges.left} onClick={() => step(-1)} />
               <Arrow dir={1} disabled={!edges.right} onClick={() => step(1)} />
             </span>
@@ -317,10 +478,10 @@ function Boards({ id, boards }: { id: string; boards: Board[] | null }) {
           {count > 0 && (
             <Link
               href={`/session/${encodeURIComponent(id)}`}
-              className="group/open -mr-2 inline-flex min-h-9 items-center gap-1 rounded-[8px] px-2 text-[13px] font-medium text-(--lp-ink-2) outline-none transition-colors duration-150 hover:text-[#1d72dc] focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
+              className={cn(PILL, "self-start")}
             >
               Open the board
-              <ArrowRight className="size-3.5 transition-transform duration-150 group-hover/open:translate-x-0.5" strokeWidth={2.4} aria-hidden />
+              <ArrowRight className="size-3.5" strokeWidth={2.4} aria-hidden />
             </Link>
           )}
         </div>
@@ -328,7 +489,7 @@ function Boards({ id, boards }: { id: string; boards: Board[] | null }) {
 
       {/* The strip bleeds into the page gutters so cards scroll under them
           rather than stopping at the text's edge; the fades say there is more. */}
-      <div className="relative mt-4">
+      <div className="relative mt-5">
         <div
           ref={scroller}
           role="region"
@@ -342,8 +503,8 @@ function Boards({ id, boards }: { id: string; boards: Board[] | null }) {
         >
           {boards === null ? (
             <>
-              <Skeleton className={cn(BOARD_W, "h-[280px] shrink-0 rounded-[20px]")} />
-              <Skeleton className={cn(BOARD_W, "h-[280px] shrink-0 rounded-[20px]")} />
+              <Skeleton className={cn(BOARD_W, "h-[290px] shrink-0 rounded-[20px]")} />
+              <Skeleton className={cn(BOARD_W, "h-[290px] shrink-0 rounded-[20px]")} />
             </>
           ) : boards.length === 0 ? (
             <NoBoard />
@@ -366,7 +527,7 @@ function Arrow({ dir, disabled, onClick }: { dir: -1 | 1; disabled: boolean; onC
       onClick={onClick}
       disabled={disabled}
       aria-label={dir < 0 ? "Earlier boards" : "Later boards"}
-      className="grid size-8 cursor-pointer place-items-center rounded-full border border-(--lp-line) text-(--lp-ink-2) outline-none transition-[color,border-color,transform] duration-150 hover:border-(--lp-gray-2) hover:text-(--lp-ink) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) active:scale-[0.96] disabled:cursor-default disabled:opacity-35 disabled:hover:border-(--lp-line) disabled:hover:text-(--lp-ink-2) disabled:active:scale-100"
+      className="grid size-10 cursor-pointer place-items-center rounded-full border border-(--lp-line) bg-(--lp-surface) text-(--lp-ink) outline-none transition-[background-color,transform] duration-150 hover:bg-(--lp-gray) focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) active:scale-[0.96] disabled:cursor-default disabled:opacity-35 disabled:hover:bg-(--lp-surface) disabled:active:scale-100"
     >
       <Icon className="size-4" strokeWidth={2.25} aria-hidden />
     </button>
@@ -410,10 +571,10 @@ function BoardCard({ board, i }: { board: Board; i: number }) {
           />
         )}
       </span>
-      <figcaption className="flex items-center gap-2.5 border-t border-(--lp-line) px-4 py-2.5">
+      <figcaption className="flex items-baseline gap-3 border-t border-(--lp-line) px-5 py-3.5">
         {/* The number is the order the problems happened in. */}
-        <span className="text-[12px] text-(--lp-ink-3) tabular-nums">{board.index}</span>
-        <span className="min-w-0 truncate text-[13.5px] font-medium text-(--lp-ink)">{board.title}</span>
+        <span className="text-[14px] text-(--lp-ink-3) tabular-nums">{board.index}</span>
+        <span className="min-w-0 truncate text-[15px] font-medium text-(--lp-ink)">{board.title}</span>
       </figcaption>
     </motion.figure>
   );
@@ -425,136 +586,23 @@ function NoBoard() {
       <span className="flex aspect-video items-center justify-center" style={DOTS}>
         <ChalkMark size={26} color="rgba(18,18,21,0.22)" />
       </span>
-      <figcaption className="border-t border-(--lp-line) px-4 py-2.5 text-[13.5px] font-medium text-(--lp-ink-2)">No board from this one</figcaption>
+      <figcaption className="border-t border-(--lp-line) px-5 py-3.5 text-[15px] font-medium text-(--lp-ink-2)">No board from this one</figcaption>
     </figure>
-  );
-}
-
-// ── The note ───────────────────────────────────────────────────────────────
-
-function Note({ summary, waiting, onPractice }: { summary: SessionSummary | null; waiting: boolean; onPractice: (topic: string) => void }) {
-  if (waiting) {
-    return (
-      <div className={cn(NOTE_GRID, "mt-12")} aria-hidden>
-        {[0, 1].map((n) => (
-          <div key={n} className="flex flex-col gap-3 border-t border-(--lp-line) pt-5">
-            <Skeleton className="h-4 w-24 rounded-[6px]" />
-            <Skeleton className="mt-1 h-5 w-full rounded-[8px]" />
-            <Skeleton className="h-5 w-11/12 rounded-[8px]" />
-            <Skeleton className="h-5 w-4/5 rounded-[8px]" />
-          </div>
-        ))}
-        <Skeleton className="h-[180px] rounded-[20px]" />
-      </div>
-    );
-  }
-  if (!summary) return null;
-
-  const skill = summary.stats.skills[0];
-  const skillLabel = skill ? (SKILL_LABEL.get(skill) ?? skill) : null;
-  const sections = [summary.wins.length > 0, summary.stuck.length > 0, Boolean(summary.next)].filter(Boolean).length;
-  if (sections === 0) return null;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, delay: 0.15, ease: EASE }}
-      className={cn(NOTE_GRID, "mt-12")}
-    >
-      {summary.wins.length > 0 && (
-        <Passage label="What clicked">
-          <Items items={summary.wins} mark="check" />
-        </Passage>
-      )}
-      {summary.stuck.length > 0 && (
-        <Passage label="Still shaky">
-          <Items items={summary.stuck} mark="ring" />
-        </Passage>
-      )}
-      {/* The one thing to do sits apart from what is only read: the home
-          page's card, in the column the eye ends on. */}
-      {summary.next && (
-        <section className={cn(CARD, "p-6 lg:col-start-3 lg:row-start-1")}>
-          <h2 className="m-0 text-[13px] font-medium text-(--lp-ink-2)">Try this next</h2>
-          <p className="m-0 mt-3 text-[16px] leading-[1.5] text-(--lp-ink)">{summary.next}</p>
-          {skillLabel && (
-            <button
-              type="button"
-              onClick={() => onPractice(skillLabel)}
-              className="group/next -ml-2 mt-3 inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-[10px] px-2 text-left text-[14px] font-medium text-[#1d72dc] outline-none transition-transform duration-150 hover:underline hover:underline-offset-4 focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) active:scale-[0.98]"
-            >
-              Practice {skillLabel.toLowerCase()}
-              <ArrowRight className="size-3.5 shrink-0 transition-transform duration-150 group-hover/next:translate-x-0.5" strokeWidth={2.4} aria-hidden />
-            </button>
-          )}
-        </section>
-      )}
-    </motion.div>
-  );
-}
-
-/** Clicked and shaky side by side, the next step in a card to their right; stacked on a phone. */
-const NOTE_GRID = "grid grid-cols-[minmax(0,1fr)] items-start gap-10 md:grid-cols-2 md:gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_300px]";
-
-function Passage({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <section className="border-t border-(--lp-line) pt-5">
-      <h2 className="m-0 text-[13px] font-medium text-(--lp-ink-2)">{label}</h2>
-      {children}
-    </section>
-  );
-}
-
-/** A check for what clicked; an empty ring, "not yet", for what is still shaky. */
-function Items({ items, mark }: { items: string[]; mark: "check" | "ring" }) {
-  return (
-    <ul className="m-0 mt-3 flex list-none flex-col gap-3 p-0">
-      {items.map((item) => (
-        <li key={item} className="flex gap-3">
-          {mark === "check" ? (
-            <span aria-hidden className="mt-px grid size-6 shrink-0 place-items-center rounded-full bg-(--lp-sky-soft)">
-              <Check className="size-3.5 text-(--lp-sky-deep)" strokeWidth={2.5} />
-            </span>
-          ) : (
-            <span aria-hidden className="mt-px grid size-6 shrink-0 place-items-center">
-              <span className="size-3 rounded-full border-2 border-(--lp-ink-3)" />
-            </span>
-          )}
-          <span className="min-w-0 text-[16px] leading-[1.5] text-(--lp-ink)">{item}</span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** No note: it failed, or the session is from before notes were written. */
-function Unwritten({ kind, onWrite, busy }: { kind: "failed" | "none"; onWrite: () => void; busy: boolean }) {
-  return (
-    <section className={cn(PROSE, "mt-12")}>
-      <h2 className="m-0 text-[13px] font-medium text-(--lp-ink-2)">Your summary</h2>
-      <p className="m-0 mt-3 text-[16px] leading-[1.55] text-(--lp-ink-2)">
-        {kind === "failed" ? "This one couldn't be written. Your boards and the conversation are still here." : "No summary was written for this one."}
-      </p>
-      <button
-        type="button"
-        onClick={onWrite}
-        disabled={busy}
-        className="-ml-2 mt-3 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[10px] px-2 text-[14px] font-medium text-[#1d72dc] outline-none transition-transform duration-150 hover:underline hover:underline-offset-4 focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow) active:scale-[0.98] disabled:cursor-default disabled:opacity-60 disabled:hover:no-underline"
-      >
-        {busy && <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden />}
-        {kind === "failed" ? "Try again" : "Write one"}
-      </button>
-    </section>
   );
 }
 
 // ── The conversation ───────────────────────────────────────────────────────
 
-function Conversation({ id, mock }: { id: string; mock: MockPayload | null }) {
-  const [open, setOpen] = useState(false);
+/**
+ * Everything that was said, in a side panel: from the right on a laptop, the
+ * whole screen on a phone. Loaded the first time it opens, then kept.
+ */
+type Transcript = { turns: Turn[] | null; state: "idle" | "loading" | "done" | "failed"; load: () => Promise<void> };
+
+/** The transcript, fetched once on demand: the page starts it when the panel is opened. */
+function useTranscript(id: string, mock: MockPayload | null): Transcript {
   const [turns, setTurns] = useState<Turn[] | null>(null);
-  const [state, setState] = useState<"idle" | "loading" | "done" | "failed">("idle");
+  const [state, setState] = useState<Transcript["state"]>("idle");
 
   const load = useCallback(async () => {
     setState("loading");
@@ -574,38 +622,31 @@ function Conversation({ id, mock }: { id: string; mock: MockPayload | null }) {
     }
   }, [id, mock]);
 
-  const toggle = () => {
-    const next = !open;
-    setOpen(next);
+  return { turns, state, load };
+}
+
+function Conversation({ transcript, open, onOpenChange }: { transcript: Transcript; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { turns, state, load } = transcript;
+  const change = (next: boolean) => {
+    onOpenChange(next);
     if (next && state === "idle") void load();
   };
 
   const entries: TranscriptEntry[] = (turns ?? []).map((t, i) => ({ role: t.role, text: t.text, id: `t${i}`, at: t.at }));
 
   return (
-    <section className="mt-14 border-t border-(--lp-line)">
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={open}
-        aria-controls="conversation"
-        className="-mx-2 flex min-h-14 w-[calc(100%+1rem)] cursor-pointer items-center justify-between gap-4 rounded-[10px] px-2 text-left outline-none focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)"
-      >
-        <span className="flex items-baseline gap-2">
-          <span className="text-[15px] font-medium text-(--lp-ink)">The conversation</span>
-          {turns && state === "done" && <span className="text-[13px] text-(--lp-ink-3) tabular-nums">{turns.length} turns</span>}
-        </span>
-        <ChevronDown className={cn("size-4 shrink-0 text-(--lp-ink-3) transition-transform duration-200 ease-out", open && "rotate-180")} strokeWidth={2.25} aria-hidden />
-      </button>
-      {open && (
-        <motion.div
-          id="conversation"
-          initial={{ opacity: 0, y: 4 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2, ease: EASE }}
-          className={cn(PROSE, "pt-1 pb-2")}
-        >
-          {state === "loading" ? (
+    <Sheet open={open} onOpenChange={change}>
+      {/* The sheet's own width rules are keyed on data-side, so the override
+          has to be too: plain w-full lost to its 75% and 384px cap. */}
+      <SheetContent side="right" className="gap-0 bg-(--lp-surface) p-0 data-[side=right]:w-full data-[side=right]:sm:max-w-[460px]">
+        <div className="border-b border-(--lp-line) px-6 pt-6 pb-5 pr-14">
+          <SheetTitle className="lp-display text-[22px] leading-tight font-normal text-(--lp-ink)">The conversation</SheetTitle>
+          <SheetDescription className="mt-1 text-[15px] text-(--lp-ink-2)">
+            {state === "done" && turns ? `Everything you and your tutor said, ${turns.length} turns.` : "Everything you and your tutor said, in order."}
+          </SheetDescription>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+          {state === "loading" || state === "idle" ? (
             <div className="flex flex-col gap-3" aria-hidden>
               <Skeleton className="h-4 w-12 rounded-[6px]" />
               <Skeleton className="h-5 w-full rounded-[8px]" />
@@ -614,7 +655,7 @@ function Conversation({ id, mock }: { id: string; mock: MockPayload | null }) {
               <Skeleton className="h-8 w-1/2 rounded-[12px]" />
             </div>
           ) : state === "failed" ? (
-            <p className="m-0 text-[14px] text-(--lp-ink-2)">
+            <p className="m-0 text-[15px] text-(--lp-ink-2)">
               Couldn&apos;t load the conversation.{" "}
               <button type="button" onClick={() => void load()} className="cursor-pointer font-medium text-[#1d72dc] hover:underline hover:underline-offset-4">
                 Try again
@@ -623,8 +664,8 @@ function Conversation({ id, mock }: { id: string; mock: MockPayload | null }) {
           ) : (
             <TranscriptList transcript={entries} emptyText="Nothing was said in this one." />
           )}
-        </motion.div>
-      )}
-    </section>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

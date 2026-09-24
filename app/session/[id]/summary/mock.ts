@@ -19,6 +19,8 @@ export type MockPayload = {
   title: string;
   startedAt: number;
   durationSec: number;
+  /** Which session this was for the student, counting it. */
+  sessionNumber: number;
   boards: MockBoard[];
   turns: MockTurn[];
 };
@@ -95,7 +97,7 @@ const short: SessionSummary = {
   model: "openai/gpt-5.6-luna",
 };
 
-const base = { sessionStatus: "ended", title: "my homework. i dont understand it", startedAt: startedAt(), durationSec: 780, boards: BOARDS, turns: TURNS };
+const base = { sessionNumber: 12, sessionStatus: "ended", title: "my homework. i dont understand it", startedAt: startedAt(), durationSec: 780, boards: BOARDS, turns: TURNS };
 
 export const SUMMARY_MOCKS: Record<string, MockPayload> = {
   "1": { ...base, summary: done, state: "done" },

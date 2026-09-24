@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { FooterWave } from "@/components/landing/FooterWave";
 import { FilesPanel } from "@/components/session/FilesPopover";
 import { useFileIntake } from "@/components/session/useFileIntake";
+import { usePhoneLink } from "@/components/session/usePhoneLink";
 import type { UploadedFile } from "@/lib/file-processor";
 import { EMPTY_INTAKE, SESSION_LANGUAGES, type LanguageCode, type SessionIntake } from "@/lib/session-intake";
 import { TopicTiles } from "@/components/onboarding/TopicTiles";
@@ -67,14 +68,26 @@ export function SessionIntakeDialog({
   const addFiles = (added: UploadedFile[]) => setFiles((prev) => [...prev, ...added]);
   // The panel has its own picker; this one is for dropping onto the window.
   const { intake: readFiles, error: dropError } = useFileIntake(files, addFiles);
+  const phone = usePhoneLink(files, addFiles);
+  const [collecting, setCollecting] = useState(false);
+  const busy = starting || collecting;
 
-  const submit = () => {
-    if (starting) return;
-    onStart({ ...intake, topic: intake.topic.trim(), fileNames: files.map((f) => f.name) }, files);
+  // A photo can still be on its way from the phone when Start is pressed, so
+  // an open code is emptied first and what it held joins the files.
+  const submit = async () => {
+    if (busy) return;
+    let all = files;
+    if (phone.phase === "live") {
+      setCollecting(true);
+      const late = await phone.close({ add: false });
+      setCollecting(false);
+      all = [...files, ...late];
+    }
+    onStart({ ...intake, topic: intake.topic.trim(), fileNames: all.map((f) => f.name) }, all);
   };
 
   return (
-    <Dialog.Root open modal onOpenChange={(next) => !next && !starting && onCancel()}>
+    <Dialog.Root open modal onOpenChange={(next) => !next && !busy && onCancel()}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-(--lp-ink)/25 backdrop-blur-[2px] transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
         <Dialog.Popup
@@ -113,7 +126,7 @@ export function SessionIntakeDialog({
               placeholder="Adding fractions, question 4"
               onChange={(e) => setIntake((prev) => ({ ...prev, topic: e.target.value, lessonKey: undefined }))}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit();
               }}
               className="mt-4 min-h-[84px] resize-none rounded-[14px] text-[15px] leading-[1.5]"
             />
@@ -150,7 +163,8 @@ export function SessionIntakeDialog({
                 files={files}
                 onAddFiles={addFiles}
                 onRemoveFile={(id) => setFiles((prev) => prev.filter((f) => f.id !== id))}
-                hint="Homework photos, worksheets, notes."
+                phone={phone}
+                hint="Or drop them on this window."
               />
             </div>
 
@@ -175,11 +189,11 @@ export function SessionIntakeDialog({
             <div className="relative flex items-center justify-between gap-2 px-5 pt-6 pb-5">
               <LanguagePicker value={intake.language} onChange={(language) => setIntake((prev) => ({ ...prev, language }))} />
               <div className="flex items-center gap-1">
-                <Button variant="ghost" onClick={onCancel} disabled={starting}>
+                <Button variant="ghost" onClick={onCancel} disabled={busy}>
                   Cancel
                 </Button>
-                <Button onClick={submit} disabled={starting} className="px-4">
-                  {starting ? (
+                <Button onClick={() => void submit()} disabled={busy} className="px-4">
+                  {busy ? (
                     <>
                       <Loader2 className="size-4 animate-spin" />
                       Starting

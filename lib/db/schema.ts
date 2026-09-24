@@ -215,6 +215,43 @@ export const learnerSkillStates = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.skillKey] }), index("learner_skill_states_user_status_idx").on(t.userId, t.status)],
 );
 
+// ── Photos from a phone (Sept 24 2026) ────────────────────────────────────
+// lib/db/sql/2026-09-24-phone-photos.sql creates these; lib/phone-link.ts
+// holds the rules. The QR code's token is stored only as its SHA-256.
+
+export const phoneLinks = pgTable(
+  "phone_links",
+  {
+    id: text("id").primaryKey(),
+    tokenHash: text("token_hash").notNull().unique(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    expiresAt: bigint("expires_at", { mode: "number" }).notNull(),
+    openedAt: bigint("opened_at", { mode: "number" }),
+    closedAt: bigint("closed_at", { mode: "number" }),
+    uploads: integer("uploads").notNull().default(0),
+  },
+  (t) => [index("phone_links_expires_idx").on(t.expiresAt)],
+);
+
+export const phonePhotos = pgTable(
+  "phone_photos",
+  {
+    id: serial("id").primaryKey(),
+    linkId: text("link_id")
+      .notNull()
+      .references(() => phoneLinks.id, { onDelete: "cascade" }),
+    data: text("data").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    bytes: integer("bytes").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("phone_photos_link_idx").on(t.linkId, t.id)],
+);
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type User = typeof users.$inferSelect;
