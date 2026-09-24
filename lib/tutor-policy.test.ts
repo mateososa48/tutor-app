@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  boardNote,
   createPolicy,
   currentState,
   cues,
@@ -16,11 +17,14 @@ import {
   suggestHelp,
   takeStateUpdate,
   boardResultExtras,
+  boardReference,
+  asksForBoard,
+  noteBoardMark,
+  spokenWorking,
   cancelAttempt,
   noteAnswerChecked,
   noteTutorTurn,
-  setSessionFiles,
-} from "./tutor-policy";
+  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep } from "./tutor-policy";
 
 const T0 = 1_000_000;
 
@@ -129,10 +133,11 @@ test("unsure but right asks them to check; bored cues up; idk asks for smaller",
   assert.ok(cues(q).some((c) => c.startsWith("said they don't know")));
 });
 
-test("mixed review comes due after four solved on one skill", () => {
+test("mixed review comes due after four solved on one skill, when there is an earlier skill", () => {
   const p = createPolicy(T0);
+  recordAttempt(p, { skill: "negatives", result: "correct", help: 1 }, T0);
   for (let i = 0; i < 4; i++) recordAttempt(p, { skill: "slope", result: "correct", help: 3 }, T0);
-  assert.ok(cues(p).some((c) => c.startsWith("mixed review due")));
+  assert.ok(cues(p).some((c) => c.startsWith('mixed review due: one quick problem on "negatives"')));
   recordAttempt(p, { skill: "negatives", result: "correct", help: 1 }, T0);
   assert.ok(!cues(p).some((c) => c.startsWith("mixed review due")));
 });
@@ -202,7 +207,7 @@ test("each nudge rides on one board result", () => {
   assert.doesNotMatch(boardResultExtras(p, 0), /Unchecked answer/, "checked answers are not nudged");
 
   noteTutorTurn(p, "Six squared is thirty six, and eight squared is sixty four.", false);
-  assert.match(boardResultExtras(p, 0), /\[Said, not written: you said "Six squared is thirty six/);
+  assert.match(boardResultExtras(p, 0), /\[Said, not written: "Six squared is thirty six/);
   assert.doesNotMatch(boardResultExtras(p, 0), /Said, not written/);
   noteTutorTurn(p, "Six squared is thirty six.", true);
   assert.doesNotMatch(boardResultExtras(p, 0), /Said, not written/, "a turn that drew is fine");
@@ -223,4 +228,123 @@ test("uploaded files are brought up every few results", () => {
   assert.equal(lines.filter((l) => l.includes("[Files:")).length, 1);
   assert.match(lines[5], /File 1 "sheet\.pdf" \(3 pages\)\. When the student names a problem or a part, call look_at_worksheet/);
   assert.match(boardResultExtras(p, 1000 + 3 * 60_000), /\[Files:/, "or every three minutes");
+});
+
+test("a permission or check-in question is named on the next tool result, once", () => {
+  const p = createPolicy(0);
+  noteTutorTurn(p, "The pieces were different sizes. Does that make sense?", true);
+  const first = boardResultExtras(p, 1000);
+  assert.match(first, /\[You asked "Does that make sense\?"\. You lead/);
+  assert.doesNotMatch(boardResultExtras(p, 2000), /You asked/);
+  noteTutorTurn(p, "Want to try another one?", true);
+  assert.match(boardResultExtras(p, 3000), /You asked "Want to try/);
+  noteTutorTurn(p, "What do you do to both sides first?", true);
+  assert.doesNotMatch(boardResultExtras(p, 4000), /You asked/);
+});
+
+test("\"I get it\" is not proof", () => {
+  for (const said of ["yeah I get it", "ok makes sense", "oh I see", "got it", "I understand now", "Um, one row would be 10? Yeah I get it.", "so it's 15. Ok makes sense."]) {
+    assert.ok(claimsUnderstanding(said), said);
+  }
+  for (const said of ["I don't get it", "is it 4?", "why does it make sense?", "x = 4"]) {
+    assert.ok(!claimsUnderstanding(said), said);
+  }
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "yeah I get it now");
+  assert.match(boardResultExtras(p, 1000), /That is not proof: give them one of the same kind with new numbers/);
+});
+
+test("talking about the board without marking it gets a reminder on the next result", () => {
+  const p = createPolicy(0);
+  noteTutorTurn(p, "Look at those two bars: which one is bigger?", true);
+  assert.match(boardResultExtras(p, 0), /You said "Look at those two bars" but marked nothing/);
+  assert.doesNotMatch(boardResultExtras(p, 0), /marked nothing/, "said once");
+  noteTutorTurn(p, "Look at those two bars: which one is bigger?", true, true);
+  assert.doesNotMatch(boardResultExtras(p, 0), /marked nothing/, "a highlight or ring in the same reply is enough");
+  noteTutorTurn(p, "What is fifteen divided by three?", false);
+  assert.doesNotMatch(boardResultExtras(p, 0), /marked nothing/);
+  assert.equal(boardReference("See the grid? Fifty squares are shaded."), "See the grid");
+  assert.equal(boardReference("Your method is right."), null);
+});
+
+test("the board's own help counts, and heavy help leads to a problem together", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { problem: "$\\frac{1}{4} + \\frac{1}{5}$" });
+  assert.equal(p.boardHelp, 0);
+  noteBoardWrite(p, "draw_fraction", { fraction: "1/4" });
+  assert.equal(p.boardHelp, 3, "a picture is a strategy hint");
+  noteBoardWrite(p, "draw_fraction", { fraction: "1/4", second_fraction: "1/5", common_denominator: 20 });
+  assert.equal(p.boardHelp, 4, "a recut picture does the key step");
+  noteBoardMark(p);
+  assert.equal(p.boardHelp, 4, "pointing never lowers it");
+  noteBoardWrite(p, "start_new_problem", { problem: "$\\frac{1}{3} + \\frac{1}{6}$" });
+  assert.equal(p.boardHelp, 0, "a new problem starts clean");
+  recordAttempt(p, { skill: "adding fractions", result: "correct", help: 4 }, 0);
+  const flow = flowStep(p);
+  assert.equal(flow?.step, "together", "solved with a lot of help: together, not alone with no hints");
+});
+
+test("mixed review names a skill from earlier, or does not come up", () => {
+  const p = createPolicy(0);
+  for (let i = 0; i < 5; i++) recordAttempt(p, { skill: "adding fractions", result: "correct", help: 1 }, 0);
+  assert.ok(!formatTutorState(p, 0).includes("mixed review"), "one skill so far: nothing to review");
+  const q = createPolicy(0);
+  recordAttempt(q, { skill: "equivalent fractions", result: "correct", help: 2 }, 0);
+  for (let i = 0; i < 5; i++) recordAttempt(q, { skill: "adding fractions", result: "correct", help: 1 }, 0);
+  assert.match(formatTutorState(q, 0), /mixed review due: one quick problem on "equivalent fractions" from earlier/);
+});
+
+test("spoken working and a request to see the board are noticed", () => {
+  assert.ok(spokenWorking("so umm we make it 12 and then its 3/12 and 2/12 and so thats 5/12"));
+  assert.ok(spokenWorking("so its 4 + 2 so its 6"));
+  assert.equal(spokenWorking("37/90"), null);
+  assert.equal(spokenWorking("um, 8?"), null);
+  assert.ok(asksForBoard("show it on the board"));
+  assert.ok(asksForBoard("can you draw it"));
+  assert.ok(!asksForBoard("the second one?"));
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "show it on the board");
+  assert.match(boardResultExtras(p, 0), /They asked to see it on the board/);
+});
+
+test("a board result carries one reminder at most, and the memory only when it changed", () => {
+  const p = createPolicy(0);
+  rememberNote(p, "likes pizza examples");
+  noteTutorTurn(p, "Six squared is thirty six. Does that make sense?", false);
+  const first = boardResultExtras(p, 0);
+  assert.match(first, /\[Memory: likes pizza examples\]/);
+  assert.equal((first.match(/\[(?!Memory|Tutor state)/g) ?? []).length, 1, "one reminder");
+  assert.match(first, /Said, not written/);
+  const second = boardResultExtras(p, 0);
+  assert.doesNotMatch(second, /\[Memory:/, "the same memory is not repeated");
+  assert.match(second, /You asked "Does that make sense\?"/, "the waiting reminder comes next");
+  assert.equal(boardResultExtras(p, 0), "");
+});
+
+test("the clock: the state line counts against the time they chose and cues the wrap-up once", () => {
+  const t0 = 1_000_000;
+  const p = createPolicy(t0);
+  p.plannedMinutes = 20;
+  assert.equal(takeStateUpdate(p, t0 + 5 * 60_000), "", "nothing to say while there is time");
+  const heads = takeStateUpdate(p, t0 + 15 * 60_000);
+  assert.match(heads, /time: nearly done, so the problem after this one is the last/);
+  assert.match(heads, /· 15 of 20 min\. Not from the student/);
+  assert.equal(takeStateUpdate(p, t0 + 16 * 60_000), "", "the same cue a minute later is not resent");
+  assert.match(takeStateUpdate(p, t0 + 18 * 60_000), /time: wrap up now/);
+  assert.match(takeStateUpdate(p, t0 + 21 * 60_000), /past the 20 minutes they chose/);
+});
+
+test("the board note: an explanation over an empty board, math said and not written, or a long turn with no move", () => {
+  const p = createPolicy(0);
+  assert.equal(boardNote(p, "Fractions, got it. Sheet or the whole idea?", false, false), null, "a short opening question is fine");
+  assert.equal(boardNote(p, "Fractions, got it. Are we looking at a specific problem on a sheet you have there, or the whole idea from the start?", false, false), null, "a long opening question with no math in it is fine too");
+  assert.match(boardNote(p, "The top number is the numerator, and the bottom number is the denominator. Which one tells you the size of the pieces?", false, false)!, /the board is empty and you explained in words/);
+  assert.match(boardNote(p, "Which number tells you how many pieces?", false, false)!, /the board is empty/, "a math question over an empty board");
+  assert.equal(boardNote(p, "The top number is the numerator, and the bottom number is the denominator. Which one tells you the size of the pieces?", true, false), null, "it drew: no note");
+  noteBoardWrite(p, "draw_fraction", {});
+  assert.equal(boardNote(p, "Which number tells you how many pieces?", false, false), null, "a short question with a picture up needs no note");
+  assert.match(boardNote(p, "So three times six is eighteen, and we keep that.", false, false)!, /you said "three times six is eighteen" and wrote nothing/);
+  const long = "The denominator shows the size of the pieces. Since the pieces are both fourths, adding them together just gives us more fourths, not a new size piece, so it stays.";
+  assert.match(boardNote(p, long, false, false)!, /a whole turn with no board move/);
+  assert.equal(boardNote(p, long, false, true), null, "it marked something: no note");
 });

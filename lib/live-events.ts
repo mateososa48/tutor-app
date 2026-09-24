@@ -22,6 +22,9 @@ export function joinTranscript(a: string, b: string, spaced = false): string {
   if (!a) return b.trimStart();
   if (!b) return a;
   if (/\s$/.test(a)) return a + b.trimStart();
+  // A new sentence after a tool call can arrive without its space even when
+  // fragments carry their own ("…looks like." + "Here is…", Sept 24 2026).
+  if (/[.!?]["'”’)]?$/.test(a) && /^\p{Lu}/u.test(b)) return `${a} ${b}`;
   if (spaced || /^\s/.test(b)) return a + b;
   if (/^[.,!?;:%)\]}'’”…]/.test(b) || /[-–—([{'‘“/]$/.test(a)) return a + b;
   return `${a} ${b}`;

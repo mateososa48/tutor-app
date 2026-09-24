@@ -1,6 +1,6 @@
 import { DEFAULT_LIVE_MODEL, GeminiLiveSession } from "./gemini-live";
 import { joinTranscript } from "./live-events";
-import { AudioCapture, AudioPlayer } from "./audio";
+import { AudioCapture, AudioPlayer, quietFrame } from "./audio";
 import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
 import type { UploadedFile } from "./file-processor";
 import { clearActiveIntake, getActiveIntake, intakeOpeningMessage } from "./session-intake";
@@ -59,11 +59,17 @@ export class GeminiTutorSession {
   private turnDone = false;
   private shownCaption = "";
   private lastAudioAt = 0;
+  private turnIndex = 0;
+  // The turn the shown caption belongs to: within a turn it only grows.
+  private captionTurn = -1;
+  // While the student talks the pet listens; a moment after they stop, it thinks.
+  private thinkTimer: ReturnType<typeof setTimeout> | null = null;
+  private cutTimer: ReturnType<typeof setTimeout> | null = null;
   private speechRate = tutorSpeedRate(DEFAULT_TUTOR_SPEED);
 
   readonly boardFrames = "auto" as const;
 
-  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime } = {}) {}
+  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean } = {}) {}
 
   /** The Live model this session runs, for the recording and the QA chip. */
   get model(): string {
@@ -75,6 +81,7 @@ export class GeminiTutorSession {
   }
 
   private resetTurn() {
+    if (this.turnText || this.turnAudioMs) this.turnIndex += 1;
     this.turnText = "";
     this.turnAudioMs = 0;
     this.turnDone = false;
@@ -85,7 +92,16 @@ export class GeminiTutorSession {
     if (this.turnDone) this.resetTurn();
   }
 
+  private clearThinkTimer() {
+    if (this.thinkTimer) clearTimeout(this.thinkTimer);
+    this.thinkTimer = null;
+  }
+
   private showCaption(text: string) {
+    if (this.cutTimer) {
+      clearTimeout(this.cutTimer);
+      this.cutTimer = null;
+    }
     if (text === this.shownCaption) return;
     this.shownCaption = text;
     this.callbacks.onCaption(text);
@@ -125,6 +141,12 @@ export class GeminiTutorSession {
       {
         onAudio: (base64) => {
           this.beginTurnIfNeeded();
+          this.clearThinkTimer();
+          // Mid-turn, a speaker that already ran dry is an audible stall.
+          if (this.turnAudioMs > 0) {
+            const dry = player.starvedMs();
+            if (dry > 60) this.debug("audio", "audio_underrun", { gapMs: Math.round(dry), turn: this.turnIndex });
+          }
           player.enqueue(base64);
           this.turnAudioMs += pcmMs(base64);
           this.lastAudioAt = Date.now();
@@ -137,7 +159,13 @@ export class GeminiTutorSession {
           } else {
             this.resetTurn();
             this.showCaption("");
-            this.callbacks.onActivity("thinking");
+            // Listening while the words arrive; thinking once they stop.
+            this.callbacks.onActivity("idle");
+            this.clearThinkTimer();
+            this.thinkTimer = setTimeout(() => {
+              this.thinkTimer = null;
+              if (!this.ended && !this.speaking) this.callbacks.onActivity("thinking");
+            }, 700);
           }
           this.callbacks.onTranscript(entry);
         },
@@ -166,8 +194,17 @@ export class GeminiTutorSession {
         onError: (message) => this.callbacks.onError(message),
         onInterrupted: () => {
           player.flush();
+          // The bubble stops on the last words the student heard, with a dash,
+          // then clears (or sooner, when the student's words arrive).
+          const heard = this.shownCaption.trim();
           this.resetTurn();
-          this.showCaption("");
+          this.showCaption(heard ? `${heard.replace(/[\s,;:.!?—-]+$/u, "")} —` : "");
+          if (heard) {
+            this.cutTimer = setTimeout(() => {
+              this.cutTimer = null;
+              this.showCaption("");
+            }, 1200);
+          }
           this.setSpeaking(false);
         },
         onTurnComplete: () => {
@@ -175,13 +212,14 @@ export class GeminiTutorSession {
         },
         onDebugEvent: (event) => this.callbacks.onDebugEvent?.(event),
       },
-      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime },
+      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools },
     );
     this.session = session;
 
     if (opts.micStream) {
       const capture = new AudioCapture((base64) => {
-        if (!this.muted) session.sendAudio(base64);
+        // Muted: the same length of a quiet room, never nothing (quietFrame).
+        session.sendAudio(this.muted ? quietFrame(Math.floor((base64.length * 3) / 8)) : base64);
       }, 16000);
       this.capture = capture;
       await capture.start(opts.micStream);
@@ -199,7 +237,15 @@ export class GeminiTutorSession {
       if (this.turnText) {
         const played = Math.max(0, this.turnAudioMs - player.getPendingSourceMs());
         const frac = this.turnAudioMs > 0 ? Math.min(1, played / this.turnAudioMs) : 0;
-        this.showCaption(revealByFraction(this.turnText, frac));
+        const next = revealByFraction(this.turnText, frac);
+        // Audio can arrive ahead of its words for a tick, which drops the
+        // fraction: never take words back within a turn (the bubble would
+        // read it as a new line).
+        const shrinks = this.captionTurn === this.turnIndex && next.length < this.shownCaption.length && this.shownCaption.startsWith(next);
+        if (!shrinks) {
+          this.captionTurn = this.turnIndex;
+          this.showCaption(next);
+        }
       }
     }, 80);
 
@@ -208,6 +254,9 @@ export class GeminiTutorSession {
 
   async end(): Promise<void> {
     this.ended = true;
+    this.clearThinkTimer();
+    if (this.cutTimer) clearTimeout(this.cutTimer);
+    this.cutTimer = null;
     if (this.meter) clearInterval(this.meter);
     this.meter = null;
     this.capture?.stop();
@@ -236,7 +285,15 @@ export class GeminiTutorSession {
   }
 
   sendText(text: string): boolean {
-    return this.session?.sendText(text) ?? false;
+    const sent = this.session?.sendText(text) ?? false;
+    if (sent) {
+      // Their answer is in: the tutor's lingering line gives way to Thinking.
+      this.clearThinkTimer();
+      this.resetTurn();
+      this.showCaption("");
+      this.callbacks.onActivity("thinking");
+    }
+    return sent;
   }
 
   sendFiles(files: UploadedFile[]): boolean {

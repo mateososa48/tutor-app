@@ -11,16 +11,17 @@
 
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer, type CheckVerdict } from "./answer-check";
+import { checkAnswer, checkBlankInPage, type CheckVerdict } from "./answer-check";
+import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import {
   currentState,
   noteAnswerChecked,
+  spokenWorking,
   parseHelpLevel,
   recordAttempt,
   suggestHelp,
   type AttemptResult,
-  type TutorPolicy,
-} from "./tutor-policy";
+  type TutorPolicy, flowStep } from "./tutor-policy";
 
 const KINDS = ["slip", "misconception", "guess"] as const;
 type WrongKind = (typeof KINDS)[number];
@@ -90,10 +91,33 @@ export const TUTOR_TOOL_DECLARATIONS = [
           enum: [...KINDS],
           description: "Optional, when you can tell a wrong answer's kind: slip (right method, arithmetic or copying error), misconception (a wrong idea), guess.",
         },
+        moves: {
+          type: "array",
+          items: { type: "string", enum: [...TEACHING_MOVE_TYPES] },
+          description: "Optional: the help you gave since their last answer, e.g. ['strategy_hint', 'point']. Leave out when they did it alone.",
+        },
+        misconception: {
+          type: "string",
+          description: "Optional: the wrong idea their answer shows, in a few words ('added the bottoms'). An observation, never a label.",
+        },
+        working: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional: the lines of working they said, in digits and symbols, one per line ('1/3 = 3/12', '3/12 + 2/12 = 5/12'), a wrong line too. The board writes them in their hand above their answer.",
+        },
       },
       required: ["problem", "student_answer", "skill", "help_level"],
     },
   },
+];
+
+// Until Sept 24 2026 a second tool recorded the help before each answer. It
+// was the most-called tool (one every three turns), each call before speech
+// cost the tutor about half a second and a re-read of the whole prompt, and
+// the board lost pointing moves to it. check_answer's `moves` records the same
+// thing in the same database rows (TutorRuntime); this stays for recordings and
+// scripts that still call it.
+export const LEGACY_TUTOR_TOOL_DECLARATIONS = [
   {
     name: "record_teaching_move",
     description:
@@ -134,7 +158,7 @@ export const TUTOR_TOOL_DECLARATIONS = [
   },
 ];
 
-export const TUTOR_TOOL_NAMES: ReadonlySet<string> = new Set(TUTOR_TOOL_DECLARATIONS.map((d) => d.name));
+export const TUTOR_TOOL_NAMES: ReadonlySet<string> = new Set([...TUTOR_TOOL_DECLARATIONS, ...LEGACY_TUTOR_TOOL_DECLARATIONS].map((d) => d.name));
 
 // GPT-Live's Responses backend takes the same JSON-schema parameters.
 export const TUTOR_FUNCTION_TOOLS: OpenAIFunctionTool[] = TUTOR_TOOL_DECLARATIONS.map((decl) => ({
@@ -146,6 +170,9 @@ export const TUTOR_FUNCTION_TOOLS: OpenAIFunctionTool[] = TUTOR_TOOL_DECLARATION
 }));
 
 /** What the checker's verdict means for the session's record. */
+// A problem with an equals sign is an equation: a right answer is checked by putting it back in.
+const IS_EQUATION = /=/;
+
 export function attemptFromVerdict(verdict: CheckVerdict, kind?: string): AttemptResult {
   if (verdict === "correct") return "correct";
   if (verdict === "partial") return "partial";
@@ -153,8 +180,36 @@ export function attemptFromVerdict(verdict: CheckVerdict, kind?: string): Attemp
   return (KINDS as readonly string[]).includes(kind ?? "") ? (kind as WrongKind) : "incorrect";
 }
 
-// An equation's answer is worth checking on the board: put the value back in.
-const IS_EQUATION = /=/;
+/**
+ * Whether a checked answer is a step inside the problem on the board rather
+ * than the problem itself (Sept 22 2026): "25 - 7 = 18" while solving
+ * 3x + 7 = 25 is a step; "6" is the problem's answer whatever line it was
+ * asked on. A step never finishes the problem, so it never sends the tutor on
+ * to a new one. Plain arithmetic inside an equation or a word problem is a
+ * step, and so is an equation in the page's letter; "10% of 80" on a page
+ * about 25% of 80 is a problem of its own (quick practice said out loud).
+ */
+export function stepOfPage(page: string | null, problem: string, answer: string): boolean {
+  if (!page) return false;
+  // An answer that is still a sum or a product ("27/90 + 10/90") is a move
+  // on the way, not the answer (it was ringed green as if it were, Sept 23).
+  if (/[\d)]\s*[-+×*÷]\s*[\d(]/.test(answer.replace(/\s*\/\s*/g, "/"))) return true;
+  const whole = problemMath(page);
+  // A word problem the checker cannot read: its arithmetic ("3 + 5", "40 / 8")
+  // is steps on the way (Sept 23 2026: every one of them was ringed green and
+  // counted as the problem solved). The final answer is the tutor's to mark.
+  if (!whole) return pureArithmetic(problemMath(problem) ?? problem);
+  const asked = problemMath(problem) ?? problem;
+  const flat = (t: string) => t.replace(/[\s$]/g, "").toLowerCase();
+  if (flat(whole) === flat(asked)) return false;
+  if (checkAnswer(whole, answer).verdict === "correct") return false;
+  // A line with a box in it ("1/2 = ?/6") is the page's working, never a
+  // problem of its own (Sept 23 2026: each one was ringed green as solved).
+  if (/\?/.test(problem)) return true;
+  if (!pureArithmetic(whole) && pureArithmetic(asked)) return true;
+  const letter = detectUnknown(`$${whole}$`);
+  return Boolean(letter && whole.includes("=") && asked.includes("=") && new RegExp(`(^|[^a-z])${letter}([^a-z]|$)`, "i").test(asked));
+}
 
 // Runs a tutor tool against the session policy. Null when `name` is not one of them.
 export function runTutorTool(
@@ -165,19 +220,50 @@ export function runTutorTool(
   callId?: string,
 ): ToolCallResult | null {
   if (name !== "check_answer") return null;
-  const problem = typeof args.problem === "string" ? args.problem.slice(0, 300) : "";
-  const answer = typeof args.student_answer === "string" ? args.student_answer.slice(0, 200) : "";
+  // A number is fine too: "student_answer": 4 failed and cost a round trip.
+  const text = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" && Number.isFinite(v) ? String(v) : "");
+  const problem = text(args.problem).slice(0, 300);
+  const answer = text(args.student_answer).slice(0, 200);
   if (!problem.trim() || !answer.trim()) return { success: false, error: "check_answer needs problem and student_answer, both as strings." };
-  const check = checkAnswer(problem, answer);
+  let check = checkAnswer(problem, answer);
+  // "x - 2 = ?" on the way through the page's equation: its box holds that
+  // side's value at the page's solution.
+  if (check.verdict === "cannot_check" && policy.pageProblem) {
+    const page = problemMath(policy.pageProblem);
+    const inPage = page ? checkBlankInPage(page, problem, answer) : null;
+    if (inPage) check = inPage;
+  }
   const skill = typeof args.skill === "string" && args.skill.trim() ? args.skill : policy.currentSkill ?? "unnamed skill";
-  const help = parseHelpLevel(args.help_level) ?? suggestHelp(policy)?.level ?? 1;
+  // The board's own help counts too: an answer found by counting the slices
+  // the tutor just drew is not an answer found alone.
+  const help = Math.max(parseHelpLevel(args.help_level) ?? suggestHelp(policy)?.level ?? 1, policy.boardHelp);
   const result = attemptFromVerdict(check.verdict, typeof args.kind === "string" ? args.kind : undefined);
-  recordAttempt(policy, { skill, result, help, callId }, now);
+  const step = stepOfPage(policy.pageProblem, problem, answer);
+  recordAttempt(policy, { skill, result, help, callId, problem, step }, now);
+  if (!step && result !== "unchecked") policy.boardHelp = 0;
+  // Their working, said out loud, belongs on the board as lines.
+  const working = spokenWorking(policy.lastUtterance);
   noteAnswerChecked(policy);
-  const next =
-    check.verdict === "correct"
-      ? ` Mark it: circle_item on their answer with keep=true${IS_EQUATION.test(problem) ? ", and have them check it by putting the value back in" : ""}.`
-      : "";
+  // The tutor writes their answer itself (add_student_attempt, their exact
+  // words) and rings a right final answer. Short notes, not sentences to read
+  // aloud (Sept 24 2026): the board part and one instruction at most, then
+  // the state.
+  const onBoard = check.verdict === "cannot_check"
+    ? ""
+    : check.verdict === "correct" && !step
+      ? ` Board: add_student_attempt with their exact words, then circle_item on it with keep=true${IS_EQUATION.test(problem) ? ", and have them check it by putting the value back in" : ""}.`
+      : " Board: add_student_attempt with their exact words; no mark on it yet.";
+  const wroteWorking = Array.isArray(args.working) && args.working.some((l) => typeof l === "string" && l.trim());
   const state = currentState(policy, now);
-  return { success: true, message: `Verdict: ${check.verdict}. ${check.message}${next}${state ? ` ${state}` : ""}` };
+  // The flow's next step rides in the state line; said here only without one.
+  const flow = state ? null : flowStep(policy);
+  const order = !wroteWorking && working
+    ? ` Their working ("${working}") is not on the board: next time pass it as working.`
+    : policy.boardAsk
+      ? ` They asked to see it on the board: show the working now.`
+      : flow
+        ? ` Next: ${flow.next}.`
+        : "";
+  policy.boardAsk = null;
+  return { success: true, message: `Verdict: ${check.verdict}. ${check.message}${onBoard}${order}${state ? ` ${state}` : ""}` };
 }

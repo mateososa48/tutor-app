@@ -10,6 +10,7 @@ import {
 import {
   boardResultExtras,
   cancelAttempt,
+  boardNote,
   createPolicy,
   normalizeSkill,
   noteBoardWrite,
@@ -21,8 +22,7 @@ import {
   setSessionFiles,
   type AttemptResult,
   type SessionFile,
-  type TutorPolicy,
-} from "./tutor-policy";
+  type TutorPolicy, noteBoardMark } from "./tutor-policy";
 
 export type TeachingMoveType = (typeof TEACHING_MOVE_TYPES)[number];
 export type RemediationStrategy = (typeof REMEDIATION_STRATEGIES)[number];
@@ -80,6 +80,15 @@ export class TutorRuntime {
   private attempts: LearningAttemptEvidence[] = [];
   private teachingMoves: TeachingMoveEvidence[] = [];
   private assistance = new Map<string, number>();
+  /**
+   * The student's spoken working that check_answer carries (`working`), for the
+   * board to write in their hand before their answer. Set by the session page.
+   */
+  private onWorking?: (lines: string[], answer: string) => void;
+
+  setWorkingSink(onWorking?: (lines: string[], answer: string) => void): void {
+    this.onWorking = onWorking;
+  }
 
   constructor(options: TutorRuntimeOptions = {}) {
     this.policy = options.policy ?? createPolicy(options.startedAt ?? Date.now());
@@ -94,16 +103,36 @@ export class TutorRuntime {
     noteStudentUtterance(this.policy, text, now);
   }
 
-  noteTutorTurn(text: string, drew: boolean): void {
-    noteTutorTurn(this.policy, text, drew);
+  noteTutorTurn(text: string, drew: boolean, marked = false): void {
+    noteTutorTurn(this.policy, text, drew, marked);
   }
 
-  noteBoardWrite(): void {
-    noteBoardWrite(this.policy);
+  /** The private note to send between turns when the board was left alone, or null. */
+  boardNote(text: string, drew: boolean, marked = false): string | null {
+    return boardNote(this.policy, text, drew, marked);
+  }
+
+  /** A highlight, ring or point on the board: H2 help for the next answer. */
+  noteBoardMark(): void {
+    noteBoardMark(this.policy);
+  }
+
+  noteBoardWrite(name?: string, args?: Record<string, unknown>): void {
+    noteBoardWrite(this.policy, name, args);
   }
 
   rememberNote(note: string): void {
     rememberNote(this.policy, note);
+  }
+
+  /** The session went live: the clock counts from here. */
+  startClock(now = Date.now()): void {
+    this.policy.startedAt = now;
+  }
+
+  /** How long they said they have (the intake), so the state line keeps the clock. */
+  setPlannedMinutes(minutes: number | null): void {
+    this.policy.plannedMinutes = minutes && minutes > 0 ? minutes : null;
   }
 
   setSessionFiles(files: SessionFile[], now = Date.now()): void {
@@ -120,6 +149,24 @@ export class TutorRuntime {
 
     const rawSkill = typeof args.skill === "string" && args.skill.trim() ? args.skill.trim().slice(0, 120) : this.policy.currentSkill ?? "unnamed skill";
     const ledgerKey = assistanceKey(rawSkill);
+    // The help given since their last answer, carried by check_answer itself
+    // (Sept 24 2026; it was record_teaching_move, one more call before speech).
+    // Recorded as teaching moves just before the attempt, so the stored rows
+    // and the server's help calculation are what they were.
+    const moves = Array.isArray(args.moves) ? args.moves.filter((m): m is TeachingMoveType => includesValue(TEACHING_MOVE_TYPES, m)) : [];
+    const misconception = optionalText(args.misconception, 240);
+    const declared = parseHelpLevel(args.help_level);
+    moves.forEach((move, i) => {
+      this.recordTeachingMove(
+        { skill: rawSkill, help_level: `H${Math.max(declared ?? 0, minimumHelpForMove(move))}`, move, ...(misconception && i === moves.length - 1 ? { diagnosis: misconception } : {}) },
+        now - 1,
+        callId,
+      );
+    });
+    const working = Array.isArray(args.working)
+      ? args.working.filter((l): l is string => typeof l === "string" && /\d/.test(l)).map((l) => l.trim().slice(0, 80)).slice(0, 4)
+      : [];
+    if (working.length) this.onWorking?.(working, typeof args.student_answer === "string" ? args.student_answer : String(args.student_answer ?? ""));
     const declaredHelp = parseHelpLevel(args.help_level);
     const observedHelp = this.assistance.get(ledgerKey);
     const effectiveHelp = Math.max(declaredHelp ?? 1, observedHelp ?? 0);
@@ -199,11 +246,13 @@ export class TutorRuntime {
   private recordTeachingMove(args: Record<string, unknown>, now: number, callId?: string): ToolCallResult {
     const rawSkill = optionalText(args.skill, 120);
     const helpLevel = parseHelpLevel(args.help_level);
+    // Name what is allowed: a bare "not valid" left the model retrying the
+    // same call three times in an eval (move "self_explanation", Sept 22 2026).
     if (!rawSkill || helpLevel === null || !includesValue(TEACHING_MOVE_TYPES, args.move)) {
-      return { success: false, error: "record_teaching_move needs skill, help_level H0-H5, and a valid move." };
+      return { success: false, error: `record_teaching_move needs skill, help_level H0-H5, and move, one of: ${TEACHING_MOVE_TYPES.join(", ")}.` };
     }
     if (args.strategy !== undefined && !includesValue(REMEDIATION_STRATEGIES, args.strategy)) {
-      return { success: false, error: "record_teaching_move strategy is not recognized." };
+      return { success: false, error: `record_teaching_move strategy is one of: ${REMEDIATION_STRATEGIES.join(", ")} (or leave it out).` };
     }
     const effectiveHelp = Math.max(helpLevel, minimumHelpForMove(args.move));
     const evidence: TeachingMoveEvidence = {

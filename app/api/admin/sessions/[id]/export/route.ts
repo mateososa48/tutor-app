@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin";
 import { loadAdminSession } from "@/lib/admin-data";
 import { analyzeSession, buildMarkdownExport } from "@/lib/session-recording";
+import { sessionScorecard } from "@/lib/session-scorecard";
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -21,6 +22,7 @@ export async function GET(req: NextRequest, ctx: RouteCtx) {
       {
         session: data.session,
         analysis: analyzeSession(data.events, data.session.durationSec * 1000),
+        scorecard: sessionScorecard(data.events, data.session.durationSec * 1000),
         frames: data.frames.map((f) => ({ ...f, url: frameUrl(f.id) })),
         events: data.events,
       },

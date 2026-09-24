@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveLiveModel, resolveTutorProvider } from "./tutor-provider";
-import { DEFAULT_LIVE_MODEL } from "./gemini-live";
+import { CONTEXT_WINDOW_COMPRESSION, DEFAULT_LIVE_MODEL } from "./gemini-live";
 
 const search = (map: Record<string, string>) => ({ get: (name: string) => map[name] ?? null });
 
@@ -20,4 +20,12 @@ test("?live picks the Live model by short name or full id", () => {
   assert.equal(resolveLiveModel(search({ live: "gemini-4.0-live" })), "gemini-4.0-live");
   assert.equal(resolveLiveModel(search({ live: "nonsense" })), DEFAULT_LIVE_MODEL);
   assert.equal(resolveLiveModel(null), DEFAULT_LIVE_MODEL);
+});
+
+test("context compression puts triggerTokens beside slidingWindow, not inside it", () => {
+  // Inside slidingWindow the server closes every session at setup (1007,
+  // "Unknown name triggerTokens"): that shipped for an evening on Sept 23 2026.
+  assert.deepEqual(Object.keys(CONTEXT_WINDOW_COMPRESSION).sort(), ["slidingWindow", "triggerTokens"]);
+  assert.deepEqual(Object.keys(CONTEXT_WINDOW_COMPRESSION.slidingWindow), ["targetTokens"]);
+  assert.ok(CONTEXT_WINDOW_COMPRESSION.slidingWindow.targetTokens < CONTEXT_WINDOW_COMPRESSION.triggerTokens);
 });

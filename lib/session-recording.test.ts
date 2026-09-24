@@ -8,8 +8,11 @@ import {
   compareEvents,
   formatClock,
   lastIndexAtOrBefore,
+  breakIntervals,
   mergeUtterances,
   speakingIntervals,
+  studentInputs,
+  voiceReplyTimes,
   type TimelineEvent,
 } from "./session-recording";
 
@@ -113,4 +116,129 @@ test("the log merges speech, hides duplicates and low-level noise", () => {
   assert.match(md, /\[0:00\.0\] STUDENT: hi there/);
   assert.match(md, /picture: https:\/\/x\/frames\/7/);
   assert.match(md, /Tool calls: 1 \(failed: 0\)/);
+});
+
+test("turn summaries, underruns and quiet events read as log lines and issues", () => {
+  const T0 = 1_790_300_000_000;
+  const summary = (offsetMs: number, extra: Record<string, unknown>) =>
+    debug(offsetMs, "turn", "turn_summary", { n: 1, model: "m", trigger: "voice", inputAt: T0, endAt: T0 + offsetMs, firstAudioMs: 900, toolsBeforeAudio: 0, tools: [], audioMs: 2000, words: 12, questions: 1, text: "A line.", arrivalGaps: 0, maxArrivalGapMs: 0, repeat: false, silent: false, interrupted: false, usage: null, costUsd: null, ...extra });
+  const events = [
+    said(0, "student", "what is a half"),
+    summary(3000, { n: 1 }),
+    summary(9000, { n: 2, repeat: true }),
+    summary(15_000, { n: 3, trigger: "text", silent: true, audioMs: 0, firstAudioMs: null }),
+    debug(16_000, "audio", "audio_underrun", { gapMs: 412.6, turn: 3 }),
+    debug(30_000, "silence", "quiet_checkin_skipped", { sinceMs: 14_000, reason: "the student is typing" }),
+    debug(31_000, "turn", "voice_activity", { type: "ACTIVITY_START" }),
+  ];
+  const log = buildLog(events);
+  const shown = log.filter((e) => !e.hidden).map((e) => [e.title, e.tone, e.issue]);
+  assert.deepEqual(shown, [
+    ["what is a half", "default", false],
+    ["Turn 2: said a sentence twice", "warn", true],
+    ["Turn 3: no audio after the student typed", "warn", true],
+    ["Voice ran dry for 413 ms", "warn", true],
+    ["Quiet: check-in skipped after 14.0 s of quiet", "default", false],
+  ]);
+  const hidden = log.filter((e) => e.hidden).map((e) => e.title);
+  assert.ok(hidden.includes("Turn 1"), "a turn with nothing wrong is there under Every event");
+  assert.ok(hidden.includes("Voice activity: ACTIVITY_START"));
+  assert.equal(log.find((e) => e.title.startsWith("Quiet"))?.detail, "the student is typing");
+
+  const flags = analyzeSession(events, 40_000).flags.map((f) => f.label);
+  assert.ok(flags.includes("Turn 2: said a sentence twice"));
+  assert.ok(flags.includes("Turn 3: no audio after the student typed"));
+  assert.ok(flags.includes("Voice ran dry for 413 ms"));
+});
+
+test("the Markdown export carries the scorecard", () => {
+  const events = [said(0, "student", "hi"), said(1500, "tutor", "Hello. What are we working on?"), said(6000, "student", "fractions")];
+  const md = buildMarkdownExport({ sessionId: "s2", title: "Hi", studentName: null, studentEmail: null, startedAt: 0, durationSec: 8, events, frameUrl: (id) => `f/${id}` });
+  const at = (heading: string) => md.indexOf(heading);
+  assert.ok(at("## Summary") < at("## Scorecard") && at("## Scorecard") < at("## Issues"), "the scorecard sits between the summary and the issues");
+  assert.match(md, /- Talk ratio, tutor : student: 3 : 1 \(6 and 2 words\)/);
+  assert.match(md, /- Tools before speech, mean \/ max: not recorded/);
+});
+
+test("what the tutor answers: the opening, typed sends, files, events and speech, never the intake or a typed line's copy", () => {
+  const events = [
+    ev(0, "transcript.entry", "student", { role: "student", text: "I need help with: ratios", id: "intake_1" }),
+    debug(900, "session", "opening_turn_sent", { sent: true, mode: "new" }),
+    debug(5000, "text", "student_text_sent", { text: "ok", success: true }),
+    ev(5000, "transcript.entry", "student", { role: "student", text: "ok", id: "text_5000" }),
+    debug(6000, "text", "student_text_sent", { text: "lost", success: false }),
+    said(9000, "student", "so is it"),
+    said(9400, "student", "three"),
+    debug(12_000, "file", "files_sent_to_tutor", { success: true, count: 1 }),
+    debug(20_000, "explore", "report", { text: "moved m" }),
+    debug(30_000, "silence", "quiet_checkin", { sinceMs: 45_000, sent: true }),
+    debug(31_000, "silence", "quiet_checkin", { sinceMs: 46_000, sent: false }),
+    debug(40_000, "session", "opening_turn_sent", { sent: true, mode: "resume" }),
+  ];
+  assert.deepEqual(studentInputs(events), [
+    { atMs: 900, trigger: "opening" },
+    { atMs: 5000, trigger: "text" },
+    { atMs: 9000, trigger: "voice" },
+    { atMs: 9400, trigger: "voice" },
+    { atMs: 12_000, trigger: "files" },
+    { atMs: 20_000, trigger: "event" },
+    { atMs: 30_000, trigger: "event", checkin: true },
+    { atMs: 40_000, trigger: "resume" },
+  ]);
+  // A pause, and a reload recorded with no pause before it, are both breaks.
+  assert.deepEqual(breakIntervals([ev(100, "session.paused", "system"), ev(900, "session.resumed", "system"), ev(5000, "session.started", "system", { resumed: true }), ev(6000, "session.paused", "system")]), [
+    { startMs: 100, endMs: 900 },
+    { startMs: 5000, endMs: 5000 },
+    { startMs: 6000, endMs: Infinity },
+  ]);
+});
+
+test("approximate reply times run to the tutor's voice, never to a tool", () => {
+  const events = [
+    said(0, "student", "what is 3/4 of 12"),
+    debug(1000, "tool", "tool_response_sent", { name: "record_teaching_move", success: true }),
+    debug(3000, "tool", "tool_response_sent", { name: "check_answer", success: true, message: "Verdict: correct." }),
+    ev(7000, "tutor.speaking", "tutor", { speaking: true }),
+    ev(9000, "tutor.speaking", "tutor", { speaking: false }),
+    // Typed while the tutor was talking: no clean reply to time.
+    ev(12_000, "tutor.speaking", "tutor", { speaking: true }),
+    debug(13_000, "text", "student_text_sent", { text: "wait", success: true }),
+    ev(14_000, "tutor.speaking", "tutor", { speaking: false }),
+    ev(15_000, "tutor.speaking", "tutor", { speaking: true }),
+    ev(16_000, "tutor.speaking", "tutor", { speaking: false }),
+    // Paused before the tutor answered.
+    said(20_000, "student", "hold on"),
+    ev(21_000, "session.paused", "system"),
+    ev(30_000, "session.resumed", "system"),
+    ev(31_000, "tutor.speaking", "tutor", { speaking: true }),
+    ev(32_000, "tutor.speaking", "tutor", { speaking: false }),
+  ];
+  assert.deepEqual(voiceReplyTimes(events), [{ atMs: 0, waitMs: 7000, trigger: "voice", via: "voice" }]);
+  const a = analyzeSession(events, 40_000);
+  assert.equal(a.medianReplyMs, 7000);
+  assert.ok(a.flags.some((f) => f.label === "Slow reply: 7.0 s from the student's input to the tutor's voice"));
+  // A recording with no voice events falls back to the tutor's first transcribed words.
+  assert.deepEqual(voiceReplyTimes([said(0, "student", "hi"), said(1800, "tutor", "Hello!")]), [{ atMs: 0, waitMs: 1800, trigger: "voice", via: "words" }]);
+});
+
+test("with turn summaries, a slow first audio is an issue and the reply time is the measured one", () => {
+  const T0 = 1_790_300_000_000;
+  const events = [
+    said(10_000, "student", "what is 3/4 of 12"),
+    debug(11_000, "tool", "tool_response_sent", { name: "record_teaching_move", success: true, message: "ok" }),
+    debug(13_000, "tool", "tool_response_sent", { name: "start_problem", success: true, message: "ok" }),
+    debug(16_000, "tool", "tool_response_sent", { name: "draw_fraction", success: true, message: "ok" }),
+    ev(18_500, "tutor.speaking", "tutor", { speaking: true }),
+    said(18_500, "tutor", "Look at the picture."),
+    ev(21_000, "tutor.speaking", "tutor", { speaking: false }),
+    debug(22_500, "turn", "turn_summary", { n: 2, model: "m", trigger: "voice", inputAt: T0 + 10_000, endAt: T0 + 21_000, firstToolMs: 1000, firstAudioMs: 8500, toolsBeforeAudio: 3, tools: ["record_teaching_move", "start_problem", "draw_fraction"], audioMs: 2500, words: 4, questions: 0, text: "Look at the picture.", arrivalGaps: 0, maxArrivalGapMs: 0, repeat: false, silent: false, interrupted: false, endedBy: "turn_complete", usage: null, usageMessages: 0, costUsd: null }),
+  ];
+  const a = analyzeSession(events, 30_000);
+  assert.equal(a.medianReplyMs, 8500);
+  assert.equal(a.slowestReplyMs, 8500);
+  assert.deepEqual(a.flags.map((f) => f.label), ["Turn 2: first audio after 8.5 s"]);
+  const md = buildMarkdownExport({ sessionId: "s3", title: "Slow", studentName: null, studentEmail: null, startedAt: 0, durationSec: 30, events, frameUrl: (id) => `f/${id}` });
+  assert.match(md, /## Issues\n\n- \[0:22\.5\] Turn 2: first audio after 8\.5 s/);
+  assert.match(md, /- First audio, p50 \/ p90: 8\.5 s \/ 8\.5 s \(over 1 reply\)/);
+  assert.doesNotMatch(md, /Reply time:|Interruptions:/, "one latency and one interruption count, in the scorecard");
 });

@@ -98,7 +98,9 @@ export const TUTOR_SPEEDS = [
 export type TutorSpeedId = (typeof TUTOR_SPEEDS)[number]["id"];
 
 export const DEFAULT_TUTOR_SPEED: TutorSpeedId = "slow";
-export const TUTOR_SPEED_STORAGE_KEY = "tutor_speech_speed";
+// "_v2" since Sept 23 2026: speeds saved before then (Mateo's own browser had
+// "normal", so the Slow default never applied) start over at Slow once.
+export const TUTOR_SPEED_STORAGE_KEY = "tutor_speech_speed_v2";
 
 // The last choice made in this tab, so the control still works when storage
 // is blocked (private windows).

@@ -20,6 +20,19 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
+/**
+ * A frame of a quiet room, ±8 LSB of noise, as base64 PCM16: what a muted
+ * microphone sends instead of nothing. Gemini 3.8 Live only hears a student
+ * finish when audio keeps arriving; a stream that stops (a mute mid-word)
+ * leaves their turn open, and the tutor waits (openclaw #152830, Sept 2026).
+ * It is synthetic, never the microphone.
+ */
+export function quietFrame(samples: number): string {
+  const pcm = new Int16Array(samples);
+  for (let i = 0; i < samples; i++) pcm[i] = Math.round((Math.random() * 2 - 1) * 8);
+  return arrayBufferToBase64(pcm.buffer as ArrayBuffer);
+}
+
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -273,6 +286,21 @@ export class AudioPlayer {
     const left = this.sourceEnd - this.head(now);
     if (left <= 0) return 0;
     return (Math.max(0, this.anchor.output - now) + left / this.anchor.rate) * 1000;
+  }
+
+  /**
+   * How long the speaker has had nothing to play, in ms (0 while audio is still
+   * due or nothing has been queued since the last flush). Asked just before a
+   * chunk is queued, mid-turn, it is an audible stall: the voice stopped
+   * mid-sentence waiting for the network.
+   */
+  starvedMs(): number {
+    const now = this.audioContext.currentTime;
+    if (this.mode === "plain") return this.nextStartTime > 0 && now > this.nextStartTime ? (now - this.nextStartTime) * 1000 : 0;
+    if (this.mode !== "stretch" || this.sourceEnd <= 0) return 0;
+    const a = this.anchor;
+    const endsAt = a.output + (this.sourceEnd - a.input) / a.rate;
+    return now > endsAt ? (now - endsAt) * 1000 : 0;
   }
 
   /** Audio still to be heard, in milliseconds of the original audio. Captions pace by this. */

@@ -98,3 +98,10 @@ test("an event sink can be attached after React creates the runtime", () => {
   runtime.runTool("record_teaching_move", { skill: "slope", help_level: "H2", move: "point" }, 200, "move-2");
   assert.equal(events.length, 1);
 });
+
+test("a refused teaching move names the moves it accepts, so the model can fix the call", () => {
+  const runtime = new TutorRuntime();
+  const bad = runtime.runTool("record_teaching_move", { skill: "percent", help_level: "H0", move: "self_explanation" }, 1000);
+  assert.ok(bad && !bad.success);
+  assert.match(bad && !bad.success ? bad.error : "", /one of: focusing_question, point, strategy_hint/);
+});

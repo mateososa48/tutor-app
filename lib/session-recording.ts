@@ -3,6 +3,7 @@
 // kinds with it, and the admin pages and exports read recordings with it.
 
 import { joinTranscript } from "./live-events";
+import { describeTurn, readTurn, recordedTurns, scorecardMarkdown, sessionScorecard, turnProblems } from "./session-scorecard";
 
 export const RECORDED_EVENT_KINDS = [
   "transcript.entry",
@@ -150,6 +151,7 @@ export type SessionAnalysis = {
   reconnects: number;
   errors: number;
   frames: number;
+  /** To the tutor's first audio: measured from turn summaries when the recording has them, else approximated from voice events (voiceReplyTimes). The scorecard shows the same numbers. */
   medianReplyMs: number | null;
   slowestReplyMs: number | null;
   replies: number;
@@ -172,9 +174,9 @@ function median(values: number[]): number | null {
   return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 }
 
-type ToolRecord = { offsetMs: number; name: string; success: boolean; error: unknown };
+export type ToolRecord = { offsetMs: number; name: string; success: boolean; error: unknown };
 
-function toolRecords(sorted: readonly TimelineEvent[]): ToolRecord[] {
+export function toolRecords(sorted: readonly TimelineEvent[]): ToolRecord[] {
   // The live client reports every tool (board and tutor tools); older recordings only have tool.call.
   const responses = sorted.filter((e) => e.kind === "live.debug" && e.payload.message === "tool_response_sent");
   if (responses.length > 0) {
@@ -183,6 +185,107 @@ function toolRecords(sorted: readonly TimelineEvent[]): ToolRecord[] {
   return sorted
     .filter((e) => e.kind === "tool.call")
     .map((e) => ({ offsetMs: e.offsetMs, name: String(e.payload.name ?? "tool"), success: e.payload.success !== false, error: e.payload.error }));
+}
+
+// ── What the tutor answers ────────────────────────────────────────────────────
+export type InputTrigger = "voice" | "text" | "event" | "files" | "opening" | "resume";
+export type StudentInput = { atMs: number; trigger: InputTrigger; /** A quiet check-in the app sent for the student. */ checkin?: true };
+
+const isTyped = (id: string) => id.startsWith("text_");
+const isIntake = (id: string) => id.startsWith("intake_");
+
+/**
+ * Everything a tutor turn can answer, in recording order, as the live client
+ * times it (lib/live-turn-metrics.ts on the board-v2 branch): the opening or
+ * resume request, a typed message when it was sent, files sent mid-session,
+ * an event the app sent (an Explore report, a quiet check-in), and every
+ * transcribed fragment of the student's speech. The intake line and the
+ * transcript's copy of a typed message are not inputs of their own.
+ */
+export function studentInputs(events: readonly TimelineEvent[]): StudentInput[] {
+  const sorted = [...events].sort(compareEvents);
+  const out: StudentInput[] = [];
+  const typedSends: number[] = [];
+  for (const e of sorted) {
+    if (e.kind !== "live.debug") continue;
+    const message = e.payload.message;
+    const data = inner(e);
+    if (message === "student_text_sent" && data.success !== false) typedSends.push(e.offsetMs);
+    else if (message === "opening_turn_sent" && data.sent !== false) out.push({ atMs: e.offsetMs, trigger: data.mode === "resume" ? "resume" : "opening" });
+    else if (message === "files_sent_to_tutor" && data.success !== false) out.push({ atMs: e.offsetMs, trigger: "files" });
+    else if (e.payload.kind === "explore" && (message === "report" || message === "report_final")) out.push({ atMs: e.offsetMs, trigger: "event" });
+    else if (message === "quiet_checkin" && data.sent !== false) out.push({ atMs: e.offsetMs, trigger: "event", checkin: true });
+  }
+  for (const at of typedSends) out.push({ atMs: at, trigger: "text" });
+  const nearTypedSend = (at: number) => typedSends.some((t) => Math.abs(t - at) <= 1500);
+  for (const e of sorted) {
+    if (e.kind !== "transcript.entry") continue;
+    const role = e.payload.role === "student" || e.payload.role === "tutor" ? e.payload.role : e.actor;
+    if (role !== "student" || typeof e.payload.text !== "string" || !e.payload.text.trim()) continue;
+    const id = String(e.payload.id ?? "");
+    if (isIntake(id)) continue;
+    // The transcript's copy of a typed message; a copy with no send recorded is the only record of it.
+    if (isTyped(id) || nearTypedSend(e.offsetMs)) {
+      if (!nearTypedSend(e.offsetMs)) out.push({ atMs: e.offsetMs, trigger: "text" });
+      continue;
+    }
+    out.push({ atMs: e.offsetMs, trigger: "voice" });
+  }
+  return out.sort((a, b) => a.atMs - b.atMs);
+}
+
+/** Where the connection was paused, reloaded or resumed: nobody was thinking or waiting then. */
+export function breakIntervals(events: readonly TimelineEvent[]): Array<{ startMs: number; endMs: number }> {
+  const out: Array<{ startMs: number; endMs: number }> = [];
+  let pausedAt: number | null = null;
+  for (const e of [...events].sort(compareEvents)) {
+    if (e.kind === "session.paused") {
+      pausedAt ??= e.offsetMs;
+    } else if (e.kind === "session.resumed" || (e.kind === "session.started" && e.payload.resumed === true)) {
+      // A resume with no pause recorded is a reload: the break ended here, whenever it began.
+      out.push({ startMs: pausedAt ?? e.offsetMs, endMs: e.offsetMs });
+      pausedAt = null;
+    }
+  }
+  if (pausedAt !== null) out.push({ startMs: pausedAt, endMs: Infinity });
+  return out;
+}
+
+/** Whether [from, to] touches a break, give or take `margin` ms. */
+export function touchesBreak(breaks: ReadonlyArray<{ startMs: number; endMs: number }>, from: number, to: number, margin = 0): boolean {
+  return breaks.some((b) => b.startMs <= to + margin && b.endMs >= from - margin);
+}
+
+export type ReplyTime = { atMs: number; waitMs: number; trigger: InputTrigger; via: "voice" | "words" };
+
+/**
+ * Approximate reply times, for recordings without turn summaries: from each
+ * student input to the tutor's voice starting (tutor.speaking, which the page
+ * sets when audio arrives), or to its first transcribed words when the
+ * recording has no voice events. Board and tutor tools are never a reply:
+ * most of them (check_answer, record_teaching_move) are silent bookkeeping.
+ * An input answered by a later input, one made while the tutor was still
+ * speaking, a wait across a pause or reload, and waits over a minute are left out.
+ */
+export function voiceReplyTimes(events: readonly TimelineEvent[]): ReplyTime[] {
+  const sorted = [...events].sort(compareEvents);
+  const speaking = speakingIntervals(sorted);
+  const via: ReplyTime["via"] = speaking.length ? "voice" : "words";
+  const starts = (speaking.length ? speaking.map((s) => s.startMs) : mergeUtterances(sorted).filter((u) => u.role === "tutor").map((u) => u.startMs)).sort((a, b) => a - b);
+  const inputs = studentInputs(sorted);
+  const breaks = breakIntervals(sorted);
+  const out: ReplyTime[] = [];
+  inputs.forEach((input, i) => {
+    const t = input.atMs;
+    if (speaking.some((s) => s.startMs < t && s.endMs > t)) return;
+    const next = inputs.slice(i + 1).find((n) => n.atMs > t)?.atMs ?? Infinity;
+    const start = starts.find((s) => s > t);
+    if (start === undefined || start >= next) return;
+    const wait = start - t;
+    if (wait > 60_000 || touchesBreak(breaks, t, start)) return;
+    out.push({ atMs: t, waitMs: wait, trigger: input.trigger, via });
+  });
+  return out;
 }
 
 export function analyzeSession(events: readonly TimelineEvent[], durationMs = 0): SessionAnalysis {
@@ -210,22 +313,27 @@ export function analyzeSession(events: readonly TimelineEvent[], durationMs = 0)
     flags.push({ offsetMs: e.offsetMs, tone: "error", label: `Error: ${message(e)}${detail ? ` (${String(detail).slice(0, 140)})` : ""}` });
   }
 
-  // Reply time: from the end of what the student said to the tutor's first
-  // response of any kind (voice, words, or a board action).
-  const tutorStarts = [
-    ...speaking.map((s) => s.startMs),
-    ...utterances.filter((u) => u.role === "tutor").map((u) => u.startMs),
-    ...tools.map((t) => t.offsetMs),
-  ].sort((a, b) => a - b);
+  // Reply time: to the tutor's first audio. Live clients from Sept 23 2026
+  // measure it in every turn summary (a slow one is among the turn's
+  // problems); older recordings are approximated from the voice events.
   const replies: number[] = [];
-  for (const u of utterances) {
-    if (u.role !== "student") continue;
-    const next = tutorStarts.find((s) => s > u.endMs);
-    if (next === undefined) continue;
-    const wait = next - u.endMs;
-    if (wait > 60_000) continue;
-    replies.push(wait);
-    if (wait >= SLOW_REPLY_MS) flags.push({ offsetMs: u.endMs, tone: "warn", label: `Slow reply: ${(wait / 1000).toFixed(1)} s after the student spoke` });
+  const turns = recordedTurns(sorted);
+  if (turns.length) {
+    for (const t of turns) {
+      if (t.firstAudioMs !== null) replies.push(t.firstAudioMs);
+      const problems = turnProblems(t);
+      if (problems.length) flags.push({ offsetMs: t.offsetMs, tone: "warn", label: `Turn ${t.n || "?"}: ${problems.join(", ")}` });
+    }
+  } else {
+    for (const r of voiceReplyTimes(sorted)) {
+      replies.push(r.waitMs);
+      if (r.waitMs >= SLOW_REPLY_MS) flags.push({ offsetMs: r.atMs, tone: "warn", label: `Slow reply: ${(r.waitMs / 1000).toFixed(1)} s from the student's input to the tutor's ${r.via}` });
+    }
+  }
+  for (const e of debug) {
+    if (message(e) !== "audio_underrun") continue;
+    const gap = inner(e).gapMs;
+    flags.push({ offsetMs: e.offsetMs, tone: "warn", label: `Voice ran dry for ${typeof gap === "number" ? Math.round(gap) : "?"} ms` });
   }
 
   // Longest silence while connected (a pause and resume is not silence).
@@ -329,7 +437,32 @@ export function buildLog(events: readonly TimelineEvent[]): LogEntry[] {
         const message = String(p.message ?? "");
         const data = inner(e);
         if (kind === "transcript" || message === "tool_call_received" || message === "board_frame_sent") break;
-        if (message === "tool_response_sent") {
+        if (message === "turn_summary") {
+          const turn = readTurn(e);
+          if (turn) {
+            const { title, detail, problems } = describeTurn(turn);
+            entries.push({ ...base, lane: "system", title, detail, tone: problems.length ? "warn" : "default", hidden: problems.length === 0, issue: problems.length > 0 });
+          }
+        } else if (message === "audio_underrun") {
+          const gap = data.gapMs;
+          entries.push({ ...base, lane: "system", title: `Voice ran dry for ${typeof gap === "number" ? Math.round(gap) : "?"} ms`, tone: "warn", hidden: false, issue: true });
+        } else if (kind === "silence") {
+          const since = typeof data.sinceMs === "number" ? ` after ${(data.sinceMs / 1000).toFixed(1)} s of quiet` : "";
+          // The hint is the pet's "Take your time." for the student; the check-in is an event that asks the tutor for one low-pressure line.
+          const what =
+            message === "quiet_hint"
+              ? "Quiet: “Take your time” shown"
+              : message === "quiet_checkin"
+                ? data.sent === false
+                  ? "Quiet: check-in not sent"
+                  : "Quiet: tutor checks in"
+                : message === "quiet_checkin_skipped"
+                  ? "Quiet: check-in skipped"
+                  : `Quiet: ${message.replaceAll("_", " ")}`;
+          entries.push({ ...base, lane: "system", title: `${what}${since}`, detail: typeof data.reason === "string" && data.reason ? data.reason : undefined, tone: "default", hidden: false, issue: false });
+        } else if (message === "voice_activity") {
+          entries.push({ ...base, lane: "system", title: `Voice activity: ${String(data.type ?? "unknown")}`, detail: typeof data.audioOffset === "string" ? `audio offset ${data.audioOffset}` : undefined, tone: "default", hidden: true, issue: false });
+        } else if (message === "tool_response_sent") {
           const success = data.success !== false;
           entries.push({ ...base, lane: "action", title: String(data.name ?? "tool"), detail: toolDetail(data.args, success, data.message, data.error, data.durationMs), tone: success ? "default" : "error", hidden: false, issue: !success });
         } else if (message === "interrupted") {
@@ -423,10 +556,12 @@ export function buildMarkdownExport(input: ExportInput): string {
     "",
     `- Student lines: ${analysis.studentTurns}; tutor lines: ${analysis.tutorTurns}`,
     `- Tool calls: ${analysis.toolCalls} (failed: ${analysis.toolErrors})`,
-    `- Interruptions: ${analysis.interruptions}; reconnects: ${analysis.reconnects}; errors: ${analysis.errors}`,
-    `- Reply time: median ${seconds(analysis.medianReplyMs)}, slowest ${seconds(analysis.slowestReplyMs)} over ${analysis.replies} replies (approximate: measured from when the student's words were transcribed)`,
+    // Reply time and interruptions are in the scorecard below, measured or marked approximate.
+    `- Reconnects: ${analysis.reconnects}; errors: ${analysis.errors}`,
     `- Longest silence: ${seconds(analysis.longestSilenceMs)}`,
     `- Board pictures: ${analysis.frames}`,
+    "",
+    ...scorecardMarkdown(sessionScorecard(input.events, input.durationSec * 1000)),
     "",
     "## Issues",
     "",

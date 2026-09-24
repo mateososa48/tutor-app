@@ -241,6 +241,7 @@ export class LiveTutorSession {
   private reconnectAttempts = 0;
   private notesList: string[] = [];
   private turnDrew = false;
+  private turnMarked = false;
   private recent: HistoryTurn[] = [];
   private idCounter = 0;
   private eventCounter = 0;
@@ -260,10 +261,13 @@ export class LiveTutorSession {
         if (role === "student") {
           this.tutorRuntime.noteStudentUtterance(text);
           this.turnDrew = false;
+          this.turnMarked = false;
         } else {
-          // Arithmetic said in a turn that wrote nothing is due on the board.
-          this.tutorRuntime.noteTutorTurn(text, this.turnDrew);
+          // Arithmetic said in a turn that wrote nothing is due on the board;
+          // "look at this" said with no mark gets a reminder too.
+          this.tutorRuntime.noteTutorTurn(text, this.turnDrew, this.turnMarked);
           this.turnDrew = false;
+          this.turnMarked = false;
         }
         this.recent.push({ role, text });
         if (this.recent.length > HISTORY_TURNS * 2) this.recent.splice(0, this.recent.length - HISTORY_TURNS * 2);
@@ -700,7 +704,11 @@ export class LiveTutorSession {
     if (!result.success) return result;
     if (toolRole(name) === "draw") {
       this.turnDrew = true;
-      this.tutorRuntime.noteBoardWrite();
+      this.tutorRuntime.noteBoardWrite(name, args);
+    }
+    if (toolRole(name) === "mark") {
+      this.turnMarked = true;
+      this.tutorRuntime.noteBoardMark();
     }
     // A changed [Tutor state] and any nudges ride on board results, so the backend sees them this turn.
     const extra = this.tutorRuntime.boardResultExtras(Date.now());

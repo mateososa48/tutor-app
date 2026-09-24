@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, Pause, Play, Search } from "lucide-react";
 import { AppShell } from "@/components/app/AppShell";
 import { TopBar } from "@/components/app/TopBar";
@@ -16,6 +16,7 @@ import {
   type LogLane,
   type TimelineEvent,
 } from "@/lib/session-recording";
+import { scorecardCaption, scorecardRows, sessionScorecard, type Scorecard, type ScoreRow } from "@/lib/session-scorecard";
 import { cn } from "@/lib/utils";
 
 // The admin session replay (Sept 15 2026): the board picture at any moment,
@@ -64,6 +65,63 @@ function Stat({ label, value, tone }: { label: string; value: ReactNode; tone?: 
   );
 }
 
+/** A scorecard number, in the overview's cell style. "Not recorded" is said quietly, never shown as 0. */
+function ScoreStat({ row }: { row: ScoreRow }) {
+  const how = row.value === null ? "Not recorded" : row.source === "approximate" ? "Approximate" : "Measured";
+  return (
+    <div className="bg-white px-3.5 py-2.5" title={`${how}: ${row.note}.`}>
+      <dt className="text-[11.5px] text-(--lp-ink-2)">{row.label}</dt>
+      {row.value === null ? (
+        <dd className="mt-0.5 text-[13px] leading-[22.5px] text-(--lp-ink-2)">Not recorded</dd>
+      ) : (
+        <>
+          <dd className="mt-0.5 text-[15px] font-medium tabular-nums text-(--lp-ink)" style={row.tone ? { color: TONE[row.tone].text } : undefined}>
+            {row.source === "approximate" && (
+              <>
+                <span aria-hidden className="mr-1 font-normal text-(--lp-ink-2)">
+                  ≈
+                </span>
+                <span className="sr-only">about </span>
+              </>
+            )}
+            {row.value}
+          </dd>
+          {row.detail && (
+            <dd className="mt-0.5 text-[11.5px] leading-snug text-(--lp-ink-2) tabular-nums">
+              {/* A wrap falls between parts, never inside "1 event" or "900 ms dry", and the dot stays on the line before. */}
+              {row.detail.split(" · ").map((part, i, parts) => (
+                <Fragment key={i}>
+                  <span className="whitespace-nowrap">{i < parts.length - 1 ? `${part} ·` : part}</span>
+                  {i < parts.length - 1 && " "}
+                </Fragment>
+              ))}
+            </dd>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function ScorecardPanel({ scorecard }: { scorecard: Scorecard }) {
+  return (
+    <section aria-labelledby="scorecard-title" className="shrink-0 overflow-hidden rounded-[14px] border border-(--lp-line) bg-white">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-(--lp-line) px-3.5 py-2 text-[12.5px] text-(--lp-ink-2)">
+        <h2 id="scorecard-title" className="font-medium text-(--lp-ink)">
+          Scorecard
+        </h2>
+        <span>{scorecardCaption(scorecard)}</span>
+        <span className="ml-auto hidden sm:inline">Hover a number to see how it is counted.</span>
+      </div>
+      <dl className="grid grid-cols-2 gap-px bg-(--lp-line) sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+        {scorecardRows(scorecard).map((row) => (
+          <ScoreStat key={row.key} row={row} />
+        ))}
+      </dl>
+    </section>
+  );
+}
+
 function FilterChip({ pressed, onClick, dot, children }: { pressed: boolean; onClick: () => void; dot?: string; children: ReactNode }) {
   return (
     <button
@@ -105,6 +163,8 @@ export function SessionReplay({ session, events, frames }: { session: AdminSessi
     return Math.max(session.durationSec * 1000, last + 1500, 1000);
   }, [events, frames, session.durationSec]);
   const analysis = useMemo(() => analyzeSession(events, duration), [events, duration]);
+  // The session's own length (as the exports use), not the padded timeline, so dollars a minute match.
+  const scorecard = useMemo(() => sessionScorecard(events, session.durationSec * 1000), [events, session.durationSec]);
   const utterances = useMemo(() => mergeUtterances(events), [events]);
   const speaking = useMemo(() => speakingIntervals(events), [events]);
 
@@ -283,15 +343,14 @@ export function SessionReplay({ session, events, frames }: { session: AdminSessi
       <main className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
         <div className="mx-auto grid w-full max-w-[1560px] gap-5 px-4 py-4 sm:px-5 sm:py-5 lg:h-full lg:grid-cols-[minmax(0,1fr)_minmax(380px,460px)]">
           <section aria-label="Replay" className="flex min-w-0 flex-col gap-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
-            <dl className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-[14px] border border-(--lp-line) bg-(--lp-line) sm:grid-cols-3 xl:grid-cols-5">
+            {/* The whole session in eight counts. Reply time and interruptions live in the scorecard, which says whether each was measured. */}
+            <dl className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-[14px] border border-(--lp-line) bg-(--lp-line) sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
               <Stat label="Length" value={longDuration(analysis.durationMs)} />
               <Stat label="Lines, student / tutor" value={`${analysis.studentTurns} / ${analysis.tutorTurns}`} />
               <Stat label="Tool calls" value={analysis.toolCalls} />
               <Stat label="Failed tools" value={analysis.toolErrors} tone={analysis.toolErrors ? "error" : undefined} />
               <Stat label="Errors" value={analysis.errors} tone={analysis.errors ? "error" : undefined} />
-              <Stat label="Interruptions" value={analysis.interruptions} tone={analysis.interruptions ? "warn" : undefined} />
               <Stat label="Reconnects" value={analysis.reconnects} tone={analysis.reconnects ? "warn" : undefined} />
-              <Stat label="Reply time, median / slowest" value={`${secondsText(analysis.medianReplyMs)} / ${secondsText(analysis.slowestReplyMs)}`} />
               <Stat label="Longest silence" value={secondsText(analysis.longestSilenceMs || null)} tone={analysis.longestSilenceMs >= 20_000 ? "warn" : undefined} />
               <Stat label="Board pictures" value={frames.length} />
             </dl>
@@ -409,6 +468,8 @@ export function SessionReplay({ session, events, frames }: { session: AdminSessi
               </div>
               <p className="mt-1 text-[11.5px] text-(--lp-ink-2)">Space plays or pauses. Arrow keys jump 5 seconds, 30 with Shift. Hover a mark to read it.</p>
             </div>
+
+            <ScorecardPanel scorecard={scorecard} />
           </section>
 
           <section aria-label="Everything that happened" className="flex min-h-[560px] min-w-0 flex-col overflow-hidden rounded-[14px] border border-(--lp-line) bg-white lg:min-h-0">

@@ -154,3 +154,9 @@ test("BackendTurnTracker ignores non-function output items and failed responses 
   assert.equal(sent.length, 0);
   assert.equal(activity[activity.length - 1], "idle");
 });
+
+test("a sentence that starts after a tool call gets its space back", () => {
+  assert.equal(joinTranscript("Let's look at what that looks like.", "Here is a circle ", true), "Let's look at what that looks like. Here is a circle ");
+  assert.equal(joinTranscript("It is 3.", "5 now", true), "It is 3.5 now");
+  assert.equal(joinTranscript("tri", "cky", true), "tricky");
+});

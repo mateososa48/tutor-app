@@ -6,6 +6,8 @@ import { toolRole } from "./board-items";
 import { hasBoundarySpace, joinTranscript } from "./live-events";
 import { formatMemory, formatTutorState } from "./tutor-policy";
 import { TutorRuntime } from "./tutor-runtime";
+import { toolScheduling, withToolBehavior, type ToolScheduling } from "./live-tool-behavior";
+import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
 // 2026). Google now calls 3.1 "legacy audio-to-audio" and 3.8 Live "the
@@ -21,7 +23,23 @@ export const LIVE_MODELS: Record<string, string> = {
   "3.8-thinking": "gemini-3.8-live-extended-thinking",
 };
 
+// 3.1 stays the default (Sept 25 2026): with the same prompt it makes a board
+// move on every turn where 3.8 makes one on three in four, and 3.8 went silent
+// after tool calls in the last recorded session. `?live=3.8` opens the new one.
 export const DEFAULT_LIVE_MODEL = LIVE_MODELS["3.1"];
+
+// Live bills every token in the session's context on every turn, and by
+// default only trims it at 80% of the 131k window, so a long session keeps
+// growing. The system prompt and tools (about 15k tokens) are always kept;
+// this keeps roughly the last 13 to 25 minutes of the conversation (a first
+// guess, Sept 23 2026: tune it from the recorded turn_summary usage).
+// `triggerTokens` belongs to contextWindowCompression itself and only
+// `targetTokens` to slidingWindow: with triggerTokens inside slidingWindow the
+// server closes every session at setup (1007, "Unknown name triggerTokens").
+export const CONTEXT_WINDOW_COMPRESSION = {
+  triggerTokens: 64_000,
+  slidingWindow: { targetTokens: 40_000 },
+} as const;
 // Ephemeral tokens are a v1alpha feature; the WS endpoint must match.
 const WS_BASE =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
@@ -92,6 +110,8 @@ export class GeminiLiveSession {
   private voiceName: string;
   /** Which Live model this session runs (LIVE_MODELS). */
   readonly model: string;
+  /** Async board tools on 3.8 (`?tools=async`, lib/live-tool-behavior.ts). */
+  private readonly asyncTools: boolean;
   private tutorTurnText = "";
   // What the student said since the tutor last spoke. Transcripts arrive in
   // fragments, so signals (frustrated, bored, unsure…) are read once the tutor answers.
@@ -107,19 +127,62 @@ export class GeminiLiveSession {
   // Whether the tutor wrote on the board this turn (arithmetic said without
   // writing it leaves a reminder), and every file the session has seen.
   private turnDrew = false;
+  private turnMarked = false;
   private knownFiles: UploadedFile[] = [];
+  // One timed summary per tutor turn for the recording (lib/live-turn-metrics).
+  private readonly turns: TurnTracker;
+  private turnFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  // An answer the tutor never replied to (Sept 24 2026: a typed "ok" got
+  // silence; 3.8 may stay quiet when it hears no request). If the student
+  // spoke or typed and nothing came back, no audio and no board move, within
+  // UNANSWERED_MS, the tutor gets one nudge to go on. Typed input waits less
+  // (Sept 24: two typed answers sat 11 s and 22 s): its words are complete the
+  // moment they are sent, where speech needs 3.8 to hear the student finish.
+  private unansweredTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly UNANSWERED_MS = { text: 5_000, voice: 8_000 } as const;
+  private usageSamples = 0;
+  private seenMessageKeys = new Set<string>();
 
   private static readonly MAX_RECONNECT_ATTEMPTS = 4;
   private static readonly TURN_FINISH_DEBOUNCE_MS = 1_600;
   // Every tool blocks the model until it answers; nothing may hold it longer.
   private static readonly TOOL_TIMEOUT_MS = 3_000;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime }) {
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean }) {
     this.callbacks = callbacks;
     this.systemInstruction = options.systemInstruction;
     this.voiceName = options.voiceName;
     this.model = options.model?.trim() || DEFAULT_LIVE_MODEL;
+    this.asyncTools = options.asyncTools === true;
     this.tutorRuntime = options.runtime ?? new TutorRuntime();
+    this.turns = new TurnTracker(this.model, (summary) => this.debug("turn", "turn_summary", summary as unknown as Record<string, unknown>));
+  }
+
+  private armUnanswered(kind: "text" | "voice") {
+    this.clearUnanswered();
+    this.unansweredTimer = setTimeout(() => {
+      this.unansweredTimer = null;
+      if (this.manualDisconnect) return;
+      this.debug("turn", "nudge_unanswered", { kind, afterMs: GeminiLiveSession.UNANSWERED_MS[kind] });
+      this.sendUserTurn(
+        [{ text: "Session event: the student just answered and you have not replied. Reply now in a sentence or two and go on with the lesson; if what they said was only \"ok\" or \"yeah\", take it as ready and give them the next thing to do." }],
+        "event",
+      );
+    }, GeminiLiveSession.UNANSWERED_MS[kind]);
+  }
+
+  private clearUnanswered() {
+    if (this.unansweredTimer) clearTimeout(this.unansweredTimer);
+    this.unansweredTimer = null;
+  }
+
+  // A finished turn waits briefly for its usage, which can arrive after turnComplete.
+  private scheduleTurnFlush() {
+    if (this.turnFlushTimer) clearTimeout(this.turnFlushTimer);
+    this.turnFlushTimer = setTimeout(() => {
+      this.turnFlushTimer = null;
+      this.turns.flush();
+    }, 1_500);
   }
 
   readonly tutorRuntime: TutorRuntime;
@@ -239,11 +302,11 @@ export class GeminiLiveSession {
         systemInstruction: {
           parts: [{ text: this.systemInstruction }],
         },
-        tools: [{ functionDeclarations: [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS] }],
+        tools: [{ functionDeclarations: withToolBehavior([...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS], this.model, this.asyncTools) }],
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
-        contextWindowCompression: { slidingWindow: {} },
+        contextWindowCompression: CONTEXT_WINDOW_COMPRESSION,
       },
     });
   }
@@ -258,7 +321,9 @@ export class GeminiLiveSession {
 
   sendText(text: string): boolean {
     this.tutorRuntime.noteStudentUtterance(text);
-    return this.sendUserTurn([{ text }]);
+    const sent = this.sendUserTurn([{ text }], "text");
+    if (sent) this.armUnanswered("text");
+    return sent;
   }
 
   /**
@@ -267,7 +332,7 @@ export class GeminiLiveSession {
    * only while nobody is talking.
    */
   sendEvent(text: string): boolean {
-    return this.sendUserTurn([{ text: `Session event: ${text}` }]);
+    return this.sendUserTurn([{ text: `Session event: ${text}` }], "event");
   }
 
   // A picture of the board, sent the way a screen share sends frames: it
@@ -290,9 +355,9 @@ export class GeminiLiveSession {
         "Session event: initial_start.\n" +
         "The live tutoring session has just started. Greet the student briefly and ask what they want help with. " +
         fileContext +
-        " Do not start teaching until the task is identified. The moment they name it, your first reply about it puts it on the board.",
+        " Do not start teaching until the task is identified. The moment they name it, put it on the board and find out what they already know about it before you explain anything.",
     });
-    return this.sendUserTurn(parts);
+    return this.sendUserTurn(parts, "opening");
   }
 
   sendResumeContext(
@@ -319,7 +384,7 @@ export class GeminiLiveSession {
       "Do not invent equations, givens, previous steps, or board content: the board was restored from a snapshot, and anything not listed above is not on it. Once you and the student pick the task back up, draw it fresh rather than pointing at what you cannot see.",
     );
     parts.push({ text: lines.join("\n") });
-    return this.sendUserTurn(parts);
+    return this.sendUserTurn(parts, "resume");
   }
 
   /**
@@ -337,7 +402,7 @@ export class GeminiLiveSession {
         (files.length > 0 ? "The attached files are the work they mean; read them first.\n\n" : "\n\n") +
         `Student: ${text}`,
     });
-    return this.sendUserTurn(parts);
+    return this.sendUserTurn(parts, "opening");
   }
 
   sendFiles(files: UploadedFile[]): boolean {
@@ -350,10 +415,11 @@ export class GeminiLiveSession {
         "Briefly acknowledge that you can see them and ask what the student wants to use them for. " +
         "Do not summarize, solve, or teach from the files until the student asks for a specific task.",
     });
-    return this.sendUserTurn(parts);
+    return this.sendUserTurn(parts, "files");
   }
 
-  private sendUserTurn(parts: GeminiContentPart[]): boolean {
+  private sendUserTurn(parts: GeminiContentPart[], trigger: Exclude<TurnTrigger, "voice" | "unknown">): boolean {
+    this.turns.noteInput(trigger, Date.now());
     return this.send({
       clientContent: {
         turns: [{ role: "user", parts }],
@@ -371,9 +437,13 @@ export class GeminiLiveSession {
 
   private noteStudentTranscript(text: string) {
     this.clearTurnTimer();
+    this.turns.noteStudentVoice(Date.now());
+    // Restarted by every fragment, so it counts from when they stop talking.
+    this.armUnanswered("voice");
     this.studentUtterance = joinTranscript(this.studentUtterance, text, this.spacedTranscripts);
     this.tutorTurnText = "";
     this.turnDrew = false;
+    this.turnMarked = false;
   }
 
   /** A transcript fragment as it arrived, with its own spacing; null when it is only whitespace. */
@@ -414,8 +484,11 @@ export class GeminiLiveSession {
     const tutorText = this.tutorTurnText.trim();
     this.tutorTurnText = "";
     if (!tutorText) return;
-    this.tutorRuntime.noteTutorTurn(tutorText, this.turnDrew);
+    const drew = this.turnDrew;
+    const marked = this.turnMarked;
+    this.tutorRuntime.noteTutorTurn(tutorText, drew, marked);
     this.turnDrew = false;
+    this.turnMarked = false;
     const line = formatTutorState(this.tutorRuntime.policy, Date.now());
     if (line) this.debug("pacing", "tutor_state", { line });
   }
@@ -483,11 +556,13 @@ export class GeminiLiveSession {
     return parts;
   }
 
-  private sendToolResponse(id: string, name: string, result: ToolCallResult) {
+  private sendToolResponse(id: string, name: string, result: ToolCallResult, scheduling?: ToolScheduling) {
     const delivered = this.send({
       toolResponse: {
         functionResponses: [
-          { id, name, response: { output: result } },
+          // `scheduling` sits beside `response`, not inside it (Google's own
+          // snippet puts it inside, where it is ignored).
+          { id, name, response: { output: result }, ...(scheduling ? { scheduling } : {}) },
         ],
       },
     });
@@ -509,6 +584,29 @@ export class GeminiLiveSession {
     } catch {
       console.warn("[Gemini] Failed to parse message:", raw.slice(0, 200));
       return;
+    }
+    const now = Date.now();
+
+    // Round 0 measurement: every message kind this model sends, the first few
+    // usage messages as they arrive, voice activity, and per-turn usage.
+    for (const key of Object.keys(msg)) {
+      if (this.seenMessageKeys.has(key)) continue;
+      this.seenMessageKeys.add(key);
+      this.debug("session", "message_key", { key, model: this.model });
+    }
+    if (msg.usageMetadata) {
+      const usage = this.turns.noteUsage(msg.usageMetadata);
+      if (usage && this.usageSamples < 3) {
+        this.usageSamples += 1;
+        this.debug("session", "usage_sample", { raw: msg.usageMetadata, turnActive: this.turns.active });
+      }
+    }
+    const activity = (msg.voiceActivity ?? msg.voiceActivityDetectionSignal) as Record<string, unknown> | undefined;
+    if (activity) {
+      this.debug("turn", "voice_activity", {
+        type: String(activity.voiceActivityType ?? activity.vadSignalType ?? "unknown"),
+        ...(typeof activity.audioOffset === "string" ? { audioOffset: activity.audioOffset } : {}),
+      });
     }
 
 
@@ -577,6 +675,8 @@ export class GeminiLiveSession {
       for (const part of parts) {
         const inlineData = part.inlineData as Record<string, unknown> | undefined;
         if (typeof inlineData?.data === "string") {
+          this.turns.noteAudio(pcmBase64Ms(inlineData.data), now);
+          this.clearUnanswered();
           this.callbacks.onAudio(inlineData.data);
         }
       }
@@ -585,6 +685,7 @@ export class GeminiLiveSession {
       if (serverContent.interrupted) {
         console.log("[Gemini] Interrupted");
         this.debug("turn", "interrupted");
+        if (this.turns.finish("interrupted", now)) this.scheduleTurnFlush();
         this.clearTurnTimer();
         this.tutorTurnText = "";
         this.callbacks.onInterrupted();
@@ -594,6 +695,7 @@ export class GeminiLiveSession {
       const outTx = serverContent.outputTranscription as Record<string, unknown> | undefined;
       const tutorEntry = typeof outTx?.text === "string" ? this.transcriptEntry("tutor", outTx.text) : null;
       if (tutorEntry) {
+        this.turns.noteTutorText(tutorEntry.text, tutorEntry.spaced === true, now);
         this.noteTutorTranscript(tutorEntry.text);
         this.callbacks.onTranscript(tutorEntry);
       }
@@ -608,6 +710,7 @@ export class GeminiLiveSession {
 
       if (serverContent.turnComplete === true) {
         this.debug("turn", "turn_complete", { tutorChars: this.tutorTurnText.trim().length });
+        if (this.turns.finish("turn_complete", now)) this.scheduleTurnFlush();
         this.finishTutorTurn();
         this.callbacks.onTurnComplete?.();
       }
@@ -630,6 +733,8 @@ export class GeminiLiveSession {
         const name = call.name as string;
         const args = (call.args as Record<string, unknown>) ?? {};
         if (!id || !name) continue;
+        this.turns.noteToolCall(name, now);
+        this.clearUnanswered();
         this.toolChain = this.toolChain
           .then(() => this.runToolCall(id, name, args))
           .catch((err) => this.debug("error", "tool_chain_failed", { id, name, message: err instanceof Error ? err.message : String(err) }));
@@ -658,6 +763,8 @@ export class GeminiLiveSession {
     }
     const startedAt = performance.now();
     this.debug("tool", "tool_call_received", { id, name, args });
+    // A turn that is still calling tools is not over, even with no new words.
+    if (this.tutorTurnText) this.scheduleTurnFinishCheck();
     let result: ToolCallResult;
     try {
       this.flushStudentUtterance();
@@ -695,7 +802,11 @@ export class GeminiLiveSession {
         if (result.success) {
           if (toolRole(name) === "draw") {
             this.turnDrew = true;
-            this.tutorRuntime.noteBoardWrite();
+            this.tutorRuntime.noteBoardWrite(name, args);
+          }
+          if (toolRole(name) === "mark") {
+            this.turnMarked = true;
+            this.tutorRuntime.noteBoardMark();
           }
           const extra = this.tutorRuntime.boardResultExtras(Date.now());
           if (extra) result = { ...result, message: `${result.message ?? "Done"} ${extra}` };
@@ -713,6 +824,7 @@ export class GeminiLiveSession {
       this.debug("tool", "tool_response_dropped_cancelled", { id, name });
       return;
     }
+    const scheduling = toolScheduling(this.model, name, result, this.asyncTools);
     this.debug("tool", "tool_response_sent", {
       id,
       name,
@@ -721,8 +833,9 @@ export class GeminiLiveSession {
       message: result.success ? result.message ?? "" : undefined,
       error: result.success ? undefined : result.error,
       durationMs: Math.round(performance.now() - startedAt),
+      scheduling,
     });
-    this.sendToolResponse(id, name, result);
+    this.sendToolResponse(id, name, result, scheduling);
   }
 
   private send(obj: unknown): boolean {
@@ -779,6 +892,11 @@ export class GeminiLiveSession {
       this.reconnectTimer = null;
     }
     this.clearTurnTimer();
+    this.clearUnanswered();
+    if (this.turnFlushTimer) clearTimeout(this.turnFlushTimer);
+    this.turnFlushTimer = null;
+    this.turns.finish("turn_complete", Date.now());
+    this.turns.flush();
     const ws = this.ws;
     this.ws = null;
     ws?.close();
