@@ -2,6 +2,9 @@
 
 import { useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
+import { Radio } from "@base-ui/react/radio";
+import { RadioGroup } from "@base-ui/react/radio-group";
+import { motion } from "motion/react";
 import { Select } from "@base-ui/react/select";
 import { Check, ChevronDown, Languages, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,7 +14,8 @@ import { FilesPanel } from "@/components/session/FilesPopover";
 import { useFileIntake } from "@/components/session/useFileIntake";
 import { usePhoneLink } from "@/components/session/usePhoneLink";
 import type { UploadedFile } from "@/lib/file-processor";
-import { EMPTY_INTAKE, SESSION_LANGUAGES, type LanguageCode, type SessionIntake } from "@/lib/session-intake";
+import { DEFAULT_MINUTES, EMPTY_INTAKE, SESSION_LANGUAGES, SESSION_LENGTHS, isSessionLength, type LanguageCode, type SessionIntake, type SessionLength } from "@/lib/session-intake";
+import { useReduce } from "@/lib/reduced-motion";
 import { TopicTiles } from "@/components/onboarding/TopicTiles";
 import { lessonTopic, type StagedLesson } from "@/lib/staged-lessons";
 import { cn } from "@/lib/utils";
@@ -158,6 +162,11 @@ export function SessionIntakeDialog({
               </div>
             )}
 
+            <TimeRow
+              value={intake.minutes ?? DEFAULT_MINUTES}
+              onChange={(minutes) => setIntake((prev) => ({ ...prev, minutes }))}
+            />
+
             <div className="mt-4">
               <FilesPanel
                 files={files}
@@ -241,6 +250,52 @@ export function SessionIntakeDialog({
         )}
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+// "How long today?" (round C, Sept 24 2026): one tap, like a segmented
+// control, a white pill sliding to the pick, 20 already picked. A radio group
+// underneath (arrow keys move the pick).
+function TimeRow({ value, onChange }: { value: SessionLength; onChange: (v: SessionLength) => void }) {
+  const reduce = useReduce();
+  return (
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+      <span id="intake-time-label" className="text-[14px] font-medium text-(--lp-ink)">
+        How long today?
+      </span>
+      <RadioGroup
+        aria-labelledby="intake-time-label"
+        value={value}
+        onValueChange={(next) => isSessionLength(next) && onChange(next)}
+        className="flex h-11 items-center rounded-[12px] bg-(--lp-gray) p-[3px] max-sm:w-full"
+      >
+        {SESSION_LENGTHS.map((m) => (
+          <Radio.Root
+            key={m}
+            value={m}
+            aria-label={`${m} minutes`}
+            className={cn(
+              "relative inline-flex h-full w-[38px] cursor-pointer items-center justify-center rounded-[9px] text-[14px] tabular-nums outline-none max-sm:flex-1",
+              "text-(--lp-ink-2) transition-colors duration-150 hover:text-(--lp-ink) data-[checked]:text-(--lp-ink)",
+              "focus-visible:ring-3 focus-visible:ring-(--lp-sky-glow)",
+            )}
+          >
+            {m === value && (
+              <motion.span
+                layoutId="intake-time-pill"
+                aria-hidden
+                className="absolute inset-0 rounded-[9px] bg-(--lp-surface) shadow-[0_1px_2px_rgba(18,18,21,0.08),0_1px_1px_rgba(18,18,21,0.04)]"
+                transition={reduce ? { duration: 0 } : { type: "spring", duration: 0.32, bounce: 0.12 }}
+              />
+            )}
+            <span className="relative">{m}</span>
+          </Radio.Root>
+        ))}
+        <span aria-hidden className="pr-1.5 pl-1 text-[13px] text-(--lp-ink-2)">
+          min
+        </span>
+      </RadioGroup>
+    </div>
   );
 }
 

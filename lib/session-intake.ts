@@ -1,4 +1,5 @@
 import type { UploadedFile } from "./file-processor";
+import { topicBrief } from "./skill-map";
 import { lessonByKey, lessonPlan, lessonTopic } from "./staged-lessons";
 
 // What the student tells us before a session starts, so the tutor can open on
@@ -31,10 +32,25 @@ export type LanguageCode = (typeof SESSION_LANGUAGES)[number]["code"];
 /** Sessions open in English unless the student picks otherwise (Mateo, Sept 15 2026). */
 export const DEFAULT_LANGUAGE: LanguageCode = "en";
 
+/**
+ * How long today (Sept 24 2026, round C). Mateo cut this on Sept 15 as one
+ * question too many, then asked for it back so the tutor can size the lesson;
+ * it came back as one row, one tap, with 20 already picked.
+ */
+export const SESSION_LENGTHS = [10, 15, 20, 30, 45, 60] as const;
+export type SessionLength = (typeof SESSION_LENGTHS)[number];
+export const DEFAULT_MINUTES: SessionLength = 20;
+
+export function isSessionLength(value: unknown): value is SessionLength {
+  return typeof value === "number" && (SESSION_LENGTHS as readonly number[]).includes(value);
+}
+
 export type SessionIntake = {
   topic: string;
   language: LanguageCode;
   fileNames: string[];
+  /** Minutes they said they have today; older intakes have none. */
+  minutes?: SessionLength;
   /** A staged lesson they picked rather than a problem they brought (lib/staged-lessons.ts). */
   lessonKey?: string;
 };
@@ -43,6 +59,7 @@ export const EMPTY_INTAKE: SessionIntake = {
   topic: "",
   language: DEFAULT_LANGUAGE,
   fileNames: [],
+  minutes: DEFAULT_MINUTES,
 };
 
 export function languageName(code: LanguageCode): string {
@@ -124,7 +141,9 @@ export function intakeOpeningMessage(intake: SessionIntake, fileCount: number): 
   const lesson = lessonByKey(intake.lessonKey);
   // A picked lesson is not something they are stuck on, so they do not say so.
   if (lesson && topic === lessonTopic(lesson)) parts.push(`I want to work on ${lesson.label.toLowerCase()}.`);
-  else parts.push(topic ? `I need help with: ${topic}` : "I need help with the work I just uploaded.");
+  // No topic and nothing uploaded: say so, rather than the upload that isn't
+  // there (Sept 24: the tutor's first move was look_at_worksheet on nothing).
+  else parts.push(topic ? `I need help with: ${topic}` : fileCount > 0 ? "I need help with the work I just uploaded." : "I'm not sure what to work on yet.");
   if (fileCount > 0) {
     parts.push(fileCount === 1 ? "I uploaded a picture of it." : `I uploaded ${fileCount} pictures of it.`);
   }
@@ -147,13 +166,31 @@ export function intakeInstructions(intake: SessionIntake, fileCount: number): st
   const lesson = lessonByKey(intake.lessonKey);
   if (lesson && topic === lessonTopic(lesson)) lines.push(lessonPlan(lesson));
   else if (topic) lines.push(`The student said what they need before starting: "${topic}"`);
+  // Where to look for the gap (round C): the skill the topic names, what
+  // comes before it, and small show-me problems for the opening
+  // (lib/skill-map.ts). Words only, never recorded as evidence.
+  const brief = topic ? topicBrief(topic) : "";
+  if (brief) lines.push(`${brief} The one you ask goes on the board: start_new_problem, then write it.`);
   if (fileCount > 0) {
     lines.push(
       `They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence.`,
     );
   }
+  // Mateo, Sept 22 2026: the tutor dived straight into the first problem on
+  // the sheet. Aristotle asks what they need and what they already know,
+  // every time, and builds the teaching on the answer. The steps themselves
+  // are in the prompt (OPEN); this only says to use them.
+  lines.push("Don't greet them at length or dive in on what they sent: open with OPEN from the steps.");
+  // Round C (Sept 24 2026): the plan is sized to the time they said they
+  // have, said in one breath, and written as one line on the board.
+  const minutes = intake.minutes;
+  if (minutes) {
+    lines.push(
+      `They have ${minutes} minutes today. Size the plan to it: roughly one step per ten minutes, and keep the last few minutes for a quick check and today's rule. [Tutor state] shows the clock; when it says to wrap up, wrap up.`,
+    );
+  }
   lines.push(
-    "Ask nothing about what they want to work on and do not greet them at length. Your first sentence starts the work on this problem, and one short question about where they are with it is fine once the work is on the board.",
+    `Only after OPEN, once you know where they are, say the plan in one breath, two to four short steps ("what fractions are, then adding them, then practice"), and start on the first. Never a plan in your first reply.`,
   );
   return lines.join("\n");
 }

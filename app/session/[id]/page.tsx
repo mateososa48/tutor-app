@@ -1270,6 +1270,8 @@ function SessionDetailPage({ id }: { id: string }) {
       const handoff = isNew ? takeIntake(id) : null;
       if (handoff) {
         setActiveIntake(handoff.intake, handoff.files.length);
+        // The time they chose keeps the tutor's clock (lib/session-clock.ts).
+        tutorRuntime.setPlannedMinutes(handoff.intake.minutes ?? null);
         if (handoff.files.length > 0) {
           setFiles(handoff.files);
           filesRef.current = handoff.files;

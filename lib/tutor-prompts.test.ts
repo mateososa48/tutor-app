@@ -47,13 +47,14 @@ test("backend instructions carry the profile, memory notes, and the output contr
   // answer is ringed), "what?" and "I don't know" never answered by the tutor
   // itself, looking at the worksheet before copying from it, one sky pen,
   // Desmos routing and a "what?" example; paid down by trimming the board
-  // intro, concrete-to-abstract, the [Board] rule and a fallback line.
-  // Explore (Sept 17): "ask them to drag it in Explore" (+32), paid for by
-  // "Four rules that override the rest" (-12): 19,594, six under the ceiling.
+  // Sept 25 2026 (tutor-v3): the old board section and examples stay, and
+  // board-v2's persona, "How you talk", "What sounds like a bot", the steps
+  // and "Your notes" come in. Backend 19,319; Gemini 20,9xx against a ceiling
+  // moved from 20,800 to 21,000, paid for by dropping the duplicated safety
+  // block and shortening backchannel and boundaries. A new rule pays for itself.
   assert.ok(text.length < 19600, `backend prompt too long: ${text.length}`);
-  // Gemini gets the conversation sections too (20,692 on Sept 17).
   const gemini = buildGeminiInstructions(profile, ["mixes up numerator and denominator"]);
-  assert.ok(gemini.length < 20800, `gemini prompt too long: ${gemini.length}`);
+  assert.ok(gemini.length < 21000, `gemini prompt too long: ${gemini.length}`);
 });
 
 test("what recorded sessions got wrong is now a rule", () => {
@@ -63,12 +64,12 @@ test("what recorded sessions got wrong is now a rule", () => {
   assert.match(text, /never answer your own question/);
   assert.match(text, /"What\?" usually means they lost the question/);
   assert.doesNotMatch(text, /Never end on "I don't know"/);
-  assert.match(text, /respect that and close warmly/i);
+  assert.match(text, /respect it\. .*close warmly/i);
   assert.match(text, /look_at_worksheet first, then copy the problem exactly as printed/);
   assert.match(text, /add_student_attempt with their exact words \(not "I don't know"\)/);
   assert.match(text, /every mark is your one sky pen/);
   assert.match(text, /praise and chat are said, not written/);
-  assert.match(text, /Example 9 — "what\?"/);
+  assert.match(text, /Example 10 — "what\?"/);
 });
 
 test("prompt records assistance honestly and treats learner evidence as a soft brief", () => {
@@ -77,8 +78,8 @@ test("prompt records assistance honestly and treats learner evidence as a soft b
     buildBackendInstructions(null, [], { learnerBrief: brief }),
     buildGeminiInstructions(null, [], { learnerBrief: brief }),
   ]) {
-    assert.match(text, /record_teaching_move/);
-    assert.match(text, /Never call helped work H0/);
+    assert.doesNotMatch(text, /record_teaching_move/, "the tutor is no longer offered that tool (check_answer carries the moves)");
+    assert.match(text, /never H0 after help/);
     assert.match(text, /Follow the student's explicit goal/);
     assert.match(text, /Slope: spaced review due/);
     for (const call of text.matchAll(/check_answer\(([^)]*)\)/g)) {
@@ -105,11 +106,11 @@ test("routing sends anything on axes to Desmos only where Desmos can draw", () =
 
 test("backend instructions teach before they draw", () => {
   const text = buildBackendInstructions(null, []);
-  for (const heading of ["# How every turn works", "# Reading the student's answer", "# How much help", "# Feedback and praise", "# Adapting up and down", "# The session", "# When they want the answer"]) {
+  for (const heading of ["# You lead", "# The steps", "# Reading their answer", "# How much help", "# Feelings", "# The session", "# When they want the answer"]) {
     assert.ok(text.includes(heading), `missing ${heading}`);
   }
-  assert.ok(text.indexOf("# Reading the student's answer") < text.indexOf("# The whiteboard"), "teaching comes before the board section");
-  assert.match(text, /H5 Worked example/);
+  assert.ok(text.indexOf("# Reading their answer") < text.indexOf("# The whiteboard"), "teaching comes before the board section");
+  assert.match(text, /H5 A worked example/);
   assert.match(text, /Never call a wrong answer right/);
   assert.doesNotMatch(text, /EVERY reply includes at least one board action/);
   assert.doesNotMatch(text, /Start as high on the ladder as you can/);
@@ -152,7 +153,7 @@ test("gemini instructions keep the conversation rules and the teaching rules", (
 
 test("answers are checked by a tool, which records the attempt", () => {
   const text = buildBackendInstructions(null, []);
-  assert.match(text, /call check_answer before you call it right or wrong/);
+  assert.match(text, /call check_answer before you say it's right or wrong/);
   assert.match(text, /it records the attempt/);
   assert.doesNotMatch(text, /record_attempt/);
   assert.match(text, /\[Tutor state\] line in tool results/);

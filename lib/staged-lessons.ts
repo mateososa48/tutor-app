@@ -72,10 +72,10 @@ export const STAGED_LESSONS: readonly StagedLesson[] = [
     label: "Solving equations",
     blurb: "Getting x on its own, two steps",
     skillKey: "equations.two-step",
-    opening: "Put it on a balance first, so undoing in the right order is obvious rather than memorised.",
+    opening: "Draw it as a tape first (three x's and a 7 make 19), so undoing in the right order is obvious rather than memorised.",
     problems: ["3x + 7 = 19", "5x − 4 = 21", "x/2 + 6 = 10"],
     watchFor: "undoing the multiply before the add, or changing only one side.",
-    board: "draw_balance for the first one, then draw_equation_step lines underneath.",
+    board: "draw_tape_diagram for the first one, then draw_equation_step lines with a short annotation for each move.",
   },
   {
     key: "slope",
@@ -205,7 +205,7 @@ export function lessonPlan(lesson: StagedLesson): string {
   return [
     `This session opens on a lesson they picked from a list, not a problem they brought, so it is yours to lead. The plan:`,
     `- Skill: ${lesson.skillKey}. Name it in check_answer.`,
-    `- Open by: ${lesson.opening}`,
+    `- Open by: first asking what they already know about ${lesson.label.toLowerCase()} and which part feels shaky; then ${lesson.opening.charAt(0).toLowerCase()}${lesson.opening.slice(1)}`,
     `- On the board first: ${lesson.board}`,
     `- Work these in order, one at a time, only moving on once they have done the last one themselves: ${lesson.problems[0]}, then ${lesson.problems[1]}, then ${lesson.problems[2]}.`,
     `- Expect this mistake: ${lesson.watchFor} If it appears, it is the lesson; slow down and take it apart rather than correcting it.`,

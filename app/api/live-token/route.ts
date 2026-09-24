@@ -5,7 +5,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
 import { buildGeminiInstructions, buildGreetingLine, buildResumeLine, type StudentProfile } from "@/lib/tutor-prompts";
-import { intakeInstructions, type SessionIntake } from "@/lib/session-intake";
+import { intakeInstructions, isSessionLength, type SessionIntake } from "@/lib/session-intake";
 import { geminiVoiceFor } from "@/lib/voice-settings";
 import { loadLearningOverview } from "@/lib/learning-overview";
 
@@ -25,8 +25,12 @@ function readIntake(value: unknown): SessionIntake | null {
     typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : null;
   const language = pick(raw.language, ["de", "en", "es", "fr", "it", "pt", "pl", "tr", "uk", "ru", "ar", "zh", "vi"] as const);
   const topic = typeof raw.topic === "string" ? raw.topic.slice(0, 600) : "";
+  // A staged lesson's key (only a short slug; lessonByKey ignores unknown ones).
+  // It was dropped here, so a picked lesson's plan never reached the prompt.
+  const lessonKey = typeof raw.lessonKey === "string" && /^[a-z0-9-]{1,40}$/.test(raw.lessonKey) ? raw.lessonKey : undefined;
+  const minutes = isSessionLength(raw.minutes) ? raw.minutes : undefined;
   if (!language && !topic) return null;
-  return { topic, language: language ?? "en", fileNames: [] };
+  return { topic, language: language ?? "en", fileNames: [], ...(lessonKey ? { lessonKey } : {}), ...(minutes ? { minutes } : {}) };
 }
 
 export async function POST(req: NextRequest) {
@@ -74,12 +78,16 @@ export async function POST(req: NextRequest) {
     ? (row!.tutorNotes as unknown[]).filter((n): n is string => typeof n === "string")
     : [];
 
-  const base = buildGeminiInstructions(profile, notes, { learnerBrief: learning.brief });
+  // With an intake, the session's own context and language sit just before
+  // "Now you're live", so they win over the general instructions, and the
+  // greeting is dropped: the student's opening message arrives instead (see
+  // app/session/[id]/page.tsx).
+  const instructions = buildGeminiInstructions(profile, notes, {
+    learnerBrief: learning.brief,
+    session: intake ? intakeInstructions(intake, fileCount) : undefined,
+  });
   const config = {
-    // With an intake, the session's own context and language go last, so they
-    // win over the general instructions, and the greeting is dropped: the
-    // student's opening message arrives instead (see app/session/[id]/page.tsx).
-    instructions: intake ? `${base}\n\n${intakeInstructions(intake, fileCount)}` : base,
+    instructions,
     voice: geminiVoiceFor(row?.voiceName),
     greeting: intake ? "" : buildGreetingLine(profile, 0),
     resume: buildResumeLine(profile),
