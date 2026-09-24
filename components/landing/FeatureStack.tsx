@@ -40,12 +40,14 @@ const CARD_H = 520;
 // sticks just under it, and the cards park just under the heading, wherever
 // its height lands (Mateo, Sept 22: keep the title in view while the deck runs).
 const HEADER = 60;
-// The space between the heading and the cards: 56px (Mateo, Sept 22: "more
-// space here, bigger gap"), shrinking toward 32 only on a screen too short to
+// The space between the heading and the cards: 24px (56 on Sept 22 after
+// "more space here, bigger gap", then 40 and 24 on Sept 23 when the cards sat
+// "a bit too low on the screen", twice). The floor matches it now; the rule
+// that shrank it on short screens stays in case it is raised again. It shrank toward 32 only on a screen too short to
 // hold the heading, the gap and the front card, so the card never runs off
 // the bottom of a 1280x800 laptop.
-const UNDER_MAX = 56;
-const UNDER_MIN = 32;
+const UNDER_MAX = 24;
+const UNDER_MIN = 24;
 // Where the first card parks when the heading has not been measured yet.
 const TOP_FALLBACK = 236;
 // Each card parks this much lower, which is the sliver of the one beneath that
@@ -54,10 +56,46 @@ const STEP = 14;
 // The cards touch (Mateo, Sept 22: no gaps, "always under each other,
 // directly touching"): each one after the first is pulled up by its 1px top
 // border so two borders never stack into a 2px line, and a slot is a card less
-// that pixel. There is no dwell any more; the next card starts over a parked
-// one the moment it arrives, and that is when the parked one starts to sink.
+// that pixel.
 const OVERLAP = 1;
-const SLOT = CARD_H - OVERLAP;
+// The pause between cards (Mateo, Sept 23: "a bit of scroll lag between each
+// card"): a parked card stays uncovered for this much scroll before the next
+// one starts over it. The pause needs that distance in the page's flow, so it
+// is the deck's flex gap; but a visible gap is what he asked to be rid of on
+// Sept 22, so each card below is held up against the one above it (`hold`)
+// until its pause is used up, and no gap is ever seen.
+const DWELL = 240;
+const SLOT = CARD_H - OVERLAP + DWELL;
+// Smoothing (Mateo, Sept 23: "make it a bit smoother"). Held still for the
+// first half of the pause, the waiting card picks up speed over EASE_IN px of
+// scroll either side of the pause's end, instead of going from still to full
+// speed in one frame; and every card after the first slows over its last LAND
+// px and settles onto the pile at zero speed, instead of stopping dead. Neither
+// changes how much scroll the deck takes, and neither can open a gap.
+const EASE_IN = 120;
+const LAND = 200;
+
+/* How much of a gap has been paid out, s px of scroll into the pause. The
+   rate goes from 1 (the card below held still) to 0 (moving with the page) as
+   a smoothstep over [DWELL - EASE_IN, DWELL + EASE_IN]; that ramp's average is
+   one half, so the total still comes to exactly DWELL. */
+function payout(s: number) {
+  const a = DWELL - EASE_IN;
+  if (s <= 0) return 0;
+  if (s <= a) return s;
+  const x = Math.min(s - a, 2 * EASE_IN);
+  const u = x / (2 * EASE_IN);
+  return a + x - 2 * EASE_IN * (u * u * u - 0.5 * u * u * u * u);
+}
+
+/* Where a landing card is drawn, given d px left to its spot: a cubic from 0
+   with no slope (at rest) to d at d = LAND with slope 1 (full speed), so it
+   meets the page's own motion without a kink. */
+function landing(d: number) {
+  if (d >= LAND) return d;
+  if (d <= 0) return 0;
+  return (2 * d * d) / LAND - (d * d * d) / (LAND * LAND);
+}
 // How much smaller a card gets for each card that lands on it. 0.022 of a
 // 1270px card is 14px off each side, the same as STEP, so a card that has gone
 // one step back has moved the same distance on every edge: the recession is
@@ -384,7 +422,7 @@ function Card({
   // later card that lands pushes this one a step further back, so the pile
   // fans, the deepest card smallest, instead of three strips the same width.
   const parked = deckTop + index * SLOT - (top + index * STEP);
-  const touched = parked;
+  const touched = parked + DWELL - EASE_IN;
   const covered = parked + SLOT - STEP;
   const sinking = stacked && !reduce && !last && deckTop > 0;
   // The last card has nothing behind it and never sinks, but the transforms
@@ -403,6 +441,32 @@ function Card({
   // The card's own left and right edges, which it only needs once it has left
   // the rails: in over the first step back, then held while it goes deeper.
   const edge = useTransform(scrollY, [touched, covered], [0, 1], { clamp: true });
+  // How far this card is held up against the one above it. Every gap above it
+  // (one per card before it) is taken back while the card that opens that gap
+  // is still moving, and paid out one pixel per pixel of scroll during that
+  // card's pause, so the cards look attached until it is this one's turn. It is
+  // zero by the time this card parks: every pause above it ends before that.
+  const hold = useTransform(scrollY, (y) => {
+    if (!stacked || index === 0) return 0;
+    if (deckTop <= 0) return -index * DWELL;
+    let lift = 0;
+    for (let i = 1; i <= index; i++) {
+      const openedBy = deckTop + (i - 1) * SLOT - (top + (i - 1) * STEP);
+      lift += DWELL - payout(y - openedBy);
+    }
+    // The soft landing, for every card that parks on the pile (the last card
+    // never parks: it carries the pile away at full speed). A card waiting
+    // below a landing card is still pressed against it, so it rides the same
+    // ease, or a sliver of page would show between them (up to 29px, measured
+    // before this sum included the cards above).
+    let land = 0;
+    for (let j = 1; j <= index; j++) {
+      if (j === FEATURES.length - 1) continue;
+      const d = deckTop + j * SLOT - y - (top + j * STEP);
+      land += landing(d) - Math.max(0, d);
+    }
+    return -lift + land;
+  });
 
   // The last card never sticks. The deck ends on its bottom edge, so there is
   // nothing below it to stick against, and it should carry the finished pile up
@@ -416,7 +480,7 @@ function Card({
   // early: the whole pile was dragged off the top before the last card had
   // even parked, leaving a band of half-faded cards above it.
   return (
-    <div className={cn(stacked && !last && "lg:sticky")} style={stacked ? { top: top + index * STEP, marginTop: index > 0 ? -OVERLAP : 0 } : undefined}>
+    <motion.div className={cn(stacked && !last && "lg:sticky")} style={stacked ? { top: top + index * STEP, marginTop: index > 0 ? -OVERLAP : 0, y: hold } : undefined}>
       {/* The sized box, so the haze below covers the card and nothing else: it
           used to be a full-width sibling and washed over the left rail, which
           paints under this content while the right rail paints over it. */}
@@ -466,7 +530,7 @@ function Card({
             distance washes things out, it does not turn them grey. */}
         {sinking && <motion.div aria-hidden style={{ opacity: dim }} className="pointer-events-none absolute inset-0 bg-(--lp-bg)" />}
       </motion.div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -529,7 +593,7 @@ export function FeatureStack() {
           type and leaves the cards room on a laptop screen. */}
       <motion.div
         ref={headRef}
-        className={cn("relative z-30 mx-auto bg-(--lp-bg) min-[1320px]:w-[calc(2*var(--lp-rail-inset)-2*var(--lp-rail-w))]", stacked && "lg:sticky lg:pt-4 lg:pb-2")}
+        className={cn("relative z-30 mx-auto bg-(--lp-bg) min-[1320px]:w-[calc(2*var(--lp-rail-inset)-2*var(--lp-rail-w))]", stacked && "lg:sticky lg:pt-2 lg:pb-0")}
         style={stacked ? { top: HEADER, y: lift } : undefined}
       >
         <Container>
@@ -551,7 +615,7 @@ export function FeatureStack() {
           The same space as the cards park under the heading (`under`), so the first card reaches its
           parking spot at the moment the heading sticks and no gap opens. */}
       <div className="mt-12 lg:mt-0" style={stacked ? { marginTop: under } : undefined}>
-        <div ref={deckRef} className="flex flex-col" style={{ gap: stacked ? 0 : 32 }}>
+        <div ref={deckRef} className="flex flex-col" style={{ gap: stacked ? DWELL : 32 }}>
           {FEATURES.map((feature, i) => (
             <Card key={feature.id} feature={feature} index={i} last={i === FEATURES.length - 1} scrollY={scrollY} deckTop={deckTop} top={top} stacked={stacked} />
           ))}
