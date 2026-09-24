@@ -10,7 +10,8 @@ const STATES: PetState[] = ["idle", "listening", "thinking", "speaking", "writin
 const SIZES = [40, 56, 80, 120];
 
 // What the bubble says per state. Captions carry the tutor's words, so the
-// bubble only ever shows state: dots while thinking, a short word otherwise.
+// bubble only ever shows state: "Thinking" while thinking (the landing FAQ's
+// thought bubble), a short word otherwise. The live caption is on /dev/bubble.
 const BUBBLE: Partial<Record<PetState, "dots" | string>> = { thinking: "dots", listening: "Your turn", happy: "Nice!", hello: "Hi!", puzzled: "Hmm?", surprised: "Oh!", sleepy: "zzz" };
 
 const DOTS = {

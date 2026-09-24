@@ -41,6 +41,8 @@ type Props = {
   /** Height of the surface the dock sits in. Defaults to the window, which is
    *  right on the session page; a framed preview passes its own height. */
   frameHeight?: number;
+  /** The tutor in person (the pet), standing on the dock. */
+  presence?: ReactNode;
 };
 
 const CONTROLS_H = 68;
@@ -104,6 +106,7 @@ export function VoiceDock({
   speed,
   onSpeedChange,
   frameHeight,
+  presence,
 }: Props) {
   const reduce = useReducedMotion();
   const [composer, setComposer] = useState(false);
@@ -253,6 +256,7 @@ export function VoiceDock({
         </div>
       </div>
       </motion.div>
+      {presence}
     </div>
   );
 }

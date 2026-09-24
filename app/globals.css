@@ -1043,3 +1043,36 @@ body {
 /* Typeset math shapes: KaTeX display mode without its block margins, so the shape box is tight. */
 .chalk-math .katex-display { margin: 0; }
 .chalk-math .katex { line-height: 1.2; }
+/* Board v2 (Sept 22 2026): words and inline math in one voice, and the blank
+   that shows it is the student's turn. The blank breathes slowly while it
+   waits (it is state, not decoration) and holds still under reduced motion. */
+.chalk-btext .katex { font-size: 1.1em; line-height: 1; }
+.chalk-btext-header .katex { font-size: 1.14em; }
+/* Board text (Sept 23 2026). A math piece in a sentence never breaks inside
+   itself ("= 24 + 10" was split across two lines). \text{} words in board
+   math are set in the board's sans, not KaTeX's serif; in a sentence they also
+   take its weight, and at the top level of the math its size (the .katex is
+   set 1.1x larger). Inside a fraction or a script KaTeX has already sized them
+   like the digits beside them, so they are left alone there. Only texts
+   written under these rules (.chalk-btext-bal, meta.balanced): a text saved
+   before was measured with math that breaks anywhere and serif words, and is
+   drawn that way, or its words spill out of its box. Scoped to the board's
+   shapes: KaTeX anywhere else keeps its own face. */
+.chalk-btext-bal .btext-math { white-space: nowrap; }
+.chalk-btext-bal .katex .mord.text,
+.chalk-math .katex .mord.text { font-family: var(--lp-font-body), "Hanken Grotesk", system-ui, sans-serif; }
+.chalk-btext-bal .katex .mord.text { font-weight: var(--btext-weight, 400); }
+.chalk-btext-bal .katex-html > .base > .mord.text,
+.chalk-btext-bal .katex-html > .base > .mord > .mord.text,
+.chalk-btext-bal .katex-html > .base > .minner > .mord.text { font-size: calc(1em / 1.1); }
+.chalk-btext-bal.chalk-btext-header .katex-html > .base > .mord.text,
+.chalk-btext-bal.chalk-btext-header .katex-html > .base > .mord > .mord.text,
+.chalk-btext-bal.chalk-btext-header .katex-html > .base > .minner > .mord.text { font-size: calc(1em / 1.14); }
+.chalk-blank-open { animation: chalk-blank-wait 2.4s ease-in-out infinite; }
+@keyframes chalk-blank-wait {
+  0%, 100% { box-shadow: 0 0 0 4px rgba(61, 156, 255, 0.1); }
+  50% { box-shadow: 0 0 0 9px rgba(61, 156, 255, 0.2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chalk-blank-open { animation: none; box-shadow: 0 0 0 6px rgba(61, 156, 255, 0.14); }
+}

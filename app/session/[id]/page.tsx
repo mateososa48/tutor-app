@@ -11,7 +11,9 @@ import { AppShell } from "@/components/app/AppShell";
 import { TopBar } from "@/components/app/TopBar";
 import { SessionChip, type LiveState } from "@/components/session/SessionChip";
 import { VoiceDock, type DockActivity } from "@/components/session/VoiceDock";
-import { CaptionBar } from "@/components/session/CaptionBar";
+import { TutorPresence } from "@/components/session/TutorPresence";
+import { useIsWide } from "@/hooks/use-mobile";
+import { dispatchWhiteboardTool as dispatchMockTool } from "@/lib/whiteboard-tool-dispatch";
 import { GraphExplorer } from "@/components/session/GraphExplorer";
 import { useGraphExplore, type ExploreChannel } from "@/components/session/useGraphExplore";
 import { DropOverlay } from "@/components/session/FilesPopover";
@@ -24,6 +26,8 @@ import { LiveTutorSession } from "@/lib/live-tutor";
 import type { LiveTutorCallbacks } from "@/lib/live-tutor";
 import { GeminiTutorSession } from "@/lib/gemini-tutor";
 import { resolveLiveModel, resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
+import { resolveAsyncTools } from "@/lib/live-tool-behavior";
+import { asksToWait, QUIET_CHECKIN_EVENT, QUIET_HINT, quietStep } from "@/lib/quiet-watch";
 import { useTutorSpeed } from "@/components/session/SpeedControl";
 import { tutorSpeedRate } from "@/lib/voice-settings";
 import type { TranscriptEntry, ToolCallResult, TutorActivity } from "@/lib/live-types";
@@ -48,6 +52,7 @@ import { SessionRecorder } from "@/lib/session-recorder";
 import { compareEvents } from "@/lib/session-recording";
 import { joinTranscript } from "@/lib/live-events";
 import { TutorRuntime } from "@/lib/tutor-runtime";
+import { boardFontsSettled, loadBoardFonts } from "@/lib/board-fonts";
 import { LearningRecorder, loadSessionLearning } from "@/lib/learning-client";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
@@ -141,6 +146,12 @@ function SessionDetailPage({ id }: { id: string }) {
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isTutorSpeaking, setIsTutorSpeaking] = useState(false);
+  // The pet says "Your turn" once the tutor has stopped on a question, and a
+  // counter it hops on when a checked answer is right.
+  const [studentTurn, setStudentTurn] = useState(false);
+  const [celebrateKey, setCelebrateKey] = useState(0);
+  // A laptop: the dock has a column of its own (TldrawCore keeps the board out of it).
+  const isWide = useIsWide();
   const [tutorActivity, setTutorActivity] = useState<TutorActivity>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [sessionTitle, setSessionTitle] = useState("Session");
@@ -149,7 +160,8 @@ function SessionDetailPage({ id }: { id: string }) {
   const [fileNotice, setFileNotice] = useState("");
   const [subtitleText, setSubtitleText] = useState("");
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
-  const [transcriptOpen, setTranscriptOpen] = useState(true);
+  // Sessions start with the transcript closed (Mateo, Sept 22 2026): the board and the pet come first.
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [debugTrace, setDebugTrace] = useState<TutorDebugEvent[]>([]);
   const [debugConfig] = useState(() => {
     const enabled = searchParams.get("debug") === "1" || searchParams.get("qa") === "1";
@@ -169,6 +181,8 @@ function SessionDetailPage({ id }: { id: string }) {
   const [provider] = useState(() => resolveTutorProvider(searchParams));
   // Which Gemini Live model this session runs (?live=3.8 for one tab).
   const [liveModel] = useState(() => resolveLiveModel(searchParams));
+  // Async board tools on Gemini 3.8 (?tools=async), off until a session shows they help.
+  const [asyncTools] = useState(() => resolveAsyncTools(searchParams));
   // How fast the tutor's voice plays. Only the Gemini client can change it.
   const [tutorSpeed, setTutorSpeed] = useTutorSpeed();
   const speechRateRef = useRef(tutorSpeedRate(tutorSpeed));
@@ -217,21 +231,44 @@ function SessionDetailPage({ id }: { id: string }) {
       setMode("live");
       liveStateRef.current = "active";
       setLiveState("active");
-      setSessionTitle("Fractions: one half");
+      setSessionTitle("Two-step equations");
       setTranscript(MOCK_TRANSCRIPT);
       setElapsedSeconds(252);
     }, 0);
-    let speaking = false;
-    const talk = setInterval(() => {
-      speaking = !speaking;
-      setIsTutorSpeaking(speaking);
-      setTutorActivity(speaking ? "idle" : "writing");
-      if (speaking) setSubtitleText("Look at the board: the pizza is cut into two equal pieces and one is shaded. Which piece is one half?");
-    }, 4200);
+    // A short lesson on the real board, in the v2 tools, with the voice's beats.
+    const beats: Array<{ at: number; run: () => void }> = [];
+    const call = (name: string, args: Record<string, unknown>) =>
+      dispatchMockTool(name, args, { whiteboard: whiteboardRef.current });
+    const say = (text: string) => {
+      setTutorActivity("idle");
+      setIsTutorSpeaking(true);
+      setSubtitleText(text);
+    };
+    const quiet = () => setIsTutorSpeaking(false);
+    const think = () => {
+      setIsTutorSpeaking(false);
+      setSubtitleText("");
+      setTutorActivity("thinking");
+    };
+    beats.push(
+      { at: 1400, run: () => { setTutorActivity("writing"); call("start_new_problem", { title: "Two-step equations" }); call("draw_equation_step", { latex: "2x + 3 = 11" }); } },
+      { at: 2600, run: () => call("draw_tape_diagram", { rows: "x | x | 3 = 11", label: "two x's and a 3 make 11" }) },
+      { at: 4200, run: () => say("Look at this bar. What would you take away from both sides first?") },
+      { at: 8200, run: quiet },
+      { at: 9400, run: think },
+      { at: 11000, run: () => { setTutorActivity("writing"); call("draw_equation_step", { latex: "2x = 8", annotations: "subtract 3 from both sides" }); } },
+      { at: 12400, run: () => call("add_callout", { text: "What's 8 split into 2 equal parts?" }) },
+      { at: 13600, run: () => say("Yep, take the 3 away. Now split 8 into two equal parts.") },
+      { at: 17000, run: () => { quiet(); setSubtitleText(""); setTutorActivity("idle"); setStudentTurn(true); } },
+      { at: 20500, run: () => { setStudentTurn(false); call("add_student_attempt", { text: "x = 4" }); call("circle_item", { target: "last", keep: true }); setCelebrateKey((k) => k + 1); } },
+      { at: 22000, run: () => say("There you go. Tougher one: x on both sides.") },
+      { at: 25500, run: quiet },
+    );
+    const timers = beats.map((b) => setTimeout(b.run, b.at));
     const clock = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
     return () => {
       clearTimeout(boot);
-      clearInterval(talk);
+      timers.forEach(clearTimeout);
       clearInterval(clock);
     };
   }, [mockPreview]);
@@ -294,11 +331,26 @@ function SessionDetailPage({ id }: { id: string }) {
     const learningRecorder = new LearningRecorder(id);
     recorderRef.current = recorder;
     learningRecorderRef.current = learningRecorder;
-    tutorRuntime.setEventSink((event) => learningRecorder.record(event));
+    tutorRuntime.setEventSink((event) => {
+      learningRecorder.record(event);
+      // A checked right answer: the pet hops (the tutor writes and rings it).
+      if (event.type === "attempt.recorded" && event.attempt.result === "correct") setCelebrateKey((k) => k + 1);
+    });
+    // Their spoken working, passed with check_answer: written in their hand
+    // before the answer (Sept 24 2026; the nudge to write it as a step was
+    // ignored in every recorded session).
+    tutorRuntime.setWorkingSink((lines, answer) => {
+      const flat = (t: string) => t.replace(/[\s$]/g, "").toLowerCase();
+      for (const line of lines) {
+        if (flat(line) === flat(answer)) continue;
+        dispatchWhiteboardTool("add_student_attempt", { text: line }, { whiteboard: whiteboardRef.current });
+      }
+    });
     return () => {
       recorder.flushBeacon();
       learningRecorder.flushBeacon();
       tutorRuntime.setEventSink();
+      tutorRuntime.setWorkingSink();
       if (recorderRef.current === recorder) recorderRef.current = null;
       if (learningRecorderRef.current === learningRecorder) learningRecorderRef.current = null;
     };
@@ -385,22 +437,32 @@ function SessionDetailPage({ id }: { id: string }) {
   const boardFrameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Gemini takes about one video frame a second: pictures are spaced out.
   const lastFrameAtRef = useRef(0);
+  // The last picture sent: an identical one is not sent again (3 of 13 were
+  // copies in the Sept 23 session), unless the tutor asked to look.
+  const lastFrameUrlRef = useRef("");
+  // The board list the tutor last read with a tool result.
+  const lastSummaryRef = useRef("");
   const frameGap = useCallback(async () => {
     const wait = lastFrameAtRef.current + 1000 - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     lastFrameAtRef.current = Date.now();
   }, []);
-  const sendBoardFrame = useCallback(async (): Promise<boolean> => {
+  const sendBoardFrame = useCallback(async (force = false): Promise<boolean> => {
     const live = sessionRef.current;
     if (!live?.sendBoardFrame) return false;
     const img = await whiteboardRef.current?.exportImage?.(896);
     if (!img || sessionRef.current !== live) return false;
+    if (!force && img.url === lastFrameUrlRef.current) {
+      recordDebug("board", "frame_skipped_duplicate", { bytes: img.url.length });
+      return true;
+    }
+    lastFrameUrlRef.current = img.url;
     await frameGap();
     const sent = live.sendBoardFrame(img.url);
     // The exact picture the tutor saw goes into the recording too.
     void recorderRef.current?.recordFrame(img, "sent to tutor", true);
     return sent;
-  }, [frameGap]);
+  }, [frameGap, recordDebug]);
   const scheduleBoardFrame = useCallback((delayMs: number) => {
     const live = sessionRef.current;
     if (!live?.sendBoardFrame || live.boardFrames !== "auto") return;
@@ -443,7 +505,7 @@ function SessionDetailPage({ id }: { id: string }) {
       clearTimeout(boardFrameTimerRef.current);
       boardFrameTimerRef.current = null;
     }
-    const sent = await Promise.race([sendBoardFrame(), new Promise<false>((resolve) => setTimeout(() => resolve(false), 2500))]);
+    const sent = await Promise.race([sendBoardFrame(true), new Promise<false>((resolve) => setTimeout(() => resolve(false), 2500))]);
     const lead = sent
       ? "Here is the board: a fresh picture of it arrived just before this"
       : sessionRef.current?.sendBoardFrame
@@ -476,9 +538,8 @@ function SessionDetailPage({ id }: { id: string }) {
     return { success: true, message: worksheetShown(choice.file, choice.page) };
   }, [frameGap]);
 
-  const handleToolCall = useCallback(
-    (name: string, args: Record<string, unknown>, callId?: string): ToolCallResult | Promise<ToolCallResult> => {
-      const startedAt = performance.now();
+  const runToolCall = useCallback(
+    (name: string, args: Record<string, unknown>, callId: string | undefined, startedAt: number): ToolCallResult | Promise<ToolCallResult> => {
       if (name === "look_at_board" || name === "look_at_worksheet") {
         const job = name === "look_at_board" ? lookAtBoard() : lookAtWorksheet(args);
         return job.then((result) => {
@@ -492,11 +553,15 @@ function SessionDetailPage({ id }: { id: string }) {
       });
       if (result.success) {
         scheduleBoardFrame(900);
+        // The short list, and only when the board changed since the tutor last
+        // read one (Sept 24 2026: the full list after every call was ~10k
+        // characters a session; look_at_board still gives the full one).
         const summary = whiteboardRef.current?.getBoardSummary?.();
-        if (summary) {
+        if (summary && summary !== lastSummaryRef.current) {
+          lastSummaryRef.current = summary;
           result = {
             success: true,
-            message: `${result.message ?? "Done"}.\n[Board: ${summary}]`,
+            message: `${result.message ?? "Done"}\n[Board: ${summary}]`,
           };
         }
       }
@@ -507,9 +572,29 @@ function SessionDetailPage({ id }: { id: string }) {
     [lookAtBoard, lookAtWorksheet, recordToolCall, scheduleBoardFrame, scheduleRecordingFrame],
   );
 
+  // Calls cancelled while they waited for the board's fonts: never drawn.
+  const cancelledWaitingRef = useRef(new Set<string>());
+  const handleToolCall = useCallback(
+    (name: string, args: Record<string, unknown>, callId?: string): ToolCallResult | Promise<ToolCallResult> => {
+      const startedAt = performance.now();
+      // The board measures what it writes the moment it writes it, so the
+      // first call waits for the board's fonts (at most 1.5 s, see
+      // lib/board-fonts.ts). Calls that arrive meanwhile run in order.
+      if (!boardFontsSettled()) {
+        return loadBoardFonts().then(() => {
+          if (callId && cancelledWaitingRef.current.delete(callId)) return { success: false, error: "Cancelled before it was drawn." };
+          return runToolCall(name, args, callId, startedAt);
+        });
+      }
+      return runToolCall(name, args, callId, startedAt);
+    },
+    [runToolCall],
+  );
+
   // The model cancelled calls (the student spoke over them): take them off the board.
   const handleToolCancelled = useCallback((callIds: string[]) => {
     for (const callId of callIds) {
+      if (!boardFontsSettled()) cancelledWaitingRef.current.add(callId);
       const undone = whiteboardRef.current?.undoCall?.(callId) ?? "";
       recorderRef.current?.record("tool.cancelled", "tutor", { callId, undone });
     }
@@ -547,10 +632,23 @@ function SessionDetailPage({ id }: { id: string }) {
   const tutorQuietSinceRef = useRef(0);
   const activityRef = useRef<TutorActivity>("idle");
   const lastStudentSpeechRef = useRef(0);
+  // For the silence watch (lib/quiet-watch): when the tutor last stopped
+  // speaking after it had spoken, the student's last sign of life, and their
+  // last words.
+  const tutorSpokeEndedAtRef = useRef(0);
+  const wasSpeakingRef = useRef(false);
+  const lastStudentActivityRef = useRef(0);
+  const lastStudentWordsRef = useRef("");
   useEffect(() => {
     speakingRef.current = isTutorSpeaking;
     if (!isTutorSpeaking) tutorQuietSinceRef.current = Date.now();
+    if (wasSpeakingRef.current && !isTutorSpeaking) tutorSpokeEndedAtRef.current = Date.now();
+    wasSpeakingRef.current = isTutorSpeaking;
   }, [isTutorSpeaking]);
+  // "Your turn" once the tutor has stopped on a question (the old board has
+  // no waiting box to read it from); off again the moment it speaks, or the
+  // caption clears because the student answered. The mock sets it directly.
+  const yourTurn = studentTurn || (!isTutorSpeaking && /\?\s*$/.test(subtitleText.trim()));
   useEffect(() => {
     activityRef.current = tutorActivity;
   }, [tutorActivity]);
@@ -588,6 +686,66 @@ function SessionDetailPage({ id }: { id: string }) {
     exited: exploreExited,
   } = useGraphExplore(() => whiteboardRef.current, exploreChannel);
 
+  // ── Silence belongs to the student (lib/quiet-watch) ──
+  // 20 s after the tutor's turn the pet shows "Take your time." without a
+  // word; at 45 s the tutor gets one event asking for a single low-pressure
+  // line. Speaking, typing or sending restarts it; "wait" skips the check-in.
+  const [quietHint, setQuietHint] = useState<string | null>(null);
+  // While the student's words are arriving the pet only listens (no bubble).
+  const [studentSpeaking, setStudentSpeaking] = useState(false);
+  const studentSpeakingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exploringRef = useRef(false);
+  const tutorIdleAtRef = useRef(0);
+  useEffect(() => {
+    exploringRef.current = Boolean(exploreState?.open);
+  }, [exploreState]);
+  useEffect(() => {
+    if (tutorActivity === "idle") tutorIdleAtRef.current = Date.now();
+  }, [tutorActivity]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      lastStudentActivityRef.current = Date.now();
+    };
+    window.addEventListener("keydown", onKey);
+    let hintedFor = 0;
+    let checkedInFor = 0;
+    const tick = setInterval(() => {
+      const spokeEnded = tutorSpokeEndedAtRef.current;
+      // The clock runs only once the tutor has answered the student's last move.
+      const quietSince = spokeEnded > lastStudentActivityRef.current ? Math.max(spokeEnded, tutorIdleAtRef.current) : 0;
+      const step = quietStep({
+        now: Date.now(),
+        active: liveStateRef.current === "active" && !exploringRef.current && document.visibilityState === "visible",
+        tutorBusy: speakingRef.current || activityRef.current !== "idle",
+        tutorQuietSince: quietSince,
+        lastStudentAt: lastStudentActivityRef.current,
+        askedToWait: asksToWait(lastStudentWordsRef.current),
+        checkedInFor,
+      });
+      setQuietHint((prev) => {
+        const next = step.hint ? QUIET_HINT : null;
+        return prev === next ? prev : next;
+      });
+      if (step.hint && hintedFor !== quietSince) {
+        hintedFor = quietSince;
+        recordDebug("silence", "quiet_hint", { sinceMs: step.sinceMs });
+      }
+      if (step.skipped) {
+        checkedInFor = quietSince;
+        recordDebug("silence", "quiet_checkin_skipped", { sinceMs: step.sinceMs, reason: step.skipped });
+      } else if (step.checkIn) {
+        checkedInFor = quietSince;
+        const sent = sessionRef.current?.sendStudentEvent?.(QUIET_CHECKIN_EVENT) ?? false;
+        recordDebug("silence", "quiet_checkin", { sinceMs: step.sinceMs, sent });
+      }
+    }, 1000);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      clearInterval(tick);
+    };
+  }, [recordDebug]);
+
   const setTemporaryFileNotice = useCallback((message: string) => {
     setFileNotice(message);
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
@@ -609,10 +767,15 @@ function SessionDetailPage({ id }: { id: string }) {
       subtitleTimerRef.current = null;
     }
     if (isTutorSpeaking || !subtitleText) return;
+    // 15 s, so a kid can read the question to the end and think with it in
+    // view (it was 4 s and read as gone too fast, Mateo, Sept 24 2026). It
+    // goes sooner when the student answers: their speech or a typed message
+    // clears it (lib/gemini-tutor.ts), and the silence watch's quiet line
+    // comes at 20 s.
     subtitleTimerRef.current = setTimeout(() => {
       subtitleTimerRef.current = null;
       setSubtitleText("");
-    }, 4000);
+    }, 15_000);
     return () => {
       if (subtitleTimerRef.current) {
         clearTimeout(subtitleTimerRef.current);
@@ -778,7 +941,17 @@ function SessionDetailPage({ id }: { id: string }) {
         });
         // Recorded in order with the rest of the session (one POST per fragment raced and shuffled them).
         const at = entry.at ?? Date.now();
-        if (entry.role === "student") lastStudentSpeechRef.current = Date.now();
+        if (entry.role === "student") {
+          lastStudentSpeechRef.current = Date.now();
+          lastStudentActivityRef.current = Date.now();
+          lastStudentWordsRef.current = `${lastStudentWordsRef.current} ${entry.text}`.slice(-120);
+          setStudentSpeaking(true);
+          if (studentSpeakingTimerRef.current) clearTimeout(studentSpeakingTimerRef.current);
+          studentSpeakingTimerRef.current = setTimeout(() => {
+            studentSpeakingTimerRef.current = null;
+            setStudentSpeaking(false);
+          }, 700);
+        }
         recorderRef.current?.record("transcript.entry", entry.role, { text: entry.text, at, role: entry.role, id: entry.id, spaced: entry.spaced === true }, at);
         setTranscript((prev) => {
           const next = appendTranscriptEntry(prev, entry);
@@ -801,9 +974,13 @@ function SessionDetailPage({ id }: { id: string }) {
         recordDebug("connection", "live_session_active", { resumed, expiresAt });
         if (!isResumeRef.current) clearNewSessionUrlFlag();
         if (!timerRef.current) {
+          // The clock starts when the tutor is live, not when the page loaded.
+          if (!isResumeRef.current) tutorRuntime.startClock();
           recorderRef.current?.record("session.started", "system", {
+            plannedMinutes: tutorRuntime.policy.plannedMinutes ?? undefined,
             provider,
             model: provider === "gemini" ? liveModel : undefined,
+            tools: provider === "gemini" && asyncTools ? "async" : undefined,
             resumed: isResumeRef.current,
             speechRate: speechRateRef.current,
             textOnly: qaTextOnlyRef.current === true,
@@ -871,6 +1048,7 @@ function SessionDetailPage({ id }: { id: string }) {
       },
       onSpeakingChange: (speaking) => {
         setIsTutorSpeaking(speaking);
+        if (speaking) setStudentSpeaking(false);
         recorderRef.current?.record("tutor.speaking", "tutor", { speaking });
       },
       onAudioAnalyser: (node) => {
@@ -886,7 +1064,7 @@ function SessionDetailPage({ id }: { id: string }) {
     };
 
     const live: TutorClient = provider === "gemini"
-      ? new GeminiTutorSession(callbacks, { model: liveModel, runtime: tutorRuntime })
+      ? new GeminiTutorSession(callbacks, { model: liveModel, runtime: tutorRuntime, asyncTools })
       : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;
     live.setSpeechRate?.(speechRateRef.current);
@@ -918,7 +1096,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, tutorRuntime]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, asyncTools, tutorRuntime]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);
@@ -974,6 +1152,8 @@ function SessionDetailPage({ id }: { id: string }) {
     }
     const sent = sessionRef.current.sendText(text);
     recordDebug("text", "student_text_sent", { success: sent, chars: text.length, text });
+    lastStudentActivityRef.current = Date.now();
+    lastStudentWordsRef.current = text.slice(-120);
     if (!sent) return;
     const entry: TranscriptEntry = {
       id: `text_${Date.now()}`,
@@ -1284,7 +1464,6 @@ function SessionDetailPage({ id }: { id: string }) {
           <EndSessionButton disabled={liveState !== "active"} onConfirm={endSession} />
         </div>
 
-        <CaptionBar text={subtitleText} />
         {exploreState && (
           <GraphExplorer
             key={exploreState.target.itemId}
@@ -1320,6 +1499,19 @@ function SessionDetailPage({ id }: { id: string }) {
           fileNotice={fileNotice}
           speed={provider === "gemini" ? tutorSpeed : undefined}
           onSpeedChange={setTutorSpeed}
+          presence={
+            <TutorPresence
+              activity={dockActivity}
+              caption={subtitleText}
+              analyser={analyser}
+              yourTurn={yourTurn}
+              celebrateKey={celebrateKey}
+              placement={isWide ? "column" : "compact"}
+              hidden={transcriptOpen}
+              quiet={quietHint}
+              studentSpeaking={studentSpeaking}
+            />
+          }
         />
         {debugMode && (
           <TutorDebugPanel
@@ -1343,12 +1535,10 @@ function SessionDetailPage({ id }: { id: string }) {
 // ── Pieces ─────────────────────────────────────────────────────────────
 
 const MOCK_TRANSCRIPT: TranscriptEntry[] = [
-  { id: "m1", role: "student", text: "I don't get fractions at all." },
-  { id: "m2", role: "tutor", text: "Totally fair. Quick question first: if you cut a pizza into two equal pieces and take one, what fraction of the pizza do you have?" },
-  { id: "m3", role: "student", text: "um, a half?" },
-  { id: "m4", role: "tutor", text: "Yes, one half. Look at the board: the pizza is cut into two equal pieces and one is shaded. If I cut the same pizza into four equal pieces instead, how many pieces would make one half?" },
-  { id: "m5", role: "student", text: "two pieces" },
-  { id: "m6", role: "tutor", text: "Exactly. Two quarters is the same amount as one half. Let me put both next to each other." },
+  { id: "m1", role: "student", text: "can you help me with 2x + 3 = 11? I have like five of these" },
+  { id: "m2", role: "tutor", text: "Sure. Quick one first, in your head: x plus 3 is 11. What's x?" },
+  { id: "m3", role: "student", text: "8" },
+  { id: "m4", role: "tutor", text: "Right. You undid the plus 3 without thinking about it. Same move here, one extra step. Let's put yours on the board." },
 ];
 
 function Centered({ text }: { text: string }) {

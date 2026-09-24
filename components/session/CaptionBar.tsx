@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { captionTail } from "@/lib/caption-words";
 
 // Live captions of what the tutor is saying. Sits over the board, clear of
 // the voice dock, and lingers briefly after the sentence ends so it can be
@@ -9,22 +10,10 @@ import { AnimatePresence, motion } from "motion/react";
 
 // A long turn arrives as one growing string; show its last sentence or two so
 // the caption follows the voice instead of pinning the start of the turn.
-function tail(text: string): string {
-  const t = text.trim();
-  if (t.length <= 160) return t;
-  const parts = t.match(/[^.!?]+(?:[.!?]+["')\]]*|$)/g) ?? [t];
-  let out = "";
-  let count = 0;
-  for (let i = parts.length - 1; i >= 0; i--) {
-    const piece = parts[i].trim();
-    if (!piece) continue;
-    const candidate = out ? `${piece} ${out}` : piece;
-    if (count > 0 && (count >= 2 || candidate.length > 200)) break;
-    out = candidate;
-    count++;
-  }
-  return out;
-}
+// `max` is the length that shows whole; a phone's bubble takes less. The rule
+// lives in lib/caption-words.ts, shared with the pet's bubble, and cuts only
+// where a sentence starts ("3.5" is not a sentence end).
+export { captionTail };
 
 export function CaptionBar({ text }: { text: string }) {
   const [shown, setShown] = useState("");
@@ -58,7 +47,7 @@ export function CaptionBar({ text }: { text: string }) {
               boxShadow: "0 1px 2px rgba(18,18,21,0.2), 0 12px 32px rgba(18,18,21,0.18)",
             }}
           >
-            <p className="m-0 line-clamp-3 text-[15.5px] leading-[1.5] font-medium tracking-[-0.005em] text-white">{tail(shown)}</p>
+            <p className="m-0 line-clamp-3 text-[15.5px] leading-[1.5] font-medium tracking-[-0.005em] text-white">{captionTail(shown)}</p>
           </motion.div>
         )}
       </AnimatePresence>

@@ -15,3 +15,21 @@ export function useIsMobile() {
     () => false,
   )
 }
+
+// A laptop-sized screen: the session's voice dock gets a column of its own
+// (TldrawCore keeps the board out of it) from this width.
+const WIDE_BREAKPOINT = 1024
+
+function subscribeWide(onChange: () => void) {
+  const mql = window.matchMedia(`(min-width: ${WIDE_BREAKPOINT}px)`)
+  mql.addEventListener("change", onChange)
+  return () => mql.removeEventListener("change", onChange)
+}
+
+export function useIsWide() {
+  return useSyncExternalStore(
+    subscribeWide,
+    () => window.innerWidth >= WIDE_BREAKPOINT,
+    () => true,
+  )
+}
