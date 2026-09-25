@@ -49,3 +49,7 @@ public/dev/
 
 # Prompt dumps and scratch output, never shipped
 output/
+
+# tutor benchmark runs (scripts/bench.ts): screenshots and transcripts
+/bench/runs/
+/lib/_bench-*

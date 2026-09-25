@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "tsx --test lib/*.test.ts",
     "vendor:stretch": "node scripts/vendor-stretch.mjs",
-    "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs"
+    "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs",
+    "bench": "tsx scripts/bench.ts",
+    "bench:compare": "tsx scripts/bench-compare.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.2",

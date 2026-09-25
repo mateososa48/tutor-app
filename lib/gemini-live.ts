@@ -98,6 +98,22 @@ function decodeBase64Text(base64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+/**
+ * The first user turn of a session from the intake: the student's own
+ * message, framed as the OPEN step. Exported so the benchmark
+ * (scripts/bench.ts) opens its sessions with the very same words.
+ */
+export function openingEvent(studentText: string, fileCount: number): string {
+  return (
+    "Session event: initial_start_with_context.\n" +
+    "The live tutoring session has just started. The student answered a few questions before it opened, and their " +
+    "message follows. Don't greet at length. Your first reply is the OPEN step, not teaching: acknowledge what they said in a few words, " +
+    "then ask what exactly they want (a problem on a sheet, or the whole idea). Nothing on the board yet but a page for the topic. " +
+    (fileCount > 0 ? "The attached files are the work they mean; read them first.\n\n" : "\n\n") +
+    `Student: ${studentText}`
+  );
+}
+
 export class GeminiLiveSession {
   private ws: WebSocket | null = null;
   private callbacks: SessionCallbacks;
@@ -395,15 +411,7 @@ export class GeminiLiveSession {
    */
   sendOpening(text: string, files: UploadedFile[]): boolean {
     const parts = this.buildFileParts(files);
-    parts.push({
-      text:
-        "Session event: initial_start_with_context.\n" +
-        "The live tutoring session has just started. The student answered a few questions before it opened, and their " +
-        "message follows. Don't greet at length. Your first reply is the OPEN step, not teaching: acknowledge what they said in a few words, " +
-        "then ask what exactly they want (a problem on a sheet, or the whole idea). Nothing on the board yet but a page for the topic. " +
-        (files.length > 0 ? "The attached files are the work they mean; read them first.\n\n" : "\n\n") +
-        `Student: ${text}`,
-    });
+    parts.push({ text: openingEvent(text, files.length) });
     return this.sendUserTurn(parts, "opening");
   }
 
