@@ -33,6 +33,10 @@
 //   --base url         the dev server (default http://localhost:3300)
 //   --out dir          where to write (default bench/runs/<label>)
 //   --verbose          print every tool call as it happens
+//   --tools sync|async the tool behaviour sent to 3.8 (default: what the app sends)
+//   --runs N           run every case N times (files get -r2, -r3…; totals pool the runs)
+//   --judge file       write <case>.judge-input.md for a Claude subagent instead of judging;
+//                      --rejudge then reads <case>.judge.json when it exists
 //   --rejudge label    judge an existing run again (cases with no verdict; --all for every case)
 //
 // Model calls use the direct Gemini key (GEMINI_API_KEY), never the Vercel AI
@@ -44,10 +48,11 @@ import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
-import { CASES, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+import { CASES, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
-import { judgeCase } from "./bench-judge";
+import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
+import { readUsage, type TurnUsage } from "../lib/live-turn-metrics";
 
 // .env.local first: desmosConfigured() and the tool declarations read it at import.
 for (const line of fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8").split("\n")) {
@@ -130,7 +135,7 @@ type LiveMessage = {
   setupComplete?: unknown;
   toolCall?: { functionCalls?: Array<{ id?: string; name: string; args?: Record<string, unknown> }> };
   toolCallCancellation?: { ids?: string[] };
-  usageMetadata?: { promptTokenCount?: number; totalTokenCount?: number };
+  usageMetadata?: unknown;
   serverContent?: {
     modelTurn?: { parts?: Array<{ text?: string; thought?: boolean; inlineData?: { data?: string } }> };
     outputTranscription?: { text?: string };
@@ -155,6 +160,8 @@ type LiveTurn = {
   nudged: boolean;
   timedOut: boolean;
   promptTokens: number | null;
+  /** The turn's usage (Live reports the whole turn's count on each generation; the largest one is the turn). */
+  usage: TurnUsage | null;
   tools: ToolRecord[];
   durationMs: number;
 };
@@ -180,10 +187,12 @@ class LiveTutor {
     private readonly declarations: unknown[],
     private readonly compression: unknown,
     private readonly onTool: (name: string, args: Record<string, unknown>, id: string) => Promise<ToolCallResult>,
+    /** The app's scheduling for a result (lib/live-tool-behavior toolScheduling), or nothing for blocking tools. */
+    private readonly scheduling: (name: string, result: ToolCallResult) => string | undefined = () => undefined,
   ) {}
 
   private static emptyTurn(): LiveTurn {
-    return { said: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, tools: [], durationMs: 0 };
+    return { said: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0 };
   }
 
   open(): Promise<void> {
@@ -253,6 +262,11 @@ class LiveTutor {
     this.send({ realtimeInput: { video: { data: base64, mimeType } } });
   }
 
+  /** A private note the model reads without answering (a user turn left open). */
+  sendNote(text: string) {
+    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: false } });
+  }
+
   private armUnanswered() {
     this.clearUnanswered();
     this.unanswered = setTimeout(() => {
@@ -269,7 +283,11 @@ class LiveTutor {
 
   private handle(msg: LiveMessage) {
     const ms = Date.now() - this.turnStart;
-    if (msg.usageMetadata?.promptTokenCount) this.turn.promptTokens = Math.max(this.turn.promptTokens ?? 0, msg.usageMetadata.promptTokenCount);
+    if (msg.usageMetadata) {
+      const u = readUsage(msg.usageMetadata);
+      if (u && u.prompt >= (this.turn.usage?.prompt ?? 0)) this.turn.usage = u;
+      if (u) this.turn.promptTokens = Math.max(this.turn.promptTokens ?? 0, u.prompt);
+    }
     if (msg.toolCallCancellation?.ids?.length) {
       for (const t of this.turn.tools) if (msg.toolCallCancellation.ids.includes(t.callId)) t.cancelled = true;
     }
@@ -288,7 +306,8 @@ class LiveTutor {
           rec.durationMs = Date.now() - started;
           this.pendingTools--;
           if (VERBOSE) console.log(`      ${ms}ms ${c.name}(${JSON.stringify(c.args ?? {}).slice(0, 100)}) ${result.success ? "→" : "✗"} ${rec.result.split("\n")[0].slice(0, 120)}`);
-          this.send({ toolResponse: { functionResponses: [{ id, name: c.name, response: { output: result } }] } });
+          const scheduling = this.scheduling(c.name, result);
+          this.send({ toolResponse: { functionResponses: [{ id, name: c.name, response: { output: result }, ...(scheduling ? { scheduling } : {}) }] } });
         });
       }
       return;
@@ -429,7 +448,8 @@ const summaryOf = (page: Page, compact: boolean) => page.evaluate((c) => (window
 
 // ── One case ───────────────────────────────────────────────────────────────
 
-async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number }): Promise<CaseRun> {
+async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; tag: string }): Promise<CaseRun> {
+  const tag = opts.tag;
   const { page, errors } = await openBoard(opts.browser, opts.base, opts.w, opts.h);
   const runtime = new m.runtime.TutorRuntime({ startedAt: Date.now() });
   runtime.setPlannedMinutes(c.minutes);
@@ -442,7 +462,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   }
   const profile = { displayName: c.name, gradeLevel: c.grade, learningPrefs: {} };
   const system = m.prompts.buildGeminiInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true });
-  const declarations = m.behavior.withToolBehavior([...m.tools.WHITEBOARD_TOOL_DECLARATIONS, ...m.tutorTools.TUTOR_TOOL_DECLARATIONS, ...m.sessionTools.SESSION_TOOL_DECLARATIONS], opts.liveModel, false);
+  const declarations = m.behavior.withToolBehavior([...m.tools.WHITEBOARD_TOOL_DECLARATIONS, ...m.tutorTools.TUTOR_TOOL_DECLARATIONS, ...m.sessionTools.SESSION_TOOL_DECLARATIONS], opts.liveModel, opts.asyncTools);
 
   // The page's sinks: the student's spoken working goes up in their hand.
   runtime.setWorkingSink((lines: string[], answer: string) => {
@@ -526,7 +546,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     return result;
   };
 
-  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool);
+  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools));
   const startedAt = Date.now();
   await live.open();
   runtime.startClock();
@@ -551,10 +571,10 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     await exportBoard(page, 64);
     if (frameTimer) { clearTimeout(frameTimer); frameTimer = null; await sendBoardFrame(); }
     await new Promise((r) => setTimeout(r, 300));
-    const shot = `${c.id}-t${i + 1}.png`;
+    const shot = `${tag}-t${i + 1}.png`;
     await page.screenshot({ path: path.join(opts.out, shot) });
     const tutorView = await exportBoard(page, 896);
-    if (tutorView) fs.writeFileSync(path.join(opts.out, `${c.id}-t${i + 1}-board.jpg`), Buffer.from(tutorView, "base64"));
+    if (tutorView) fs.writeFileSync(path.join(opts.out, `${tag}-t${i + 1}-board.jpg`), Buffer.from(tutorView, "base64"));
     const said = t.said.replace(/\s+/g, " ").trim();
     runtime.noteTutorTurn(said, t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "draw"), t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "mark"));
     const turn: TurnRecord = {
@@ -569,10 +589,11 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       timedOut: t.timedOut,
       interrupted: t.interrupted,
       promptTokens: t.promptTokens,
+      usage: t.usage,
       board: await summaryOf(page, false),
       boardCompact: await summaryOf(page, true),
       shot,
-      boardShot: tutorView ? `${c.id}-t${i + 1}-board.jpg` : null,
+      boardShot: tutorView ? `${tag}-t${i + 1}-board.jpg` : null,
     };
     turns.push(turn);
     console.log(`  ${i + 1}. ${c.name}: ${turn.student}\n     tutor: ${turn.tutor || (turn.timedOut ? "(timed out)" : "(silent)")}\n     tools: ${turn.tools.map((x) => `${x.name}${x.ok ? "" : " ✗"}`).join(", ") || "(none)"}${turn.firstAudioMs != null ? ` · first audio ${turn.firstAudioMs} ms` : ""}${turn.promptTokens ? ` · ${turn.promptTokens.toLocaleString()} prompt tokens` : ""}`);
@@ -583,11 +604,12 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     pending = live.userTurn([{ text: studentText }]);
   }
   const finalBoard = await exportBoard(page, 1600);
-  if (finalBoard) fs.writeFileSync(path.join(opts.out, `${c.id}-board.jpg`), Buffer.from(finalBoard, "base64"));
+  if (finalBoard) fs.writeFileSync(path.join(opts.out, `${tag}-board.jpg`), Buffer.from(finalBoard, "base64"));
   live.close();
   await page.close();
   return {
-    id: c.id,
+    id: tag,
+    caseId: c.id,
     name: c.name,
     grade: c.grade,
     liveModel: opts.liveModel,
@@ -597,7 +619,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     framesSent: frames.length,
     turns,
     pageErrors: [...new Set(errors)],
-    finalBoard: finalBoard ? `${c.id}-board.jpg` : null,
+    finalBoard: finalBoard ? `${tag}-board.jpg` : null,
     metrics: measure(turns, c, { ...m.policy, isNonAnswer: m.rules.isNonAnswer }),
     judgement: null,
   };
@@ -626,32 +648,70 @@ function caseMarkdown(c: BenchCase, r: CaseRun): string {
 // verdict, or every case with --all), for a judge that was down or out of quota,
 // then rewrite the case files, summary.json and report.md.
 async function rejudge(label: string, judgeModel: string, all: boolean) {
+  const m = await loadModules("", "");
   const out = path.resolve(arg("out", path.join("bench", "runs", label)));
   const summaryFile = path.join(out, "summary.json");
   if (!fs.existsSync(summaryFile)) throw new Error(`No run at ${out}`);
-  const old = JSON.parse(fs.readFileSync(summaryFile, "utf8")) as { promptName: string; liveModel: string; studentModel: string; date: string };
+  const old = JSON.parse(fs.readFileSync(summaryFile, "utf8")) as { promptName: string; liveModel: string; studentModel: string; date: string; tools?: string; runs?: number };
   const runs: CaseRun[] = [];
-  for (const c of CASES) {
-    const file = path.join(out, `${c.id}.json`);
-    if (!fs.existsSync(file)) continue;
+  // Every case file in the folder, in case order, runs -r2… after their first.
+  const files = fs.readdirSync(out).filter((f) => f.endsWith(".json") && f !== "summary.json" && !f.endsWith(".judge.json"));
+  const order = (f: string) => { const base = f.replace(/\.json$/, "").replace(/-r\d+$/, ""); const i = CASES.findIndex((c) => c.id === base); return `${i < 0 ? 99 : i}-${f}`; };
+  for (const f of files.sort((a, b) => order(a).localeCompare(order(b)))) {
+    const tag = f.replace(/\.json$/, "");
+    const c = caseById(tag.replace(/-r\d+$/, ""));
+    if (!c) continue;
+    const file = path.join(out, f);
     const run = JSON.parse(fs.readFileSync(file, "utf8")) as CaseRun;
+    // The code metrics are recomputed from the turns, so a run from before a
+    // metric existed gets it too (cost stays null without recorded usage).
+    run.caseId ??= c.id;
+    run.metrics = measure(run.turns, c, { ...m.policy, isNonAnswer: m.rules.isNonAnswer });
     if (all || !run.judgement) {
-      try {
-        run.judgement = await judgeCase(callModel, judgeModel, c, run, out);
-        const j = run.judgement;
-        console.log(`  ${c.id}: ${j ? `outcome ${j.outcome_met ? "met" : "missed"} · ${Object.entries(j.scores).map(([k, v]) => `${k} ${v}`).join(" · ")}` : "no parseable verdict"}`);
-      } catch (err) {
-        console.log(`  ${c.id}: judge unavailable: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`);
-      }
+      run.judgement = await judgeRun(judgeModel, c, run, out, tag);
+    } else {
       fs.writeFileSync(file, JSON.stringify(run, null, 2));
-      fs.writeFileSync(path.join(out, `${c.id}.md`), caseMarkdown(c, run));
     }
     runs.push(run);
   }
-  const { report, summary } = (await import("./bench-report")).buildReport({ label, promptName: old.promptName, liveModel: old.liveModel, studentModel: old.studentModel, judgeModel, date: old.date, runs, modelUsage });
+  const { report, summary } = (await import("./bench-report")).buildReport({ label, promptName: old.promptName, liveModel: old.liveModel, studentModel: old.studentModel, judgeModel, tools: old.tools ?? "sync", runs: old.runs ?? 1, date: old.date, cases: runs, modelUsage });
   fs.writeFileSync(summaryFile, JSON.stringify(summary, null, 2));
   fs.writeFileSync(path.join(out, "report.md"), report);
   console.log(`\n${report.split("## What the judge said")[0]}\nwrote ${out}`);
+}
+
+// One case's verdict: from <tag>.judge.json when a subagent wrote it, else from
+// the judge model; with --judge file, only the subagent's input is written.
+async function judgeRun(judgeModel: string, c: BenchCase, run: CaseRun, out: string, tag: string): Promise<Judgement | null> {
+  const fromFile = path.join(out, `${tag}.judge.json`);
+  if (fs.existsSync(fromFile)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(fromFile, "utf8")) as Judgement;
+      if (Array.isArray(parsed.turns) && parsed.scores) { parsed.checks = Array.isArray(parsed.checks) ? parsed.checks : []; return finishJudge(c, run, out, tag, parsed, "file"); }
+    } catch { /* fall through to the model */ }
+  }
+  if (judgeModel === "file") {
+    fs.writeFileSync(path.join(out, `${tag}.judge-input.md`), judgeInputMarkdown(c, run, out));
+    console.log(`  ${tag}: judge input written (${tag}.judge-input.md); answer goes in ${tag}.judge.json`);
+    return finishJudge(c, run, out, tag, run.judgement, null);
+  }
+  if (judgeModel === "none") return finishJudge(c, run, out, tag, run.judgement, null);
+  let judgement: Judgement | null = run.judgement;
+  try {
+    judgement = await judgeCase(callModel, judgeModel, c, run, out);
+    if (!judgement) console.log(`  ${tag}: no parseable verdict`);
+  } catch (err) {
+    console.log(`  ${tag}: judge unavailable: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`);
+  }
+  return finishJudge(c, run, out, tag, judgement, judgement ? judgeModel : null);
+}
+
+function finishJudge(c: BenchCase, run: CaseRun, out: string, tag: string, j: Judgement | null, by: string | null): Judgement | null {
+  run.judgement = j;
+  if (j && by) console.log(`  judge${by === "file" ? " (from file)" : ""}: outcome ${j.outcome_met ? "met" : "missed"} · ${Object.entries(j.scores).map(([k, v]) => `${k} ${v}`).join(" · ")}`);
+  fs.writeFileSync(path.join(out, `${tag}.json`), JSON.stringify(run, null, 2));
+  fs.writeFileSync(path.join(out, `${tag}.md`), caseMarkdown(c, run));
+  return j;
 }
 
 async function main() {
@@ -671,6 +731,10 @@ async function main() {
   const liveModel = liveArg ? m.live.LIVE_MODELS[liveArg] ?? (liveArg.startsWith("gemini-") ? liveArg : m.live.DEFAULT_LIVE_MODEL) : m.live.DEFAULT_LIVE_MODEL;
   const w = Number(arg("w", "1440"));
   const h = Number(arg("h", "900"));
+  const runsN = Math.max(1, Number(arg("runs", "1")));
+  const toolsArg = arg("tools", "");
+  // The tool behaviour the app itself sends for a plain session, unless told otherwise.
+  const asyncTools = toolsArg ? toolsArg === "async" : m.behavior.resolveAsyncTools(null);
 
   try {
     await fetch(`${base}/dev/board`, { method: "HEAD" });
@@ -678,38 +742,31 @@ async function main() {
     throw new Error(`No dev server at ${base}. Start one (npm run dev -- -p 3300) or pass --base.`);
   }
   fs.mkdirSync(out, { recursive: true });
-  console.log(`bench "${label}" · tutor ${liveModel} · prompt ${m.promptName} · student ${studentModel} · judge ${judgeModel} · board ${base} at ${w}×${h}\n→ ${out}`);
+  console.log(`bench "${label}" · tutor ${liveModel} (tools ${asyncTools ? "async" : "sync"}) · prompt ${m.promptName} · student ${studentModel} · judge ${judgeModel} · ${runsN} run${runsN > 1 ? "s" : ""} · board ${base} at ${w}×${h}\n→ ${out}`);
 
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox", "--hide-scrollbars"] });
   const runs: CaseRun[] = [];
   try {
-    for (const c of cases) {
-      console.log(`\n=== ${c.name}, ${c.grade} (${c.id}): "${c.topic}"`);
-      let run: CaseRun;
-      try {
-        run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h });
-      } catch (err) {
-        console.log(`  failed: ${err instanceof Error ? err.message : String(err)}`);
-        continue;
-      }
-      if (judgeModel !== "none") {
+    for (let r = 1; r <= runsN; r++) {
+      for (const c of cases) {
+        const tag = r === 1 ? c.id : `${c.id}-r${r}`;
+        console.log(`\n=== ${c.name}, ${c.grade} (${tag}): "${c.topic}"`);
+        let run: CaseRun;
         try {
-          run.judgement = await judgeCase(callModel, judgeModel, c, run, out);
-          const j = run.judgement;
-          if (j) console.log(`  judge: outcome ${j.outcome_met ? "met" : "missed"} · ${Object.entries(j.scores).map(([k, v]) => `${k} ${v}`).join(" · ")}`);
+          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, tag });
         } catch (err) {
-          console.log(`  (judge unavailable: ${err instanceof Error ? err.message.slice(0, 200) : String(err)})`);
+          console.log(`  failed: ${err instanceof Error ? err.message : String(err)}`);
+          continue;
         }
+        await judgeRun(judgeModel, c, run, out, tag);
+        runs.push(run);
+        if (run.pageErrors.length) fs.writeFileSync(path.join(out, `${tag}-page-errors.txt`), run.pageErrors.join("\n"));
       }
-      runs.push(run);
-      fs.writeFileSync(path.join(out, `${c.id}.json`), JSON.stringify(run, null, 2));
-      fs.writeFileSync(path.join(out, `${c.id}.md`), caseMarkdown(c, run));
-      if (run.pageErrors.length) fs.writeFileSync(path.join(out, `${c.id}-page-errors.txt`), run.pageErrors.join("\n"));
     }
   } finally {
     await browser.close();
   }
-  const { report, summary } = (await import("./bench-report")).buildReport({ label, promptName: m.promptName, liveModel, studentModel, judgeModel, date: new Date().toISOString(), runs, modelUsage });
+  const { report, summary } = (await import("./bench-report")).buildReport({ label, promptName: m.promptName, liveModel, studentModel, judgeModel, tools: asyncTools ? "async" : "sync", runs: runsN, date: new Date().toISOString(), cases: runs, modelUsage });
   fs.writeFileSync(path.join(out, "summary.json"), JSON.stringify(summary, null, 2));
   fs.writeFileSync(path.join(out, "report.md"), report);
   console.log(`\n${report}\nwrote ${out}`);

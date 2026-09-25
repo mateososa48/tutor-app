@@ -174,12 +174,18 @@ export function dispatchWhiteboardTool(
   // first, then each line, then the question, each its own item.
   if (name === "start_new_problem" && ((typeof args.problem === "string" && args.problem.trim()) || (typeof args.ask === "string" && args.ask.trim()))) {
     const { problem, ask, ...rest } = args;
+    // The topic is not the problem (Sept 25 2026: 3.8 passed problem="Decimals"
+    // and got a fake problem line): a problem has a digit, an operator or LaTeX.
+    const problemText = typeof problem === "string" ? problem.trim() : "";
+    const titleText = typeof rest.title === "string" ? rest.title.trim() : "";
+    const isProblem = Boolean(problemText) && problemText.toLowerCase() !== titleText.toLowerCase() && /[\d=+\-−×÷*/^\\<>]/.test(problemText);
     const page = dispatchWhiteboardTool("start_new_problem", rest, ctx);
     if (!page.success) return page;
     const plain = (m: string | undefined) => (m ?? "").replace(/\n\[Board:[\s\S]*$/, "").trim();
-    const head = plain(page.message).replace(/\s*Next, write the problem itself[\s\S]*$/, "");
+    const head = plain(page.message).replace(/\s*Write the problem exactly as given[\s\S]*$/, "");
     const parts: string[] = [head];
-    const lines = typeof problem === "string" ? splitSteps(problem).map((l) => l.trim()).filter(Boolean).slice(0, 6) : [];
+    if (problemText && !isProblem) parts.push(`(problem="${problemText.slice(0, 40)}" is the topic, not a problem, so nothing was written for it.)`);
+    const lines = isProblem ? splitSteps(problemText).map((l) => l.trim()).filter(Boolean).slice(0, 6) : [];
     const written: string[] = [];
     for (const line of lines) {
       const r = dispatchWhiteboardTool("draw_equation_step", { latex: line }, ctx);
@@ -191,7 +197,7 @@ export function dispatchWhiteboardTool(
       const r = dispatchWhiteboardTool("add_callout", { text: ask }, ctx);
       parts.push(r.success ? plain(r.message) : `The question was not written: ${r.error}`);
     }
-    if (written.length) parts.push("Before any first move, ask what they already know about this kind and where it stops making sense.");
+    parts.push(written.length ? "Next: ask what they already know about this kind of problem." : "Next: write the problem exactly as given (problem=, typeset), then ask.");
     return ok(parts.join(" "));
   }
   // The session plan (Sept 24 2026): a box at the top right, not an item.
@@ -200,10 +206,18 @@ export function dispatchWhiteboardTool(
     const board = ctx.whiteboard;
     if (!board?.setPlan) return fail("This board cannot show a plan.");
     const rawSteps = Array.isArray(args.steps) ? args.steps : typeof args.steps === "string" && args.steps.trim() ? args.steps : null;
-    const parsed = rawSteps ? parsePlan(rawSteps) : null;
+    let parsed = rawSteps ? parsePlan(rawSteps) : null;
     if (rawSteps && !parsed) return fail(`"steps" has no steps in it: give 2-4 short steps separated by " | " ('What fractions are | Adding them | Practice').`);
-    const count = parsed?.steps.length ?? board.plan?.()?.steps.length ?? 0;
     const notes: string[] = [];
+    // The same plan sent again (Sept 25 2026: 3.8 re-sent `steps` on every
+    // call, and the box was rewritten each time) only moves the step.
+    const current = board.plan?.() ?? null;
+    const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+    if (parsed && current && parsed.steps.length === current.steps.length && parsed.steps.every((s, i) => same(s, current.steps[i].label))) {
+      parsed = null;
+      if (args.step === undefined || args.step === null || args.step === "") return ok(`The plan is already on the board, on step ${current.current}. ${planSummary(current)} Say the step you are on and go.`);
+    }
+    const count = parsed?.steps.length ?? current?.steps.length ?? 0;
     let step: number | undefined;
     if (args.step !== undefined && args.step !== null && args.step !== "") {
       const n = typeof args.step === "number" ? args.step : typeof args.step === "string" && /^\s*\d+\s*$/.test(args.step) ? Number(args.step) : NaN;
@@ -213,7 +227,12 @@ export function dispatchWhiteboardTool(
     if (!parsed && step === undefined) return fail('Give "steps" (2-4, split by " | ") to write the plan, or "step" to move on to the next one.');
     if (parsed && parsed.dropped > 0) notes.push(`kept the first ${PLAN_MAX_STEPS} steps`);
     const { plan } = board.withDirectMeta({ owner: "tutor" }, () => board.setPlan!(parsed?.steps, step));
-    const said = parsed ? "The plan is in its box on the board. Say it in one breath, then start the first step." : `Moved on to step ${step} of the plan.`;
+    if (!plan) return fail("The plan could not be written.");
+    const labels = plan.steps.map((s) => s.label);
+    const sentence = labels.length > 1 ? `First ${labels[0].toLowerCase()}, then ${labels.slice(1, -1).map((l) => l.toLowerCase()).join(", then ")}${labels.length > 2 ? ", then " : ""}${labels.at(-1)!.toLowerCase()}.` : `${labels[0]}.`;
+    const said = parsed
+      ? `The plan is up. Say: "${sentence}" Then start step 1: ${labels[0]}.`
+      : `On step ${plan.current} now: ${labels[plan.current - 1] ?? ""}.`;
     return ok(`${said} ${planSummary(plan)}${notes.length ? ` (${notes.join("; ")})` : ""}`);
   }
   const board = ctx.whiteboard;
@@ -270,7 +289,7 @@ function dispatchInner(
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
         board.startNewProblem(title),
       );
-      return ok(`Cleared the board and wrote the heading "${title}".${NEXT}Next, write the problem itself exactly as given (problem=…, typeset), then work under it.`);
+      return ok(`Cleared the board and wrote the heading "${title}".${NEXT}Write the problem exactly as given (problem=, typeset), then ask what they already know.`);
     }
 
     case "start_board_section": {
@@ -944,8 +963,12 @@ function dispatchInner(
       const shaded = clamp(Math.round(shadedRaw ?? 0), 0, rows * columns);
       const srRaw = optionalNumber(args, "shade_rows"); if (isToolError(srRaw)) return srRaw;
       const scRaw = optionalNumber(args, "shade_columns"); if (isToolError(scRaw)) return scRaw;
-      const shadeRows = srRaw ? clamp(Math.round(srRaw), 0, rows) : undefined;
-      const shadeColumns = scRaw ? clamp(Math.round(scRaw), 0, columns) : undefined;
+      // Both a count and bands (Sept 25 2026: shaded=35 with shade_columns=5
+      // drew a 50/50 grid for "0.35 or 0.5"): the count is the picture asked
+      // for, so the bands go.
+      const bandsIgnored = shaded > 0 && Boolean(srRaw || scRaw);
+      const shadeRows = srRaw && !bandsIgnored ? clamp(Math.round(srRaw), 0, rows) : undefined;
+      const shadeColumns = scRaw && !bandsIgnored ? clamp(Math.round(scRaw), 0, columns) : undefined;
       const label = opt(args, "label"); if (label.error) return label.error;
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label.value ?? `${rows} by ${columns} grid` }, () =>
@@ -954,7 +977,7 @@ function dispatchInner(
       const bands = shadeRows || shadeColumns
         ? `${shadeRows ? `${shadeRows} of ${rows} rows tinted` : ""}${shadeRows && shadeColumns ? ", " : ""}${shadeColumns ? `${shadeColumns} of ${columns} columns hatched` : ""}${shadeRows && shadeColumns ? `; overlap ${shadeRows * shadeColumns} of ${rows * columns}` : ""}`
         : `${shaded} shaded`;
-      return ok(`Drew a ${rows} × ${columns} grid (${rows * columns} squares) with ${bands}${label.value ? `, captioned "${label.value}"` : ""}.`);
+      return ok(`Drew a ${rows} × ${columns} grid (${rows * columns} squares) with ${bands}${label.value ? `, captioned "${label.value}"` : ""}.${bandsIgnored ? " (shade_rows/shade_columns were ignored: shaded=N is the count; use the bands only for a product of fractions.)" : ""}`);
     }
 
     case "write_vertical": {

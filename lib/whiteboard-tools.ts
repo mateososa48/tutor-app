@@ -706,6 +706,54 @@ const ALL_TOOL_DECLARATIONS = [
 /** The tools this build offers: Desmos-only ones need Desmos (lib/desmos-config.ts). */
 export const WHITEBOARD_TOOL_DECLARATIONS = ALL_TOOL_DECLARATIONS.filter((decl) => desmosConfigured() || !DESMOS_ONLY_TOOLS.has(decl.name));
 
+// ── The Live set (Sept 25 2026) ───────────────────────────────────────────
+// gemini-3.8-live re-reads every declaration on every tool round trip (a
+// six-call turn read 156k tokens), and the benchmark showed it never calls
+// most of the menu. So a Live session gets a diet: the tools no session or
+// benchmark turn has called on either model are not declared (the dispatcher
+// still replays them for old recordings and the landing), every description
+// is its first sentence, and the `place` parameter goes (27 copies, about
+// 5.8k characters; the dispatcher keeps reading it). Kept despite zero calls,
+// because the app serves grades 5 to 12 and six students never exercise
+// them: draw_fraction, draw_figure, draw_balance, add_area_model, add_table,
+// draw_desmos. add_function_graph is declared only without Desmos.
+export const LIVE_CUT: ReadonlySet<string> = new Set([
+  "add_problem_setup",
+  "start_board_section",
+  "draw_angle",
+  "draw_transversal",
+  "draw_long_division",
+  "write_vertical",
+  "draw_bar_chart",
+  "plot_points",
+  "draw_data_plot",
+  "draw_array",
+  "look_at_board",
+  "erase_older",
+  "add_text_note",
+]);
+
+export type ToolDeclaration = { name: string; description: string; parameters: { type: string; properties?: Record<string, unknown>; required?: string[] } };
+
+/** The first sentence of a description: what a Live session is given. */
+export function firstSentence(description: string): string {
+  return description.split(/(?<=[.!?])\s+(?=[A-Z'"(])/)[0].trim();
+}
+
+/** A declaration as the Live session sends it: one-sentence description, no `place`. */
+export function liveDeclaration<T extends ToolDeclaration>(decl: T): T {
+  const { place: _place, ...properties } = decl.parameters.properties ?? {};
+  void _place;
+  return { ...decl, description: firstSentence(decl.description), parameters: { ...decl.parameters, properties } };
+}
+
+/** The whiteboard tools a Live session declares (see LIVE_CUT). */
+export function liveWhiteboardDeclarations(): ToolDeclaration[] {
+  return WHITEBOARD_TOOL_DECLARATIONS
+    .filter((decl) => !LIVE_CUT.has(decl.name) && (decl.name !== "add_function_graph" || !desmosConfigured()))
+    .map((decl) => liveDeclaration(decl as ToolDeclaration));
+}
+
 // ── OpenAI Responses function-tool format ──────────────────────────────────
 // The declarations above are the single source of truth. GPT-Live's Responses
 // backend takes the same JSON-schema `parameters`, wrapped as a function tool.

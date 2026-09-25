@@ -40,6 +40,11 @@ const ROWS: Row[] = [
   { name: "tool calls / errors", cell: (s) => `${s.totals.toolCalls} / ${s.totals.toolErrors}`, num: (s) => s.totals.toolErrors, up: "bad" },
   { name: "tool calls before speech", cell: (s) => String(s.totals.toolsBeforeSpeech), num: (s) => s.totals.toolsBeforeSpeech, up: "bad" },
   { name: "prompt tokens, total", cell: (s) => s.totals.promptTokensSum.toLocaleString(), num: (s) => s.totals.promptTokensSum, up: "bad" },
+  { name: "estimated Live cost", cell: (s) => (s.totals.costUsd == null ? "–" : `$${s.totals.costUsd.toFixed(2)}`), num: (s) => s.totals.costUsd, up: "bad" },
+  { name: "tool calls a turn", cell: (s) => String(s.totals.callsPerTurn ?? "–"), num: (s) => s.totals.callsPerTurn ?? null },
+  { name: "turns over 8 s to first sound", cell: (s) => String(s.totals.slowTurns ?? "–"), num: (s) => s.totals.slowTurns ?? null, up: "bad" },
+  { name: "transcript leaks", cell: (s) => String(s.totals.leakTurns ?? "–"), num: (s) => s.totals.leakTurns ?? null, up: "bad" },
+  { name: "attempts written as raw LaTeX", cell: (s) => String(s.totals.rawLatexAttempts ?? "–"), num: (s) => s.totals.rawLatexAttempts ?? null, up: "bad" },
   { name: "judge: telling moves", cell: (s) => pct(s.totals.judge.telling, s.totals.judge.turns), num: (s) => Math.round((100 * s.totals.judge.telling) / Math.max(1, s.totals.judge.turns)), up: "bad" },
   { name: "judge: focus moves", cell: (s) => pct(s.totals.judge.focus, s.totals.judge.turns), num: (s) => Math.round((100 * s.totals.judge.focus) / Math.max(1, s.totals.judge.turns)), up: "good" },
   { name: "judge: mistakes caught", cell: (s) => `${s.totals.judge.caught}/${s.totals.judge.errTurns}`, num: (s) => Math.round((100 * s.totals.judge.caught) / Math.max(1, s.totals.judge.errTurns)), up: "good" },
@@ -68,17 +73,19 @@ function main() {
   const runs = labels.map(load);
   const L: string[] = [];
   L.push(`# ${labels.join(" vs ")}`, "");
-  for (const s of runs) L.push(`- **${s.label}**: ${s.date.slice(0, 16).replace("T", " ")} · tutor \`${s.liveModel}\` · prompt \`${s.promptName}\` · student \`${s.studentModel}\` · judge \`${s.judgeModel}\` · ${s.totals.cases} cases, ${s.totals.turns} turns`);
+  for (const s of runs) L.push(`- **${s.label}**: ${s.date.slice(0, 16).replace("T", " ")} · tutor \`${s.liveModel}\`${s.tools ? ` (tools ${s.tools})` : ""} · prompt \`${s.promptName}\` · student \`${s.studentModel}\` · judge \`${s.judgeModel}\` · ${s.totals.cases} case runs, ${s.totals.turns} turns`);
   L.push("", `| measure | ${runs.map((s) => s.label).join(" | ")}${runs.length === 2 ? " | last vs first |" : " |"}`, `|---|${runs.map(() => "---").join("|")}|${runs.length === 2 ? "---|" : ""}`);
   for (const row of ROWS) L.push(`| ${row.name} | ${runs.map((s) => row.cell(s)).join(" | ")}${runs.length === 2 ? ` | ${verdict(row, runs[0], runs[1])} |` : " |"}`);
   L.push("", "## Per case", "", `| case | ${runs.map((s) => `${s.label}: outcome · scores`).join(" | ")} |`, `|---|${runs.map(() => "---").join("|")}|`);
-  const ids = [...new Set(runs.flatMap((s) => s.cases.map((c) => c.id)))];
+  const ids = [...new Set(runs.flatMap((s) => s.cases.map((c) => c.caseId ?? c.id)))];
   for (const id of ids) {
     L.push(`| ${id} | ${runs.map((s) => {
-      const c = s.cases.find((x) => x.id === id);
-      if (!c) return "–";
-      const j = c.judgement;
-      return `${j ? (j.outcome_met ? "met" : "missed") : "?"} · ${j ? SCORE_KEYS.map((k) => j.scores[k]).join(" ") : "–"}`;
+      const cs = s.cases.filter((x) => (x.caseId ?? x.id) === id);
+      if (cs.length === 0) return "–";
+      return cs.map((c) => {
+        const j = c.judgement;
+        return `${j ? (j.outcome_met ? "met" : "missed") : "?"} · ${j ? SCORE_KEYS.map((k) => j.scores[k]).join(" ") : "–"}`;
+      }).join(" / ");
     }).join(" | ")} |`);
   }
   L.push("", "Scores in order: diagnosis · remediation · pacing · voice · board object · board steps · board clean · board matches speech.", "", "One run per prompt is one sample: a difference of one outcome or a few percent is noise. Read the judge's words in each run's report.md before believing a number.");

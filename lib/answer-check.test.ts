@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkAnswer, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
+import { checkAnswer, substituteFunctionEval, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
 
 const verdict = (problem: string, answer: string) => checkAnswer(problem, answer).verdict;
 
@@ -69,7 +69,7 @@ test("never guesses: unreadable input can't be checked", () => {
   assert.equal(verdict("3 4 + 1", "35"), "cannot_check");
   assert.equal(verdict("2x + 3y = 11", "4"), "cannot_check");
   assert.equal(verdict("", "4"), "cannot_check");
-  assert.match(checkAnswer("x > 2", "3").message, /Work it out yourself/);
+  assert.match(checkAnswer("x > 2", "3").message, /work it out yourself/i);
 });
 
 test("helpers", () => {
@@ -241,4 +241,24 @@ test("how many Nths", () => {
   assert.equal(verdict("How many seconds are in a minute?", "60"), "cannot_check");
   assert.equal(verdict(q, "a few"), "cannot_check");
   assert.equal(verdict("How many apples are in 3 bags?", "12"), "cannot_check");
+});
+
+// Function evaluation (Sept 25 2026): 3.8 wrote "f(3) where f(x) = 2x + 1" as
+// the problem and got cannot_check; the value goes in for the variable now.
+test("f(a) where f(x) = … is read by substitution", () => {
+  assert.equal(substituteFunctionEval("f(3) where f(x) = 2x + 1"), "2(3) + 1");
+  assert.equal(substituteFunctionEval("g(-2) if g(x) = x^2 + 3"), "(-2)^2 + 3");
+  assert.equal(substituteFunctionEval("f(x) = 3x - 5, f(4)"), "3(4) - 5");
+  assert.equal(substituteFunctionEval("h(t) = 4t, find h(2)"), "4(2)");
+  assert.equal(substituteFunctionEval("2x + 3 = 11"), null);
+  assert.equal(checkAnswer("f(3) where f(x) = 2x + 1", "7").verdict, "correct");
+  assert.equal(checkAnswer("f(x) = 3x - 5, f(4)", "7").verdict, "correct");
+  assert.equal(checkAnswer("f(x) = 3x - 5, f(4)", "12").verdict, "incorrect");
+  assert.equal(checkAnswer("g(-2) if g(x) = x^2 + 3", "7").verdict, "correct");
+});
+
+test("cannot_check is an order to resend in digits and symbols", () => {
+  const r = checkAnswer("How many cookies from 5 cups?", "30");
+  assert.equal(r.verdict, "cannot_check");
+  assert.match(r.message, /Call check_answer again with the problem in digits and symbols/);
 });

@@ -31,11 +31,11 @@ test("set_plan writes the plan once and says it back; step moves it on", () => {
   const f = fakeBoard();
   const r = dispatchWhiteboardTool("set_plan", { steps: "What fractions are | Adding them | Practice" }, { whiteboard: f.board });
   assert.equal(r.success, true, msg(r));
-  assert.match(msg(r), /The plan is in its box on the board\. Say it in one breath/);
+  assert.match(msg(r), /The plan is up\. Say: "First what fractions are, then adding them, then practice\." Then start step 1: What fractions are/);
   assert.match(msg(r), /Plan: 1 What fractions are \(now\) · 2 Adding them · 3 Practice/);
   const on2 = dispatchWhiteboardTool("set_plan", { step: 2 }, { whiteboard: f.board });
   assert.equal(on2.success, true, msg(on2));
-  assert.match(msg(on2), /Moved on to step 2/);
+  assert.match(msg(on2), /On step 2 now: Adding them/);
   assert.deepEqual(f.plan()!.steps.map((s) => s.done), [true, false, false]);
   assert.equal(f.plan()!.current, 2);
 });
@@ -74,6 +74,7 @@ function fakeWritingBoard() {
     drawEquationStep: (latex: string) => log.push(`eq:${latex}`),
     addCallout: (text: string) => log.push(`callout:${text}`),
     addTextNote: (text: string) => log.push(`note:${text}`),
+    drawGrid: (o: { shaded: number; shadeRows?: number; shadeColumns?: number }) => log.push(`grid:${o.shaded}/${o.shadeRows}/${o.shadeColumns}`),
     setPens: () => {},
     setPlacement: () => {},
   };
@@ -87,9 +88,51 @@ test("start_new_problem writes the problem, typeset, and the first question in o
   assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["title", "eq", "eq", "callout"]);
   assert.match(f.log[1], /2x\^\{?2\}?/);
   assert.match(msg(r), /The problem is up, typeset/);
-  assert.match(msg(r), /Before any first move, ask what they already know/);
+  assert.match(msg(r), /Next: ask what they already know about this kind of problem/);
   const bare = dispatchWhiteboardTool("start_new_problem", { title: "Fractions" }, { whiteboard: f.board });
-  assert.match(msg(bare), /write the problem itself exactly as given \(problem=…, typeset\)/);
+  assert.match(msg(bare), /Write the problem exactly as given \(problem=, typeset\), then ask what they already know/);
+});
+
+// Sept 25 2026: 3.8 passed the topic as the problem ("Decimals") and the
+// board got a fake problem line.
+test("a topic passed as the problem is not written as one", () => {
+  const f = fakeWritingBoard();
+  const r = dispatchWhiteboardTool("start_new_problem", { title: "Decimals", problem: "Decimals" }, { whiteboard: f.board });
+  assert.equal(r.success, true, msg(r));
+  assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["title"]);
+  assert.match(msg(r), /is the topic, not a problem/);
+  assert.match(msg(r), /Next: write the problem exactly as given/);
+  const words = dispatchWhiteboardTool("start_new_problem", { title: "Integer Operations", problem: "Integer Operations", ask: "Which one first?" }, { whiteboard: f.board });
+  assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["title", "title", "callout"]);
+  assert.equal(words.success, true);
+  const real = dispatchWhiteboardTool("start_new_problem", { title: "Decimals", problem: "0.35 or 0.5" }, { whiteboard: f.board });
+  assert.match(msg(real), /The problem is up, typeset/);
+});
+
+test("set_plan says the sentence to say, and a re-sent plan only moves the step", () => {
+  const f = fakeBoard();
+  const first = dispatchWhiteboardTool("set_plan", { steps: "Compare | Add | Practice" }, { whiteboard: f.board });
+  assert.match(msg(first), /Say: "First compare, then add, then practice\." Then start step 1: Compare/);
+  const again = dispatchWhiteboardTool("set_plan", { steps: "Compare | Add | Practice" }, { whiteboard: f.board });
+  assert.equal(again.success, true, msg(again));
+  assert.match(msg(again), /already on the board, on step 1/);
+  assert.equal(f.calls.length, 1, "the box was not rewritten");
+  const move = dispatchWhiteboardTool("set_plan", { steps: "compare | add | practice", step: 2 }, { whiteboard: f.board });
+  assert.match(msg(move), /On step 2 now: Add/);
+  assert.equal(f.plan()!.current, 2);
+  assert.deepEqual(f.calls.at(-1), { steps: undefined, step: 2 });
+});
+
+test("a grid with a shaded count keeps the count and drops the bands", () => {
+  const f = fakeWritingBoard();
+  const r = dispatchWhiteboardTool("draw_grid", { rows: 10, columns: 10, shaded: 35, shade_columns: 5 }, { whiteboard: f.board });
+  assert.equal(r.success, true, msg(r));
+  assert.equal(f.log.at(-1), "grid:35/undefined/undefined");
+  assert.match(msg(r), /35 shaded/);
+  assert.match(msg(r), /shade_rows\/shade_columns were ignored/);
+  const bands = dispatchWhiteboardTool("draw_grid", { rows: 2, columns: 3, shade_rows: 1, shade_columns: 2 }, { whiteboard: f.board });
+  assert.equal(f.log.at(-1), "grid:0/1/2");
+  assert.match(msg(bands), /1 of 2 rows tinted, 2 of 3 columns hatched/);
 });
 
 test("a note that is really math goes up as typeset lines", () => {

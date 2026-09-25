@@ -442,24 +442,33 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
   return { step: "together", next: "point at the exact spot and let them fix it" };
 }
 
+// One line, one order (Sept 25 2026: 3.8 follows a short order and skims a
+// list): the step and its next move first, with a mood or stuck cue standing
+// in for the move when there is one, then the help level, the score, and the
+// clock. The old line led with the score and listed every cue after the move.
 export function formatTutorState(p: TutorPolicy, now: number): string {
   const parts: string[] = [];
+  const flow = flowStep(p);
+  const all = cues(p).filter((c) => !(c.startsWith("up:") && flow?.step === "up"));
+  // A student who is frustrated or lost outranks the flow's move; "up" never
+  // does, because ALONE, WHY and UP already say how to raise the bar.
+  const lead = all.find((c) => /^(down:|said they don't know|confused)/.test(c));
+  const rest = all.filter((c) => c !== lead);
+  const next = lead ?? flow?.next;
+  // One more cue at most, after the move: a review that is due or a check they
+  // should make; "up" only when the flow is not already raising the bar.
+  const then = rest.find((c) => !c.startsWith("up:")) ?? (flow && ["alone", "why", "up"].includes(flow.step) ? undefined : rest.find((c) => c.startsWith("up:")));
+  if (flow && next) parts.push(`step ${flow.step.toUpperCase()} · next: ${next}${then ? `; then ${then}` : ""}`);
+  else if (then) parts.push(then);
   if (p.currentSkill) {
-    const onSkill = p.attempts.filter((a) => a.skill === p.currentSkill && !a.step);
-    const right = onSkill.filter((a) => a.result === "correct").length;
-    parts.push(`skill "${p.currentSkill}": ${right} of ${onSkill.length} right, ${aloneRight(p)} with no help`);
-    const flow = flowStep(p);
-    if (flow) parts.push(`step ${flow.step.toUpperCase()} · next: ${flow.next}`);
-    const last = p.attempts.at(-1);
-    if (p.missesInRow > 0 && last) parts.push(`${p.missesInRow} ${p.missesInRow === 1 ? "miss" : "misses"} in a row (last: ${last.result})`);
     const help = suggestHelp(p);
     if (help) parts.push(`suggested help H${help.level} (${help.why})`);
+    const onSkill = p.attempts.filter((a) => a.skill === p.currentSkill && !a.step);
+    const right = onSkill.filter((a) => a.result === "correct").length;
+    const last = p.attempts.at(-1);
+    const misses = p.missesInRow > 0 && last ? `, ${p.missesInRow} ${p.missesInRow === 1 ? "miss" : "misses"} in a row (last: ${last.result})` : "";
+    parts.push(`skill "${p.currentSkill}": ${right} of ${onSkill.length} right, ${aloneRight(p)} with no help${misses}`);
   }
-  if (!p.currentSkill) {
-    const opening = flowStep(p);
-    if (opening) parts.push(`step ${opening.step.toUpperCase()} · next: ${opening.next}`);
-  }
-  parts.push(...cues(p).filter((c) => !(c.startsWith("up:") && flowStep(p)?.step === "up")));
   const time = clockCue(now - p.startedAt, p.plannedMinutes);
   if (time) parts.push(time);
   if (parts.length === 0) return "";

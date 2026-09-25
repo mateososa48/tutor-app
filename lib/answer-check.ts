@@ -149,7 +149,26 @@ function decimalsIn(s: string): number | null {
 }
 
 function cannot(message: string): AnswerCheck {
-  return { verdict: "cannot_check", message: `Can't check this automatically: ${message} Work it out yourself, step by step, before you respond.` };
+  // An order, not an apology (Sept 25 2026: 3.8 acts on short fix-it orders and
+  // ignores prose): resend in digits and symbols, or check it yourself.
+  return { verdict: "cannot_check", message: `Can't check this automatically: ${message} Call check_answer again with the problem in digits and symbols (problem="12/2*5", problem="2(3)+1", problem="15% of 100"), or work it out yourself before you respond.` };
+}
+
+// "f(3) where f(x) = 2x + 1", "f(x) = 2x + 1, f(3)", "g(-2) if g(x) = x^2 + 3":
+// the value goes in for the variable and the problem is the arithmetic left.
+const FUNCTION_EVAL_FIRST = /^\s*([a-z])\s*\(\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*\)\s*(?:where|if|when|with|given|,|;|:)\s*\1\s*\(\s*([a-z])\s*\)\s*=\s*(.+?)\s*$/i;
+const FUNCTION_EVAL_LAST = /^\s*([a-z])\s*\(\s*([a-z])\s*\)\s*=\s*(.+?)\s*(?:,|;|:|\.|\s+)\s*(?:find|evaluate|what is|whats|what's)?\s*\1\s*\(\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*\)\s*\??\s*$/i;
+
+/** "f(3) where f(x) = 2x + 1" as the arithmetic "2(3) + 1", or null when it is not that shape. */
+export function substituteFunctionEval(problem: string): string | null {
+  const m = FUNCTION_EVAL_FIRST.exec(problem);
+  const [value, variable, body] = m ? [m[2], m[3], m[4]] : (() => { const l = FUNCTION_EVAL_LAST.exec(problem); return l ? [l[4], l[2], l[3]] : ["", "", ""]; })();
+  if (!body) return null;
+  const v = /^-|\//.test(value) ? `(${value})` : value;
+  // The variable, standing alone (not inside a function name like "sin").
+  const re = new RegExp(`(?<![a-z])${variable}(?![a-z])`, "gi");
+  if (!re.test(body)) return null;
+  return body.replace(re, `(${v})`).replace(/\(\((-?[\d./]+)\)\)/g, "($1)");
 }
 
 function evalConstant(text: string): number | null {
@@ -597,7 +616,7 @@ const PICTURE_WORDS = /\b(shaded|shown|pictured|picture|diagram|drawn|number lin
 const QUESTION_LEAD = /^\s*(?:what(?:'s|\s+is)|whats|find|calculate|compute|work\s+out)\s+(?:the\s+value\s+of\s+)?/i;
 
 function readProblem(problem: string): string | AnswerCheck {
-  let s = problem;
+  let s = substituteFunctionEval(problem) ?? problem;
   const led = QUESTION_LEAD.test(s);
   if (led) s = s.replace(QUESTION_LEAD, "");
   // With an "=" a "?" is a box ("3/4 = 6/?"); without one it is a question mark.

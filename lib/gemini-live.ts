@@ -1,4 +1,4 @@
-import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
+import { liveWhiteboardDeclarations, type ToolDeclaration } from "./whiteboard-tools";
 import type { UploadedFile } from "./file-processor";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
@@ -103,6 +103,21 @@ function decodeBase64Text(base64: string): string {
  * message, framed as the OPEN step. Exported so the benchmark
  * (scripts/bench.ts) opens its sessions with the very same words.
  */
+/**
+ * Every tool a Live session declares: the whiteboard diet, the tutor tools and
+ * the session tools, each as its first sentence with no `place` (Sept 25 2026,
+ * see LIVE_CUT in lib/whiteboard-tools.ts). The benchmark sends the same set.
+ */
+export function liveToolDeclarations(): ToolDeclaration[] {
+  return [...liveWhiteboardDeclarations(), ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS].map((d) => liveDeclarationOf(d as ToolDeclaration));
+}
+
+function liveDeclarationOf(decl: ToolDeclaration): ToolDeclaration {
+  const { place: _place, ...properties } = decl.parameters.properties ?? {};
+  void _place;
+  return { ...decl, description: decl.description.split(/(?<=[.!?])\s+(?=[A-Z'"(])/)[0].trim(), parameters: { ...decl.parameters, properties } };
+}
+
 export function openingEvent(studentText: string, fileCount: number): string {
   return (
     "Session event: initial_start_with_context.\n" +
@@ -319,7 +334,7 @@ export class GeminiLiveSession {
         systemInstruction: {
           parts: [{ text: this.systemInstruction }],
         },
-        tools: [{ functionDeclarations: withToolBehavior([...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS], this.model, this.asyncTools) }],
+        tools: [{ functionDeclarations: withToolBehavior(liveToolDeclarations(), this.model, this.asyncTools) }],
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         sessionResumption: resumeHandle ? { handle: resumeHandle } : {},

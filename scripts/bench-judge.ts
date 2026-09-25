@@ -102,13 +102,14 @@ function pickShots(run: CaseRun, max: number): Array<{ turn: number; file: strin
 
 type Call = (c: { model: string; system: string; text: string; images?: Array<{ mimeType: string; data: string }>; json?: boolean; temperature?: number; maxTokens?: number }) => Promise<string>;
 
-export async function judgeCase(call: Call, model: string, c: BenchCase, run: CaseRun, dir: string): Promise<Judgement | null> {
+/** Everything the judge is given for one case: the prompt text, the pictures, and which turns they show. */
+export function judgeInput(c: BenchCase, run: CaseRun, dir: string): { system: string; text: string; images: Array<{ mimeType: string; data: string; file: string }>; shots: Array<{ turn: number; file: string }> } {
   const transcript = run.turns
     .map((t) => `Turn ${t.n}\nStudent: ${t.student}\nTutor tools: ${describeTools(t.tools)}\nTutor said: ${t.tutor || (t.timedOut ? "(nothing; the turn timed out)" : "(nothing)")}${t.nudged ? " [the app had to nudge the tutor to reply]" : ""}\nBoard after the turn: ${t.boardCompact || "(empty)"}`)
     .join("\n\n");
   const shots = pickShots(run, 4);
-  const images = shots.map((s) => ({ mimeType: "image/jpeg", data: fs.readFileSync(path.join(dir, s.file)).toString("base64") }));
-  if (run.finalBoard) images.push({ mimeType: "image/jpeg", data: fs.readFileSync(path.join(dir, run.finalBoard)).toString("base64") });
+  const images = shots.map((s) => ({ mimeType: "image/jpeg", data: fs.readFileSync(path.join(dir, s.file)).toString("base64"), file: s.file }));
+  if (run.finalBoard) images.push({ mimeType: "image/jpeg", data: fs.readFileSync(path.join(dir, run.finalBoard)).toString("base64"), file: run.finalBoard });
   const text = `The student: ${c.name}, ${c.grade}, ${c.age} years old. What they typed before the session: "${c.topic}". They said they had ${c.minutes} minutes.${c.worksheet ? " They attached a photo of a worksheet." : ""}
 
 Their hidden brief (the tutor could not see this): ${c.brief}
@@ -123,8 +124,37 @@ Transcript:
 ${transcript}
 
 Pictures attached, in order: ${shots.map((s) => `the board after turn ${s.turn}`).join(", ")}${run.finalBoard ? `${shots.length ? ", then " : ""}the final board` : ""}.`;
+  return { system: SYSTEM, text, images, shots };
+}
+
+/** The same input as a Markdown file a Claude subagent can grade from (it reads the pictures by path). */
+export function judgeInputMarkdown(c: BenchCase, run: CaseRun, dir: string): string {
+  const input = judgeInput(c, run, dir);
+  return [
+    `# Judge input: ${c.name} (${run.id})`,
+    "",
+    "Read the instructions, the case, and the pictures (open each file with the Read tool), then write the JSON verdict, exactly the shape the instructions give, to `" + path.join(dir, `${run.id}.judge.json`) + "`. Nothing else in that file.",
+    "",
+    "## Instructions",
+    "",
+    input.system,
+    "",
+    "## The case",
+    "",
+    input.text,
+    "",
+    "## Pictures",
+    "",
+    ...input.images.map((im, i) => `${i + 1}. ${path.join(dir, im.file)}`),
+    "",
+  ].join("\n");
+}
+
+export async function judgeCase(call: Call, model: string, c: BenchCase, run: CaseRun, dir: string): Promise<Judgement | null> {
+  const { system: SYSTEM_, text, images } = judgeInput(c, run, dir);
+  void SYSTEM_;
   for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = (await call({ model, system: SYSTEM, text, images, json: true, temperature: 0.2, maxTokens: 12000 })).replace(/^```(?:json)?\s*|\s*```$/g, "");
+    const raw = (await call({ model, system: SYSTEM, text, images: images.map(({ mimeType, data }) => ({ mimeType, data })), json: true, temperature: 0.2, maxTokens: 12000 })).replace(/^```(?:json)?\s*|\s*```$/g, "");
     try {
       const parsed = JSON.parse(raw) as Judgement;
       if (Array.isArray(parsed.turns) && parsed.scores) {

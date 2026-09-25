@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { WHITEBOARD_FUNCTION_TOOLS, WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
+import { LIVE_CUT, WHITEBOARD_FUNCTION_TOOLS, WHITEBOARD_TOOL_DECLARATIONS, firstSentence, liveWhiteboardDeclarations } from "./whiteboard-tools";
+import { liveToolDeclarations } from "./gemini-live";
 
 test("every whiteboard tool converts to a valid Responses function tool", () => {
   assert.equal(WHITEBOARD_FUNCTION_TOOLS.length, WHITEBOARD_TOOL_DECLARATIONS.length);
@@ -63,4 +64,32 @@ test("off-topic tools are cut and the schema stays small", () => {
   // 39,400 since Sept 24 2026: set_plan, and start_new_problem taking the
   // problem and the first question, which saves a round trip on every problem.
   assert.ok(size < 39400, `whiteboard tool schema is ${size} characters`);
+});
+
+// The Live set (Sept 25 2026): what a gemini-3.8-live session is given.
+test("the Live set leaves out the tools nobody calls, keeps the ones a lesson needs, and stays small", () => {
+  const live = liveWhiteboardDeclarations();
+  const names = new Set(live.map((d) => d.name));
+  const full = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name));
+  for (const cut of LIVE_CUT) {
+    assert.ok(!names.has(cut), `${cut} should not be declared to a Live session`);
+    assert.ok(full.has(cut), `${cut} must stay in the full set for GPT-Live and replays`);
+  }
+  for (const keep of ["start_new_problem", "draw_equation_step", "add_student_attempt", "draw_fraction", "add_number_line", "draw_figure", "draw_balance", "add_area_model", "add_table", "draw_tape_diagram", "draw_grid", "draw_icons", "draw_sketch", "point_at", "highlight", "circle_item", "erase_items", "add_callout", "set_plan", "remember_about_student"]) {
+    assert.ok(names.has(keep), `${keep} should be declared to a Live session`);
+  }
+  for (const d of live) {
+    assert.ok(!("place" in (d.parameters.properties ?? {})), `${d.name} still offers place to a Live session`);
+    assert.equal(d.description, firstSentence(d.description), `${d.name}: one sentence`);
+    assert.ok(d.description.length > 15, `${d.name}: a description`);
+  }
+  const size = JSON.stringify(liveToolDeclarations()).length;
+  // 42,381 characters for 40 tools before the diet.
+  assert.ok(size < 22000, `Live tool set is ${size} characters`);
+});
+
+test("firstSentence keeps a sentence that carries an example in quotes", () => {
+  assert.equal(firstSentence("Write ONE equation line in typeset math. Use it for every step."), "Write ONE equation line in typeset math.");
+  assert.equal(firstSentence("A small sky tag ('Which side is heavier?'), a rule. More."), "A small sky tag ('Which side is heavier?'), a rule.");
+  assert.equal(firstSentence("Draw a number line with labelled ticks."), "Draw a number line with labelled ticks.");
 });

@@ -46,7 +46,7 @@ test("check_answer records the attempt and answers with the state line", () => {
   const p = createPolicy(0);
   const r = runTutorTool("check_answer", { problem: "1/2 + 1/3", student_answer: "2/5", skill: "adding fractions", help_level: "H1", kind: "misconception" }, p, 0, "call-1");
   assert.ok(r && r.success);
-  assert.match(r.message ?? "", /\[Tutor state: skill "adding fractions": 0 of 1 right/);
+  assert.match(r.message ?? "", /\[Tutor state: .*skill "adding fractions": 0 of 1 right/);
   assert.deepEqual(p.attempts.map((a) => [a.result, a.help, a.callId]), [["misconception", 1, "call-1"]]);
   // A right answer: the tutor writes it and rings it, and the flow's next order rides in the state line.
   const right = runTutorTool("check_answer", { problem: "2x + 3 = 11", student_answer: "x = 4", skill: "two-step equations" }, p, 0);

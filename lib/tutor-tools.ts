@@ -71,7 +71,7 @@ export const TUTOR_TOOL_DECLARATIONS = [
       properties: {
         problem: {
           type: "string",
-          description: "What the student is answering, in digits and symbols: '1/2 + 1/3', '2x + 3 = 11', '3(x + 4)'. For one step of a longer problem, pass just that step: '21 / 3'. 300 chars max.",
+          description: "What the student is answering, in digits and symbols only, never words or your own verdict: '1/2 + 1/3', '2x + 3 = 11', '3(x + 4)', '15% of 100'. For f(3) with f(x) = 2x + 1 pass 'f(3) where f(x) = 2x + 1'. For one step of a longer problem, pass just that step: '21 / 3'. 300 chars max.",
         },
         student_answer: {
           type: "string",

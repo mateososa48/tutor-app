@@ -9,8 +9,12 @@ export type RunInput = {
   liveModel: string;
   studentModel: string;
   judgeModel: string;
+  /** The tool behaviour sent to the model: "sync" (every tool blocks) or "async". */
+  tools: string;
+  /** How many times each case was run; totals pool the runs. */
+  runs: number;
   date: string;
-  runs: CaseRun[];
+  cases: CaseRun[];
   modelUsage: { calls: number; prompt: number; output: number };
 };
 
@@ -44,6 +48,11 @@ export type Totals = {
   toolsBeforeSpeech: number;
   promptTokensSum: number;
   promptTokensMax: number | null;
+  costUsd: number | null;
+  callsPerTurn: number;
+  slowTurns: number;
+  leakTurns: number;
+  rawLatexAttempts: number;
   wallMs: number;
   judge: {
     turns: number;
@@ -66,7 +75,7 @@ export type Totals = {
   };
 };
 
-export type Summary = Omit<RunInput, "runs"> & { totals: Totals; cases: Array<{ id: string; name: string; grade: string; metrics: CaseRun["metrics"]; judgement: CaseRun["judgement"]; wallMs: number; closed: string | null; pageErrors: number }> };
+export type Summary = Omit<RunInput, "cases"> & { totals: Totals; cases: Array<{ id: string; caseId?: string; name: string; grade: string; metrics: CaseRun["metrics"]; judgement: CaseRun["judgement"]; wallMs: number; closed: string | null; pageErrors: number }> };
 
 const median = (xs: number[]) => {
   if (xs.length === 0) return null;
@@ -115,6 +124,11 @@ export function totals(runs: CaseRun[]): Totals {
     toolsBeforeSpeech: sum((m) => m.toolsBeforeSpeech),
     promptTokensSum: sum((m) => m.promptTokensSum),
     promptTokensMax: ms.reduce<number | null>((a, m) => (m.promptTokensMax == null ? a : Math.max(a ?? 0, m.promptTokensMax)), null),
+    costUsd: ms.some((m) => m.costUsd != null) ? Math.round(sum((m) => m.costUsd ?? 0) * 100) / 100 : null,
+    callsPerTurn: turns ? Math.round((sum((m) => m.toolCalls) / turns) * 10) / 10 : 0,
+    slowTurns: sum((m) => m.slowTurns ?? 0),
+    leakTurns: sum((m) => m.leakTurns ?? 0),
+    rawLatexAttempts: sum((m) => m.rawLatexAttempts ?? 0),
     wallMs: runs.reduce((s, r) => s + r.wallMs, 0),
     judge: {
       turns: verdicts.length,
@@ -142,14 +156,14 @@ export const pct = (n: number, d: number) => (d === 0 ? "–" : `${Math.round((1
 const ms = (x: number | null) => (x == null ? "–" : `${(x / 1000).toFixed(1)}s`);
 
 export function buildReport(input: RunInput): { report: string; summary: Summary } {
-  const t = totals(input.runs);
+  const t = totals(input.cases);
   const L: string[] = [];
-  L.push(`# Tutor benchmark: ${input.label}`, "", `${input.date.slice(0, 16).replace("T", " ")} · tutor \`${input.liveModel}\` · prompt \`${input.promptName}\` · student \`${input.studentModel}\` · judge \`${input.judgeModel}\``, "");
-  L.push("## Cases", "", "| case | outcome | opened | asked know | plan | board | pictures | marks | checked | phantom | praise | words | 1st audio | silent | tool err | judge scores |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
-  for (const r of input.runs) {
+  L.push(`# Tutor benchmark: ${input.label}`, "", `${input.date.slice(0, 16).replace("T", " ")} · tutor \`${input.liveModel}\` (tools ${input.tools}) · prompt \`${input.promptName}\` · student \`${input.studentModel}\` · judge \`${input.judgeModel}\`${input.runs > 1 ? ` · ${input.runs} runs a case, pooled` : ""}`, "");
+  L.push("## Cases", "", "| case | outcome | opened | asked know | plan | board | pictures | marks | checked | phantom | praise | leaks | words | 1st audio | worst | silent | tool err | calls/turn | cost | judge scores |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+  for (const r of input.cases) {
     const m = r.metrics;
     const j = r.judgement;
-    L.push(`| ${r.name} (${r.id}) | ${j ? (j.outcome_met ? "met" : "missed") : "?"} | ${m.openingAsked ? "✓" : "✗"} | ${m.askedWhatTheyKnow ? "✓" : "✗"} | ${m.planTurn ?? "–"} | ${m.boardTurns}/${m.turns} | ${m.pictureTurns} | ${m.markTurns} | ${m.checkedTurns}/${m.answerLines} | ${m.phantomClaims} | ${m.praiseTurns} | ${m.wordsPerTurn} | ${ms(m.firstAudioMedianMs)} | ${m.silentTurns}${m.timedOutTurns ? `+${m.timedOutTurns}⏱` : ""} | ${m.toolErrors} | ${j ? SCORE_KEYS.map((k) => j.scores[k]).join(" ") : "–"} |`);
+    L.push(`| ${r.name} (${r.id}) | ${j ? (j.outcome_met ? "met" : "missed") : "?"} | ${m.openingAsked ? "✓" : "✗"} | ${m.askedWhatTheyKnow ? "✓" : "✗"} | ${m.planTurn ?? "–"} | ${m.boardTurns}/${m.turns} | ${m.pictureTurns} | ${m.markTurns} | ${m.checkedTurns}/${m.answerLines} | ${m.phantomClaims} | ${m.praiseTurns} | ${m.leakTurns ?? 0} | ${m.wordsPerTurn} | ${ms(m.firstAudioMedianMs)} | ${ms(m.firstAudioMaxMs)} | ${m.silentTurns}${m.timedOutTurns ? `+${m.timedOutTurns}⏱` : ""} | ${m.toolErrors} | ${m.callsPerTurn ?? "–"} | ${m.costUsd == null ? "–" : `$${m.costUsd.toFixed(2)}`} | ${j ? SCORE_KEYS.map((k) => j.scores[k]).join(" ") : "–"} |`);
   }
   L.push("", "Judge scores, 1–5, in order: diagnosis · remediation · pacing · voice · board object · board steps · board clean · board matches speech.", "");
   L.push("## Totals", "");
@@ -174,6 +188,11 @@ export function buildReport(input: RunInput): { report: string; summary: Summary
     `| silent turns / nudged / timed out | ${t.silentTurns} / ${t.nudgedTurns} / ${t.timedOutTurns} |`,
     `| tool calls / errors / before speech | ${t.toolCalls} / ${t.toolErrors} / ${t.toolsBeforeSpeech} |`,
     `| prompt tokens, total / largest turn | ${t.promptTokensSum.toLocaleString()} / ${t.promptTokensMax?.toLocaleString() ?? "–"} |`,
+    `| estimated Live cost | ${t.costUsd == null ? "–" : `$${t.costUsd.toFixed(2)}`} |`,
+    `| tool calls a turn | ${t.callsPerTurn} |`,
+    `| turns over 8 s to the first sound | ${t.slowTurns} |`,
+    `| transcript leaks (LaTeX, markup, tool syntax) | ${t.leakTurns} |`,
+    `| attempts written as raw LaTeX | ${t.rawLatexAttempts} |`,
     `| session time | ${Math.round(t.wallMs / 1000)}s |`,
   );
   if (J.turns) {
@@ -193,7 +212,7 @@ export function buildReport(input: RunInput): { report: string; summary: Summary
   }
   L.push("", `Model calls (student and judge): ${input.modelUsage.calls}, ${input.modelUsage.prompt.toLocaleString()} tokens in, ${input.modelUsage.output.toLocaleString()} out.`, "");
   L.push("## What the judge said", "");
-  for (const r of input.runs) {
+  for (const r of input.cases) {
     const j = r.judgement;
     if (!j) { L.push(`### ${r.name} (${r.id}): not judged`, ""); continue; }
     L.push(`### ${r.name} (${r.id}): outcome ${j.outcome_met ? "met" : "missed"}`, "", j.outcome_reason, "", `- Best: ${j.best}`, `- Worst: ${j.worst}`, `- An expert would have: ${j.human_tutor_would}`);
@@ -201,9 +220,9 @@ export function buildReport(input: RunInput): { report: string; summary: Summary
     if (!j.student_realistic) L.push(`- ⚠ student not realistic: ${j.student_note}`);
     L.push("");
   }
-  const failed = input.runs.filter((r) => r.closed && !/^1000/.test(r.closed));
+  const failed = input.cases.filter((r) => r.closed && !/^1000/.test(r.closed));
   if (failed.length) L.push("## Sessions that closed early", "", ...failed.map((r) => `- ${r.id}: ${r.closed}`), "");
-  const errs = input.runs.flatMap((r) => r.metrics.toolErrorNames.map((e) => `- ${r.id}: ${e}`));
+  const errs = input.cases.flatMap((r) => r.metrics.toolErrorNames.map((e) => `- ${r.id}: ${e}`));
   if (errs.length) L.push("## Tool errors", "", ...errs, "");
   const summary: Summary = {
     label: input.label,
@@ -211,10 +230,12 @@ export function buildReport(input: RunInput): { report: string; summary: Summary
     liveModel: input.liveModel,
     studentModel: input.studentModel,
     judgeModel: input.judgeModel,
+    tools: input.tools,
+    runs: input.runs,
     date: input.date,
     modelUsage: input.modelUsage,
     totals: t,
-    cases: input.runs.map((r) => ({ id: r.id, name: r.name, grade: r.grade, metrics: r.metrics, judgement: r.judgement, wallMs: r.wallMs, closed: r.closed, pageErrors: r.pageErrors.length })),
+    cases: input.cases.map((r) => ({ id: r.id, caseId: r.caseId ?? r.id, name: r.name, grade: r.grade, metrics: r.metrics, judgement: r.judgement, wallMs: r.wallMs, closed: r.closed, pageErrors: r.pageErrors.length })),
   };
   return { report: L.join("\n"), summary };
 }

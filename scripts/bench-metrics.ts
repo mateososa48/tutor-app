@@ -2,6 +2,7 @@
 // (scripts/bench.ts). Pure: a run's turns in, numbers out.
 import type { BenchCase } from "./bench-cases";
 import type { Judgement } from "./bench-judge";
+import { estimateCostUsd, type TurnUsage } from "../lib/live-turn-metrics";
 
 export type ToolRecord = {
   name: string;
@@ -29,6 +30,8 @@ export type TurnRecord = {
   timedOut: boolean;
   interrupted: boolean;
   promptTokens: number | null;
+  /** The turn's billed usage by modality (the largest count Live reported during the turn). */
+  usage?: TurnUsage | null;
   /** The full [Board: …] list after the turn, and the short one the tutor reads. */
   board: string;
   boardCompact: string;
@@ -75,11 +78,24 @@ export type Metrics = {
   toolsBeforeSpeech: number;
   promptTokensMax: number | null;
   promptTokensSum: number;
+  /** Estimated Live cost of the case in dollars (lib/live-turn-metrics prices), or null without usage. */
+  costUsd: number | null;
+  /** Tool calls per tutor turn. */
+  callsPerTurn: number;
+  /** Turns whose first sound came more than 8 s after the student's line. */
+  slowTurns: number;
+  /** Turns whose transcript carries LaTeX, markup or tool syntax the student would hear. */
+  leakTurns: number;
+  /** Student attempts written with a backslash in them (raw LaTeX in handwriting). */
+  rawLatexAttempts: number;
   wallMs: number;
 };
 
 export type CaseRun = {
+  /** The run's file tag: the case id, or "<id>-r2" for a repeat. */
   id: string;
+  /** The case this run played. */
+  caseId?: string;
   name: string;
   grade: string;
   liveModel: string;
@@ -106,6 +122,10 @@ export const PICTURE_TOOLS = new Set<string>([
 const CLAIMS_BOARD = /\b(on the board|i(?:'ve| have) (?:drawn|written|put)|i drew|i wrote|look at the (?:board|picture|diagram|graph|triangle|table|number line|grid|circle|bars?)|as you can see|from the picture|(?:this|the) (?:number line|graph|table|diagram|picture) (?:here|shows|i)|see (?:the|this) (?:number line|graph|table|diagram|picture))\b/i;
 const ASKS_WHAT_THEY_KNOW = /\b(already know|what do you know|what you know|where (?:it|does it|do you|things?) (?:stop|start|get|go)|which part|what (?:is|was|part is|parts? are) (?:confusing|tricky|hard|the (?:tricky|hard|confusing) (?:part|bit))|what did you (?:do|try|get|put|write)|how did you (?:get|do|work)|walk me through|what have you tried|what (?:do|did) you think|tell me what you (?:did|tried|know|think))\b/i;
 const OPENING_ALLOWED = new Set(["start_new_problem", "look_at_worksheet", "add_callout", "look_at_board", "remember_about_student"]);
+// What a kid would hear that is not speech: LaTeX between dollars, markup, a
+// stage direction, or a tool call read aloud ("set_plan(steps=…").
+const LEAK = /\$[^$\n]{1,80}\$|<!--|<no speech|<\/?[a-z]+>|\b[a-z_]+\((?:[a-z_]+=|")/i;
+const SLOW_MS = 8_000;
 
 type PolicyFns = {
   looksLikeAnswer: (text: string) => boolean;
@@ -142,6 +162,7 @@ export function measure(turns: TurnRecord[], c: BenchCase, policy: PolicyFns): M
   const words = turns.reduce((s, t) => s + (t.tutor ? t.tutor.split(/\s+/).length : 0), 0);
   const allTools = turns.flatMap((t) => t.tools);
   const promptTokens = turns.map((t) => t.promptTokens).filter((x): x is number => x != null);
+  const costs = turns.map((t) => (t.usage ? estimateCostUsd(t.usage) : null)).filter((x): x is number => x != null);
   void c;
   return {
     turns: turns.length,
@@ -173,6 +194,11 @@ export function measure(turns: TurnRecord[], c: BenchCase, policy: PolicyFns): M
     toolsBeforeSpeech: allTools.filter((x) => x.beforeSpeech).length,
     promptTokensMax: promptTokens.length ? Math.max(...promptTokens) : null,
     promptTokensSum: promptTokens.reduce((a, b) => a + b, 0),
+    costUsd: costs.length ? Math.round(costs.reduce((a, b) => a + b, 0) * 1000) / 1000 : null,
+    callsPerTurn: turns.length ? Math.round((allTools.length / turns.length) * 10) / 10 : 0,
+    slowTurns: turns.filter((t) => t.firstAudioMs != null && t.firstAudioMs > SLOW_MS).length,
+    leakTurns: turns.filter((t) => LEAK.test(t.tutor)).length,
+    rawLatexAttempts: allTools.filter((x) => x.ok && x.name === "add_student_attempt" && typeof x.args.text === "string" && x.args.text.includes("\\")).length,
     wallMs: turns.reduce((s, t) => s + t.durationMs, 0),
   };
 }

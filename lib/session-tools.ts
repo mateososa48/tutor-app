@@ -73,5 +73,5 @@ export function resolveWorksheet(files: WorksheetFile[], args: Record<string, un
 /** The tool result once the page has been sent. */
 export function worksheetShown(file: WorksheetFile, page: number): string {
   const where = file.pages > 1 ? `, page ${page} of ${file.pages}` : "";
-  return `Here is ${file.label} "${file.name}"${where}: the picture arrived just before this. Put the problem on the board exactly as printed (start_new_problem with problem=), then ask what they already know about it before any first move.`;
+  return `Here is ${file.label} "${file.name}"${where}: the picture arrived just before this. Next: start_new_problem with problem= exactly as printed, then ask what they already know about it.`;
 }
