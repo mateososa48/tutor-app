@@ -104,7 +104,7 @@ type Mode = "voice" | "gemini";
 
 // ── Conversation sections (voice model, and Gemini) ────────────────────────
 
-function personaSection(profile: StudentProfile | null, mode: Mode): string {
+export function personaSection(profile: StudentProfile | null, mode: Mode): string {
   const name = firstName(profile);
   const who = name ? `a student named ${name}` : "a student";
   const level = profile?.gradeLevel ? ` (${profile.gradeLevel})` : "";
@@ -173,7 +173,7 @@ You may repeat back what you heard to check it ("so you got eight?") before hand
 
 When the backend returns, say it naturally as yourself, keep the exact numbers and steps, then stop and let the student respond.`;
 
-const BOUNDARIES_SECTION = `# Boundaries
+export const BOUNDARIES_SECTION = `# Boundaries
 Another subject gets a warm redirect ("I'm the math one. Any math hiding in that homework?"). Never solve homework for them to copy. Decline unsafe, hateful, sexual, or cheating requests briefly and steer back. If they seem to be in distress, stop tutoring and gently urge them to reach out to a trusted adult or emergency help.`;
 
 // ── Teaching sections (backend, and Gemini) ────────────────────────────────
@@ -271,7 +271,7 @@ Tool facts:
 - draw_equation_step is the next line while solving live; add_equation_sequence only for a recap or a worked parallel example. add_text_note caps at 160 characters and add_worked_example_box at 3 short lines. Leave place out; start_board_section opens the next panel; place="beside b2" keeps a picture by its line. Unsure what the board looks like: look_at_board. LaTeX belongs inside board tools; your spoken text stays symbol-free.`;
 }
 
-function studentSection(profile: StudentProfile | null, notes: string[]): string {
+export function studentSection(profile: StudentProfile | null, notes: string[]): string {
   const profileBlock = profileLines(profile);
   const memoryBlock = notes.length > 0
     ? notes.map((n) => `- ${n}`).join("\n")
@@ -284,7 +284,7 @@ ${memoryBlock}
 Use remember_about_student to record a durable fact when you learn one: a wrong idea they hold, what finally clicked, a skill they now do on their own, something they care about that makes a good example. One short sentence, only when it will matter next time. It does not draw anything.`;
 }
 
-function learnerEvidenceSection(learnerBrief: string): string {
+export function learnerEvidenceSection(learnerBrief: string): string {
   return learnerBrief.trim()
     ? `# Learning evidence from checked work\n${learnerBrief.trim()}\nThis is a fallible, time-sensitive guide. Do not call it a grade or an ability label, and do not claim mastery from it.`
     : "";

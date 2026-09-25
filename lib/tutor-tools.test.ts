@@ -114,7 +114,6 @@ test("the flow says what comes next: alone, then why, then harder now", () => {
 });
 
 import { stepOfPage } from "./tutor-tools";
-import { noteBoardWrite } from "./tutor-policy";
 
 test("a checked step inside the problem on the board is not a finished problem", () => {
   const eq = "$3x + 7 = 25$";
