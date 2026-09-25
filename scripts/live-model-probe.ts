@@ -52,7 +52,7 @@ import { SESSION_TOOL_DECLARATIONS } from "../lib/session-tools";
 import { toolScheduling, withToolBehavior } from "../lib/live-tool-behavior";
 import { toolRole } from "../lib/board-items";
 import { TutorRuntime } from "../lib/tutor-runtime";
-import { CONTEXT_WINDOW_COMPRESSION } from "../lib/gemini-live";
+import { CONTEXT_WINDOW_COMPRESSION, liveToolDeclarations } from "../lib/gemini-live";
 import { EMPTY_INTAKE, intakeInstructions, intakeOpeningMessage, type SessionIntake } from "../lib/session-intake";
 
 const env = fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8");
@@ -71,7 +71,8 @@ async function loadInstructions() {
   instructions = promptModule.buildGeminiInstructions({ displayName: "Sam", gradeLevel: "Middle school (6–8)", learningPrefs: {} } as never, [], intake ? { session: intakeInstructions(intake, 0) } : {});
 }
 const conversation: string[] = [];
-const declarations = [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS];
+// The set a session sends since Sept 25 2026 (the Live diet); FULLTOOLS=1 sends every declaration.
+const declarations = process.env.FULLTOOLS ? [...WHITEBOARD_TOOL_DECLARATIONS, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS] : liveToolDeclarations();
 
 type LivePart = { text?: string; thought?: boolean; inlineData?: { data?: string } };
 type LiveMessage = {

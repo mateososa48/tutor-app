@@ -26,7 +26,7 @@ import { LiveTutorSession } from "@/lib/live-tutor";
 import type { LiveTutorCallbacks } from "@/lib/live-tutor";
 import { GeminiTutorSession } from "@/lib/gemini-tutor";
 import { resolveLiveModel, resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
-import { resolveAsyncTools } from "@/lib/live-tool-behavior";
+import { resolveAsyncTools, resolveLiveVad } from "@/lib/live-tool-behavior";
 import { asksToWait, QUIET_CHECKIN_EVENT, QUIET_HINT, quietStep } from "@/lib/quiet-watch";
 import { useTutorSpeed } from "@/components/session/SpeedControl";
 import { tutorSpeedRate } from "@/lib/voice-settings";
@@ -184,6 +184,7 @@ function SessionDetailPage({ id }: { id: string }) {
   const [liveModel] = useState(() => resolveLiveModel(searchParams));
   // Async board tools on Gemini 3.8 (?tools=async), off until a session shows they help.
   const [asyncTools] = useState(() => resolveAsyncTools(searchParams));
+  const [liveVad] = useState(() => resolveLiveVad(searchParams));
   // How fast the tutor's voice plays. Only the Gemini client can change it.
   const [tutorSpeed, setTutorSpeed] = useTutorSpeed();
   const speechRateRef = useRef(tutorSpeedRate(tutorSpeed));
@@ -1071,7 +1072,7 @@ function SessionDetailPage({ id }: { id: string }) {
     };
 
     const live: TutorClient = provider === "gemini"
-      ? new GeminiTutorSession(callbacks, { model: liveModel, runtime: tutorRuntime, asyncTools })
+      ? new GeminiTutorSession(callbacks, { model: liveModel, runtime: tutorRuntime, asyncTools, vad: liveVad })
       : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;
     live.setSpeechRate?.(speechRateRef.current);
@@ -1103,7 +1104,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, asyncTools, tutorRuntime]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, asyncTools, liveVad, tutorRuntime]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);

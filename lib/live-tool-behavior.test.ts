@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BLOCKING_TOOLS, liveToolMode, resolveAsyncTools, toolScheduling, withToolBehavior } from "./live-tool-behavior";
+import { BLOCKING_TOOLS, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior } from "./live-tool-behavior";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
@@ -42,16 +42,26 @@ test("async results: one that worked is filed silently; a refusal or a warning i
   const m = LIVE_MODELS["3.8"];
   assert.equal(toolScheduling(m, "write_step", { success: true, message: "Wrote it (item b3)." }, true), "SILENT");
   assert.equal(toolScheduling(m, "point_at", { success: true }, true), "SILENT");
-  assert.equal(toolScheduling(m, "record_teaching_move", { success: true, message: "[Tutor state: …]" }, true), "SILENT");
+  assert.equal(toolScheduling(m, "record_teaching_move", { success: true, message: "[Tutor state: …]" }, true), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "ask", { success: false }, true), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "draw_figure", { success: true, message: "Drew it. Careful: 6, 8 and 11 cannot make a right triangle." }, true), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "check_answer", { success: true }, true), undefined);
   assert.equal(toolScheduling(m, "look_at_board", { success: true }, true), undefined);
 });
 
-test("?tools=async turns it on", () => {
+test("async tools are the default; ?tools=sync turns them off", () => {
   assert.equal(resolveAsyncTools(new URLSearchParams("tools=async")), true);
   assert.equal(resolveAsyncTools(new URLSearchParams("tools=blocking")), false);
-  assert.equal(resolveAsyncTools(new URLSearchParams("")), false);
-  assert.equal(resolveAsyncTools(null), false);
+  assert.equal(resolveAsyncTools(new URLSearchParams("tools=sync")), false);
+  assert.equal(resolveAsyncTools(new URLSearchParams("")), true);
+  assert.equal(resolveAsyncTools(null), true);
+});
+
+test("a changed state line comes back when the tutor is idle, and ?vad=patient is the only VAD knob", () => {
+  const m = LIVE_MODELS["3.8"];
+  assert.equal(toolScheduling(m, "draw_fraction", { success: true, message: "Drew it (b2). [Tutor state: step TOGETHER · next: …]" }, true), "WHEN_IDLE");
+  assert.equal(toolScheduling(m, "draw_fraction", { success: true, message: "Drew it (b2)." }, true), "SILENT");
+  assert.deepEqual(resolveLiveVad(new URLSearchParams("vad=patient")), { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", silenceDurationMs: 1200 });
+  assert.equal(resolveLiveVad(new URLSearchParams("")), undefined);
+  assert.equal(resolveLiveVad(null), undefined);
 });

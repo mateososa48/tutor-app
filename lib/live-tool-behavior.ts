@@ -41,10 +41,37 @@ export function toolScheduling(model: string, name: string, result: { success: b
   if (!asyncTools || liveToolMode(model) !== "scheduled" || BLOCKING_TOOLS.has(name)) return undefined;
   if (!result.success) return "WHEN_IDLE";
   if (/\bCareful:/.test(result.message ?? "")) return "WHEN_IDLE";
+  // A changed [Tutor state] is an order for the next move: heard when the
+  // tutor is done talking, not filed away (Sept 25 2026).
+  if (/\[Tutor state:/.test(result.message ?? "")) return "WHEN_IDLE";
   return "SILENT";
 }
 
-/** `?tools=async` turns the async design on for one tab. */
+/**
+ * Async tools are on by default (Sept 25 2026: with every tool blocking, 3.8
+ * drew everything first, one call at a time, and read the whole context per
+ * call); `?tools=sync` puts a tab back to every tool blocking.
+ */
 export function resolveAsyncTools(search: { get(name: string): string | null } | null | undefined): boolean {
-  return search?.get("tools")?.trim().toLowerCase() === "async";
+  const v = search?.get("tools")?.trim().toLowerCase();
+  return !(v === "sync" || v === "blocking");
+}
+
+/** The server's voice activity detection knobs, for a spoken-session test (Phase 5 of the 3.8 plan). */
+export type LiveVadConfig = {
+  disabled?: boolean;
+  startOfSpeechSensitivity?: "START_SENSITIVITY_LOW" | "START_SENSITIVITY_HIGH";
+  endOfSpeechSensitivity?: "END_SENSITIVITY_LOW" | "END_SENSITIVITY_HIGH";
+  prefixPaddingMs?: number;
+  silenceDurationMs?: number;
+};
+
+/**
+ * `?vad=patient` waits longer before deciding a kid has finished talking;
+ * nothing is sent otherwise, so the server's defaults stand untouched.
+ */
+export function resolveLiveVad(search: { get(name: string): string | null } | null | undefined): LiveVadConfig | undefined {
+  const v = search?.get("vad")?.trim().toLowerCase();
+  if (v === "patient") return { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", silenceDurationMs: 1200 };
+  return undefined;
 }

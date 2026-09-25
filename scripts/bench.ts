@@ -148,8 +148,11 @@ type Part = { text: string } | { inlineData: { mimeType: string; data: string } 
 const UNANSWERED_EVENT =
   "Session event: the student just answered and you have not replied. Reply now in a sentence or two and go on with the lesson; if what they said was only \"ok\" or \"yeah\", take it as ready and give them the next thing to do.";
 const TURN_DEBOUNCE_MS = 1_600; // the client's TURN_FINISH_DEBOUNCE_MS
-const TOOL_TIMEOUT_MS = 3_000; // the client's TOOL_TIMEOUT_MS
-const UNANSWERED_MS = 5_000; // typed input
+const TOOL_TIMEOUT_MS = 3_000; // the client's TOOL_TIMEOUT_MS (blocking tools)
+const UNANSWERED_MS = 4_000; // typed input
+const AFTER_TOOL_MS = 6_000; // the client re-arms the nudge after a silent tool result
+const ESCALATE_MS = 10_000; // one escalation after an unanswered nudge
+const ESCALATE_EVENT = "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing.";
 const TURN_CAP_MS = 75_000;
 
 type LiveTurn = {
@@ -252,6 +255,7 @@ class LiveTutor {
     this.turn = LiveTutor.emptyTurn();
     this.turnStart = Date.now();
     this.turnCompleteSeen = false;
+    this.nudges = 0;
     this.send({ clientContent: { turns: [{ role: "user", parts }], turnComplete: true } });
     if (arm) this.armUnanswered();
     this.cap = setTimeout(() => { this.turn.timedOut = true; this.finishTurn(); }, TURN_CAP_MS);
@@ -267,14 +271,18 @@ class LiveTutor {
     this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: false } });
   }
 
-  private armUnanswered() {
+  private nudges = 0;
+  private armUnanswered(afterMs = UNANSWERED_MS) {
     this.clearUnanswered();
-    this.unanswered = setTimeout(() => {
-      this.unanswered = null;
-      if (this.turn.audioChunks > 0 || this.turn.tools.length > 0) return;
-      this.turn.nudged = true;
-      this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: UNANSWERED_EVENT }] }], turnComplete: true } });
-    }, UNANSWERED_MS);
+    this.unanswered = setTimeout(() => { this.unanswered = null; this.nudgeNow(); }, afterMs);
+  }
+  // As the client does: at most twice a line, never once audio has come.
+  private nudgeNow() {
+    if (this.turn.audioChunks > 0 || this.nudges >= 2) return;
+    this.nudges += 1;
+    this.turn.nudged = true;
+    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: this.nudges === 1 ? UNANSWERED_EVENT : ESCALATE_EVENT }] }], turnComplete: true } });
+    if (this.nudges === 1) this.armUnanswered(ESCALATE_MS);
   }
   private clearUnanswered() {
     if (this.unanswered) clearTimeout(this.unanswered);
@@ -308,6 +316,7 @@ class LiveTutor {
           if (VERBOSE) console.log(`      ${ms}ms ${c.name}(${JSON.stringify(c.args ?? {}).slice(0, 100)}) ${result.success ? "→" : "✗"} ${rec.result.split("\n")[0].slice(0, 120)}`);
           const scheduling = this.scheduling(c.name, result);
           this.send({ toolResponse: { functionResponses: [{ id, name: c.name, response: { output: result }, ...(scheduling ? { scheduling } : {}) }] } });
+          if (this.turn.audioChunks === 0) this.armUnanswered(AFTER_TOOL_MS);
         });
       }
       return;
@@ -324,7 +333,11 @@ class LiveTutor {
     }
     if (sc.outputTranscription?.text) { this.turn.said += sc.outputTranscription.text; this.bump(); }
     if (sc.interrupted) this.turn.interrupted = true;
-    if (sc.turnComplete) { this.turnCompleteSeen = true; this.bump(); }
+    if (sc.turnComplete) {
+      this.turnCompleteSeen = true;
+      if (this.turn.audioChunks === 0 && this.nudges === 0 && this.pendingTools === 0) { this.clearUnanswered(); this.nudgeNow(); }
+      this.bump();
+    }
   }
 
   // A turn is over once the model said turnComplete and nothing new (audio,
@@ -335,8 +348,8 @@ class LiveTutor {
     this.debounce = setTimeout(() => {
       this.debounce = null;
       if (!this.turnCompleteSeen || this.pendingTools > 0) return;
-      if (this.turn.audioChunks === 0 && !this.turn.nudged) return;
-      if (this.turn.audioChunks === 0 && this.turn.nudged && Date.now() - this.turnStart < UNANSWERED_MS + 15_000) return;
+      if (this.turn.audioChunks === 0 && this.nudges < 2) return;
+      if (this.turn.audioChunks === 0 && Date.now() - this.turnStart < UNANSWERED_MS + ESCALATE_MS + 12_000) return;
       this.finishTurn();
     }, TURN_DEBOUNCE_MS);
   }

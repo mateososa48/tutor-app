@@ -1,3 +1,4 @@
+import type { LiveVadConfig } from "./live-tool-behavior";
 import { DEFAULT_LIVE_MODEL, GeminiLiveSession } from "./gemini-live";
 import { joinTranscript } from "./live-events";
 import { AudioCapture, AudioPlayer, quietFrame } from "./audio";
@@ -69,7 +70,7 @@ export class GeminiTutorSession {
 
   readonly boardFrames = "auto" as const;
 
-  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean } = {}) {}
+  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig } = {}) {}
 
   /** The Live model this session runs, for the recording and the QA chip. */
   get model(): string {
@@ -212,7 +213,7 @@ export class GeminiTutorSession {
         },
         onDebugEvent: (event) => this.callbacks.onDebugEvent?.(event),
       },
-      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools },
+      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools, vad: this.options.vad },
     );
     this.session = session;
 

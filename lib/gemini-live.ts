@@ -6,7 +6,7 @@ import { toolRole } from "./board-items";
 import { hasBoundarySpace, joinTranscript } from "./live-events";
 import { formatMemory, formatTutorState } from "./tutor-policy";
 import { TutorRuntime } from "./tutor-runtime";
-import { toolScheduling, withToolBehavior, type ToolScheduling } from "./live-tool-behavior";
+import { BLOCKING_TOOLS, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
@@ -171,36 +171,70 @@ export class GeminiLiveSession {
   // (Sept 24: two typed answers sat 11 s and 22 s): its words are complete the
   // moment they are sent, where speech needs 3.8 to hear the student finish.
   private unansweredTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly UNANSWERED_MS = { text: 5_000, voice: 8_000 } as const;
+  private static readonly UNANSWERED_MS = { text: 4_000, voice: 8_000 } as const;
+  // Sept 25 2026, from the benchmark: 3.8 sat 48 s after a tool result (the
+  // nudge was disarmed by the call and never re-armed) and 54 s after a nudge
+  // it did not answer. So a tool result with no audio yet re-arms the nudge,
+  // a silent turnComplete nudges at once, and one escalation follows.
+  private static readonly AFTER_TOOL_MS = 6_000;
+  private static readonly ESCALATE_MS = 10_000;
+  private turnHadAudio = false;
+  private awaitingReply = false;
+  private nudgesThisTurn = 0;
+  private lastInputKind: "text" | "voice" = "voice";
   private usageSamples = 0;
   private seenMessageKeys = new Set<string>();
 
   private static readonly MAX_RECONNECT_ATTEMPTS = 4;
   private static readonly TURN_FINISH_DEBOUNCE_MS = 1_600;
-  // Every tool blocks the model until it answers; nothing may hold it longer.
+  // A blocking tool holds the model until it answers; nothing may hold it
+  // longer. An async tool runs while the tutor talks and may take a little more.
   private static readonly TOOL_TIMEOUT_MS = 3_000;
+  private static readonly ASYNC_TOOL_TIMEOUT_MS = 6_000;
+  private readonly vad: LiveVadConfig | undefined;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean }) {
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig }) {
     this.callbacks = callbacks;
     this.systemInstruction = options.systemInstruction;
     this.voiceName = options.voiceName;
     this.model = options.model?.trim() || DEFAULT_LIVE_MODEL;
     this.asyncTools = options.asyncTools === true;
+    this.vad = options.vad;
     this.tutorRuntime = options.runtime ?? new TutorRuntime();
     this.turns = new TurnTracker(this.model, (summary) => this.debug("turn", "turn_summary", summary as unknown as Record<string, unknown>));
   }
 
-  private armUnanswered(kind: "text" | "voice") {
+  // A new line from the student: nothing heard back yet, no nudge sent yet.
+  private newStudentInput(kind: "text" | "voice") {
+    this.lastInputKind = kind;
+    this.turnHadAudio = false;
+    this.awaitingReply = true;
+    this.nudgesThisTurn = 0;
+  }
+
+  private armUnanswered(kind: "text" | "voice", afterMs: number = GeminiLiveSession.UNANSWERED_MS[kind]) {
     this.clearUnanswered();
     this.unansweredTimer = setTimeout(() => {
       this.unansweredTimer = null;
-      if (this.manualDisconnect) return;
-      this.debug("turn", "nudge_unanswered", { kind, afterMs: GeminiLiveSession.UNANSWERED_MS[kind] });
-      this.sendUserTurn(
-        [{ text: "Session event: the student just answered and you have not replied. Reply now in a sentence or two and go on with the lesson; if what they said was only \"ok\" or \"yeah\", take it as ready and give them the next thing to do." }],
-        "event",
-      );
-    }, GeminiLiveSession.UNANSWERED_MS[kind]);
+      this.nudgeNow(kind, afterMs);
+    }, afterMs);
+  }
+
+  // The nudge itself, at most twice a student line: the second time it says
+  // the student is waiting. Nothing when audio has already come.
+  private nudgeNow(kind: "text" | "voice", afterMs: number) {
+    if (this.manualDisconnect || this.turnHadAudio || !this.awaitingReply || this.nudgesThisTurn >= 2) return;
+    this.nudgesThisTurn += 1;
+    this.debug("turn", this.nudgesThisTurn === 1 ? "nudge_unanswered" : "nudge_escalated", { kind, afterMs });
+    this.sendUserTurn(
+      [{
+        text: this.nudgesThisTurn === 1
+          ? "Session event: the student just answered and you have not replied. Reply now in a sentence or two and go on with the lesson; if what they said was only \"ok\" or \"yeah\", take it as ready and give them the next thing to do."
+          : "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing.",
+      }],
+      "event",
+    );
+    if (this.nudgesThisTurn === 1) this.armUnanswered(kind, GeminiLiveSession.ESCALATE_MS);
   }
 
   private clearUnanswered() {
@@ -339,6 +373,7 @@ export class GeminiLiveSession {
         outputAudioTranscription: {},
         sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
         contextWindowCompression: CONTEXT_WINDOW_COMPRESSION,
+        ...(this.vad ? { realtimeInputConfig: { automaticActivityDetection: this.vad } } : {}),
       },
     });
   }
@@ -353,6 +388,7 @@ export class GeminiLiveSession {
 
   sendText(text: string): boolean {
     this.tutorRuntime.noteStudentUtterance(text);
+    this.newStudentInput("text");
     const sent = this.sendUserTurn([{ text }], "text");
     if (sent) this.armUnanswered("text");
     return sent;
@@ -464,6 +500,7 @@ export class GeminiLiveSession {
     this.clearTurnTimer();
     this.turns.noteStudentVoice(Date.now());
     // Restarted by every fragment, so it counts from when they stop talking.
+    this.newStudentInput("voice");
     this.armUnanswered("voice");
     this.studentUtterance = joinTranscript(this.studentUtterance, text, this.spacedTranscripts);
     this.tutorTurnText = "";
@@ -701,6 +738,8 @@ export class GeminiLiveSession {
         const inlineData = part.inlineData as Record<string, unknown> | undefined;
         if (typeof inlineData?.data === "string") {
           this.turns.noteAudio(pcmBase64Ms(inlineData.data), now);
+          this.turnHadAudio = true;
+          this.awaitingReply = false;
           this.clearUnanswered();
           this.callbacks.onAudio(inlineData.data);
         }
@@ -738,6 +777,11 @@ export class GeminiLiveSession {
         if (this.turns.finish("turn_complete", now)) this.scheduleTurnFlush();
         this.finishTutorTurn();
         this.callbacks.onTurnComplete?.();
+        // The model declared itself done without a sound: nudge now, not later.
+        if (this.awaitingReply && !this.turnHadAudio && this.nudgesThisTurn === 0) {
+          this.clearUnanswered();
+          this.nudgeNow(this.lastInputKind, 0);
+        }
       }
     }
 
@@ -817,7 +861,7 @@ export class GeminiLiveSession {
         const timeout = new Promise<ToolCallResult>((resolve) => {
           timer = setTimeout(
             () => resolve({ success: false, error: "That took too long to finish; carry on and try it again later if you still need it." }),
-            GeminiLiveSession.TOOL_TIMEOUT_MS,
+            this.asyncTools && !BLOCKING_TOOLS.has(name) ? GeminiLiveSession.ASYNC_TOOL_TIMEOUT_MS : GeminiLiveSession.TOOL_TIMEOUT_MS,
           );
         });
         result = await Promise.race([Promise.resolve(this.callbacks.onToolCall(name, args, id)), timeout]);
@@ -867,6 +911,8 @@ export class GeminiLiveSession {
       scheduling,
     });
     this.sendToolResponse(id, name, result, scheduling);
+    // A result with no sound yet: the nudge was disarmed by the call, so it is armed again.
+    if (this.awaitingReply && !this.turnHadAudio) this.armUnanswered(this.lastInputKind, GeminiLiveSession.AFTER_TOOL_MS);
   }
 
   private send(obj: unknown): boolean {
