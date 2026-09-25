@@ -362,4 +362,16 @@ const explore: DemoCall[] = [
   { name: "add_number_line", args: { min: 0, max: 10, points: "3,7", label: "not explorable" } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, all };
+// The session plan's box (Sept 24 2026): written once, moved on, kept across a new page.
+const plan: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Fractions" } },
+  { name: "set_plan", args: { steps: "What fractions are | Adding them | Practice" } },
+  { name: "draw_fraction", args: { fraction: "1/4", model: "bar", label: "one fourth" } },
+  { name: "add_callout", args: { text: "Which number says how many pieces?" } },
+  { name: "set_plan", args: { step: 2 } },
+  { name: "start_new_problem", args: { title: "Adding fractions" } },
+  { name: "draw_equation_step", args: { latex: "\\frac{1}{4} + \\frac{2}{4} = ?" } },
+  { name: "set_plan", args: { step: 3 } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };

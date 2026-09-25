@@ -53,6 +53,7 @@ import { compareEvents } from "@/lib/session-recording";
 import { joinTranscript } from "@/lib/live-events";
 import { TutorRuntime } from "@/lib/tutor-runtime";
 import { boardFontsSettled, loadBoardFonts } from "@/lib/board-fonts";
+import { stepOfPage } from "@/lib/tutor-tools";
 import { LearningRecorder, loadSessionLearning } from "@/lib/learning-client";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
@@ -333,8 +334,12 @@ function SessionDetailPage({ id }: { id: string }) {
     learningRecorderRef.current = learningRecorder;
     tutorRuntime.setEventSink((event) => {
       learningRecorder.record(event);
-      // A checked right answer: the pet hops (the tutor writes and rings it).
-      if (event.type === "attempt.recorded" && event.attempt.result === "correct") setCelebrateKey((k) => k + 1);
+      // A checked right answer: the pet hops (the tutor writes and rings it),
+      // and a finished problem (not a step of it) checks the plan's step.
+      if (event.type === "attempt.recorded" && event.attempt.result === "correct") {
+        setCelebrateKey((k) => k + 1);
+        if (!stepOfPage(tutorRuntime.policy.pageProblem, event.attempt.problem, event.attempt.studentAnswer)) whiteboardRef.current?.planAnswered?.();
+      }
     });
     // Their spoken working, passed with check_answer: written in their hand
     // before the answer (Sept 24 2026; the nudge to write it as a step was

@@ -193,7 +193,7 @@ export function intakeInstructions(intake: SessionIntake, fileCount: number): st
     );
   }
   lines.push(
-    `The plan comes only once you know where they are: two to four short steps ("what fractions are, then adding them, then practice"), said in one breath, then the first step. Never a plan or a problem in your first reply.`,
+    `The plan comes only once you know where they are: two to four short steps, said in one breath and written with set_plan ("What fractions are | Adding them | Practice"), then the first step; set_plan(step=2) when you move on. Never a plan or a problem in your first reply.`,
   );
   return lines.join("\n");
 }

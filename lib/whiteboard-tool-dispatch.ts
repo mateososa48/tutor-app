@@ -1,4 +1,5 @@
 import type { WhiteboardHandle } from "@/components/TldrawCore";
+import { parsePlan, planSummary, PLAN_MAX_STEPS, validStep } from "@/lib/board-plan";
 import {
   clamp,
   type IconArrange,
@@ -154,6 +155,28 @@ export function dispatchWhiteboardTool(
   args: Args,
   ctx: DispatchCtx,
 ): ToolCallResult {
+  // The session plan (Sept 24 2026): a box at the top right, not an item.
+  // Steps once after the opening, then `step` to move on.
+  if (name === "set_plan") {
+    const board = ctx.whiteboard;
+    if (!board?.setPlan) return fail("This board cannot show a plan.");
+    const rawSteps = Array.isArray(args.steps) ? args.steps : typeof args.steps === "string" && args.steps.trim() ? args.steps : null;
+    const parsed = rawSteps ? parsePlan(rawSteps) : null;
+    if (rawSteps && !parsed) return fail(`"steps" has no steps in it: give 2-4 short steps separated by " | " ('What fractions are | Adding them | Practice').`);
+    const count = parsed?.steps.length ?? board.plan?.()?.steps.length ?? 0;
+    const notes: string[] = [];
+    let step: number | undefined;
+    if (args.step !== undefined && args.step !== null && args.step !== "") {
+      const n = typeof args.step === "number" ? args.step : typeof args.step === "string" && /^\s*\d+\s*$/.test(args.step) ? Number(args.step) : NaN;
+      if (validStep(n, count)) step = n;
+      else notes.push(count > 0 ? `step ${String(args.step)} was ignored: the plan has ${count} steps` : "step was ignored: there is no plan yet");
+    }
+    if (!parsed && step === undefined) return fail('Give "steps" (2-4, split by " | ") to write the plan, or "step" to move on to the next one.');
+    if (parsed && parsed.dropped > 0) notes.push(`kept the first ${PLAN_MAX_STEPS} steps`);
+    const { plan } = board.withDirectMeta({ owner: "tutor" }, () => board.setPlan!(parsed?.steps, step));
+    const said = parsed ? "The plan is in its box on the board. Say it in one breath, then start the first step." : `Moved on to step ${step} of the plan.`;
+    return ok(`${said} ${planSummary(plan)}${notes.length ? ` (${notes.join("; ")})` : ""}`);
+  }
   const board = ctx.whiteboard;
   const token = board ? board.beginItem(name, ctx.callId) : null;
   // Where the new item goes: the tutor's `place`, else its older `column`.

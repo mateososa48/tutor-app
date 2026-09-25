@@ -23,10 +23,11 @@ export const LIVE_MODELS: Record<string, string> = {
   "3.8-thinking": "gemini-3.8-live-extended-thinking",
 };
 
-// 3.1 stays the default (Sept 25 2026): with the same prompt it makes a board
-// move on every turn where 3.8 makes one on three in four, and 3.8 went silent
-// after tool calls in the last recorded session. `?live=3.8` opens the new one.
-export const DEFAULT_LIVE_MODEL = LIVE_MODELS["3.1"];
+// 3.8 (Mateo, Sept 24 2026: "we wanna use 3.8, not the thinking model").
+// Measured on the probe, 3.8 makes a board move on three turns in four where
+// 3.1 makes one on every turn, and it once went silent after tool calls (the
+// unanswered-answer nudge covers that). `?live=3.1` opens the old model.
+export const DEFAULT_LIVE_MODEL = LIVE_MODELS["3.8"];
 
 // Live bills every token in the session's context on every turn, and by
 // default only trims it at 80% of the 131k window, so a long session keeps

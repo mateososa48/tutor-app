@@ -212,7 +212,7 @@ const ALL_TOOL_DECLARATIONS = [
   {
     name: "draw_figure",
     description:
-      "Draw a clean geometry figure with labels: triangle, right triangle, square, rectangle, circle, parallelogram, trapezoid, rhombus, pentagon, hexagon, or a 3D rectangular prism, cube, or cylinder. Labels go on sides, vertices, angles, radius, diameter, or the height. Use for area, perimeter, Pythagoras, angles in a polygon, similar shapes, circles, volume and surface area, and any 'picture the shape' moment.",
+      "Draw a clean geometry figure with labels: triangle, right triangle, square, rectangle, circle, parallelogram, trapezoid, rhombus, pentagon, hexagon, or a 3D rectangular prism, cube, or cylinder. Labels go on sides, vertices, angles, radius, diameter, or the height. For area, perimeter, Pythagoras, angles, similar shapes, circles, volume and surface area.",
     parameters: {
       type: "object",
       properties: {
@@ -459,6 +459,18 @@ const ALL_TOOL_DECLARATIONS = [
     },
   },
   {
+    name: "set_plan",
+    description:
+      "The session plan in a box on the board, once, after the opening: 2-4 short steps. Later step=N moves on (earlier steps done); a step also turns green when a checked answer finishes a problem in it.",
+    parameters: {
+      type: "object",
+      properties: {
+        steps: { type: "string", description: "2-4 steps split by ' | ': 'What fractions are | Adding them | Practice'." },
+        step: { type: "number", description: "Now on step N (1-based)." },
+      },
+    },
+  },
+  {
     name: "add_worked_example_box",
     description: "A boxed key idea or worked example: a title and up to 3 short lines. For a rule worth keeping or a model problem, never for a paragraph of explanation. Say the explanation out loud instead.",
     parameters: {
@@ -561,7 +573,7 @@ const ALL_TOOL_DECLARATIONS = [
   {
     name: "draw_icons",
     description:
-      "Draw rows of real things: apples, coins, pizzas, cars, cats, cookies, balloons and so on. THE picture for counting, equal groups, sharing, multiplication as groups, taking away (crossed), comparing two amounts (second_icon), and for an everyday analogy when the abstract version is not landing. Twelve cookies in groups of three is a picture of 12 ÷ 3.",
+      "Draw rows of real things: apples, coins, pizzas, cars, cats, cookies, balloons and so on. THE picture for counting, equal groups, sharing, multiplication as groups, taking away (crossed), comparing two amounts (second_icon), and everyday analogies. Twelve cookies in groups of three is a picture of 12 ÷ 3.",
     parameters: {
       type: "object",
       properties: {
@@ -586,7 +598,7 @@ const ALL_TOOL_DECLARATIONS = [
   {
     name: "draw_sketch",
     description:
-      "The fallback picture, for any topic the other tools do not cover: a clock face, a garden plot with a path, a ladder against a wall, a shape made of two rectangles, a simple map. Reach for this rather than writing a paragraph: a topic with no picture tool of its own is still a topic to draw. Strokes are polylines in a 0-100 box (x right, y down). Keep it to a few strokes and label the parts. Use a dedicated tool (draw_fraction, draw_figure, add_number_line) when one fits.",
+      "The fallback picture for any topic the other tools do not cover: a clock face, a garden plot, a ladder against a wall, a simple map. Draw it rather than writing a paragraph. Strokes are polylines in a 0-100 box (x right, y down): a few strokes, labelled. Use a dedicated tool when one fits.",
     parameters: {
       type: "object",
       properties: {

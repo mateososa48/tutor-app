@@ -54,7 +54,8 @@ test("backend instructions carry the profile, memory notes, and the output contr
   // block and shortening backchannel and boundaries. A new rule pays for itself.
   assert.ok(text.length < 19600, `backend prompt too long: ${text.length}`);
   const gemini = buildGeminiInstructions(profile, ["mixes up numerator and denominator"]);
-  assert.ok(gemini.length < 21000, `gemini prompt too long: ${gemini.length}`);
+  // 21,300 since set_plan (Sept 24, Mateo's plan box): its two lines.
+  assert.ok(gemini.length < 21300, `gemini prompt too long: ${gemini.length}`);
 });
 
 test("what recorded sessions got wrong is now a rule", () => {

@@ -39,6 +39,8 @@ import { TutorPenOverlayUtil, TutorScribbleOverlayUtil } from "@/components/boar
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
 import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
 import { GraphShapeUtil, type TLGraphShape, type TLGraphShapeProps } from "@/components/board/GraphShape";
+import { PlanShapeUtil, measurePlanBox, type TLPlanShape } from "@/components/board/PlanShape";
+import { planAfterCorrect, planAfterStart, planSummary, readPlan, type BoardPlan } from "@/lib/board-plan";
 import { desmosAvailable, desmosFailure, desmosStatus, devParam, renderDesmosGraph } from "@/components/board/desmos-renderer";
 import { buildBarChartGraph } from "@/lib/desmos-bar-chart";
 import { exploreHint, hasExploreControls, isExplorable } from "@/lib/desmos-explore";
@@ -59,7 +61,7 @@ import {
 } from "@/lib/desmos-spec";
 
 const OVERLAY_UTILS = [TutorPenOverlayUtil, TutorScribbleOverlayUtil];
-const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil];
+const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil, PlanShapeUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -131,6 +133,10 @@ type TldrawColor = TLDefaultColorStyle;
 const LEFT_X = 60;
 const RIGHT_X = 640;
 const START_Y = 108;
+// A viewport this narrow (a phone) sees only the left of the page.
+const NARROW_BOARD = 640;
+// The page heading's height with its rule, where a phone's plan box starts.
+const HEADING_H = 72;
 const ROW_GAP = 16;
 const EQ_H = 52;
 const EQ_ROW_GAP = 8;
@@ -293,6 +299,8 @@ export interface WhiteboardSnapshot {
   semanticBoard?: SemanticBoard;
   /** `section`: the current section's writing area; `rowTop`: where its row of sections starts. `sectionTop`: snapshots before Sept 16 2026. */
   pageState: { pageIndex: number; pageTop: number; leftY: number; rightY: number; frame?: Rect; section?: Rect | null; rowTop?: number | null; sectionTop?: number };
+  /** The session plan (set_plan), so a resumed session keeps its box. */
+  plan?: BoardPlan;
   /** Board items (b1, b2, …) so a resumed session keeps its ids. */
   items?: BoardItem[];
   itemSeq?: number;
@@ -302,6 +310,11 @@ export type StepTarget = { step_label?: string; step_index?: number };
 
 export interface WhiteboardHandle {
   startNewProblem(title: string): void;
+  /** The session plan in its box (set_plan): new steps, or the step they are on now. */
+  setPlan?(steps?: string[] | null, step?: number): { plan: BoardPlan | null; ignoredStep: boolean };
+  plan?(): BoardPlan | null;
+  /** A checked right answer finished a problem: the plan's current step is done. */
+  planAnswered?(): void;
   startBoardSection(title: string, freshPage?: boolean): void;
   drawEquationStep(latex: string, annotation?: string, column?: "left" | "right"): void;
   addTextNote(text: string, size?: "heading" | "body", column?: "left" | "right"): void;
@@ -826,6 +839,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const notesRef = useRef<string[]>([]);
   const placeRequestRef = useRef<PlaceRequest | null>(null);
   const placedRectsRef = useRef<Map<string, Rect>>(new Map());
+  // The session plan and its box (components/board/PlanShape): not an item,
+  // kept across pages, drawn again at the top right of each one.
+  const planRef = useRef<BoardPlan | null>(null);
+  const planShapeRef = useRef<TLShapeId | null>(null);
   const buildingItemRef = useRef(false);
   const pendingIsPageRef = useRef(false);
   // A lone item too wide for a phone at the readable zoom: framed tight, a little further out.
@@ -1448,15 +1465,23 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   );
 
   // Everything on this page that new work must not cover, the dock first.
+  const planBoxRect = useCallback((editor: Editor): Rect | null => {
+    const id = planShapeRef.current;
+    const b = id ? editor.getShapePageBounds(id) : null;
+    return b ? { x: b.x, y: b.y, w: b.w, h: b.h } : null;
+  }, []);
+
   const occupiedOn = useCallback((editor: Editor, frame: Rect, exclude?: string): Rect[] => {
     const out: Rect[] = [dockBlock(frame)];
+    const pb = planBoxRect(editor);
+    if (pb && onPage(pb, frame)) out.push(pb);
     for (const item of itemsRef.current) {
       if (item.id === exclude) continue;
       const r = rectOf(editor, item);
       if (r && onPage(r, frame)) out.push(r);
     }
     return out;
-  }, [rectOf]);
+  }, [planBoxRect, rectOf]);
 
   // How many of a page's nine cells hold work: headings count by their words
   // (their rows are kept clear, not written on) and the dock not at all.
@@ -2606,6 +2631,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         else if (item.tool === "start_board_section") content.push(itemBounds(editor, item) ?? r);
         else content.push(r);
       }
+      const pb = planBoxRect(editor);
+      if (pb && onPage(pb, frame)) content.push(pb);
       const below = { x: page.x, y: headBottom, w: page.w, h: Math.max(0, page.y + page.h - headBottom) };
       return { page, content, below, dock: dockBlock(frame) };
     };
@@ -2675,6 +2702,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         items: [...itemsRef.current],
         itemSeq: itemSeqRef.current,
         semanticBoard: semanticBoardRef.current,
+        plan: planRef.current ?? undefined,
         pageState: {
           pageIndex: pageIndex.current,
           pageTop: pageTop.current,
@@ -2687,7 +2715,68 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       };
     };
 
+    // The plan's box at the top right of the current page (PlanShape). Drawn
+    // fresh on every page; refreshed in place when a step changes state.
+    const drawPlanBox = (editor: Editor, animate: boolean): Rect | null => {
+      const old = planShapeRef.current;
+      if (old && editor.getShape(old)) editor.deleteShape(old);
+      planShapeRef.current = null;
+      const plan = planRef.current;
+      if (!plan || plan.steps.length === 0) return null;
+      const usable = usableArea(ensurePageFrame(editor));
+      const { w, h } = measurePlanBox(plan);
+      // Top right of the page on a laptop. A phone shows only the left of the
+      // 900px page, so there the box goes under the heading, on the left;
+      // placement keeps new work clear of it either way (occupiedOn).
+      const narrow = editor.getViewportScreenBounds().w < NARROW_BOARD;
+      const x = narrow ? usable.x : usable.x + usable.w - w;
+      const y = narrow ? usable.y + HEADING_H + 16 : usable.y;
+      const id = createShapeId();
+      const fade = animate && !prefersReducedMotion();
+      editor.createShape({ id, type: "plan", x, y, opacity: fade ? 0 : 1, props: { w, h, data: JSON.stringify(plan) }, meta: { plan: true } } as unknown as Parameters<Editor["createShape"]>[0]);
+      if (fade) editor.animateShape({ id, type: "plan", opacity: 1 } as unknown as Parameters<Editor["animateShape"]>[0], { animation: { duration: 450 } });
+      planShapeRef.current = id;
+      return { x, y, w, h };
+    };
+    const refreshPlanBox = (editor: Editor) => {
+      const id = planShapeRef.current;
+      const plan = planRef.current;
+      const shape = id ? (editor.getShape(id) as TLPlanShape | undefined) : undefined;
+      if (!plan || !shape || shape.type !== "plan") {
+        drawPlanBox(editor, true);
+        return;
+      }
+      const { w, h } = measurePlanBox(plan);
+      editor.run(() => editor.updateShapes([{ id: shape.id, type: "plan", props: { w, h, data: JSON.stringify(plan) } }] as unknown as Parameters<Editor["updateShapes"]>[0]), { history: "ignore" });
+    };
+
     const api: WhiteboardHandle = {
+      setPlan(steps, step) {
+        const editor = editorRef.current;
+        const next = planAfterStart(planRef.current, steps, step);
+        planRef.current = next.plan;
+        if (editor) {
+          const isNew = !planShapeRef.current || Boolean(steps && steps.length);
+          if (isNew) {
+            const r = drawPlanBox(editor, true);
+            if (r) focusOn(editor, r.x - 24, r.y - 16, r.w + 48, r.h + 32);
+          } else refreshPlanBox(editor);
+        }
+        return { plan: next.plan, ignoredStep: next.ignoredStep };
+      },
+
+      plan() {
+        return planRef.current;
+      },
+
+      planAnswered() {
+        const editor = editorRef.current;
+        const next = planAfterCorrect(planRef.current);
+        if (!next.changed) return;
+        planRef.current = next.plan;
+        if (editor) refreshPlanBox(editor);
+      },
+
     clearWhiteboard() {
       const editor = editorRef.current;
       if (!editor) return;
@@ -2708,6 +2797,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       rowTopRef.current = null;
       currentSectionRef.current = null;
       placedRectsRef.current.clear();
+      planShapeRef.current = null;
+      drawPlanBox(editor, false);
     },
 
     startNewProblem(title: string) {
@@ -2738,9 +2829,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       rowTopRef.current = null;
       currentSectionRef.current = null;
       placedRectsRef.current.clear();
-      // A fresh page the size of the visible board, headed at its top left.
+      planShapeRef.current = null;
+      // A fresh page the size of the visible board, headed at its top left,
+      // the plan's box at its top right (the heading keeps clear of it).
       const usable = usableArea(ensurePageFrame(editor));
-      const headW = Math.min(1120, usable.w);
+      const narrow = editor.getViewportScreenBounds().w < NARROW_BOARD;
+      const planW = !narrow && planRef.current?.steps.length ? measurePlanBox(planRef.current).w + 24 : 0;
+      const headW = Math.min(1120, usable.w - planW);
       // Ink heading with a thin pencil rule, the way a board title is written.
       const measured = measureText(editor, title, "sans", "xl", headW);
       editor.createShape({
@@ -2767,6 +2862,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         { type: "start_new_problem", title },
         { bounds: { x: usable.x, y: usable.y, w: titleW, h: 80, column: "full", pageIndex: pageIndex.current } },
       );
+      drawPlanBox(editor, false);
     },
 
     startBoardSection(title: string, freshPage?: boolean) {
@@ -4390,10 +4486,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     },
 
     getBoardSummary() {
+      const planLine = planSummary(planRef.current);
+      const withPlan = (text: string) => (planLine ? `${planLine}. ${text}` : text);
       const editor = editorRef.current;
       const title = semanticBoardRef.current.title;
       const frame = pageFrameRef.current;
-      if (!editor || !frame || itemsRef.current.length === 0) return formatBoardItems(itemsRef.current, title);
+      if (!editor || !frame || itemsRef.current.length === 0) return withPlan(formatBoardItems(itemsRef.current, title));
       // Where each item sits and where the page is still empty, in words, on
       // the page area a named `place` resolves against. Work on another page
       // says which page it is on.
@@ -4429,13 +4527,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           if (notes.length > 0) issues[item.id] = notes.join("; ");
         }
       }
-      return formatBoardItems(itemsRef.current, title, 10, {
+      return withPlan(formatBoardItems(itemsRef.current, title, 10, {
         places,
         free: freeSpace([...here, dockBlock(frame)], usable),
         page: pageIndex.current,
         seen: visiblePage(editor, frame, pageIndex.current),
         issues,
-      });
+      }));
     },
 
     beginItem(tool: string, callId?: string): ItemToken {
@@ -4827,6 +4925,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       rowTopRef.current = snap.pageState?.rowTop ?? null;
       currentSectionRef.current = null;
       placedRectsRef.current.clear();
+      planRef.current = readPlan(snap.plan);
+      planShapeRef.current = (editor.getCurrentPageShapes().find((sh) => sh.type === "plan")?.id as TLShapeId | undefined) ?? null;
+      if (planRef.current && !planShapeRef.current) drawPlanBox(editor, false);
       // Math shapes came back with the store; old overlay items become shapes.
       mathOrderRef.current = editor.getCurrentPageShapesSorted().filter((shape) => shape.type === "math").map((shape) => shape.id);
       for (const item of snap.eqItems ?? []) {
