@@ -49,7 +49,7 @@ const ALL_TOOL_DECLARATIONS = [
   {
     name: "start_new_problem",
     description:
-      "Clear the board and write a heading. Use it every time the problem or topic changes.",
+      "Clear the board and write a heading, and in the same call the problem exactly as given (typeset) and your first question. Use it every time the problem or topic changes.",
     parameters: {
       type: "object",
       properties: {
@@ -57,6 +57,8 @@ const ALL_TOOL_DECLARATIONS = [
           type: "string",
           description: "Short heading, 160 chars or fewer, e.g. 'Solving 2x + 3 = 11', 'One half', 'Area of a triangle'.",
         },
+        problem: { type: "string", description: "The problem as printed, LaTeX or plain math, lines split by ' | ': 'f(x) = 2x^2 - 6x + 4 | g(x) = 4\\cos(\\pi x/4)'." },
+        ask: { type: "string", description: "Optional: your first question, tagged under it (as add_callout)." },
       },
       required: ["title"],
     },

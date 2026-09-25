@@ -181,7 +181,7 @@ export function intakeInstructions(intake: SessionIntake, fileCount: number): st
   if (brief) lines.push(`For after the opening, not your first reply: ${brief} The one you ask goes on the board: start_new_problem, then write it.`);
   if (fileCount > 0) {
     lines.push(
-      `They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence.`,
+      `They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence, and ask which problem first. When they pick one: look_at_worksheet, start_new_problem with the problem exactly as printed (problem=), and before any first move ask what they already know about that kind and where it stops making sense.`,
     );
   }
   // Round C (Sept 24 2026): the plan is sized to the time they said they

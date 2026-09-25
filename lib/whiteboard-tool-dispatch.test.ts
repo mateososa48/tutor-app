@@ -58,3 +58,47 @@ after(() => {
   const handles = (process as unknown as { _getActiveHandles?: () => Array<{ constructor: { name: string }; unref?: () => void }> })._getActiveHandles?.() ?? [];
   for (const h of handles) if (h.constructor.name === "MessagePort") h.unref?.();
 });
+
+// A board that records what start_new_problem, the equation lines and the
+// callout were given, the way the old board's methods take them.
+function fakeWritingBoard() {
+  let n = 0;
+  const log: string[] = [];
+  const board = {
+    beginItem: (tool: string) => ({ tool, shapes: new Set<string>(), eqs: new Set<string>() }),
+    endItem: () => `b${++n}`,
+    withDirectMeta: <T,>(_meta: unknown, fn: () => T) => fn(),
+    takeNotes: () => [],
+    itemsSnapshot: () => [],
+    startNewProblem: (title: string) => log.push(`title:${title}`),
+    drawEquationStep: (latex: string) => log.push(`eq:${latex}`),
+    addCallout: (text: string) => log.push(`callout:${text}`),
+    addTextNote: (text: string) => log.push(`note:${text}`),
+    setPens: () => {},
+    setPlacement: () => {},
+  };
+  return { board: board as unknown as WhiteboardHandle, log };
+}
+
+test("start_new_problem writes the problem, typeset, and the first question in one call", () => {
+  const f = fakeWritingBoard();
+  const r = dispatchWhiteboardTool("start_new_problem", { title: "Area of a region", problem: "f(x) = 2x^2 - 6x + 4 | g(x) = 4\\cos(\\pi x/4)", ask: "What do you already know about this kind?" }, { whiteboard: f.board });
+  assert.equal(r.success, true, msg(r));
+  assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["title", "eq", "eq", "callout"]);
+  assert.match(f.log[1], /2x\^\{?2\}?/);
+  assert.match(msg(r), /The problem is up, typeset/);
+  assert.match(msg(r), /Before any first move, ask what they already know/);
+  const bare = dispatchWhiteboardTool("start_new_problem", { title: "Fractions" }, { whiteboard: f.board });
+  assert.match(msg(bare), /write the problem itself exactly as given \(problem=…, typeset\)/);
+});
+
+test("a note that is really math goes up as typeset lines", () => {
+  const f = fakeWritingBoard();
+  const r = dispatchWhiteboardTool("add_text_note", { text: "f(x) = 2x^2 - 6x + 4 | g(x) = 4cos(1/4 \\pi x)" }, { whiteboard: f.board });
+  assert.equal(r.success, true, msg(r));
+  assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["eq", "eq"]);
+  assert.match(msg(r), /That was math, so it went up typeset as lines \(b1, b2\)/);
+  const words = dispatchWhiteboardTool("add_text_note", { text: "Same size pieces first" }, { whiteboard: f.board });
+  assert.equal(words.success, true, msg(words));
+  assert.equal(f.log.at(-1), "note:Same size pieces first");
+});

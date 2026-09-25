@@ -183,3 +183,15 @@ test("the summary flags a graph that did not draw", () => {
   const s = formatBoardItems(items, "One half", 10, { issues: { b2: "could not draw: y=sin x" } });
   assert.ok(s.includes("[could not draw: y=sin x]"), s);
 });
+
+test("a single glyph gets a short horizontal swipe, not a vertical blob", () => {
+  const digit = highlightSwipeFor({ x: 300, y: 120, w: 12, h: 18 });
+  const ys = digit.points.map((p) => p.y);
+  const xs = digit.points.map((p) => p.x);
+  const run = Math.max(...xs) - Math.min(...xs);
+  assert.ok(run >= 12, "runs at least the glyph's width");
+  assert.ok(Math.max(...ys) - Math.min(...ys) < run / 2, "flat, not upright");
+  // A stacked fraction (tall and narrow, but not one glyph) still gets the vertical swipe.
+  const stacked = highlightSwipeFor({ x: 300, y: 100, w: 16, h: 50 });
+  assert.equal(new Set(stacked.points.map((p) => Math.round(p.x))).size, 1);
+});

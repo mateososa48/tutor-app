@@ -810,8 +810,14 @@ export class GeminiLiveSession {
             this.turnMarked = true;
             this.tutorRuntime.noteBoardMark();
           }
+          // The notes go before the board list, not after it (a long list
+          // buried the OPEN order at the end; Sept 24 2026).
           const extra = this.tutorRuntime.boardResultExtras(Date.now());
-          if (extra) result = { ...result, message: `${result.message ?? "Done"} ${extra}` };
+          if (extra) {
+            const m = result.message ?? "Done";
+            const at = m.lastIndexOf("\n[Board: ");
+            result = { ...result, message: at >= 0 ? `${m.slice(0, at)} ${extra}${m.slice(at)}` : `${m} ${extra}` };
+          }
         }
       }
     } catch (error) {

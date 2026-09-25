@@ -150,11 +150,50 @@ function opt(args: Args, key: string): { error?: ToolCallResult; value?: string 
 
 // Every tool call is one board item: whatever it creates gets an id (b7) the
 // model can point at, ring, or erase later. The id rides along in the result.
+
+// Text that is an equation or an expression rather than words: a relation
+// sign, a power, a LaTeX command, a function of x, or arithmetic between
+// numbers, and at most a few plain words around it.
+function looksLikeMath(text: string): boolean {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  const mathy = /[=^\\]|\b(?:sin|cos|tan|log|ln|sqrt)\s*\(|\b[a-z]\s*\(\s*[a-z]\s*\)|\d\s*[-+×÷*/]\s*\d/.test(t);
+  if (!mathy) return false;
+  const words = t.replace(/[^a-zA-Z\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !/^(sin|cos|tan|log|ln|sqrt|pi|frac|left|right|cdot|times|div|text)$/i.test(w));
+  return words.length <= 3;
+}
+
 export function dispatchWhiteboardTool(
   name: string,
   args: Args,
   ctx: DispatchCtx,
 ): ToolCallResult {
+  // A new problem with the problem and the first question in one call (Sept
+  // 24 2026: a worksheet problem took four calls before the first word, and
+  // the functions went up as a handwritten note). The heading is placed
+  // first, then each line, then the question, each its own item.
+  if (name === "start_new_problem" && ((typeof args.problem === "string" && args.problem.trim()) || (typeof args.ask === "string" && args.ask.trim()))) {
+    const { problem, ask, ...rest } = args;
+    const page = dispatchWhiteboardTool("start_new_problem", rest, ctx);
+    if (!page.success) return page;
+    const plain = (m: string | undefined) => (m ?? "").replace(/\n\[Board:[\s\S]*$/, "").trim();
+    const head = plain(page.message).replace(/\s*Next, write the problem itself[\s\S]*$/, "");
+    const parts: string[] = [head];
+    const lines = typeof problem === "string" ? splitSteps(problem).map((l) => l.trim()).filter(Boolean).slice(0, 6) : [];
+    const written: string[] = [];
+    for (const line of lines) {
+      const r = dispatchWhiteboardTool("draw_equation_step", { latex: line }, ctx);
+      if (r.success) written.push(plain(r.message));
+      else parts.push(`A line was not written: ${r.error}`);
+    }
+    if (written.length) parts.push(`The problem is up, typeset: ${written.join("; ")}.`);
+    if (typeof ask === "string" && ask.trim()) {
+      const r = dispatchWhiteboardTool("add_callout", { text: ask }, ctx);
+      parts.push(r.success ? plain(r.message) : `The question was not written: ${r.error}`);
+    }
+    if (written.length) parts.push("Before any first move, ask what they already know about this kind and where it stops making sense.");
+    return ok(parts.join(" "));
+  }
   // The session plan (Sept 24 2026): a box at the top right, not an item.
   // Steps once after the opening, then `step` to move on.
   if (name === "set_plan") {
@@ -231,7 +270,7 @@ function dispatchInner(
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title }, () =>
         board.startNewProblem(title),
       );
-      return ok(`Cleared the board and wrote the heading "${title}".${NEXT}Next, write the problem itself exactly as given, then work under it.`);
+      return ok(`Cleared the board and wrote the heading "${title}".${NEXT}Next, write the problem itself exactly as given (problem=…, typeset), then work under it.`);
     }
 
     case "start_board_section": {
@@ -304,6 +343,17 @@ function dispatchInner(
       const text = requiredString(args, "text");
       if (isToolError(text)) return text;
       const note = boardLines(text);
+      // Math sent as a note went up in handwriting, "^2" and "\pi" as typed
+      // (Sept 24 2026). Math is typeset: it goes up as equation lines instead.
+      if (looksLikeMath(note)) {
+        const lines = splitSteps(text).map((l) => l.trim()).filter(Boolean).slice(0, 6);
+        const ids: string[] = [];
+        for (const line of lines) {
+          const r = dispatchWhiteboardTool("draw_equation_step", { latex: line }, ctx);
+          if (r.success) ids.push(...((r.message ?? "").match(/\(item (b\d+)\)/g) ?? []).map((m) => m.slice(6, -1)));
+        }
+        if (ids.length) return ok(`That was math, so it went up typeset as ${ids.length === 1 ? "a line" : "lines"} (${ids.join(", ")}). Use draw_equation_step for math; a note is for a few plain words.`);
+      }
       if (note.length > NOTE_MAX) {
         return fail(`That note is ${note.length} characters. A board note is one short line (${NOTE_MAX} max): say the explanation out loud, or draw the idea instead.`);
       }

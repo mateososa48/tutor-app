@@ -52,10 +52,12 @@ test("backend instructions carry the profile, memory notes, and the output contr
   // and "Your notes" come in. Backend 19,319; Gemini 20,9xx against a ceiling
   // moved from 20,800 to 21,000, paid for by dropping the duplicated safety
   // block and shortening backchannel and boundaries. A new rule pays for itself.
-  assert.ok(text.length < 19600, `backend prompt too long: ${text.length}`);
+  // Backend 19,900 since Sept 24 (the worksheet opening and the graph-first line).
+  assert.ok(text.length < 19900, `backend prompt too long: ${text.length}`);
   const gemini = buildGeminiInstructions(profile, ["mixes up numerator and denominator"]);
   // 21,300 since set_plan (Sept 24, Mateo's plan box): its two lines.
-  assert.ok(gemini.length < 21300, `gemini prompt too long: ${gemini.length}`);
+  // 21,500 since the graph-first line for functions (Sept 24, a calculus sheet).
+  assert.ok(gemini.length < 21500, `gemini prompt too long: ${gemini.length}`);
 });
 
 test("what recorded sessions got wrong is now a rule", () => {

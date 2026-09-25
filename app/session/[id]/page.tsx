@@ -561,7 +561,9 @@ function SessionDetailPage({ id }: { id: string }) {
         // The short list, and only when the board changed since the tutor last
         // read one (Sept 24 2026: the full list after every call was ~10k
         // characters a session; look_at_board still gives the full one).
-        const summary = whiteboardRef.current?.getBoardSummary?.();
+        // The short list on tool results (the full one after every call was
+        // ~10k characters a session; look_at_board still gives the full one).
+        const summary = whiteboardRef.current?.getBoardSummary?.(true);
         if (summary && summary !== lastSummaryRef.current) {
           lastSummaryRef.current = summary;
           result = {

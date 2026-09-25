@@ -20,6 +20,14 @@ export type ItemBounds = { x: number; y: number; w: number; h: number };
 
 // Tool name → the word a tutor would use for it in a board summary.
 const KIND_BY_TOOL: Record<string, string> = {
+  // Board v2 (Sept 22 2026)
+  start_problem: "problem",
+  section: "subheading",
+  write_step: "step",
+  write_example: "worked example",
+  ask: "question",
+  note: "note",
+  rule: "rule",
   start_new_problem: "heading",
   start_board_section: "subheading",
   add_problem_setup: "setup box",
@@ -84,7 +92,7 @@ export function itemLabelFrom(message: string | null | undefined, fallback: stri
 }
 
 export function isHeadingItem(item: BoardItem): boolean {
-  return item.tool === "start_new_problem" || item.tool === "start_board_section";
+  return item.tool === "start_new_problem" || item.tool === "start_board_section" || item.tool === "start_problem" || item.tool === "section";
 }
 
 // "b3", "3", "B3 ", "item b3" all mean item b3; otherwise match label text,
@@ -149,10 +157,30 @@ export type BoardSummaryExtras = {
   seen?: number;
   /** item id -> what went wrong drawing it (a graph line Desmos could not read) */
   issues?: Record<string, string>;
+  /**
+   * The short form for tool results (Sept 24 2026): ids, kinds and a few words
+   * each, only places off this page, no free space and no instructions. The
+   * full list stays for look_at_board.
+   */
+  compact?: boolean;
 };
+
+function shortLabel(label: string, words = 6): string {
+  const w = label.replace(/\s+/g, " ").trim().split(" ");
+  return w.length > words ? `${w.slice(0, words).join(" ")}…` : w.join(" ");
+}
 
 export function formatBoardItems(items: BoardItem[], title?: string, limit = 10, extras?: BoardSummaryExtras): string {
   if (items.length === 0) return `${title ? `"${title}". ` : ""}The board is empty.`;
+  if (extras?.compact) {
+    const list = items.slice(-8).map((item) => {
+      const place = extras.places?.[item.id];
+      const off = place && /^page \d+$/.test(place) ? ` (${place})` : "";
+      const issue = extras.issues?.[item.id];
+      return `${item.id} ${itemKind(item.tool)}${item.owner === "student" ? " (student)" : ""}${off} "${shortLabel(item.label)}"${issue ? ` [${issue}]` : ""}`;
+    });
+    return `${title ? `"${title}": ` : ""}${list.join("; ")}`;
+  }
   const shown = items.slice(-limit);
   const hidden = items.length - shown.length;
   const list = shown
@@ -187,6 +215,8 @@ const TOOL_ROLES: Record<string, ToolRole> = {
   highlight: "mark",
   highlight_step: "mark",
   cross_out_step: "mark",
+  cross_out: "mark",
+  erase: "erase",
   erase_items: "erase",
   erase_older: "erase",
   clear_whiteboard: "erase",
@@ -281,6 +311,13 @@ export type HighlightSwipe = { points: Array<{ x: number; y: number }>; size: Hi
  * a horizontal stroke tall enough to cover it spilled over the signs beside it.
  */
 export function highlightSwipeFor(r: ItemBounds): HighlightSwipe {
+  // One glyph (the 4 in a stacked 1/4) is taller than wide but not a
+  // fraction: a vertical swipe on it was a blob. A short horizontal swipe,
+  // widened a little past the glyph, reads as a highlight.
+  if (r.w < 22 && r.h < 30) {
+    const pen = highlightSizeFor(r.h);
+    return { size: pen.size, width: pen.width, points: swipePoints({ x: r.x - 3, y: r.y, w: r.w + 6, h: r.h }, pen.width) };
+  }
   if (r.h > r.w * 1.3) {
     const pen = highlightSizeFor(Math.max(r.w, 12));
     const midX = r.x + r.w / 2;

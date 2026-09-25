@@ -363,7 +363,8 @@ export interface WhiteboardHandle {
   clearWhiteboard(): void;
   getSnapshot(): WhiteboardSnapshot | null;
   loadSnapshot(snap: WhiteboardSnapshot): void;
-  getBoardSummary(): string;
+  /** The board in words; `compact` is the short list tool results carry (look_at_board keeps the full one). */
+  getBoardSummary(compact?: boolean): string;
   /** Item bookkeeping around one tool call: everything created between begin and end becomes one board item. */
   beginItem(tool: string, callId?: string): ItemToken;
   endItem(token: ItemToken, label: string | null, owner?: "tutor" | "student"): string | null;
@@ -4485,13 +4486,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return snapshotBoard(false);
     },
 
-    getBoardSummary() {
+    getBoardSummary(compact?: boolean) {
       const planLine = planSummary(planRef.current);
       const withPlan = (text: string) => (planLine ? `${planLine}. ${text}` : text);
       const editor = editorRef.current;
       const title = semanticBoardRef.current.title;
       const frame = pageFrameRef.current;
-      if (!editor || !frame || itemsRef.current.length === 0) return withPlan(formatBoardItems(itemsRef.current, title));
+      if (!editor || !frame || itemsRef.current.length === 0) return withPlan(formatBoardItems(itemsRef.current, title, 10, compact ? { compact } : undefined));
       // Where each item sits and where the page is still empty, in words, on
       // the page area a named `place` resolves against. Work on another page
       // says which page it is on.
@@ -4533,6 +4534,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         page: pageIndex.current,
         seen: visiblePage(editor, frame, pageIndex.current),
         issues,
+        compact,
       }));
     },
 

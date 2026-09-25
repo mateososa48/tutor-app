@@ -60,5 +60,7 @@ test("off-topic tools are cut and the schema stays small", () => {
   // 41 tools before the cut, 35,748 for 35 after. Sept 17: 38,815 for 37, with
   // draw_desmos and draw_data_plot (declared only where Desmos can load).
   const size = JSON.stringify(WHITEBOARD_TOOL_DECLARATIONS).length;
-  assert.ok(size < 39000, `whiteboard tool schema is ${size} characters`);
+  // 39,400 since Sept 24 2026: set_plan, and start_new_problem taking the
+  // problem and the first question, which saves a round trip on every problem.
+  assert.ok(size < 39400, `whiteboard tool schema is ${size} characters`);
 });
