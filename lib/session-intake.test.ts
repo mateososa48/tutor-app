@@ -47,7 +47,9 @@ test("the instructions set the language, quote the topic and open by asking, not
   const text = intakeInstructions(intake({ topic: "Solving for x", language: "de" }), 0);
   assert.match(text, /speak and write on the board in German/);
   assert.match(text, /"Solving for x"/);
-  assert.match(text, /dive in on what they sent: open with OPEN from the steps/);
+  assert.match(text, /Open, don't dive in\. Your first reply: acknowledge what they said in a few words, then ask what exactly they want/);
+  assert.ok(text.indexOf("Open, don't dive in") < text.indexOf("For after the opening"), "the opening comes before the show-me problems");
+  assert.match(text, /Never a plan or a problem in your first reply/);
   assert.match(text, /say the plan in one breath/);
   assert.doesNotMatch(text, /pictures/);
 });

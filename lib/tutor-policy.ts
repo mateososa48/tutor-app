@@ -383,7 +383,7 @@ export function cues(p: TutorPolicy): string[] {
 // bar for "understood for today" (the tutoring review): two right with no
 // help on different problems, plus a reason in the student's own words.
 
-export type FlowStep = "probe" | "show" | "together" | "alone" | "why" | "up";
+export type FlowStep = "open" | "probe" | "show" | "together" | "alone" | "why" | "up";
 
 /** Different problems solved right with no help on the current skill. */
 export function aloneRight(p: TutorPolicy): number {
@@ -412,7 +412,13 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
     if (recent.result === "correct") return { step: "together", next: "that step is done, not the problem: the next step of this same problem is theirs (ask for the next line), help only where they stall" };
     return { step: "together", next: "point at the exact spot in this step and let them fix it" };
   }
-  if (!p.currentSkill) return null;
+  // Before any answer is checked the session is still opening (Sept 24 2026:
+  // on 3.1 the first reply asked the show-me question with nothing asked
+  // first). The state line says so on the first board results.
+  if (!p.currentSkill) {
+    if (p.attempts.length === 0 && p.studentTurns >= 1 && p.studentTurns <= 2) return { step: "open", next: "no teaching yet: ask what exactly they want (a sheet, or the whole idea), then what they already know and where it stops making sense; one question a turn; then the plan in one breath and one small show-me problem" };
+    return null;
+  }
   const onSkill = p.attempts.filter((a) => a.skill === p.currentSkill && !a.step && a.result !== "unchecked");
   const last = onSkill.at(-1);
   if (!last) return p.missesInRow >= 2 ? { step: "show", next: SHOW_NEXT } : { step: "probe", next: "before teaching: what they already know about it and which part doesn't make sense (unless they said), then their first move on it" };
@@ -448,6 +454,10 @@ export function formatTutorState(p: TutorPolicy, now: number): string {
     if (p.missesInRow > 0 && last) parts.push(`${p.missesInRow} ${p.missesInRow === 1 ? "miss" : "misses"} in a row (last: ${last.result})`);
     const help = suggestHelp(p);
     if (help) parts.push(`suggested help H${help.level} (${help.why})`);
+  }
+  if (!p.currentSkill) {
+    const opening = flowStep(p);
+    if (opening) parts.push(`step ${opening.step.toUpperCase()} · next: ${opening.next}`);
   }
   parts.push(...cues(p).filter((c) => !(c.startsWith("up:") && flowStep(p)?.step === "up")));
   const time = clockCue(now - p.startedAt, p.plannedMinutes);

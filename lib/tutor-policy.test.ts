@@ -348,3 +348,15 @@ test("the board note: an explanation over an empty board, math said and not writ
   assert.match(boardNote(p, long, false, false)!, /a whole turn with no board move/);
   assert.equal(boardNote(p, long, false, true), null, "it marked something: no note");
 });
+
+test("before any answer is checked, the state line says the session is still opening", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "I need help with: fractions", 0);
+  noteBoardWrite(p, "start_new_problem", { title: "Fractions" });
+  const line = takeStateUpdate(p, 1000);
+  assert.match(line, /step OPEN · next: no teaching yet: ask what exactly they want/);
+  noteStudentUtterance(p, "the whole idea", 2000);
+  noteStudentUtterance(p, "idk", 3000);
+  noteStudentUtterance(p, "a piece of a number", 4000);
+  assert.equal(formatTutorState(p, 5000).includes("step OPEN"), false, "after a few turns the opening is over");
+});

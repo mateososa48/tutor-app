@@ -398,7 +398,8 @@ export class GeminiLiveSession {
       text:
         "Session event: initial_start_with_context.\n" +
         "The live tutoring session has just started. The student answered a few questions before it opened, and their " +
-        "message follows. Do not greet at length and do not ask what they want to work on: start the work. " +
+        "message follows. Don't greet at length. Your first reply is the OPEN step, not teaching: acknowledge what they said in a few words, " +
+        "then ask what exactly they want (a problem on a sheet, or the whole idea). Nothing on the board yet but a page for the topic. " +
         (files.length > 0 ? "The attached files are the work they mean; read them first.\n\n" : "\n\n") +
         `Student: ${text}`,
     });
