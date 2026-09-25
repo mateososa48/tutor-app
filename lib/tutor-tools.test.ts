@@ -218,3 +218,19 @@ test("auto-check: a typed answer to the board's question is checked once and reu
   assert.equal(autoCheck(chat, "i dont know", 0), null);
   assert.equal(autoCheck(chat, "can we do the next one", 0), null);
 });
+
+// Sept 25 2026: a wrong attempt stayed on the board uncrossed after the right
+// answer went up beside it; the right answer's result now says to strike it.
+test("a right answer after a wrong one orders the wrong one crossed out", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Integers", problem: "-7 - 4" });
+  const wrong = runTutorTool("check_answer", { problem: "-7 - 4", student_answer: "11", skill: "integers", help_level: "H0" }, p, 0);
+  assert.match(wrong && wrong.success ? wrong.message ?? "" : "", /no mark on it yet/);
+  const right = runTutorTool("check_answer", { problem: "-7 - 4", student_answer: "-11", skill: "integers", help_level: "H2" }, p, 5000);
+  const msg = right && right.success ? right.message ?? "" : "";
+  assert.match(msg, /circle_item on it with keep=true/);
+  assert.match(msg, /Then cross_out_step their earlier "11"/);
+  assert.equal(p.lastWrongAttempt, null);
+  const again = runTutorTool("check_answer", { problem: "6 - (-2)", student_answer: "8", skill: "integers", help_level: "H1" }, p, 9000);
+  assert.doesNotMatch(again && again.success ? again.message ?? "" : "", /cross_out_step/);
+});

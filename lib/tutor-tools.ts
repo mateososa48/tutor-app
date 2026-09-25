@@ -236,8 +236,11 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
     const step = stepOfPage(policy.pageProblem, problem, t);
     recordAttempt(policy, { skill, result: attemptFromVerdict(check.verdict), help, auto: true, problem, step }, now);
     noteAnswerChecked(policy);
+    const struck = check.verdict === "correct" && !step && policy.lastWrongAttempt ? ` Cross out their earlier "${policy.lastWrongAttempt}" (cross_out_step).` : "";
+    if (check.verdict === "correct" && !step) policy.lastWrongAttempt = null;
+    else if (check.verdict === "incorrect" || check.verdict === "partial") policy.lastWrongAttempt = t.length > 40 ? `${t.slice(0, 37)}…` : t;
     const order = check.verdict === "correct"
-      ? "Write it in their hand (add_student_attempt), ring it (circle_item keep=true), then the next thing to do."
+      ? `Write it in their hand (add_student_attempt), ring it (circle_item keep=true), then the next thing to do.${struck}`
       : check.verdict === "partial"
         ? "Write it in their hand (add_student_attempt), then ask what is still missing."
         : "Write it in their hand (add_student_attempt), then point at the step it came from and ask; don't say the answer.";
@@ -297,10 +300,15 @@ export function runTutorTool(
   // words) and rings a right final answer. Short notes, not sentences to read
   // aloud (Sept 24 2026): the board part and one instruction at most, then
   // the state.
+  // A right answer after a wrong one strikes the wrong one, now that they
+  // have seen it; a wrong one is remembered for that.
+  const struck = check.verdict === "correct" && !step && policy.lastWrongAttempt ? ` Then cross_out_step their earlier "${policy.lastWrongAttempt}".` : "";
+  if (check.verdict === "correct" && !step) policy.lastWrongAttempt = null;
+  else if (check.verdict === "incorrect" || check.verdict === "partial") policy.lastWrongAttempt = answer.length > 40 ? `${answer.slice(0, 37)}…` : answer;
   const onBoard = check.verdict === "cannot_check"
     ? ""
     : check.verdict === "correct" && !step
-      ? ` Board: add_student_attempt with their exact words, then circle_item on it with keep=true${IS_EQUATION.test(problem) ? ", and have them check it by putting the value back in" : ""}.`
+      ? ` Board: add_student_attempt with their exact words, then circle_item on it with keep=true${IS_EQUATION.test(problem) ? ", and have them check it by putting the value back in" : ""}.${struck}`
       : " Board: add_student_attempt with their exact words; no mark on it yet.";
   const wroteWorking = Array.isArray(args.working) && args.working.some((l) => typeof l === "string" && l.trim());
   const state = currentState(policy, now);

@@ -91,6 +91,8 @@ export type TutorPolicy = {
   autoChecked: { answer: string; verdict: string; message: string; problem: string; at: number; note: string; sent: boolean; consumed: boolean } | null;
   /** The idea the student stated in the opening, before any skill ("cuz you add 3"), so PROBE asks about it instead of "what do you know". */
   openingReason: string | null;
+  /** Their last wrong answer on the current problem, in their words, until a right one strikes it (Sept 25 2026: superseded attempts sat uncrossed). */
+  lastWrongAttempt: string | null;
 };
 
 const MAX_ATTEMPTS = 80;
@@ -134,6 +136,7 @@ export function createPolicy(now: number): TutorPolicy {
     lastAsked: null,
     autoChecked: null,
     openingReason: null,
+    lastWrongAttempt: null,
     drawCount: 0,
   };
 }
@@ -615,6 +618,7 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     const raw = typeof args?.problem === "string" ? args.problem : typeof args?.title === "string" ? args.title : "";
     p.pageProblem = raw.trim() ? raw.trim().slice(0, 200) : null;
     p.lastAsked = typeof args?.ask === "string" && args.ask.trim() ? args.ask.trim().slice(0, 200) : null;
+    p.lastWrongAttempt = null;
     p.pageSkill = null;
     p.boardHelp = 0;
     return;
