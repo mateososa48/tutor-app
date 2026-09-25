@@ -37,8 +37,19 @@ export function withToolBehavior<T extends { name?: string }>(declarations: T[],
 
 export type ToolScheduling = "SILENT" | "WHEN_IDLE";
 
-export function toolScheduling(model: string, name: string, result: { success: boolean; message?: string }, asyncTools = false): ToolScheduling | undefined {
+/**
+ * How the model is told about an async result. `spoken` is whether it has
+ * said anything yet this turn: filed SILENT, a result reaches a model that
+ * has not started talking as nothing at all, and 3.8 then ends its turn
+ * without a word (Sept 25 2026: on the benchmark the first sound came at
+ * 7.8–8.6 s, after the nudge, on every turn that opened with a tool call).
+ * So a result the model has not talked past comes back WHEN_IDLE, which
+ * re-triggers it the moment it is idle; once it is talking, a result that
+ * worked is filed silently.
+ */
+export function toolScheduling(model: string, name: string, result: { success: boolean; message?: string }, asyncTools = false, spoken = true): ToolScheduling | undefined {
   if (!asyncTools || liveToolMode(model) !== "scheduled" || BLOCKING_TOOLS.has(name)) return undefined;
+  if (!spoken) return "WHEN_IDLE";
   if (!result.success) return "WHEN_IDLE";
   if (/\bCareful:/.test(result.message ?? "")) return "WHEN_IDLE";
   // A changed [Tutor state] is an order for the next move: heard when the

@@ -234,7 +234,7 @@ function probe(model: string, thinkingConfig: Record<string, unknown> | null): P
           const output = runtime.runTool(c.name, c.args ?? {}, Date.now(), c.id) ?? { success: true, message: `Done (item b${r.toolCalls.length}). ${runtime.boardResultExtras()}`.trim() };
           if (toolRole(c.name) === "draw") { turnDrew = true; runtime.noteBoardWrite(c.name, c.args ?? {}); }
           if (toolRole(c.name) === "mark") { turnMarked = true; runtime.noteBoardMark(); }
-          const planned = process.env.BEHAVIOR ? undefined : toolScheduling(model, c.name, output, Boolean(process.env.ASYNC));
+          const planned = process.env.BEHAVIOR ? undefined : toolScheduling(model, c.name, output, Boolean(process.env.ASYNC), audioStarted);
           const scheduling = planned && (process.env.SCHED ?? planned);
           if (process.env.TIMELINE) console.log(`   ${ms}ms   -> ${c.name}: ${(output.success ? output.message ?? "" : output.error).slice(0, 110)}${scheduling ? ` [${scheduling}]` : ""}`);
           setTimeout(() => {

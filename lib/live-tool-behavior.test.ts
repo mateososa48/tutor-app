@@ -47,6 +47,10 @@ test("async results: one that worked is filed silently; a refusal or a warning i
   assert.equal(toolScheduling(m, "draw_figure", { success: true, message: "Drew it. Careful: 6, 8 and 11 cannot make a right triangle." }, true), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "check_answer", { success: true }, true), undefined);
   assert.equal(toolScheduling(m, "look_at_board", { success: true }, true), undefined);
+  // Before the model has said anything this turn, a result is what makes it speak.
+  assert.equal(toolScheduling(m, "write_step", { success: true, message: "Wrote it (item b3)." }, true, false), "WHEN_IDLE");
+  assert.equal(toolScheduling(m, "write_step", { success: true, message: "Wrote it (item b3)." }, true, true), "SILENT");
+  assert.equal(toolScheduling(m, "check_answer", { success: true }, true, false), undefined);
 });
 
 test("async tools are the default; ?tools=sync turns them off", () => {

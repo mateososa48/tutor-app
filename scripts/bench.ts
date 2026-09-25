@@ -192,7 +192,7 @@ class LiveTutor {
     private readonly compression: unknown,
     private readonly onTool: (name: string, args: Record<string, unknown>, id: string) => Promise<ToolCallResult>,
     /** The app's scheduling for a result (lib/live-tool-behavior toolScheduling), or nothing for blocking tools. */
-    private readonly scheduling: (name: string, result: ToolCallResult) => string | undefined = () => undefined,
+    private readonly scheduling: (name: string, result: ToolCallResult, spoken: boolean) => string | undefined = () => undefined,
   ) {}
 
   private static emptyTurn(): LiveTurn {
@@ -315,7 +315,7 @@ class LiveTutor {
           rec.durationMs = Date.now() - started;
           this.pendingTools--;
           if (VERBOSE) console.log(`      ${ms}ms ${c.name}(${JSON.stringify(c.args ?? {}).slice(0, 100)}) ${result.success ? "→" : "✗"} ${rec.result.split("\n")[0].slice(0, 120)}`);
-          const scheduling = this.scheduling(c.name, result);
+          const scheduling = this.scheduling(c.name, result, this.turn.audioChunks > 0);
           this.send({ toolResponse: { functionResponses: [{ id, name: c.name, response: { output: result }, ...(scheduling ? { scheduling } : {}) }] } });
           if (this.turn.audioChunks === 0) this.armUnanswered(AFTER_TOOL_MS);
         });
@@ -561,7 +561,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     return result;
   };
 
-  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools));
+  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken));
   const startedAt = Date.now();
   await live.open();
   runtime.startClock();
