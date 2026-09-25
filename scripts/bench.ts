@@ -34,6 +34,7 @@
 //   --out dir          where to write (default bench/runs/<label>)
 //   --verbose          print every tool call as it happens
 //   --tools sync|async the tool behaviour sent to 3.8 (default: what the app sends)
+//   --fulltools        every declaration instead of the Live set the app sends
 //   --runs N           run every case N times (files get -r2, -r3…; totals pool the runs)
 //   --judge file       write <case>.judge-input.md for a Claude subagent instead of judging;
 //                      --rejudge then reads <case>.judge.json when it exists
@@ -461,7 +462,7 @@ const summaryOf = (page: Page, compact: boolean) => page.evaluate((c) => (window
 
 // ── One case ───────────────────────────────────────────────────────────────
 
-async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; tag: string }): Promise<CaseRun> {
+async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; tag: string }): Promise<CaseRun> {
   const tag = opts.tag;
   const { page, errors } = await openBoard(opts.browser, opts.base, opts.w, opts.h);
   const runtime = new m.runtime.TutorRuntime({ startedAt: Date.now() });
@@ -475,7 +476,8 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   }
   const profile = { displayName: c.name, gradeLevel: c.grade, learningPrefs: {} };
   const system = m.prompts.buildGeminiInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true });
-  const declarations = m.behavior.withToolBehavior([...m.tools.WHITEBOARD_TOOL_DECLARATIONS, ...m.tutorTools.TUTOR_TOOL_DECLARATIONS, ...m.sessionTools.SESSION_TOOL_DECLARATIONS], opts.liveModel, opts.asyncTools);
+  // Exactly what the app sends (the Live diet since Sept 25 2026; --fulltools for every declaration).
+  const declarations = m.behavior.withToolBehavior(opts.fullTools ? [...m.tools.WHITEBOARD_TOOL_DECLARATIONS, ...m.tutorTools.TUTOR_TOOL_DECLARATIONS, ...m.sessionTools.SESSION_TOOL_DECLARATIONS] : m.live.liveToolDeclarations(), opts.liveModel, opts.asyncTools);
 
   // The page's sinks: the student's spoken working goes up in their hand.
   runtime.setWorkingSink((lines: string[], answer: string) => {
@@ -748,6 +750,8 @@ async function main() {
   const toolsArg = arg("tools", "");
   // The tool behaviour the app itself sends for a plain session, unless told otherwise.
   const asyncTools = toolsArg ? toolsArg === "async" : m.behavior.resolveAsyncTools(null);
+  const fullTools = process.argv.includes("--fulltools");
+  const toolCount = (fullTools ? m.tools.WHITEBOARD_TOOL_DECLARATIONS.length + m.tutorTools.TUTOR_TOOL_DECLARATIONS.length + m.sessionTools.SESSION_TOOL_DECLARATIONS.length : m.live.liveToolDeclarations().length);
 
   try {
     await fetch(`${base}/dev/board`, { method: "HEAD" });
@@ -755,7 +759,7 @@ async function main() {
     throw new Error(`No dev server at ${base}. Start one (npm run dev -- -p 3300) or pass --base.`);
   }
   fs.mkdirSync(out, { recursive: true });
-  console.log(`bench "${label}" · tutor ${liveModel} (tools ${asyncTools ? "async" : "sync"}) · prompt ${m.promptName} · student ${studentModel} · judge ${judgeModel} · ${runsN} run${runsN > 1 ? "s" : ""} · board ${base} at ${w}×${h}\n→ ${out}`);
+  console.log(`bench "${label}" · tutor ${liveModel} (${toolCount} tools, ${asyncTools ? "async" : "sync"}) · prompt ${m.promptName} · student ${studentModel} · judge ${judgeModel} · ${runsN} run${runsN > 1 ? "s" : ""} · board ${base} at ${w}×${h}\n→ ${out}`);
 
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox", "--hide-scrollbars"] });
   const runs: CaseRun[] = [];
@@ -766,7 +770,7 @@ async function main() {
         console.log(`\n=== ${c.name}, ${c.grade} (${tag}): "${c.topic}"`);
         let run: CaseRun;
         try {
-          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, tag });
+          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, tag });
         } catch (err) {
           console.log(`  failed: ${err instanceof Error ? err.message : String(err)}`);
           continue;

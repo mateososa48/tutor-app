@@ -159,6 +159,43 @@ function cannot(message: string): AnswerCheck {
 const FUNCTION_EVAL_FIRST = /^\s*([a-z])\s*\(\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*\)\s*(?:where|if|when|with|given|,|;|:)\s*\1\s*\(\s*([a-z])\s*\)\s*=\s*(.+?)\s*$/i;
 const FUNCTION_EVAL_LAST = /^\s*([a-z])\s*\(\s*([a-z])\s*\)\s*=\s*(.+?)\s*(?:,|;|:|\.|\s+)\s*(?:find|evaluate|what is|whats|what's)?\s*\1\s*\(\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*\)\s*\??\s*$/i;
 
+// "0.5 > 0.35" or "0.35 < 0.5" as the problem (Sept 25 2026: 3.8 passed its
+// own verdict as the problem four times in one session): the student's answer
+// is the bigger or smaller number, or a yes/no about the claim.
+const COMPARISON = /^\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*(>=|<=|>|<)\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*\??\s*$/;
+const YES = /^\s*(yes|yeah|yep|true|right|correct|it is|its true|that's right)\s*[.!?]*\s*$/i;
+const NO = /^\s*(no|nope|false|wrong|incorrect|not true|it isn't|it's not)\s*[.!?]*\s*$/i;
+
+function checkInequalityClaim(problem: string, answer: string): AnswerCheck | null {
+  const m = COMPARISON.exec(problem);
+  if (!m) return null;
+  const a = readValue(m[1]);
+  const b = readValue(m[3]);
+  if (a === null || b === null) return null;
+  const op = m[2];
+  const holds = op === ">" ? a > b : op === "<" ? a < b : op === ">=" ? a >= b : a <= b;
+  const bigger = a > b ? m[1] : m[3];
+  const smaller = a > b ? m[3] : m[1];
+  const wantsBigger = op === ">" || op === ">=";
+  const said = cleanAnswer(stripFiller(spokenToDigits(answer.replace(/\$/g, ""))));
+  if (YES.test(said)) return holds ? { verdict: "correct", message: `Correct: ${m[1]} ${op} ${m[3]} holds.` } : { verdict: "incorrect", message: `Incorrect: ${m[1]} ${op} ${m[3]} does not hold. (For you only: ${bigger} is the bigger one. Don't say it; help them find the mistake.)` };
+  if (NO.test(said)) return holds ? { verdict: "incorrect", message: `Incorrect: ${m[1]} ${op} ${m[3]} does hold. (For you only: ${bigger} is the bigger one. Don't say it; help them find the mistake.)` } : { verdict: "correct", message: `Correct: ${m[1]} ${op} ${m[3]} does not hold.` };
+  const v = readValue(said);
+  if (v === null) return cannot(`couldn't read the student's answer "${answer}" as a number or a yes/no.`);
+  // A number: the one the claim points at (the bigger for >, the smaller for <).
+  const target = wantsBigger ? bigger : smaller;
+  if (near(v, readValue(target)!)) return { verdict: "correct", message: `Correct: ${target} is the ${wantsBigger ? "bigger" : "smaller"} of ${m[1]} and ${m[3]}.` };
+  return { verdict: "incorrect", message: `Incorrect: the student's ${said} is not the ${wantsBigger ? "bigger" : "smaller"} of ${m[1]} and ${m[3]}. (For you only: it is ${target}. Don't say it; help them find the mistake.)` };
+}
+
+// "5 cups * 6 cookies" is "5 * 6": a unit word right after a number goes when
+// the rest is arithmetic. Math words stay ("25% of 80", "2 pi", "3 halves").
+const UNIT_KEEP = /^(of|pi|percent|mod|and|to|by|over|per|halves?|thirds?|quarters?|fourths?|fifths?|sixths?|sevenths?|eighths?|ninths?|tenths?|twelfths?|hundredths?|wholes?)$/i;
+export function stripUnitWords(problem: string): string {
+  if (!/[-+×÷*/]/.test(problem)) return problem;
+  return problem.replace(/(\d(?:\.\d+)?)\s+([a-zA-Z]{2,})(?![a-zA-Z(])/g, (whole, num: string, word: string) => (UNIT_KEEP.test(word) ? whole : num)).replace(/\s{2,}/g, " ").trim();
+}
+
 /** "f(3) where f(x) = 2x + 1" as the arithmetic "2(3) + 1", or null when it is not that shape. */
 export function substituteFunctionEval(problem: string): string | null {
   const m = FUNCTION_EVAL_FIRST.exec(problem);
@@ -179,6 +216,8 @@ function evalConstant(text: string): number | null {
 }
 
 export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck {
+  const claimed = checkInequalityClaim(problem, studentAnswer);
+  if (claimed) return claimed;
   // "25\\%" is the board's LaTeX for 25%: the tutor copies it from there.
   const asked = (problem ?? "").trim().replace(/\\%/g, "%");
   const heard = (studentAnswer ?? "").trim().replace(/\\%/g, "%");
@@ -616,7 +655,7 @@ const PICTURE_WORDS = /\b(shaded|shown|pictured|picture|diagram|drawn|number lin
 const QUESTION_LEAD = /^\s*(?:what(?:'s|\s+is)|whats|find|calculate|compute|work\s+out)\s+(?:the\s+value\s+of\s+)?/i;
 
 function readProblem(problem: string): string | AnswerCheck {
-  let s = substituteFunctionEval(problem) ?? problem;
+  let s = stripUnitWords(substituteFunctionEval(problem) ?? problem);
   const led = QUESTION_LEAD.test(s);
   if (led) s = s.replace(QUESTION_LEAD, "");
   // With an "=" a "?" is a box ("3/4 = 6/?"); without one it is a question mark.

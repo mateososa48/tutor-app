@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkAnswer, substituteFunctionEval, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
+import { checkAnswer, substituteFunctionEval, stripUnitWords, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
 
 const verdict = (problem: string, answer: string) => checkAnswer(problem, answer).verdict;
 
@@ -261,4 +261,27 @@ test("cannot_check is an order to resend in digits and symbols", () => {
   const r = checkAnswer("How many cookies from 5 cups?", "30");
   assert.equal(r.verdict, "cannot_check");
   assert.match(r.message, /Call check_answer again with the problem in digits and symbols/);
+});
+
+// Sept 25 2026: 3.8 passed its own comparison as the problem ("0.5 > 0.35")
+// and left unit words in ("5 cups * 6 cookies"); both were cannot_check.
+test("a comparison as the problem: the bigger number, or yes and no", () => {
+  assert.equal(checkAnswer("0.5 > 0.35", "0.5").verdict, "correct");
+  assert.equal(checkAnswer("0.5 > 0.35", "0.35").verdict, "incorrect");
+  assert.equal(checkAnswer("0.5 > 0.35", "yes").verdict, "correct");
+  assert.equal(checkAnswer("0.35 > 0.5", "yes").verdict, "incorrect");
+  assert.equal(checkAnswer("0.35 > 0.5", "no").verdict, "correct");
+  assert.equal(checkAnswer("0.2 < 0.15", "0.15").verdict, "correct");
+  assert.equal(checkAnswer("1/2 > 1/3", "1/2").verdict, "correct");
+  assert.equal(checkAnswer("x > 2", "3").verdict, "cannot_check");
+});
+
+test("unit words after numbers go when the rest is arithmetic", () => {
+  assert.equal(stripUnitWords("5 cups * 6 cookies"), "5 * 6");
+  assert.equal(stripUnitWords("25% of 80"), "25% of 80");
+  assert.equal(stripUnitWords("2 pi * 3"), "2 pi * 3");
+  assert.equal(stripUnitWords("12 cookies / 2 cups"), "12 / 2");
+  assert.equal(stripUnitWords("2 cups makes 12 cookies"), "2 cups makes 12 cookies");
+  assert.equal(checkAnswer("5 cups * 6 cookies", "30").verdict, "correct");
+  assert.equal(checkAnswer("12 cookies / 2 cups", "6").verdict, "correct");
 });
