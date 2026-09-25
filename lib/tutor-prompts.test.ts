@@ -55,14 +55,14 @@ test("backend instructions carry the profile, memory notes, and the output contr
   // Backend 19,900 since Sept 24 (the worksheet opening and the graph-first line).
   assert.ok(text.length < 19900, `backend prompt too long: ${text.length}`);
   const gemini = buildGeminiInstructions(profile, ["mixes up numerator and denominator"]);
-  // 21,300 since set_plan (Sept 24, Mateo's plan box): its two lines.
-  // 21,500 since the graph-first line for functions (Sept 24, a calculus sheet).
-  assert.ok(gemini.length < 21500, `gemini prompt too long: ${gemini.length}`);
+  // 21,000 since the board section was rewritten as one model (Sept 24 2026):
+  // Gemini 20,662, backend 19,009, both under the ceilings they replaced.
+  assert.ok(gemini.length < 21000, `gemini prompt too long: ${gemini.length}`);
 });
 
 test("what recorded sessions got wrong is now a rule", () => {
   const text = buildBackendInstructions(null, []);
-  assert.match(text, /4\. What you work out goes on the board in the same reply/);
+  assert.match(text, /3\. Each step goes up as you say it/);
   assert.match(text, /their right answer ringed \(circle_item keep=true\)/);
   assert.match(text, /never answer your own question/);
   assert.match(text, /"What\?" usually means they lost the question/);
@@ -70,7 +70,7 @@ test("what recorded sessions got wrong is now a rule", () => {
   assert.match(text, /respect it\. .*close warmly/i);
   assert.match(text, /look_at_worksheet first, then copy the problem exactly as printed/);
   assert.match(text, /add_student_attempt with their exact words \(not "I don't know"\)/);
-  assert.match(text, /every mark is your one sky pen/);
+  assert.match(text, /every mark is your one sky pen/i);
   assert.match(text, /praise and chat are said, not written/);
   assert.match(text, /Example 10 — "what\?"/);
 });
@@ -123,7 +123,7 @@ test("backend instructions still name the picture tools and board rules", () => 
   const text = buildBackendInstructions(null, []);
   assert.match(text, /draw_fraction/);
   assert.match(text, /draw_balance/);
-  assert.match(text, /never fake a diagram with text, brackets, dashes, or ASCII/);
+  assert.match(text, /never fake a diagram with text, brackets, dashes, or ASCII/i);
   assert.match(text, /never a bare question with an empty board/i);
   assert.match(text, /point_at/);
   assert.match(text, /erase_older/);
@@ -208,4 +208,15 @@ test("interests reach the prompt as material for examples, and only when set", (
   assert.match(withLikes, /never say that you are doing it/);
   const without = profileLines({ displayName: "Ana", gradeLevel: "9th grade", onboarding: { by: "student" } }).join("\n");
   assert.doesNotMatch(without, /Likes:/);
+});
+
+test("the board section is one model of a tutor on a call, not a list of situations", () => {
+  const text = buildGeminiInstructions(null, []);
+  assert.match(text, /You're tutoring on a video call, and the board is the one thing you both look at/);
+  assert.match(text, /a function is its graph, a fraction is pieces of a whole, an equation is two sides in balance/);
+  assert.match(text, /Draw that once, then work on it: point at its parts, add to it, mark it/);
+  assert.match(text, /Point when you refer/);
+  assert.match(text, /Draw, then talk about what's there/);
+  assert.doesNotMatch(text, /area between curves|calculus/i, "no rule written for one recorded scenario");
+  assert.ok(text.indexOf("How a tutor works a shared board") < text.indexOf("What draws what"), "principles before the tool table");
 });
