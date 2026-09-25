@@ -6,6 +6,8 @@ import {
   TEACHING_MOVE_TYPES,
   minimumHelpForMove,
   runTutorTool,
+  autoCheck,
+  takeAutoCheckNote,
 } from "./tutor-tools";
 import {
   boardResultExtras,
@@ -101,6 +103,13 @@ export class TutorRuntime {
 
   noteStudentUtterance(text: string, now = Date.now()): void {
     noteStudentUtterance(this.policy, text, now);
+    // An answer the board can check is checked here, before the model speaks.
+    autoCheck(this.policy, text, now);
+  }
+
+  /** The auto-check's note for a typed line, once; the voice path gets it on the first tool result. */
+  takeAutoCheckNote(): string | null {
+    return takeAutoCheckNote(this.policy);
   }
 
   noteTutorTurn(text: string, drew: boolean, marked = false): void {

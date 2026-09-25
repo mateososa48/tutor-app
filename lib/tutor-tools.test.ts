@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LEGACY_TUTOR_TOOL_DECLARATIONS, TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLARATIONS, TUTOR_TOOL_NAMES, attemptFromVerdict, runTutorTool } from "./tutor-tools";
+import { LEGACY_TUTOR_TOOL_DECLARATIONS, TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLARATIONS, TUTOR_TOOL_NAMES, attemptFromVerdict, runTutorTool, autoCheck, takeAutoCheckNote } from "./tutor-tools";
 import { SESSION_TOOL_NAMES } from "./session-tools";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { buildBackendInstructions, buildGeminiInstructions } from "./tutor-prompts";
-import { createPolicy, noteStudentUtterance } from "./tutor-policy";
+import { createPolicy, noteStudentUtterance, noteBoardWrite } from "./tutor-policy";
 
 test("tutor tools do not collide with whiteboard tools and convert for Responses", () => {
   const board = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name));
@@ -187,4 +187,35 @@ test("check_answer counts the board's help, asks for spoken working, and keeps a
   noteStudentUtterance(p, "show it on the board");
   const shown = runTutorTool("check_answer", { problem: "1/2 + 1/4", student_answer: "3/4", skill: "adding fractions" }, p, 0);
   assert.match(shown && shown.success ? shown.message ?? "" : "", /They asked to see it on the board/);
+});
+
+// The auto-check (Sept 25 2026): an answer to what the board asked is checked
+// by the code, handed to the model as a note, and not recorded twice.
+test("auto-check: a typed answer to the board's question is checked once and reused by check_answer", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Percent", problem: "15% of 100", ask: "What is 15% of 100?" });
+  assert.equal(p.lastAsked, "What is 15% of 100?");
+  noteStudentUtterance(p, "15", 1000);
+  const note = autoCheck(p, "15", 1000);
+  assert.ok(note && /Answer check, not from the student: "15" → correct/.test(note), note ?? "no note");
+  assert.match(note!, /add_student_attempt/);
+  assert.match(note!, /circle_item keep=true/);
+  assert.equal(p.attempts.length, 1);
+  assert.equal(p.attempts[0].auto, true);
+  assert.equal(p.pendingAnswer, null, "the unchecked-answer nudge is off");
+  assert.equal(takeAutoCheckNote(p), note);
+  assert.equal(takeAutoCheckNote(p), null, "the note goes out once");
+  const r = runTutorTool("check_answer", { problem: "15% of 100", student_answer: "15", skill: "percent", help_level: "H1" }, p, 2000);
+  assert.ok(r && r.success);
+  assert.match(r!.success ? r!.message ?? "" : "", /Verdict: correct/);
+  assert.equal(p.attempts.length, 1, "the same answer is recorded once");
+  const wrong = createPolicy(0);
+  noteBoardWrite(wrong, "add_callout", { text: "What is 5 × 6?" });
+  const w = autoCheck(wrong, "35", 0);
+  assert.ok(w && /→ incorrect/.test(w) && /don't say the answer/i.test(w));
+  assert.equal(autoCheck(createPolicy(0), "35", 0), null, "nothing asked, nothing checked");
+  const chat = createPolicy(0);
+  noteBoardWrite(chat, "add_callout", { text: "What is 5 × 6?" });
+  assert.equal(autoCheck(chat, "i dont know", 0), null);
+  assert.equal(autoCheck(chat, "can we do the next one", 0), null);
 });

@@ -32,6 +32,8 @@ export type TurnRecord = {
   promptTokens: number | null;
   /** The turn's billed usage by modality (the largest count Live reported during the turn). */
   usage?: TurnUsage | null;
+  /** The auto-check note the code sent with this turn's student line, if any. */
+  autoCheck?: string | null;
   /** The full [Board: …] list after the turn, and the short one the tutor reads. */
   board: string;
   boardCompact: string;
@@ -58,7 +60,9 @@ export type Metrics = {
   phantomClaims: number;
   /** Student lines that were answers, and how many turns then called check_answer. */
   answerLines: number;
+  /** Answer lines checked: by check_answer, or by the code's auto-check. */
   checkedTurns: number;
+  autoChecks: number;
   studentAttemptsWritten: number;
   multiQuestionTurns: number;
   praiseTurns: number;
@@ -176,7 +180,8 @@ export function measure(turns: TurnRecord[], c: BenchCase, policy: PolicyFns): M
     textOnlyTurns: turns.filter((t) => drew(t) && !drewPicture(t) && !marked(t)).length,
     phantomClaims: turns.filter((t) => CLAIMS_BOARD.test(t.tutor) && !drew(t) && !marked(t)).length,
     answerLines: answerTurns.length,
-    checkedTurns: answerTurns.filter((t) => ok(t, (x) => x.name === "check_answer")).length,
+    checkedTurns: answerTurns.filter((t) => Boolean(t.autoCheck) || ok(t, (x) => x.name === "check_answer")).length,
+    autoChecks: turns.filter((t) => Boolean(t.autoCheck)).length,
     studentAttemptsWritten: allTools.filter((x) => x.ok && x.name === "add_student_attempt").length,
     multiQuestionTurns: turns.filter((t) => (t.tutor.match(/\?/g) ?? []).length > 1).length,
     praiseTurns: turns.filter((t) => policy.praiseOpener(t.tutor) !== null).length,

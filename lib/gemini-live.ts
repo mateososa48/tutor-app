@@ -389,6 +389,12 @@ export class GeminiLiveSession {
   sendText(text: string): boolean {
     this.tutorRuntime.noteStudentUtterance(text);
     this.newStudentInput("text");
+    // A checked answer goes in first, as a note the model reads with the line.
+    const note = this.tutorRuntime.takeAutoCheckNote();
+    if (note) {
+      this.debug("tool", "auto_check", { note: note.slice(0, 200) });
+      this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: note }] }], turnComplete: false } });
+    }
     const sent = this.sendUserTurn([{ text }], "text");
     if (sent) this.armUnanswered("text");
     return sent;

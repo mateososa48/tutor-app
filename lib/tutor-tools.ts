@@ -12,6 +12,7 @@
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
 import { checkAnswer, checkBlankInPage, type CheckVerdict } from "./answer-check";
+import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import {
   currentState,
@@ -21,7 +22,10 @@ import {
   recordAttempt,
   suggestHelp,
   type AttemptResult,
-  type TutorPolicy, flowStep } from "./tutor-policy";
+  type TutorPolicy,
+  flowStep,
+  looksLikeAnswer,
+} from "./tutor-policy";
 
 const KINDS = ["slip", "misconception", "guess"] as const;
 type WrongKind = (typeof KINDS)[number];
@@ -212,6 +216,47 @@ export function stepOfPage(page: string | null, problem: string, answer: string)
 }
 
 // Runs a tutor tool against the session policy. Null when `name` is not one of them.
+// ── The auto-check (Sept 25 2026) ─────────────────────────────────────────
+// 3.8 judged short numeric answers by ear (12 of 28 answer lines never got a
+// check_answer call). When a student line looks like an answer and the board
+// holds what was asked (the last callout or "?" line, else the problem), the
+// code checks it and hands the model the verdict: as a note before a typed
+// turn, or on the first tool result of a spoken one (nextReminder).
+const answerKey = (t: string) => t.toLowerCase().replace(/[\s$,]/g, "").replace(/^(isit|itis|its|it's|so|umm?|uh)+/, "").replace(/[?.!]+$/, "");
+
+export function autoCheck(policy: TutorPolicy, text: string, now: number): string | null {
+  const t = text.trim();
+  if (!t || !looksLikeAnswer(t) || isNonAnswer(t)) return null;
+  const candidates = [policy.lastAsked, policy.pageProblem].filter((c): c is string => Boolean(c && c.trim()));
+  for (const problem of candidates) {
+    const check = checkAnswer(problem, t);
+    if (check.verdict === "cannot_check") continue;
+    const skill = policy.currentSkill ?? policy.pageSkill ?? "unnamed skill";
+    const help = Math.max(suggestHelp(policy)?.level ?? 1, policy.boardHelp);
+    const step = stepOfPage(policy.pageProblem, problem, t);
+    recordAttempt(policy, { skill, result: attemptFromVerdict(check.verdict), help, auto: true, problem, step }, now);
+    noteAnswerChecked(policy);
+    const order = check.verdict === "correct"
+      ? "Write it in their hand (add_student_attempt), ring it (circle_item keep=true), then the next thing to do."
+      : check.verdict === "partial"
+        ? "Write it in their hand (add_student_attempt), then ask what is still missing."
+        : "Write it in their hand (add_student_attempt), then point at the step it came from and ask; don't say the answer.";
+    const said = t.length > 60 ? `${t.slice(0, 57)}…` : t;
+    const note = `[Answer check, not from the student: "${said}" → ${check.verdict}. ${check.message} ${order}]`;
+    policy.autoChecked = { answer: t, verdict: check.verdict, message: check.message, problem, at: now, note, sent: false, consumed: false };
+    return note;
+  }
+  return null;
+}
+
+/** The auto-check's note, once, for the typed-text path; null when there is none or it went out already. */
+export function takeAutoCheckNote(policy: TutorPolicy): string | null {
+  const a = policy.autoChecked;
+  if (!a || a.sent) return null;
+  a.sent = true;
+  return a.note;
+}
+
 export function runTutorTool(
   name: string,
   args: Record<string, unknown>,
@@ -225,10 +270,14 @@ export function runTutorTool(
   const problem = text(args.problem).slice(0, 300);
   const answer = text(args.student_answer).slice(0, 200);
   if (!problem.trim() || !answer.trim()) return { success: false, error: "check_answer needs problem and student_answer, both as strings." };
-  let check = checkAnswer(problem, answer);
+  // The same answer the code checked a moment ago: the same verdict, recorded once.
+  const auto = policy.autoChecked;
+  const reused = auto && !auto.consumed && now - auto.at < 60_000 && answerKey(auto.answer) === answerKey(answer) ? auto : null;
+  let check = reused ? { verdict: reused.verdict as CheckVerdict, message: reused.message } : checkAnswer(problem, answer);
+  if (reused) reused.consumed = true;
   // "x - 2 = ?" on the way through the page's equation: its box holds that
   // side's value at the page's solution.
-  if (check.verdict === "cannot_check" && policy.pageProblem) {
+  if (!reused && check.verdict === "cannot_check" && policy.pageProblem) {
     const page = problemMath(policy.pageProblem);
     const inPage = page ? checkBlankInPage(page, problem, answer) : null;
     if (inPage) check = inPage;
@@ -239,7 +288,7 @@ export function runTutorTool(
   const help = Math.max(parseHelpLevel(args.help_level) ?? suggestHelp(policy)?.level ?? 1, policy.boardHelp);
   const result = attemptFromVerdict(check.verdict, typeof args.kind === "string" ? args.kind : undefined);
   const step = stepOfPage(policy.pageProblem, problem, answer);
-  recordAttempt(policy, { skill, result, help, callId, problem, step }, now);
+  if (!reused) recordAttempt(policy, { skill, result, help, callId, problem, step }, now);
   if (!step && result !== "unchecked") policy.boardHelp = 0;
   // Their working, said out loud, belongs on the board as lines.
   const working = spokenWorking(policy.lastUtterance);

@@ -85,6 +85,12 @@ export type TutorPolicy = {
   boardAsk: string | null;
   /** Drawing calls so far this session: zero means the board is still empty. */
   drawCount: number;
+  /** The last thing the tutor asked on the board (a callout, a line ending in "?"), for the auto-check. */
+  lastAsked: string | null;
+  /** A student line the code checked itself (Sept 25 2026), with the note the model gets. */
+  autoChecked: { answer: string; verdict: string; message: string; problem: string; at: number; note: string; sent: boolean; consumed: boolean } | null;
+  /** The idea the student stated in the opening, before any skill ("cuz you add 3"), so PROBE asks about it instead of "what do you know". */
+  openingReason: string | null;
 };
 
 const MAX_ATTEMPTS = 80;
@@ -125,6 +131,9 @@ export function createPolicy(now: number): TutorPolicy {
     boardHelp: 0,
     lastUtterance: "",
     boardAsk: null,
+    lastAsked: null,
+    autoChecked: null,
+    openingReason: null,
     drawCount: 0,
   };
 }
@@ -245,6 +254,8 @@ export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.no
   // the tutor records it (recorded sessions never did).
   if (claimsUnderstanding(t)) p.claimedGetIt = t.length > 48 ? `${t.slice(0, 45)}…` : t;
   if (p.currentSkill && givesReason(t)) p.reasonSkill = p.currentSkill;
+  // Their idea, stated before any skill is set: the opening asks about it.
+  if (!p.currentSkill && p.attempts.length === 0 && givesReason(t)) p.openingReason = t.length > 70 ? `${t.slice(0, 67)}…` : t;
   if (p.currentSkill && signals.includes("idk") && isNonAnswer(t)) {
     const last = p.attempts.at(-1);
     recordAttempt(p, { skill: p.currentSkill, result: "stuck", help: last?.help ?? 1, auto: true }, now);
@@ -416,7 +427,12 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
   // on 3.1 the first reply asked the show-me question with nothing asked
   // first). The state line says so on the first board results.
   if (!p.currentSkill) {
-    if (p.attempts.length === 0 && p.studentTurns >= 1 && p.studentTurns <= 2) return { step: "open", next: "no teaching yet: ask what exactly they want (a sheet, or the whole idea), then what they already know and where it stops making sense; one question a turn; then the plan in one breath and one small show-me problem" };
+    if (p.attempts.length === 0 && p.studentTurns >= 1 && p.studentTurns <= 2) {
+      // They already said their idea (Sept 25 2026: Marcus was asked "what do
+      // you already know" right after saying it): ask about that instead.
+      if (p.openingReason) return { step: "open", next: `they already said their idea ("${p.openingReason}"): say it back in their words and ask where it came from, no "what do you know"; then one small show-me problem on it` };
+      return { step: "open", next: "no teaching yet: ask what exactly they want (a sheet, or the whole idea), then what they already know and where it stops making sense; one question a turn; then the plan in one breath and one small show-me problem" };
+    }
     return null;
   }
   const onSkill = p.attempts.filter((a) => a.skill === p.currentSkill && !a.step && a.result !== "unchecked");
@@ -592,9 +608,13 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
 export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<string, unknown>): void {
   p.unwrittenMath = null;
   p.drawCount += 1;
+  // What was asked on the board, so an answer can be checked against it.
+  if (name === "add_callout" && typeof args?.text === "string" && args.text.trim()) p.lastAsked = args.text.trim().slice(0, 200);
+  if (name === "draw_equation_step" && typeof args?.latex === "string" && /\?/.test(args.latex)) p.lastAsked = args.latex.trim().slice(0, 200);
   if (name === "start_problem" || name === "start_new_problem") {
     const raw = typeof args?.problem === "string" ? args.problem : typeof args?.title === "string" ? args.title : "";
     p.pageProblem = raw.trim() ? raw.trim().slice(0, 200) : null;
+    p.lastAsked = typeof args?.ask === "string" && args.ask.trim() ? args.ask.trim().slice(0, 200) : null;
     p.pageSkill = null;
     p.boardHelp = 0;
     return;
@@ -676,6 +696,12 @@ export function boardResultExtras(p: TutorPolicy, now: number): string {
 }
 
 function nextReminder(p: TutorPolicy, now: number): string | null {
+  // A line the code already checked: the verdict rides on the first result
+  // of the turn (the voice path; typed text gets it as a note before the turn).
+  if (p.autoChecked && !p.autoChecked.sent) {
+    p.autoChecked.sent = true;
+    return p.autoChecked.note;
+  }
   if (p.pendingAnswer && !p.answerNudged) {
     p.answerNudged = true;
     return `[Unchecked answer: the student said "${p.pendingAnswer}". Call check_answer before you say whether it is right.]`;

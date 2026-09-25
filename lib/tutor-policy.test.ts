@@ -360,3 +360,18 @@ test("before any answer is checked, the state line says the session is still ope
   noteStudentUtterance(p, "a piece of a number", 4000);
   assert.equal(formatTutorState(p, 5000).includes("step OPEN"), false, "after a few turns the opening is over");
 });
+
+// Sept 25 2026: a student who states their idea in the opening is asked
+// about it, not "what do you already know".
+test("the opening asks about the idea the student already gave", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "I need help with: ratios", 0);
+  noteStudentUtterance(p, "2 cups make 12 cookies so 5 cups is 15 cuz you add 3", 0);
+  const line = formatTutorState(p, 0);
+  assert.match(line, /step OPEN · next: they already said their idea \("2 cups make 12 cookies so 5 cups is 15 cuz you add 3"\): say it back/);
+  assert.doesNotMatch(line, /what they already know/);
+  const q = createPolicy(0);
+  noteStudentUtterance(q, "I need help with: ratios", 0);
+  noteStudentUtterance(q, "the whole idea", 0);
+  assert.match(formatTutorState(q, 0), /no teaching yet: ask what exactly they want/);
+});

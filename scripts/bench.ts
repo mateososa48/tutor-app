@@ -578,6 +578,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
 
   const turns: TurnRecord[] = [];
   let studentText = opening;
+  let pendingAuto: string | null = null;
   let pending = live.userTurn(parts, false);
   for (let i = 0; i < opts.turns; i++) {
     const t = await pending;
@@ -605,6 +606,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       interrupted: t.interrupted,
       promptTokens: t.promptTokens,
       usage: t.usage,
+      autoCheck: pendingAuto,
       board: await summaryOf(page, false),
       boardCompact: await summaryOf(page, true),
       shot,
@@ -616,6 +618,9 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     if (i === opts.turns - 1) break;
     studentText = await studentLine(opts.studentModel, c, turns, tutorView);
     runtime.noteStudentUtterance(studentText);
+    // The app's typed path: a checked answer goes in as a note before the line.
+    pendingAuto = runtime.takeAutoCheckNote();
+    if (pendingAuto) live.sendNote(pendingAuto);
     pending = live.userTurn([{ text: studentText }]);
   }
   const finalBoard = await exportBoard(page, 1600);
