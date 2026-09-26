@@ -4,7 +4,7 @@ import { LEGACY_TUTOR_TOOL_DECLARATIONS, TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLAR
 import { SESSION_TOOL_NAMES } from "./session-tools";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { buildBackendInstructions, buildGeminiInstructions } from "./tutor-prompts";
-import { createPolicy, noteStudentUtterance, noteBoardWrite } from "./tutor-policy";
+import { createPolicy, noteStudentUtterance, noteBoardWrite, noteTutorTurn } from "./tutor-policy";
 
 test("tutor tools do not collide with whiteboard tools and convert for Responses", () => {
   const board = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((d) => d.name));
@@ -233,4 +233,15 @@ test("a right answer after a wrong one orders the wrong one crossed out", () => 
   assert.equal(p.lastWrongAttempt, null);
   const again = runTutorTool("check_answer", { problem: "6 - (-2)", student_answer: "8", skill: "integers", help_level: "H1" }, p, 9000);
   assert.doesNotMatch(again && again.success ? again.message ?? "" : "", /cross_out_step/);
+});
+
+test("auto-check reads the tutor's spoken question when nothing was asked on the board", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Decimals" });
+  noteTutorTurn(p, "Okay. Which is bigger, 0.35 or 0.5?", true);
+  const note = autoCheck(p, "0.5", 1000);
+  assert.ok(note && /→ correct/.test(note), note ?? "no note");
+  const q = createPolicy(0);
+  noteBoardWrite(q, "start_new_problem", { title: "Decimals" });
+  assert.equal(autoCheck(q, "0.5", 0), null, "a topic heading is not a problem to check against");
 });

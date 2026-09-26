@@ -274,6 +274,11 @@ test("a comparison as the problem: the bigger number, or yes and no", () => {
   assert.equal(checkAnswer("0.2 < 0.15", "0.15").verdict, "correct");
   assert.equal(checkAnswer("1/2 > 1/3", "1/2").verdict, "correct");
   assert.equal(checkAnswer("x > 2", "3").verdict, "cannot_check");
+  // "0.35 vs 0.5" with the comparative in the answer.
+  assert.equal(checkAnswer("0.35 vs 0.5", "0.35 is bigger because 35 is more than 5").verdict, "incorrect");
+  assert.equal(checkAnswer("0.35 vs 0.5", "0.5 is bigger").verdict, "correct");
+  assert.equal(checkAnswer("0.35 or 0.5", "0.35 is smaller").verdict, "correct");
+  assert.equal(checkAnswer("0.35 vs 0.5", "0.35").verdict, "cannot_check");
 });
 
 test("unit words after numbers go when the rest is arithmetic", () => {

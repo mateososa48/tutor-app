@@ -227,7 +227,9 @@ const answerKey = (t: string) => t.toLowerCase().replace(/[\s$,]/g, "").replace(
 export function autoCheck(policy: TutorPolicy, text: string, now: number): string | null {
   const t = text.trim();
   if (!t || !looksLikeAnswer(t) || isNonAnswer(t)) return null;
-  const candidates = [policy.lastAsked, policy.pageProblem].filter((c): c is string => Boolean(c && c.trim()));
+  // A topic heading is not a problem; the spoken question usually is.
+  const page = policy.pageProblem && /[\d=+\-−×÷*/^\\<>]/.test(policy.pageProblem) ? policy.pageProblem : null;
+  const candidates = [policy.lastAsked, policy.lastSpokenQuestion, page].filter((c): c is string => Boolean(c && c.trim()));
   for (const problem of candidates) {
     const check = checkAnswer(problem, t);
     if (check.verdict === "cannot_check") continue;

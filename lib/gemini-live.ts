@@ -176,6 +176,9 @@ export class GeminiLiveSession {
   // a silent turnComplete nudges at once, and one escalation follows.
   private static readonly AFTER_TOOL_MS = 6_000;
   private static readonly ESCALATE_MS = 10_000;
+  // 3.8 sends turnComplete while it is still reasoning, and the sound
+  // follows within a second or two; a silent turnComplete waits this long.
+  private static readonly SILENT_TURN_MS = 2_500;
   private turnHadAudio = false;
   private awaitingReply = false;
   private nudgesThisTurn = 0;
@@ -781,11 +784,9 @@ export class GeminiLiveSession {
         if (this.turns.finish("turn_complete", now)) this.scheduleTurnFlush();
         this.finishTutorTurn();
         this.callbacks.onTurnComplete?.();
-        // The model declared itself done without a sound: nudge now, not later.
-        if (this.awaitingReply && !this.turnHadAudio && this.nudgesThisTurn === 0) {
-          this.clearUnanswered();
-          this.nudgeNow(this.lastInputKind, 0);
-        }
+        // The model declared itself done without a sound: nudge soon, unless
+        // the sound follows (an early turnComplete mid-reasoning).
+        if (this.awaitingReply && !this.turnHadAudio && this.nudgesThisTurn === 0) this.armUnanswered(this.lastInputKind, GeminiLiveSession.SILENT_TURN_MS);
       }
     }
 

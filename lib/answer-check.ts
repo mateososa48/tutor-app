@@ -166,9 +166,23 @@ const COMPARISON = /^\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*(>=|<=|>|<)\s*(-?\d+(?:\.\
 const YES = /^\s*(yes|yeah|yep|true|right|correct|it is|its true|that's right)\s*[.!?]*\s*$/i;
 const NO = /^\s*(no|nope|false|wrong|incorrect|not true|it isn't|it's not)\s*[.!?]*\s*$/i;
 
+// "0.35 vs 0.5", "0.35 or 0.5": which one is asked is in the answer ("0.35 is bigger").
+const PAIR = /^\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:vs\.?|versus|or|,)\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*\??\s*$/i;
+const ANSWER_COMPARATIVE = /\b(bigger|larger|greater|more|higher|smaller|less|lower|fewer)\b/i;
+
+function checkPairClaim(problem: string, answer: string): AnswerCheck | null {
+  const m = PAIR.exec(problem);
+  if (!m) return null;
+  const said = answer.replace(/\$/g, "");
+  const cmp = ANSWER_COMPARATIVE.exec(said)?.[1].toLowerCase();
+  if (!cmp) return cannot(`"${problem}" lists two numbers but not which is asked; put it in the problem ("which is bigger, ${m[1]} or ${m[2]}").`);
+  const wantsBigger = /^(bigger|larger|greater|more|higher)$/.test(cmp);
+  return checkInequalityClaim(`${m[1]} ${wantsBigger ? ">" : "<"} ${m[2]}`, said.replace(ANSWER_COMPARATIVE, " ").replace(/\b(is|are|the|one|than|because|cuz|cause)\b.*$/i, " "));
+}
+
 function checkInequalityClaim(problem: string, answer: string): AnswerCheck | null {
   const m = COMPARISON.exec(problem);
-  if (!m) return null;
+  if (!m) return checkPairClaim(problem, answer);
   const a = readValue(m[1]);
   const b = readValue(m[3]);
   if (a === null || b === null) return null;

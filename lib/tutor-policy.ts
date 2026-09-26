@@ -87,6 +87,8 @@ export type TutorPolicy = {
   drawCount: number;
   /** The last thing the tutor asked on the board (a callout, a line ending in "?"), for the auto-check. */
   lastAsked: string | null;
+  /** The last question the tutor said with a number in it ("Which is bigger, 0.35 or 0.5?"), for the auto-check. */
+  lastSpokenQuestion: string | null;
   /** A student line the code checked itself (Sept 25 2026), with the note the model gets. */
   autoChecked: { answer: string; verdict: string; message: string; problem: string; at: number; note: string; sent: boolean; consumed: boolean } | null;
   /** The idea the student stated in the opening, before any skill ("cuz you add 3"), so PROBE asks about it instead of "what do you know". */
@@ -134,6 +136,7 @@ export function createPolicy(now: number): TutorPolicy {
     lastUtterance: "",
     boardAsk: null,
     lastAsked: null,
+    lastSpokenQuestion: null,
     autoChecked: null,
     openingReason: null,
     lastWrongAttempt: null,
@@ -594,6 +597,13 @@ export function boardReference(text: string): string | null {
 }
 
 export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marked = false): void {
+  // The last question with a number in it, spoken: what an answer answers.
+  const questions = text.split(/(?<=\?)\s+/).map((q) => q.trim()).filter((q) => q.endsWith("?") && /\d/.test(q));
+  if (questions.length) {
+    const q = questions[questions.length - 1];
+    const tail = q.split(/(?<=[.!])\s+/).pop() ?? q;
+    p.lastSpokenQuestion = tail.slice(0, 200);
+  }
   p.unmarkedReference = marked ? null : boardReference(text);
   const asked = permissionQuestion(text);
   if (asked) p.askedPermission = asked;

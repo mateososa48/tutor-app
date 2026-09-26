@@ -155,6 +155,7 @@ const TOOL_TIMEOUT_MS = 3_000; // the client's TOOL_TIMEOUT_MS (blocking tools)
 const UNANSWERED_MS = 4_000; // typed input
 const AFTER_TOOL_MS = 6_000; // the client re-arms the nudge after a silent tool result
 const ESCALATE_MS = 10_000; // one escalation after an unanswered nudge
+const SILENT_TURN_MS = 2_500; // a silent turnComplete waits this long for the sound
 const ESCALATE_EVENT = "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing.";
 const TURN_CAP_MS = 75_000;
 
@@ -338,7 +339,7 @@ class LiveTutor {
     if (sc.interrupted) this.turn.interrupted = true;
     if (sc.turnComplete) {
       this.turnCompleteSeen = true;
-      if (this.turn.audioChunks === 0 && this.nudges === 0 && this.pendingTools === 0) { this.clearUnanswered(); this.nudgeNow(); }
+      if (this.turn.audioChunks === 0 && this.nudges === 0 && this.pendingTools === 0) this.armUnanswered(SILENT_TURN_MS);
       this.bump();
     }
   }
