@@ -190,7 +190,8 @@ function checkInequalityClaim(problem: string, answer: string): AnswerCheck | nu
   const bigger = a > b ? m[1] : m[3];
   const smaller = a > b ? m[3] : m[1];
   const wantsBigger = op === ">" || op === ">=";
-  const said = cleanAnswer(stripFiller(spokenToDigits(answer.replace(/\$/g, ""))));
+  // "0.5 is bigger" names the value it picks (Sept 26 2026: cannot_check).
+  const said = cleanAnswer(stripFiller(spokenToDigits(answer.replace(/\$/g, ""))).replace(/\s+(?:is|'s|are)\s+(?:the\s+)?(?:bigger|greater|larger|more|higher|smaller|less|lower)(?:\s+one)?(?:\s+than\s+.*)?$/i, "").trim());
   if (YES.test(said)) return holds ? { verdict: "correct", message: `Correct: ${m[1]} ${op} ${m[3]} holds.` } : { verdict: "incorrect", message: `Incorrect: ${m[1]} ${op} ${m[3]} does not hold. (For you only: ${bigger} is the bigger one. Don't say it or write it; help them find the mistake.)` };
   if (NO.test(said)) return holds ? { verdict: "incorrect", message: `Incorrect: ${m[1]} ${op} ${m[3]} does hold. (For you only: ${bigger} is the bigger one. Don't say it or write it; help them find the mistake.)` } : { verdict: "correct", message: `Correct: ${m[1]} ${op} ${m[3]} does not hold.` };
   const v = readValue(said);

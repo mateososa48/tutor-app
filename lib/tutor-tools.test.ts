@@ -387,3 +387,17 @@ test("every right answer is ringed; a wrong line is struck only by a right answe
   autoCheck(p, "oh 6", 2000);
   assert.deepEqual(p.pendingMarks, { line: "12 / 2 = 6", ring: true, strike: "12 / 2 = 5" });
 });
+
+test("the app never rings an existing line that says something else", () => {
+  const calls: string[] = [];
+  const dispatch = (name: string, args: Record<string, unknown>) => {
+    calls.push(name);
+    return name === "add_student_attempt" ? { success: true as const, message: 'Already on the board as b5 ("0.35"), so it was not written again; pointing at it instead.' } : { success: true as const, message: "ok" };
+  };
+  applyVerdictMarks({ line: "0.5 > 0.35", ring: true, strike: null }, dispatch, new Map());
+  assert.deepEqual(calls, ["add_student_attempt"]);
+  calls.length = 0;
+  const same = (name: string) => (calls.push(name), name === "add_student_attempt" ? { success: true as const, message: 'Already on the board as b2 ("7"), so it was not written again.' } : { success: true as const, message: "ok" });
+  applyVerdictMarks({ line: "f(3) = 7", ring: true, strike: null }, same, new Map());
+  assert.deepEqual(calls, ["add_student_attempt", "circle_item"], "the model's own copy of the same answer is ringed");
+});

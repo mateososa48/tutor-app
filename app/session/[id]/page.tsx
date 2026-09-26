@@ -54,7 +54,7 @@ import { joinTranscript } from "@/lib/live-events";
 import { TutorRuntime } from "@/lib/tutor-runtime";
 import { boardFontsSettled, loadBoardFonts } from "@/lib/board-fonts";
 import { applyVerdictMarks, stepOfPage } from "@/lib/tutor-tools";
-import { takePlanStep } from "@/lib/tutor-policy";
+import { notePlanAdvanced, takePlanStep } from "@/lib/tutor-policy";
 import { LearningRecorder, loadSessionLearning } from "@/lib/learning-client";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
@@ -346,6 +346,7 @@ function SessionDetailPage({ id }: { id: string }) {
         if (!stepOfPage(tutorRuntime.policy.pageProblem, event.attempt.problem, event.attempt.studentAnswer)) {
           whiteboardRef.current?.planAnswered?.();
           tutorRuntime.policy.planStepAdvanced = true;
+          notePlanAdvanced(tutorRuntime.policy);
         }
       }
     });
@@ -577,7 +578,10 @@ function SessionDetailPage({ id }: { id: string }) {
         });
       }
       // A new problem after a right answer on this one checks the plan's step off before the board is redrawn.
-      if (name === "start_new_problem" && takePlanStep(tutorRuntime.policy)) whiteboardRef.current?.planAnswered?.();
+      if (name === "start_new_problem" && takePlanStep(tutorRuntime.policy)) {
+        whiteboardRef.current?.planAnswered?.();
+        notePlanAdvanced(tutorRuntime.policy);
+      }
       // A result the student has not said goes up as "= ?" (Sept 26 2026).
       const shaped = tutorRuntime.shapeBoardCall(name, args);
       let result = dispatchWhiteboardTool(name, shaped.args, {

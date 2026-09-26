@@ -101,4 +101,6 @@ test("an attempt the app wrote is not written again when the model sends the sam
   assert.equal(findDuplicate("add_student_attempt", fp("7"), items), "b2");
   assert.equal(findDuplicate("add_student_attempt", fp("f(3) = 6"), items), null);
   assert.equal(findDuplicate("add_student_attempt", fp("5 cups make 7 cups of dough"), items), null, "a long different line with the same number is new");
+  const wrongThenRight = [{ id: "b5", tool: "add_student_attempt", content: fp("0.35") }];
+  assert.equal(findDuplicate("add_student_attempt", fp("0.5 > 0.35"), wrongThenRight), null, "a comparison is not the earlier bare 0.35");
 });

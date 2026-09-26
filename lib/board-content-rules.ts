@@ -161,10 +161,15 @@ const EQUATION_TOOLS = new Set(["draw_equation_step", "add_equation_sequence"]);
  * newest equation only (writing a line again later can be deliberate), a
  * picture with the last six pictures.
  */
-// The last number in a fingerprint's text: "f(3)=7" and "7" are the same answer.
-function lastNumber(fingerprint: string): string | null {
+// The value an attempt claims: what follows its last "=", or the whole of a
+// bare number ("f(3)=7" and "7" are the same answer). A comparison claims no
+// single value (Sept 26 2026: "0.5 > 0.35" was matched to an earlier "0.35" by
+// its last number, and the app ringed the wrong answer).
+function claimedValue(fingerprint: string): string | null {
   const body = fingerprint.slice(fingerprint.indexOf(":") + 1);
-  return /(-?\d+(?:\.\d+)?(?:\/\d+)?)(?!.*\d)/.exec(body)?.[1] ?? null;
+  if (/[<>≤≥≠]/.test(body)) return null;
+  const tail = body.includes("=") ? body.slice(body.lastIndexOf("=") + 1) : body;
+  return /^-?\d+(?:\.\d+)?(?:\/\d+)?$/.test(tail) ? tail : null;
 }
 
 export function findDuplicate(tool: string, fingerprint: string, items: FingerprintedItem[]): string | null {
@@ -176,15 +181,10 @@ export function findDuplicate(tool: string, fingerprint: string, items: Fingerpr
     // model gets to it (Sept 26 2026); the model's "7" or "f(3) = 7, right?"
     // is that answer again when one of the two just contains the other's
     // value, among the two newest attempts.
-    const n = lastNumber(fingerprint);
+    const n = claimedValue(fingerprint);
     if (!n) return null;
-    const body = fingerprint.slice(fingerprint.indexOf(":") + 1);
     const recent = since.filter((i) => i.tool === tool && i.content).slice(-2);
-    const twin = recent.reverse().find((i) => {
-      const other = i.content!.slice(i.content!.indexOf(":") + 1);
-      return lastNumber(i.content!) === n && (other === n || body === n || other.includes(body) || body.includes(other));
-    });
-    return twin?.id ?? null;
+    return recent.reverse().find((i) => claimedValue(i.content!) === n)?.id ?? null;
   }
   if (TEXT_TOOLS.has(tool)) {
     return since.find((i) => i.content === fingerprint)?.id ?? null;

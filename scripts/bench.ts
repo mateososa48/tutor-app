@@ -658,6 +658,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     if (event.type !== "attempt.recorded" || event.attempt.result !== "correct") return;
     if (m.tutorTools.stepOfPage(runtime.policy.pageProblem, event.attempt.problem, event.attempt.studentAnswer)) return;
     runtime.policy.planStepAdvanced = true;
+    m.policy.notePlanAdvanced(runtime.policy);
     void page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
   });
 
@@ -728,7 +729,10 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       lastLook = { fileId: file.id, page: choice.page };
       return { success: true, message: m.sessionTools.worksheetShown(choice.file, choice.page) };
     } else {
-      if (name === "start_new_problem" && m.policy.takePlanStep(runtime.policy)) await page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
+      if (name === "start_new_problem" && m.policy.takePlanStep(runtime.policy)) {
+        m.policy.notePlanAdvanced(runtime.policy);
+        await page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
+      }
       const shaped = runtime.shapeBoardCall(name, args);
       args = shaped.args;
       result = await page.evaluate(({ name, args, callId }) => (window as BoardWindow).__chalkDispatch?.(name, args, callId) ?? { success: false, error: "no dispatcher on the page" }, { name, args, callId });

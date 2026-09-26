@@ -24,7 +24,7 @@ import {
   cancelAttempt,
   noteAnswerChecked,
   noteTutorTurn,
-  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep, takePlanStep, turnNote, givesTask, praiseOpener } from "./tutor-policy";
+  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep, takePlanStep, turnNote, givesTask, praiseOpener, notePlanAdvanced } from "./tutor-policy";
 
 const T0 = 1_000_000;
 
@@ -452,4 +452,17 @@ test("three turns on a problem with no picture: the note asks for the picture, o
   assert.doesNotMatch(turnNote(p, "And after two years?", true, false) ?? "", /no picture/);
   assert.match(turnNote(p, "And after three years?", true, false) ?? "", /no picture of it/);
   assert.doesNotMatch(turnNote(p, "What about four?", true, false) ?? "", /no picture/);
+});
+
+test("a plan left on one step for five turns gets one reminder to move it", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Cookies", problem: "2 cups make 12 cookies" });
+  noteBoardWrite(p, "set_plan", { steps: "What a rate is | Scaling | Practice" });
+  noteBoardWrite(p, "draw_icons", { icon: "cookie", count: 12 });
+  const notes = [1, 2, 3, 4, 5, 6].map(() => turnNote(p, "How many for one cup?", true, false) ?? "");
+  assert.equal(notes.filter((n) => /plan box still shows step 1 of 3/.test(n)).length, 1);
+  assert.match(notes[4], /set_plan\(step=2\)/);
+  notePlanAdvanced(p);
+  assert.equal(p.planStep, 2);
+  assert.equal(p.turnsOnStep, 0);
 });

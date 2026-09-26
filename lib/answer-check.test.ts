@@ -322,3 +322,8 @@ test("a plus-or-minus problem is checked against both of its values", () => {
   assert.equal(checkAnswer("(3 ± 1)/4", "1").verdict, "partial");
   assert.equal(checkAnswer("(3 ± 1)/4", "2 and 1").verdict, "incorrect");
 });
+
+test("a comparison claim answered with a named value", () => {
+  assert.equal(checkAnswer("0.5 > 0.35", "0.5 is bigger").verdict, "correct");
+  assert.equal(checkAnswer("0.5 > 0.35", "0.35 is bigger").verdict, "incorrect");
+});

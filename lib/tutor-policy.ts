@@ -130,6 +130,10 @@ export type TutorPolicy = {
   pagePictures: number;
   pageTurns: number;
   pictureNudged: boolean;
+  /** The plan box as the policy knows it: how many steps, which one is current, tutor turns spent on it. */
+  planSteps: number;
+  planStep: number;
+  turnsOnStep: number;
 };
 
 const MAX_ATTEMPTS = 80;
@@ -191,6 +195,9 @@ export function createPolicy(now: number): TutorPolicy {
     pagePictures: 0,
     pageTurns: 0,
     pictureNudged: false,
+    planSteps: 0,
+    planStep: 0,
+    turnsOnStep: 0,
     drawCount: 0,
   };
 }
@@ -696,7 +703,14 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
 export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<string, unknown>): void {
   p.unwrittenMath = null;
   p.drawCount += 1;
-  if (name === "set_plan") p.planSet = true;
+  if (name === "set_plan") {
+    p.planSet = true;
+    const steps = typeof args?.steps === "string" ? args.steps.split("|").filter((s) => s.trim()).length : 0;
+    if (steps) p.planSteps = steps;
+    const step = Number(args?.step);
+    p.planStep = Number.isFinite(step) && step > 0 ? step : steps ? 1 : p.planStep;
+    p.turnsOnStep = 0;
+  }
   if (name && PICTURE_TOOLS.has(name)) p.pagePictures += 1;
   // What was asked on the board, so an answer can be checked against it.
   if (name === "add_callout" && typeof args?.text === "string" && args.text.trim()) p.lastAsked = args.text.trim().slice(0, 200);
@@ -955,6 +969,12 @@ export function turnNote(p: TutorPolicy, tutorText: string, drew: boolean, marke
     orders.push("their problem is not on the board: put it up first (start_new_problem with problem= as they said it)");
   }
   p.pageTurns += 1;
+  // Sept 26 2026: every judge found the plan box frozen on step 1 while the
+  // lesson moved on; the model never moves it unasked.
+  if (p.planSteps > 0 && p.planStep < p.planSteps) {
+    p.turnsOnStep += 1;
+    if (p.turnsOnStep === 5) orders.push(`the plan box still shows step ${p.planStep} of ${p.planSteps}: if you have moved on, set_plan(step=${p.planStep + 1})`);
+  }
   // Sept 26 2026: the judges' lowest score was "board object" (2.2): whole
   // problems went by in equations and words with nothing drawn.
   if (pageMath && p.pagePictures === 0 && p.pageTurns >= 3 && !p.pictureNudged) {
@@ -980,3 +1000,9 @@ export function turnNote(p: TutorPolicy, tutorText: string, drew: boolean, marke
 // A real question about the math in their opening line: "why is it…", "how
 // come…", "what does … mean", "is log(2) + log(3) = log(5)?".
 const OPENING_QUESTION = /\b(?:why (?:is|it'?s|its|does|do|are|would|did|can'?t|isn'?t|doesn'?t)|how come|what (?:does|do) [^.?!]{1,40} mean|what(?:'s| is) the difference|is [^.?!]{2,40}\?)[^.?!]*\??/i;
+
+/** The plan box moved on a step (a finished problem, a new one after a right answer). */
+export function notePlanAdvanced(p: TutorPolicy): void {
+  if (p.planSteps && p.planStep < p.planSteps) p.planStep += 1;
+  p.turnsOnStep = 0;
+}

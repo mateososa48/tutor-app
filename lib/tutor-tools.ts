@@ -319,6 +319,13 @@ function planMarks(policy: TutorPolicy, problem: string, answer: string, verdict
     : `"${line}" is on the board in their hand.`;
 }
 
+// What a line claims, for comparing two lines: the part after its last "=", or
+// the whole line; comparisons compare whole.
+function sayValue(line: string): string {
+  const flat = line.replace(/[\s$]/g, "").replace(/−/g, "-").toLowerCase();
+  return /[<>]/.test(flat) || !flat.includes("=") ? flat : flat.slice(flat.lastIndexOf("=") + 1);
+}
+
 /**
  * Runs a verdict's board move through the board's own dispatcher: the line in
  * their hand, then its ring or the strike through their earlier wrong line
@@ -337,7 +344,11 @@ export function applyVerdictMarks(
     return result;
   };
   const wrote = run("add_student_attempt", { text: marks.line });
-  const id = wrote.success ? /\b(?:item|as) (b\d+)\b/.exec(wrote.message ?? "")?.[1] ?? null : null;
+  let id = wrote.success ? /\b(?:item|as) (b\d+)\b/.exec(wrote.message ?? "")?.[1] ?? null : null;
+  // An existing line is ringed only when it says the same thing (a guard: a
+  // bad duplicate match once ringed the student's earlier wrong answer).
+  const twin = wrote.success ? /Already on the board as b\d+ \("([^"]*)"\)/.exec(wrote.message ?? "")?.[1] : undefined;
+  if (twin !== undefined && sayValue(twin) !== sayValue(marks.line)) id = null;
   if (id) ids.set(marks.line, id);
   if (marks.ring && id) run("circle_item", { target: id, keep: true });
   const struck = marks.strike ? ids.get(marks.strike) : null;
