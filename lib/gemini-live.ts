@@ -247,18 +247,23 @@ export class GeminiLiveSession {
   // The nudge itself, at most twice a student line: the second time it says
   // the student is waiting. Nothing when audio has already come.
   private nudgeNow(kind: "text" | "voice", afterMs: number) {
-    if (this.manualDisconnect || this.turnHadAudio || !this.awaitingReply || this.nudgesThisTurn >= 2) return;
+    if (this.manualDisconnect || this.turnHadAudio || !this.awaitingReply || this.nudgesThisTurn >= 3) return;
     this.nudgesThisTurn += 1;
-    this.debug("turn", this.nudgesThisTurn === 1 ? "nudge_unanswered" : "nudge_escalated", { kind, afterMs });
+    this.debug("turn", this.nudgesThisTurn === 1 ? "nudge_unanswered" : this.nudgesThisTurn === 2 ? "nudge_escalated" : "nudge_repeated", { kind, afterMs });
+    // The third time, their own words again (Sept 26 2026: 3.8 sat through two
+    // nudges for 39 s after "wdym 15% gets smaller").
+    const again = this.lastStudentLine.trim().slice(0, 200);
     this.sendUserTurn(
       [{
         text: this.nudgesThisTurn === 1
           ? "Session event: the student just answered and you have not replied. Reply now in a sentence or two and go on with the lesson; if what they said was only \"ok\" or \"yeah\", take it as ready and give them the next thing to do."
-          : "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing.",
+          : this.nudgesThisTurn === 2 || !again
+            ? "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing."
+            : `The student said: "${again}". Answer them now, out loud, in a sentence or two.`,
       }],
       "event",
     );
-    if (this.nudgesThisTurn === 1) this.armUnanswered(kind, GeminiLiveSession.ESCALATE_MS);
+    if (this.nudgesThisTurn < 3) this.armUnanswered(kind, GeminiLiveSession.ESCALATE_MS);
   }
 
   private clearUnanswered() {

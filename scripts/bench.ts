@@ -273,6 +273,8 @@ class LiveTutor {
   }
 
   private readonly hold: HoldLike | null;
+  /** The student's last line, for the third nudge. */
+  lastLine = "";
   /** --voice: the student's line as 16 kHz PCM, being streamed by the mic loop. */
   private voicePcm: Buffer | null = null;
   private voiceAt = 0;
@@ -409,11 +411,12 @@ class LiveTutor {
   }
   // As the client does: at most twice a line, never once audio has come.
   private nudgeNow() {
-    if (this.turn.audioChunks > 0 || this.nudges >= 2) return;
+    if (this.turn.audioChunks > 0 || this.nudges >= 3) return;
     this.nudges += 1;
     this.turn.nudged = true;
-    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: this.nudges === 1 ? UNANSWERED_EVENT : ESCALATE_EVENT }] }], turnComplete: true } });
-    if (this.nudges === 1) this.armUnanswered(ESCALATE_MS);
+    const text = this.nudges === 1 ? UNANSWERED_EVENT : this.nudges === 2 || !this.lastLine ? ESCALATE_EVENT : `The student said: "${this.lastLine.slice(0, 200)}". Answer them now, out loud, in a sentence or two.`;
+    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } });
+    if (this.nudges < 3) this.armUnanswered(ESCALATE_MS);
   }
   private clearUnanswered() {
     if (this.unanswered) clearTimeout(this.unanswered);
@@ -500,8 +503,8 @@ class LiveTutor {
         if (left > 0) { this.debounce = setTimeout(() => { this.debounce = null; this.idleReplyAt = null; this.bump(); }, left); return; }
         this.idleReplyAt = null;
       }
-      if (this.turn.audioChunks === 0 && this.nudges < 2) return;
-      if (this.turn.audioChunks === 0 && Date.now() - this.turnStart < UNANSWERED_MS + ESCALATE_MS + 12_000) return;
+      if (this.turn.audioChunks === 0 && this.nudges < 3) return;
+      if (this.turn.audioChunks === 0 && Date.now() - this.turnStart < UNANSWERED_MS + 2 * ESCALATE_MS + 12_000) return;
       this.finishTurn();
     }, TURN_DEBOUNCE_MS);
   }
@@ -841,6 +844,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     const bye = (t: string) => /^\s*(?:ok(?:ay)?\s+)?(?:bye|cya|see ya|thanks?,? bye|ok thanks|thank you|thx)\b/i.test(t);
     if (bye(studentText) && turns.length && bye(turns[turns.length - 1].student)) { console.log(`  (${c.name} has left)`); break; }
     pendingNote = [nextNote, coached].filter(Boolean).join("\n") || null;
+    live.lastLine = studentText;
     if (opts.voice) {
       // The app's voice path: the note goes in as the student starts talking;
       // the utterance is read when they stop, and a checked answer's note rides
