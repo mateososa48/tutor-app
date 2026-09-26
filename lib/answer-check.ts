@@ -128,7 +128,7 @@ function splitAnswers(raw: string): string[] {
 function stripFiller(raw: string): string {
   return raw
     .replace(/[?!]+/g, " ")
-    .replace(/\b(i think|i guess|maybe|probably|um+|uh+|hmm+|so|it'?s|it is|the answer is|answer)\b:?/gi, " ")
+    .replace(/\b(i think|i guess|maybe|probably|um+|uh+|hmm+|oh+|ok|okay|well|like|wait|yeah|so|it'?s|it is|the answer is|answer)\b:?/gi, " ")
     .replace(/\s+/g, " ")
     .replace(/^[\s,;:]+|[\s,;:.]+$/g, "")
     .trim();
@@ -176,8 +176,7 @@ function checkPairClaim(problem: string, answer: string): AnswerCheck | null {
   const said = answer.replace(/\$/g, "");
   const cmp = ANSWER_COMPARATIVE.exec(said)?.[1].toLowerCase();
   if (!cmp) return cannot(`"${problem}" lists two numbers but not which is asked; put it in the problem ("which is bigger, ${m[1]} or ${m[2]}").`);
-  const wantsBigger = /^(bigger|larger|greater|more|higher)$/.test(cmp);
-  return checkInequalityClaim(`${m[1]} ${wantsBigger ? ">" : "<"} ${m[2]}`, said.replace(ANSWER_COMPARATIVE, " ").replace(/\b(is|are|the|one|than|because|cuz|cause)\b.*$/i, " "));
+  return checkComparison(`which is ${cmp}, ${m[1]} or ${m[2]}`, said);
 }
 
 function checkInequalityClaim(problem: string, answer: string): AnswerCheck | null {
@@ -229,7 +228,14 @@ function evalConstant(text: string): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
+// The board's typeset line, copied back as the problem: "0.35 \\text{ vs } 0.5"
+// (Sept 25 2026, Maya's auto-check found "symbols it can't read").
+function unTextLatex(s: string): string {
+  return s.replace(/\\(?:text|mathrm|textrm)\{([^{}]*)\}/g, " $1 ").replace(/\\[,;:!]/g, " ").replace(/\s+/g, " ").trim();
+}
+
 export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck {
+  problem = unTextLatex(problem ?? "");
   const claimed = checkInequalityClaim(problem, studentAnswer);
   if (claimed) return claimed;
   // "25\\%" is the board's LaTeX for 25%: the tutor copies it from there.
@@ -846,8 +852,13 @@ function pickChoice(answer: string, choices: Choice[], want: "max" | "min"): Pic
     return { kind: "cannot", reason: `"${answer}" could be a place or a fraction; ask them to say the number.` };
   } else {
     // "third" on its own, like "the third", is a third.
-    const value = readValue(spokenToDigits(bare in DENOMINATOR_WORDS ? `the ${bare}` : s, { the: true }).replace(/^the\s+/, ""));
-    if (value === null) return unread;
+    let value = readValue(spokenToDigits(bare in DENOMINATOR_WORDS ? `the ${bare}` : s, { the: true }).replace(/^the\s+/, ""));
+    if (value === null) {
+      // "oh so 0.5 is bigger cause its 50 cents": the one choice it names.
+      const named = choices.filter((c) => (spokenToDigits(s, { the: true }).match(/-?\d+(?:\.\d+)?(?:\/\d+)?/g) ?? []).some((n) => near(readValue(n) ?? NaN, c.value)));
+      if (named.length !== 1) return unread;
+      value = named[0].value;
+    }
     const matches = choices.map((c, i) => (near(c.value, value) ? i : -1)).filter((i) => i >= 0);
     if (matches.length === 0) return { kind: "cannot", reason: `the student's "${answer}" isn't one of the choices.` };
     index = matches[0];

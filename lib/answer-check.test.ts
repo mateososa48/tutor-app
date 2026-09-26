@@ -290,3 +290,13 @@ test("unit words after numbers go when the rest is arithmetic", () => {
   assert.equal(checkAnswer("5 cups * 6 cookies", "30").verdict, "correct");
   assert.equal(checkAnswer("12 cookies / 2 cups", "6").verdict, "correct");
 });
+
+// Sept 25 2026, from Maya's Phase 4 session: the auto-check could not read the
+// board's typeset line or a kid's "oh so 0.5 is bigger cause its 50 cents".
+test("a comparison copied off the board, with the kid's whole sentence", () => {
+  assert.equal(checkAnswer("0.35 \\text{ vs } 0.5", "oh so 0.5 is bigger cause its 50 cents").verdict, "correct");
+  assert.equal(checkAnswer("0.35 vs 0.5", "0.35 is bigger cuz 35 is more than 5").verdict, "incorrect");
+  assert.equal(checkAnswer("Which is bigger: 0.35 or 0.5?", "oh so 0.5 is bigger cause its 50 cents").verdict, "correct");
+  assert.equal(checkAnswer("Which is bigger: 0.35 or 0.5?", "wait 0.35").verdict, "incorrect");
+  assert.equal(checkAnswer("Which is bigger: 0.35 or 0.5?", "oh 0.35 and 0.5 are both").verdict, "cannot_check", "both named: no guess");
+});

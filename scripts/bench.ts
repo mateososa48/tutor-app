@@ -156,6 +156,7 @@ const UNANSWERED_MS = 4_000; // typed input
 const AFTER_TOOL_MS = 6_000; // the client re-arms the nudge after a silent tool result
 const ESCALATE_MS = 10_000; // one escalation after an unanswered nudge
 const SILENT_TURN_MS = 2_500; // a silent turnComplete waits this long for the sound
+const IDLE_REPLY_MS = 5_000; // a WHEN_IDLE result makes the model speak again after its turnComplete: wait this long for that
 const ESCALATE_EVENT = "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing.";
 const TURN_CAP_MS = 75_000;
 
@@ -183,6 +184,9 @@ class LiveTutor {
   private cap: ReturnType<typeof setTimeout> | null = null;
   private unanswered: ReturnType<typeof setTimeout> | null = null;
   private turnCompleteSeen = false;
+  private turnCompleteAt = 0;
+  /** When a WHEN_IDLE result went out: the model answers it in a fresh generation, so the turn is not over until a turnComplete after it (Sept 25 2026: p4 turns opened with the tail of the last one, "check our answer.", first audio 36 ms). */
+  private idleReplyAt: number | null = null;
   private pendingTools = 0;
   private toolSeq = 0;
   closed: string | null = null;
@@ -259,6 +263,7 @@ class LiveTutor {
     this.turn = LiveTutor.emptyTurn();
     this.turnStart = Date.now();
     this.turnCompleteSeen = false;
+    this.idleReplyAt = null;
     this.nudges = 0;
     this.send({ clientContent: { turns: [{ role: "user", parts }], turnComplete: true } });
     if (arm) this.armUnanswered();
@@ -320,6 +325,7 @@ class LiveTutor {
           if (VERBOSE) console.log(`      ${ms}ms ${c.name}(${JSON.stringify(c.args ?? {}).slice(0, 100)}) ${result.success ? "→" : "✗"} ${rec.result.split("\n")[0].slice(0, 120)}`);
           const scheduling = this.scheduling(c.name, result, this.turn.audioChunks > 0);
           this.send({ toolResponse: { functionResponses: [{ id, name: c.name, response: { output: result }, ...(scheduling ? { scheduling } : {}) }] } });
+          if (scheduling === "WHEN_IDLE") { this.idleReplyAt = Date.now(); this.bump(); }
           if (this.turn.audioChunks === 0) this.armUnanswered(AFTER_TOOL_MS);
         });
       }
@@ -339,6 +345,7 @@ class LiveTutor {
     if (sc.interrupted) this.turn.interrupted = true;
     if (sc.turnComplete) {
       this.turnCompleteSeen = true;
+      this.turnCompleteAt = Date.now();
       if (this.turn.audioChunks === 0 && this.nudges === 0 && this.pendingTools === 0) this.armUnanswered(SILENT_TURN_MS);
       this.bump();
     }
@@ -352,6 +359,11 @@ class LiveTutor {
     this.debounce = setTimeout(() => {
       this.debounce = null;
       if (!this.turnCompleteSeen || this.pendingTools > 0) return;
+      if (this.idleReplyAt !== null && this.turnCompleteAt < this.idleReplyAt) {
+        const left = IDLE_REPLY_MS - (Date.now() - this.idleReplyAt);
+        if (left > 0) { this.debounce = setTimeout(() => { this.debounce = null; this.idleReplyAt = null; this.bump(); }, left); return; }
+        this.idleReplyAt = null;
+      }
       if (this.turn.audioChunks === 0 && this.nudges < 2) return;
       if (this.turn.audioChunks === 0 && Date.now() - this.turnStart < UNANSWERED_MS + ESCALATE_MS + 12_000) return;
       this.finishTurn();
@@ -439,6 +451,7 @@ type BoardWindow = Window & {
   __chalkBoard?: {
     getBoardSummary?: (compact?: boolean) => string;
     exportImage?: (maxWidth?: number) => Promise<{ url: string; width: number; height: number } | null>;
+    planAnswered?: () => void;
   } | null;
 };
 
@@ -486,6 +499,14 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   runtime.setWorkingSink((lines: string[], answer: string) => {
     const flat = (t: string) => t.replace(/[\s$]/g, "").toLowerCase();
     for (const line of lines) if (flat(line) !== flat(answer)) void page.evaluate((text) => (window as BoardWindow).__chalkDispatch?.("add_student_attempt", { text }), line);
+  });
+  // A checked right answer that finishes a problem (not a step of it) checks
+  // the plan's step, as the session page does (until Sept 25 2026 the bench
+  // left the plan box on step 1 all session, and the judge marked it down).
+  runtime.setEventSink((event) => {
+    if (event.type !== "attempt.recorded" || event.attempt.result !== "correct") return;
+    if (m.tutorTools.stepOfPage(runtime.policy.pageProblem, event.attempt.problem, event.attempt.studentAnswer)) return;
+    void page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
   });
 
   let lastSummary = "";

@@ -90,6 +90,8 @@ export type Metrics = {
   slowTurns: number;
   /** Turns whose transcript carries LaTeX, markup or tool syntax the student would hear. */
   leakTurns: number;
+  /** Turns where the tutor said the same sentence twice. */
+  repeatTurns: number;
   /** Student attempts written with a backslash in them (raw LaTeX in handwriting). */
   rawLatexAttempts: number;
   wallMs: number;
@@ -128,7 +130,19 @@ const ASKS_WHAT_THEY_KNOW = /\b(already know|what do you know|what you know|wher
 const OPENING_ALLOWED = new Set(["start_new_problem", "look_at_worksheet", "add_callout", "look_at_board", "remember_about_student"]);
 // What a kid would hear that is not speech: LaTeX between dollars, markup, a
 // stage direction, or a tool call read aloud ("set_plan(steps=…").
-const LEAK = /\$[^$\n]{1,80}\$|<!--|<no speech|<\/?[a-z]+>|\b[a-z_]+\((?:[a-z_]+=|")/i;
+const LEAK = /\$[^$\n]{1,80}\$|<!--|<no speech|<\/?[a-z]+>|\b[a-z_]+\((?:[a-z_]+=|")|-{3,}/i;
+// A sentence of six or more words said twice in one turn (Sept 25 2026, 3.8:
+// "split that into two equations… And now, split that into two equations…").
+function repeatsItself(text: string): boolean {
+  const seen = new Set<string>();
+  for (const raw of text.split(/(?<=[.!?])\s+|\s*[.!?]\s*(?=[A-Z])/)) {
+    const s = raw.toLowerCase().replace(/^(?:(?:and|so|now|then|ok|okay),?\s+)+/, "").replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+    if (s.split(" ").length < 6) continue;
+    if (seen.has(s)) return true;
+    seen.add(s);
+  }
+  return false;
+}
 const SLOW_MS = 8_000;
 
 type PolicyFns = {
@@ -203,6 +217,7 @@ export function measure(turns: TurnRecord[], c: BenchCase, policy: PolicyFns): M
     callsPerTurn: turns.length ? Math.round((allTools.length / turns.length) * 10) / 10 : 0,
     slowTurns: turns.filter((t) => t.firstAudioMs != null && t.firstAudioMs > SLOW_MS).length,
     leakTurns: turns.filter((t) => LEAK.test(t.tutor)).length,
+    repeatTurns: turns.filter((t) => repeatsItself(t.tutor)).length,
     rawLatexAttempts: allTools.filter((x) => x.ok && x.name === "add_student_attempt" && typeof x.args.text === "string" && x.args.text.includes("\\")).length,
     wallMs: turns.reduce((s, t) => s + t.durationMs, 0),
   };

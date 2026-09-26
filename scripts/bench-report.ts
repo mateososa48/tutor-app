@@ -52,6 +52,7 @@ export type Totals = {
   callsPerTurn: number;
   slowTurns: number;
   leakTurns: number;
+  repeatTurns: number;
   rawLatexAttempts: number;
   wallMs: number;
   judge: {
@@ -128,6 +129,7 @@ export function totals(runs: CaseRun[]): Totals {
     callsPerTurn: turns ? Math.round((sum((m) => m.toolCalls) / turns) * 10) / 10 : 0,
     slowTurns: sum((m) => m.slowTurns ?? 0),
     leakTurns: sum((m) => m.leakTurns ?? 0),
+    repeatTurns: sum((m) => m.repeatTurns ?? 0),
     rawLatexAttempts: sum((m) => m.rawLatexAttempts ?? 0),
     wallMs: runs.reduce((s, r) => s + r.wallMs, 0),
     judge: {
@@ -192,6 +194,7 @@ export function buildReport(input: RunInput): { report: string; summary: Summary
     `| tool calls a turn | ${t.callsPerTurn} |`,
     `| turns over 8 s to the first sound | ${t.slowTurns} |`,
     `| transcript leaks (LaTeX, markup, tool syntax) | ${t.leakTurns} |`,
+    `| turns that repeat a sentence | ${t.repeatTurns} |`,
     `| attempts written as raw LaTeX | ${t.rawLatexAttempts} |`,
     `| session time | ${Math.round(t.wallMs / 1000)}s |`,
   );
