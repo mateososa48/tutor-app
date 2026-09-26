@@ -26,6 +26,8 @@
 //   --save-audio       write each turn's speech as <case>-t<N>.wav
 //   --nohold           send async results at once, as before the app's ResponseHold
 //   --nonotes          no note between turns (TutorRuntime.turnNote)
+//   --coach model      a coach (lib/tutor-coach) reads the lesson after each tutor
+//                      turn and adds one order to the note (e.g. gemini-3.5-flash)
 //   --turns N          student turns per case (default: the case's own)
 //   --label name       the run's name (default: the date and time)
 //   --live 3.8|3.1|id  the Live model (default: the app's DEFAULT_LIVE_MODEL)
@@ -55,6 +57,7 @@ import WebSocket from "ws";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
 import { CASES, HELDOUT, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
@@ -538,7 +541,7 @@ const summaryOf = (page: Page, compact: boolean) => page.evaluate((c) => (window
 
 // ── One case ───────────────────────────────────────────────────────────────
 
-async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; hold: boolean; notes: boolean; tag: string }): Promise<CaseRun> {
+async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; hold: boolean; notes: boolean; coach: string; tag: string }): Promise<CaseRun> {
   const tag = opts.tag;
   const { page, errors } = await openBoard(opts.browser, opts.base, opts.w, opts.h);
   const runtime = new m.runtime.TutorRuntime({ startedAt: Date.now() });
@@ -731,14 +734,26 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     console.log(`  ${i + 1}. ${c.name}: ${turn.student}\n     tutor: ${turn.tutor || (turn.timedOut ? "(timed out)" : "(silent)")}\n     tools: ${turn.tools.map((x) => `${x.name}${x.ok ? "" : " ✗"}`).join(", ") || "(none)"}${turn.firstAudioMs != null ? ` · first audio ${turn.firstAudioMs} ms` : ""}${turn.promptTokens ? ` · ${turn.promptTokens.toLocaleString()} prompt tokens` : ""}`);
     if (live.closed) { console.log(`  (session closed: ${live.closed})`); break; }
     if (i === opts.turns - 1) break;
+    // The coach reads the lesson while the student thinks (it never sees their answer).
+    const coaching = opts.coach
+      ? callModel({
+          model: opts.coach,
+          system: COACH_SYSTEM,
+          text: coachPrompt({ grade: c.grade, topic: c.topic, turns: turns.map((x) => ({ student: x.student, tutor: x.tutor, tools: x.tools.filter((y) => y.ok && !y.by).map((y) => y.name) })), board: turn.boardCompact, state: m.policy.formatTutorState(runtime.policy, Date.now()) || null }),
+          images: [],
+          temperature: 0.3,
+          maxTokens: 120,
+        }).then(coachNote).catch(() => null)
+      : Promise.resolve(null);
     studentText = await studentLine(opts.studentModel, c, turns, tutorView);
+    const coached = await coaching;
     // A kid who has said goodbye twice is gone (Maya said "bye" three times into 14 turns).
     const bye = (t: string) => /^\s*(?:ok(?:ay)?\s+)?(?:bye|cya|see ya|thanks?,? bye|ok thanks|thank you|thx)\b/i.test(t);
     if (bye(studentText) && turns.length && bye(turns[turns.length - 1].student)) { console.log(`  (${c.name} has left)`); break; }
     runtime.noteStudentUtterance(studentText);
     // The app's typed path: a checked answer goes in as a note before the line.
     pendingAuto = runtime.takeAutoCheckNote();
-    pendingNote = nextNote;
+    pendingNote = [nextNote, coached].filter(Boolean).join("\n") || null;
     await markChain;
     const context = [pendingAuto, pendingNote].filter(Boolean).join("\n");
     if (context) live.sendNote(context);
@@ -902,7 +917,7 @@ async function main() {
         console.log(`\n=== ${c.name}, ${c.grade} (${tag}): "${c.topic}"`);
         let run: CaseRun;
         try {
-          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: !process.argv.includes("--nohold"), notes: !process.argv.includes("--nonotes"), tag });
+          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: !process.argv.includes("--nohold"), notes: !process.argv.includes("--nonotes"), coach: arg("coach", ""), tag });
         } catch (err) {
           console.log(`  failed: ${err instanceof Error ? err.message : String(err)}`);
           continue;
