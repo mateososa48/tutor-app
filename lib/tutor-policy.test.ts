@@ -479,3 +479,10 @@ test("a question with numbers the board does not show, and spoken arithmetic, go
   assert.deepEqual(math, [{ name: "draw_equation_step", args: { latex: "3 \\times 6 = 18" } }]);
   assert.deepEqual(spokenBoardMoves(p, "Is there a problem on a sheet, or the whole idea?"), []);
 });
+
+test("a number named with 'is' is not arithmetic to write", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Integers", problem: "-12 / 4 =" });
+  assert.deepEqual(spokenBoardMoves(p, "Okay, number six is negative twelve divided by four."), []);
+  assert.deepEqual(spokenBoardMoves(p, "Right, thirteen minus five is eight."), [{ name: "draw_equation_step", args: { latex: "13 - 5 = 8" } }]);
+});

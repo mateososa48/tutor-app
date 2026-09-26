@@ -1039,9 +1039,12 @@ export function spokenBoardMoves(p: TutorPolicy, text: string): BoardMove[] {
   }
   const said = spokenMath(text);
   if (said) {
-    const plain = spokenToDigits(said, { the: true }).replace(/\s+(?:is|equals|makes|gives)\s+/i, " = ").replace(/\s*\*\s*/g, " \\times ").replace(/\s+/g, " ").trim();
+    const plain = spokenToDigits(said, { the: true }).replace(/\s+(?:is|equals|makes|gives)\s+/i, " = ").replace(/\s*\*\s*/g, " \\times ").replace(/(\d)\s*-\s*(\d)/g, "$1 - $2").replace(/\s+/g, " ").trim();
     const nums = numbersIn(plain);
-    if (nums.length >= 2 && !onBoard(nums)) {
+    // Only real arithmetic: "number six is negative twelve divided by four"
+    // matched "six is negative twelve" and went up as "6 = -12" (Sept 26 2026).
+    const lhs = plain.split("=")[0];
+    if (nums.length >= 2 && /[+×*/^]|\\times|\\div|\d\s*-\s*\d|sqrt/.test(lhs) && !onBoard(nums)) {
       moves.push({ name: "draw_equation_step", args: { latex: plain } });
       for (const n of nums) if (!p.boardNumbers.includes(n)) p.boardNumbers.push(n);
       p.unwrittenMath = null;
