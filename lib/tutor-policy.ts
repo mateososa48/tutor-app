@@ -116,6 +116,8 @@ export type TutorPolicy = {
   lastWrongLine: string | null;
   /** Lines the app has already put up for this problem (a second check of the same answer marks nothing). */
   markedLines: string[];
+  /** The problem their latest wrong line answered, so only a right answer to the same one strikes it. */
+  lastWrongProblem: string | null;
   /** Numbers the student has said since the problem opened, and the page's own: a line may show these as results. */
   saidNumbers: string[];
   /** They asked to try one on their own ("can i try one"): the next problem is theirs, until they answer one. */
@@ -180,6 +182,7 @@ export function createPolicy(now: number): TutorPolicy {
     pendingMarks: null,
     lastWrongLine: null,
     markedLines: [],
+    lastWrongProblem: null,
     saidNumbers: [],
     wantsAlone: false,
     planSet: false,

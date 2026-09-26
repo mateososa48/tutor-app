@@ -370,3 +370,20 @@ test("a reported answer is checked against the problem in the same line", () => 
   const m = autoCheck(q, "2 cups make 12 cookies how many for 5 cups and i got 15 cuz you add 3", 0);
   assert.equal(m, null, "a word problem the checker cannot read is left alone");
 });
+
+test("every right answer is ringed; a wrong line is struck only by a right answer to the same question", () => {
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  noteBoardWrite(p, "start_new_problem", { title: "Cookies", problem: "2 cups make 12 cookies. How many from 5 cups?" });
+  noteBoardWrite(p, "add_callout", { text: "What is 12 / 2?" });
+  autoCheck(p, "5", 0);
+  assert.deepEqual(p.pendingMarks, { line: "12 / 2 = 5", ring: false, strike: null });
+  p.pendingMarks = null;
+  noteBoardWrite(p, "add_callout", { text: "What is 5 * 6?" });
+  autoCheck(p, "30", 1000);
+  assert.deepEqual(p.pendingMarks, { line: "5 × 6 = 30", ring: true, strike: null }, "a right step is ringed; the other question's miss stays");
+  p.pendingMarks = null;
+  noteBoardWrite(p, "add_callout", { text: "What is 12 / 2?" });
+  autoCheck(p, "oh 6", 2000);
+  assert.deepEqual(p.pendingMarks, { line: "12 / 2 = 6", ring: true, strike: "12 / 2 = 5" });
+});

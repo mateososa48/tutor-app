@@ -290,15 +290,30 @@ function planMarks(policy: TutorPolicy, problem: string, answer: string, verdict
   if (!policy.codeMarks || verdict === "cannot_check") return "";
   const line = answerLine(problem, answer);
   if (!line) return "";
-  const ring = verdict === "correct" && !step;
+  // Every right answer is ringed (Sept 26 2026: on a word problem the checker
+  // cannot tell the final answer from a step, so no right answer was ever
+  // ringed and every judge said so); a step only decides the plan box.
+  const ring = verdict === "correct";
   // The same answer checked twice (the auto-check, then the model): up once.
   const key = `${line}|${ring}`;
   if (policy.markedLines.includes(key)) return `"${line}" is already on the board in their hand${ring ? " and ringed" : ""}.`;
   policy.markedLines.push(key);
-  const strike = ring && policy.lastWrongLine && policy.lastWrongLine !== line ? policy.lastWrongLine : null;
+  // Their wrong line is struck by a right answer to the same question (the
+  // same numbers in it), not by a right answer to the next step.
+  const sameQuestion = (a: string | null, b: string) => {
+    if (!a) return false;
+    const na = numbersIn(a).sort().join(",");
+    return Boolean(na) && na === numbersIn(b).sort().join(",");
+  };
+  const strike = ring && policy.lastWrongLine && policy.lastWrongLine !== line && sameQuestion(policy.lastWrongProblem, problem) ? policy.lastWrongLine : null;
   policy.pendingMarks = { line, ring, strike };
-  if (ring) policy.lastWrongLine = null;
-  else if (verdict === "incorrect" || verdict === "partial") policy.lastWrongLine = line;
+  if (strike || (ring && !step)) {
+    policy.lastWrongLine = null;
+    policy.lastWrongProblem = null;
+  } else if (verdict === "incorrect" || verdict === "partial") {
+    policy.lastWrongLine = line;
+    policy.lastWrongProblem = problem;
+  }
   return ring
     ? `"${line}" is on the board in their hand and ringed${strike ? `; their earlier "${strike}" is crossed out` : ""}.`
     : `"${line}" is on the board in their hand.`;
