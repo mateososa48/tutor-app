@@ -523,7 +523,17 @@ function SessionDetailPage({ id }: { id: string }) {
       scheduleBoardFrame(900);
       scheduleRecordingFrame();
     });
-    return () => tutorRuntime.setMarkSink();
+    // What the tutor asked or worked out aloud and did not write (spokenBoardMoves).
+    tutorRuntime.setBoardSink((moves) => {
+      const startedAt = performance.now();
+      for (const m of moves) recordToolCall(m.name, m.args, dispatchWhiteboardTool(m.name, m.args, { whiteboard: whiteboardRef.current }), startedAt, "app-board");
+      scheduleBoardFrame(900);
+      scheduleRecordingFrame();
+    });
+    return () => {
+      tutorRuntime.setMarkSink();
+      tutorRuntime.setBoardSink();
+    };
   }, [tutorRuntime, recordToolCall, scheduleBoardFrame, scheduleRecordingFrame]);
 
   // look_at_board: the picture reaches the tutor before the answer does (it

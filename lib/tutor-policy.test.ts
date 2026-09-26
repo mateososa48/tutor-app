@@ -24,7 +24,7 @@ import {
   cancelAttempt,
   noteAnswerChecked,
   noteTutorTurn,
-  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep, takePlanStep, turnNote, givesTask, praiseOpener, notePlanAdvanced } from "./tutor-policy";
+  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep, takePlanStep, turnNote, givesTask, praiseOpener, notePlanAdvanced, spokenBoardMoves } from "./tutor-policy";
 
 const T0 = 1_000_000;
 
@@ -465,4 +465,17 @@ test("a plan left on one step for five turns gets one reminder to move it", () =
   notePlanAdvanced(p);
   assert.equal(p.planStep, 2);
   assert.equal(p.turnsOnStep, 0);
+});
+
+test("a question with numbers the board does not show, and spoken arithmetic, go on the board once", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Decimals", problem: "0.35 vs 0.5" });
+  assert.deepEqual(spokenBoardMoves(p, "Right. Which is bigger, 0.35 or 0.5?"), [], "already on the board");
+  const moves = spokenBoardMoves(p, "Nice. Let's try another one: which is bigger, zero point four or zero point two five?");
+  assert.deepEqual(moves, [{ name: "add_callout", args: { text: "Which is bigger, 0.4 or 0.25?" } }]);
+  assert.equal(p.lastAsked, "which is bigger, 0.4 or 0.25?");
+  assert.deepEqual(spokenBoardMoves(p, "Which is bigger, 0.4 or 0.25?"), [], "not twice");
+  const math = spokenBoardMoves(p, "So three times six is eighteen.");
+  assert.deepEqual(math, [{ name: "draw_equation_step", args: { latex: "3 \\times 6 = 18" } }]);
+  assert.deepEqual(spokenBoardMoves(p, "Is there a problem on a sheet, or the whole idea?"), []);
 });

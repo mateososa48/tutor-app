@@ -703,6 +703,20 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     }).catch(() => undefined);
   });
 
+  // What the tutor said with numbers and did not write, as the session page writes it.
+  if (typeof runtime.setBoardSink === "function") runtime.setBoardSink((moves) => {
+    markChain = markChain.then(async () => {
+      const recs: ToolRecord[] = [];
+      for (const mv of moves) {
+        const r = (await page.evaluate(({ name, args }) => (window as BoardWindow).__chalkDispatch?.(name, args, `appb${Date.now()}`) ?? { success: false, error: "no dispatcher" }, mv)) as ToolCallResult;
+        recs.push({ name: mv.name, args: mv.args, callId: "app-board", atMs: 0, beforeSpeech: false, ok: r.success, result: r.success ? r.message ?? "Done" : `Error: ${r.error}`, durationMs: 0, by: "app" });
+      }
+      if (live.active) live.noteAppTools(recs);
+      else pendingApp.push(...recs);
+      scheduleFrame(900);
+    }).catch(() => undefined);
+  });
+
   const onTool = async (name: string, args: Record<string, unknown>, callId: string): Promise<ToolCallResult> => {
     await markChain;
     const now = Date.now();

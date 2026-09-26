@@ -26,7 +26,7 @@ import {
   setSessionFiles,
   type AttemptResult,
   type SessionFile,
-  type TutorPolicy, type VerdictMarks, noteBoardMark } from "./tutor-policy";
+  type TutorPolicy, type VerdictMarks, type BoardMove, noteBoardMark, spokenBoardMoves } from "./tutor-policy";
 
 export type TeachingMoveType = (typeof TEACHING_MOVE_TYPES)[number];
 export type RemediationStrategy = (typeof REMEDIATION_STRATEGIES)[number];
@@ -158,6 +158,18 @@ export class TutorRuntime {
 
   noteTutorTurn(text: string, drew: boolean, marked = false): void {
     noteTutorTurn(this.policy, text, drew, marked);
+    // What it said with numbers and did not write, the app writes (spokenBoardMoves).
+    if (this.onBoardMoves) {
+      const moves = spokenBoardMoves(this.policy, text);
+      if (moves.length) this.onBoardMoves(moves);
+    }
+  }
+
+  private onBoardMoves?: (moves: BoardMove[]) => void;
+
+  /** The page's hand for board moves the app makes from what the tutor said (without one, nothing is written). */
+  setBoardSink(onBoardMoves?: (moves: BoardMove[]) => void): void {
+    this.onBoardMoves = onBoardMoves;
   }
 
   /** The note for the tutor's next turn (lib/tutor-policy turnNote), or null. */

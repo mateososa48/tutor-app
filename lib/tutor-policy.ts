@@ -134,6 +134,8 @@ export type TutorPolicy = {
   planSteps: number;
   planStep: number;
   turnsOnStep: number;
+  /** Numbers already written on the board for this problem (what the app need not write again). */
+  boardNumbers: string[];
 };
 
 const MAX_ATTEMPTS = 80;
@@ -198,6 +200,7 @@ export function createPolicy(now: number): TutorPolicy {
     planSteps: 0,
     planStep: 0,
     turnsOnStep: 0,
+    boardNumbers: [],
     drawCount: 0,
   };
 }
@@ -703,6 +706,7 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
 export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<string, unknown>): void {
   p.unwrittenMath = null;
   p.drawCount += 1;
+  if (args && name !== "start_new_problem") for (const v of Object.values(args)) if (typeof v === "string" || typeof v === "number") for (const n of numbersIn(String(v))) if (!p.boardNumbers.includes(n)) p.boardNumbers.push(n);
   if (name === "set_plan") {
     p.planSet = true;
     const steps = typeof args?.steps === "string" ? args.steps.split("|").filter((s) => s.trim()).length : 0;
@@ -730,6 +734,7 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.markedLines = [];
     // The page's numbers and the line that opened it are given, not results.
     p.saidNumbers = numbersIn(`${raw} ${typeof args?.ask === "string" ? args.ask : ""} ${p.lastUtterance ?? ""}`);
+    p.boardNumbers = numbersIn(`${raw} ${typeof args?.ask === "string" ? args.ask : ""}`);
     p.pageSkill = null;
     p.boardHelp = 0;
     return;
@@ -1005,4 +1010,42 @@ const OPENING_QUESTION = /\b(?:why (?:is|it'?s|its|does|do|are|would|did|can'?t|
 export function notePlanAdvanced(p: TutorPolicy): void {
   if (p.planSteps && p.planStep < p.planSteps) p.planStep += 1;
   p.turnsOnStep = 0;
+}
+
+// ── What the tutor said goes on the board (Sept 26 2026) ────────────────────
+// The judges' most repeated board complaint after the marks: a practice
+// problem asked aloud and never written ("which is bigger, 0.4 or 0.25?"),
+// arithmetic said and not written. After the tutor's turn, the app writes the
+// last question with numbers the board does not show yet, as a callout (which
+// is also what the auto-check reads the answer against), and spoken arithmetic
+// the board does not show, as a line.
+export type BoardMove = { name: string; args: Record<string, unknown> };
+
+export function spokenBoardMoves(p: TutorPolicy, text: string): BoardMove[] {
+  const moves: BoardMove[] = [];
+  const onBoard = (nums: string[]) => nums.every((n) => p.boardNumbers.includes(n));
+  // "one" as a word ("another one", "which one") is not the number 1; the
+  // question is what follows a lead-in ("Let's try another one: which is…").
+  const words = (t: string) => t.replace(/\b(another|this|that|the|which|each|every|next|last|first|a|one more|any)\s+one\b/gi, "$1 ◊");
+  const question = text.split(/(?<=[.!?])\s+/).map((q) => q.trim()).filter((q) => q.endsWith("?")).map((q) => q.split(/[:—–]\s+/).at(-1)!.trim()).filter((q) => numbersIn(words(q)).length > 0).at(-1);
+  if (question) {
+    const nums = numbersIn(words(question));
+    const plain = spokenToDigits(words(question), { the: true }).replace(/◊/g, "one").replace(/^(?:so|now|okay|ok|alright|great|right|yes|then),?\s+/i, "").trim();
+    if (!onBoard(nums) && plain.length <= 120) {
+      moves.push({ name: "add_callout", args: { text: plain.charAt(0).toUpperCase() + plain.slice(1) } });
+      p.lastAsked = plain;
+      for (const n of nums) if (!p.boardNumbers.includes(n)) p.boardNumbers.push(n);
+    }
+  }
+  const said = spokenMath(text);
+  if (said) {
+    const plain = spokenToDigits(said, { the: true }).replace(/\s+(?:is|equals|makes|gives)\s+/i, " = ").replace(/\s*\*\s*/g, " \\times ").replace(/\s+/g, " ").trim();
+    const nums = numbersIn(plain);
+    if (nums.length >= 2 && !onBoard(nums)) {
+      moves.push({ name: "draw_equation_step", args: { latex: plain } });
+      for (const n of nums) if (!p.boardNumbers.includes(n)) p.boardNumbers.push(n);
+      p.unwrittenMath = null;
+    }
+  }
+  return moves;
 }
