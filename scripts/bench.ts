@@ -841,7 +841,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     studentText = await studentLine(opts.studentModel, c, turns, tutorView);
     const coached = await coaching;
     // A kid who has said goodbye twice is gone (Maya said "bye" three times into 14 turns).
-    const bye = (t: string) => /^\s*(?:ok(?:ay)?\s+)?(?:bye|cya|see ya|thanks?,? bye|ok thanks|thank you|thx)\b/i.test(t);
+    const bye = (t: string) => /^\s*(?:ok(?:ay)?\s+)?(?:bye|cya|see ya|peace|later|gtg|gotta go|thanks?,? bye|ok thanks|thank you|thx)\b/i.test(t);
     if (bye(studentText) && turns.length && bye(turns[turns.length - 1].student)) { console.log(`  (${c.name} has left)`); break; }
     pendingNote = [nextNote, coached].filter(Boolean).join("\n") || null;
     live.lastLine = studentText;
