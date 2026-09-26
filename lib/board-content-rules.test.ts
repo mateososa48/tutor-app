@@ -90,3 +90,15 @@ test("the same content twice points at what is already there", () => {
   const after = [...items, { id: "b6", tool: "start_new_problem", content: "x" }];
   assert.equal(findDuplicate("add_text_note", note, after), null);
 });
+
+test("an attempt the app wrote is not written again when the model sends the same answer", () => {
+  const fp = (t: string) => contentFingerprint("add_student_attempt", t);
+  const items = [
+    { id: "b1", tool: "start_new_problem", content: undefined },
+    { id: "b2", tool: "add_student_attempt", content: fp("f(3) = 7") },
+  ];
+  assert.equal(findDuplicate("add_student_attempt", fp("f(3) = 7"), items), "b2");
+  assert.equal(findDuplicate("add_student_attempt", fp("7"), items), "b2");
+  assert.equal(findDuplicate("add_student_attempt", fp("f(3) = 6"), items), null);
+  assert.equal(findDuplicate("add_student_attempt", fp("5 cups make 7 cups of dough"), items), null, "a long different line with the same number is new");
+});

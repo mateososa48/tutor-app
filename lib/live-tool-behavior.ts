@@ -52,10 +52,96 @@ export function toolScheduling(model: string, name: string, result: { success: b
   if (!spoken) return "WHEN_IDLE";
   if (!result.success) return "WHEN_IDLE";
   if (/\bCareful:/.test(result.message ?? "")) return "WHEN_IDLE";
-  // A changed [Tutor state] is an order for the next move: heard when the
-  // tutor is done talking, not filed away (Sept 25 2026).
-  if (/\[Tutor state:/.test(result.message ?? "")) return "WHEN_IDLE";
+  // Once it has spoken, a changed [Tutor state] is filed too: it is read on
+  // the next turn. WHEN_IDLE made it speak a second time after its reply
+  // (Sept 26 2026: "…sheet or the idea? Where do you usually get stuck…?",
+  // heard as two questions in the saved audio).
   return "SILENT";
+}
+
+/**
+ * One spoken reply per student line (Sept 26 2026). A non-blocking result
+ * that comes back before the tutor has made a sound is held, not sent: sent
+ * WHEN_IDLE it made 3.8 answer the line and then talk again once idle, and
+ * sent SILENT to a tutor that then ends its turn quietly it is never acted
+ * on. So it waits for the first sound (then it goes SILENT, read next turn)
+ * or for a turnComplete with no sound after a short grace (then the last one
+ * goes WHEN_IDLE, which makes the tutor speak). A new student line or a long
+ * wait sends whatever is held SILENT.
+ */
+export class ResponseHold {
+  private held: Array<{ id: string; name: string; result: { success: boolean; message?: string } }> = [];
+  private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  private maxTimer: ReturnType<typeof setTimeout> | null = null;
+  static readonly GRACE_MS = 900;
+  static readonly MAX_MS = 5_000;
+
+  constructor(
+    private readonly send: (id: string, name: string, result: { success: boolean; message?: string }, scheduling: ToolScheduling) => void,
+    private readonly schedule: (name: string, result: { success: boolean; message?: string }, spoken: boolean) => ToolScheduling | undefined,
+  ) {}
+
+  get size(): number {
+    return this.held.length;
+  }
+
+  /** A result is ready. `spoken`: the tutor has made a sound this turn. Returns true when it was held. */
+  offer(id: string, name: string, result: { success: boolean; message?: string }, spoken: boolean): boolean {
+    const first = this.schedule(name, result, spoken);
+    if (spoken || first === undefined) return false;
+    this.held.push({ id, name, result });
+    if (!this.maxTimer) this.maxTimer = setTimeout(() => this.release("SILENT"), ResponseHold.MAX_MS);
+    return true;
+  }
+
+  /** The tutor made its first sound: everything held is filed. */
+  onAudio(): void {
+    if (this.held.length) this.release("SILENT");
+  }
+
+  /** The tutor ended its turn: if still quiet after a grace, the held results make it speak. */
+  onTurnComplete(hadAudio: boolean): void {
+    if (!this.held.length) return;
+    if (hadAudio) return this.release("SILENT");
+    if (this.graceTimer) clearTimeout(this.graceTimer);
+    this.graceTimer = setTimeout(() => this.release("WHEN_IDLE"), ResponseHold.GRACE_MS);
+  }
+
+  /** A call the model took back: its result is never sent. */
+  drop(id: string): void {
+    this.held = this.held.filter((h) => h.id !== id);
+    if (!this.held.length) this.clearTimers();
+  }
+
+  /** A new student line: what is held belongs to the last turn. */
+  onNewInput(): void {
+    if (this.held.length) this.release("SILENT");
+  }
+
+  dispose(): void {
+    this.clearTimers();
+    this.held = [];
+  }
+
+  private clearTimers(): void {
+    if (this.graceTimer) clearTimeout(this.graceTimer);
+    if (this.maxTimer) clearTimeout(this.maxTimer);
+    this.graceTimer = null;
+    this.maxTimer = null;
+  }
+
+  private release(mode: ToolScheduling): void {
+    this.clearTimers();
+    const batch = this.held;
+    this.held = [];
+    batch.forEach((h, i) => {
+      // A refusal or a warning still asks to be heard; otherwise only the last
+      // one of a quiet turn wakes the tutor, so it speaks once.
+      const own = this.schedule(h.name, h.result, true);
+      const scheduling: ToolScheduling = mode === "WHEN_IDLE" ? (i === batch.length - 1 || own === "WHEN_IDLE" ? "WHEN_IDLE" : "SILENT") : own === "WHEN_IDLE" ? "WHEN_IDLE" : "SILENT";
+      this.send(h.id, h.name, h.result, scheduling);
+    });
+  }
 }
 
 /**

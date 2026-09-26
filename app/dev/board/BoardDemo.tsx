@@ -7,6 +7,8 @@ import { GraphExplorer } from "@/components/session/GraphExplorer";
 import { useGraphExplore, type ExploreChannel } from "@/components/session/useGraphExplore";
 import { preloadDesmos, whenDesmosSettled } from "@/components/board/desmos-renderer";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
+import { applyVerdictMarks } from "@/lib/tutor-tools";
+import type { VerdictMarks } from "@/lib/tutor-policy";
 import { BOARD_DEMOS } from "./demos";
 
 export default function BoardDemo() {
@@ -54,7 +56,10 @@ export default function BoardDemo() {
   // can also call the dispatcher directly: window.__chalkDispatch(name, args).
   useEffect(() => {
     if (!ready) return;
-    const w = window as unknown as { __chalkDispatch?: (name: string, args: Record<string, unknown>, callId?: string) => unknown };
+    const w = window as unknown as {
+      __chalkDispatch?: (name: string, args: Record<string, unknown>, callId?: string) => ReturnType<typeof dispatchWhiteboardTool>;
+      __chalkVerdictMarks?: (marks: VerdictMarks) => unknown;
+    };
     let seq = 0;
     w.__chalkDispatch = (name, args, callId) => {
       const result = dispatchWhiteboardTool(name, args, { whiteboard: ref.current, callId: callId ?? `d${seq++}` });
@@ -62,8 +67,12 @@ export default function BoardDemo() {
       setLog((prev) => [...prev, `${name}: ${line}`]);
       return result;
     };
+    // A checked answer's board move, as the session page runs it (the benchmark calls this).
+    const ids = new Map<string, string>();
+    w.__chalkVerdictMarks = (marks) => applyVerdictMarks(marks, (name, args) => w.__chalkDispatch!(name, args, `code${seq++}`), ids);
     return () => {
       delete w.__chalkDispatch;
+      delete w.__chalkVerdictMarks;
     };
   }, [ready]);
 

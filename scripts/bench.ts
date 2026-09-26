@@ -24,6 +24,7 @@
 //   --set main|heldout|all  the six the redesign reads (default), the four held
 //                      out for gates (slope, triangle, divide, logs), or all ten
 //   --save-audio       write each turn's speech as <case>-t<N>.wav
+//   --nohold           send async results at once, as before the app's ResponseHold
 //   --turns N          student turns per case (default: the case's own)
 //   --label name       the run's name (default: the date and time)
 //   --live 3.8|3.1|id  the Live model (default: the app's DEFAULT_LIVE_MODEL)
@@ -178,8 +179,12 @@ function wav(chunks: string[], rate = 24_000): Buffer {
   return Buffer.concat([head, pcm]);
 }
 
+type HoldLike = { offer(id: string, name: string, result: ToolCallResult, spoken: boolean): boolean; onAudio(): void; onTurnComplete(hadAudio: boolean): void; onNewInput(): void; drop(id: string): void; dispose(): void };
+
 type LiveTurn = {
   said: string;
+  /** The transcription as 3.8 sent it, markup and all (said is what the student reads). */
+  raw: string;
   firstAudioMs: number | null;
   audioChunks: number;
   interrupted: boolean;
@@ -220,10 +225,23 @@ class LiveTutor {
     private readonly onTool: (name: string, args: Record<string, unknown>, id: string) => Promise<ToolCallResult>,
     /** The app's scheduling for a result (lib/live-tool-behavior toolScheduling), or nothing for blocking tools. */
     private readonly scheduling: (name: string, result: ToolCallResult, spoken: boolean) => string | undefined = () => undefined,
-  ) {}
+    /** The app's ResponseHold (one spoken reply per line), built around this client's sender. */
+    makeHold?: (send: (id: string, name: string, result: ToolCallResult, scheduling: string) => void) => HoldLike,
+  ) {
+    this.hold = makeHold ? makeHold((id, name, result, scheduling) => this.sendResponse(id, name, result, scheduling)) : null;
+  }
+
+  private readonly hold: HoldLike | null;
+  /** The app's caption cleaner (lib/live-events SpeechTextCleaner), when given. */
+  speech: { clean(text: string): string } | null = null;
+
+  private sendResponse(id: string, name: string, result: ToolCallResult, scheduling: string | undefined) {
+    this.send({ toolResponse: { functionResponses: [{ id, name, response: { output: result }, ...(scheduling ? { scheduling } : {}) }] } });
+    if (scheduling === "WHEN_IDLE") { this.idleReplyAt = Date.now(); this.bump(); }
+  }
 
   private static emptyTurn(): LiveTurn {
-    return { said: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0, audio: [] };
+    return { said: "", raw: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0, audio: [] };
   }
 
   open(): Promise<void> {
@@ -280,6 +298,7 @@ class LiveTutor {
 
   /** A user turn: the opening (with files) or a typed line. Returns a promise for the tutor's whole turn. */
   userTurn(parts: Part[], arm = true): Promise<LiveTurn> {
+    this.hold?.onNewInput();
     this.turn = LiveTutor.emptyTurn();
     this.turnStart = Date.now();
     this.turnCompleteSeen = false;
@@ -327,6 +346,7 @@ class LiveTutor {
     }
     if (msg.toolCallCancellation?.ids?.length) {
       for (const t of this.turn.tools) if (msg.toolCallCancellation.ids.includes(t.callId)) t.cancelled = true;
+      for (const id of msg.toolCallCancellation.ids) this.hold?.drop(id);
     }
     if (msg.toolCall?.functionCalls) {
       this.clearUnanswered();
@@ -343,9 +363,8 @@ class LiveTutor {
           rec.durationMs = Date.now() - started;
           this.pendingTools--;
           if (VERBOSE) console.log(`      ${ms}ms ${c.name}(${JSON.stringify(c.args ?? {}).slice(0, 100)}) ${result.success ? "→" : "✗"} ${rec.result.split("\n")[0].slice(0, 120)}`);
-          const scheduling = this.scheduling(c.name, result, this.turn.audioChunks > 0);
-          this.send({ toolResponse: { functionResponses: [{ id, name: c.name, response: { output: result }, ...(scheduling ? { scheduling } : {}) }] } });
-          if (scheduling === "WHEN_IDLE") { this.idleReplyAt = Date.now(); this.bump(); }
+          // Before the first sound an async result waits for it, as in the app (ResponseHold).
+          if (!this.hold?.offer(id, c.name, result, this.turn.audioChunks > 0)) this.sendResponse(id, c.name, result, this.scheduling(c.name, result, this.turn.audioChunks > 0));
           if (this.turn.audioChunks === 0) this.armUnanswered(AFTER_TOOL_MS);
         });
       }
@@ -356,13 +375,14 @@ class LiveTutor {
     for (const p of sc.modelTurn?.parts ?? []) {
       if (p.inlineData?.data) {
         this.turn.audioChunks++;
+        this.hold?.onAudio();
         if (SAVE_AUDIO) this.turn.audio.push(p.inlineData.data);
         this.turn.firstAudioMs ??= ms;
         this.clearUnanswered();
         this.bump();
       }
     }
-    if (sc.outputTranscription?.text) { this.turn.said += sc.outputTranscription.text; this.bump(); }
+    if (sc.outputTranscription?.text) { this.turn.raw += sc.outputTranscription.text; this.turn.said += this.speech?.clean(sc.outputTranscription.text) ?? sc.outputTranscription.text; this.bump(); }
     if (sc.interrupted) {
       // The student's line cut a generation short (the tail of a WHEN_IDLE reply,
       // Maya r2 turn 8): the answer to the line is a fresh generation, so wait for it.
@@ -371,6 +391,7 @@ class LiveTutor {
     }
     if (sc.turnComplete) {
       this.turnCompleteSeen = true;
+      this.hold?.onTurnComplete(this.turn.audioChunks > 0);
       this.turnCompleteAt = Date.now();
       if (this.turn.audioChunks === 0 && this.nudges === 0 && this.pendingTools === 0) this.armUnanswered(SILENT_TURN_MS);
       this.bump();
@@ -407,7 +428,18 @@ class LiveTutor {
     r(this.turn);
   }
 
+  /** Board moves the app made itself (code-owned marks), filed with the turn in progress. */
+  get active(): boolean {
+    return this.resolveTurn !== null;
+  }
+
+  noteAppTools(recs: ToolRecord[]): void {
+    const at = Date.now() - this.turnStart;
+    for (const r of recs) this.turn.tools.push({ ...r, atMs: at, beforeSpeech: this.turn.audioChunks === 0 });
+  }
+
   close() {
+    this.hold?.dispose();
     if (this.mic) clearInterval(this.mic);
     try { this.ws?.close(); } catch { /* already closed */ }
   }
@@ -479,6 +511,7 @@ type BoardWindow = Window & {
     exportImage?: (maxWidth?: number) => Promise<{ url: string; width: number; height: number } | null>;
     planAnswered?: () => void;
   } | null;
+  __chalkVerdictMarks?: (marks: unknown) => Array<{ name: string; args: Record<string, unknown>; result: ToolCallResult }>;
 };
 
 async function openBoard(browser: Browser, base: string, w: number, h: number): Promise<{ page: Page; errors: string[] }> {
@@ -504,7 +537,7 @@ const summaryOf = (page: Page, compact: boolean) => page.evaluate((c) => (window
 
 // ── One case ───────────────────────────────────────────────────────────────
 
-async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; tag: string }): Promise<CaseRun> {
+async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; hold: boolean; tag: string }): Promise<CaseRun> {
   const tag = opts.tag;
   const { page, errors } = await openBoard(opts.browser, opts.base, opts.w, opts.h);
   const runtime = new m.runtime.TutorRuntime({ startedAt: Date.now() });
@@ -563,7 +596,22 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   };
 
   // What the session page does with each call (app/session/[id]/page.tsx runToolCall).
+  // Code-owned marks, as the session page runs them (Sept 26 2026): in order,
+  // before the model's next board call, and filed as the app's.
+  let markChain: Promise<void> = Promise.resolve();
+  const pendingApp: ToolRecord[] = [];
+  runtime.setMarkSink((marks) => {
+    markChain = markChain.then(async () => {
+      const done = (await page.evaluate((mk) => (window as BoardWindow).__chalkVerdictMarks?.(mk) ?? [], marks as unknown)) as Array<{ name: string; args: Record<string, unknown>; result: ToolCallResult }>;
+      const recs: ToolRecord[] = done.map((d, i) => ({ name: d.name, args: d.args, callId: `app${i}`, atMs: 0, beforeSpeech: false, ok: d.result.success, result: d.result.success ? d.result.message ?? "Done" : `Error: ${d.result.error}`, durationMs: 0, by: "app" }));
+      if (live.active) live.noteAppTools(recs);
+      else pendingApp.push(...recs);
+      scheduleFrame(900);
+    }).catch(() => undefined);
+  });
+
   const onTool = async (name: string, args: Record<string, unknown>, callId: string): Promise<ToolCallResult> => {
+    await markChain;
     const now = Date.now();
     const tutor = runtime.runTool(name, args, now, callId);
     if (tutor) return tutor;
@@ -589,7 +637,10 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       return { success: true, message: m.sessionTools.worksheetShown(choice.file, choice.page) };
     } else {
       if (name === "start_new_problem" && m.policy.takePlanStep(runtime.policy)) await page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
+      const shaped = runtime.shapeBoardCall(name, args);
+      args = shaped.args;
       result = await page.evaluate(({ name, args, callId }) => (window as BoardWindow).__chalkDispatch?.(name, args, callId) ?? { success: false, error: "no dispatcher on the page" }, { name, args, callId });
+      if (result.success && shaped.note) result = { success: true, message: `${result.message ?? "Done"} ${shaped.note}` };
       if (result.success) {
         scheduleFrame(900);
         const compact = await summaryOf(page, true);
@@ -613,7 +664,9 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     return result;
   };
 
-  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken));
+  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken), opts.hold ? (send) => new m.behavior.ResponseHold(send as never, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken)) : undefined);
+  const events = await import("../lib/live-events");
+  if (typeof events.SpeechTextCleaner === "function") live.speech = new events.SpeechTextCleaner();
   const startedAt = Date.now();
   await live.open();
   runtime.startClock();
@@ -644,12 +697,14 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     const tutorView = await exportBoard(page, 896);
     if (tutorView) fs.writeFileSync(path.join(opts.out, `${tag}-t${i + 1}-board.jpg`), Buffer.from(tutorView, "base64"));
     const said = t.said.replace(/\s+/g, " ").trim();
+    const rawSaid = t.raw.replace(/\s+/g, " ").trim();
     if (SAVE_AUDIO && t.audio.length) fs.writeFileSync(path.join(opts.out, `${tag}-t${i + 1}.wav`), wav(t.audio));
     runtime.noteTutorTurn(said, t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "draw"), t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "mark"));
     const turn: TurnRecord = {
       n: i + 1,
       student: studentText,
       tutor: said,
+      ...(rawSaid !== said ? { rawTutor: rawSaid } : {}),
       tools: t.tools,
       firstAudioMs: t.firstAudioMs,
       durationMs: t.durationMs,
@@ -673,8 +728,10 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     runtime.noteStudentUtterance(studentText);
     // The app's typed path: a checked answer goes in as a note before the line.
     pendingAuto = runtime.takeAutoCheckNote();
+    await markChain;
     if (pendingAuto) live.sendNote(pendingAuto);
     pending = live.userTurn([{ text: studentText }]);
+    live.noteAppTools(pendingApp.splice(0));
   }
   const finalBoard = await exportBoard(page, 1600);
   if (finalBoard) fs.writeFileSync(path.join(opts.out, `${tag}-board.jpg`), Buffer.from(finalBoard, "base64"));
@@ -704,7 +761,7 @@ function caseMarkdown(c: BenchCase, r: CaseRun): string {
   const L = [`# ${c.name}, ${c.grade} (${c.id})`, "", `Intake: "${c.topic}" · ${c.minutes} min${c.worksheet ? " · worksheet attached" : ""}`, "", `Hidden brief: ${c.brief}`, "", `Outcome wanted: ${c.outcome}`, ""];
   for (const t of r.turns) {
     L.push(`## Turn ${t.n}`, "", `**${c.name}:** ${t.student}`, "", `**Tutor:** ${t.tutor || (t.timedOut ? "(timed out)" : "(said nothing)")}${t.nudged ? " _(after the unanswered nudge)_" : ""}`, "");
-    for (const x of t.tools) L.push(`- \`${x.name}(${JSON.stringify(x.args).slice(0, 220)})\` ${x.ok ? "→" : "✗"} ${x.result.split("\n[Board:")[0].replace(/\s+/g, " ").slice(0, 240)}${x.beforeSpeech ? "" : " _(after it started talking)_"}`);
+    for (const x of t.tools) L.push(`- ${x.by === "app" ? "_(the app, not the model)_ " : ""}\`${x.name}(${JSON.stringify(x.args).slice(0, 220)})\` ${x.ok ? "→" : "✗"} ${x.result.split("\n[Board:")[0].replace(/\s+/g, " ").slice(0, 240)}${x.by === "app" || x.beforeSpeech ? "" : " _(after it started talking)_"}`);
     L.push("", `Board: ${t.boardCompact || "(empty)"}`, "", `![turn ${t.n}](${t.boardShot ?? t.shot})`, "");
   }
   if (r.judgement) {
@@ -831,7 +888,7 @@ async function main() {
         console.log(`\n=== ${c.name}, ${c.grade} (${tag}): "${c.topic}"`);
         let run: CaseRun;
         try {
-          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, tag });
+          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: !process.argv.includes("--nohold"), tag });
         } catch (err) {
           console.log(`  failed: ${err instanceof Error ? err.message : String(err)}`);
           continue;

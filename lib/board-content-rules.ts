@@ -161,8 +161,31 @@ const EQUATION_TOOLS = new Set(["draw_equation_step", "add_equation_sequence"]);
  * newest equation only (writing a line again later can be deliberate), a
  * picture with the last six pictures.
  */
+// The last number in a fingerprint's text: "f(3)=7" and "7" are the same answer.
+function lastNumber(fingerprint: string): string | null {
+  const body = fingerprint.slice(fingerprint.indexOf(":") + 1);
+  return /(-?\d+(?:\.\d+)?(?:\/\d+)?)(?!.*\d)/.exec(body)?.[1] ?? null;
+}
+
 export function findDuplicate(tool: string, fingerprint: string, items: FingerprintedItem[]): string | null {
   const since = items.slice(items.map((i) => i.tool).lastIndexOf("start_new_problem") + 1);
+  if (tool === "add_student_attempt") {
+    const exact = since.find((i) => i.content === fingerprint)?.id;
+    if (exact) return exact;
+    // The app writes a checked answer as a short line ("f(3) = 7") before the
+    // model gets to it (Sept 26 2026); the model's "7" or "f(3) = 7, right?"
+    // is that answer again when one of the two just contains the other's
+    // value, among the two newest attempts.
+    const n = lastNumber(fingerprint);
+    if (!n) return null;
+    const body = fingerprint.slice(fingerprint.indexOf(":") + 1);
+    const recent = since.filter((i) => i.tool === tool && i.content).slice(-2);
+    const twin = recent.reverse().find((i) => {
+      const other = i.content!.slice(i.content!.indexOf(":") + 1);
+      return lastNumber(i.content!) === n && (other === n || body === n || other.includes(body) || body.includes(other));
+    });
+    return twin?.id ?? null;
+  }
   if (TEXT_TOOLS.has(tool)) {
     return since.find((i) => i.content === fingerprint)?.id ?? null;
   }

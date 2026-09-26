@@ -16,6 +16,8 @@ export type ToolRecord = {
   result: string;
   durationMs: number;
   cancelled?: boolean;
+  /** Made by the app (code-owned marks), not by the model. */
+  by?: "app";
 };
 
 export type TurnRecord = {
@@ -32,6 +34,8 @@ export type TurnRecord = {
   promptTokens: number | null;
   /** The turn's billed usage by modality (the largest count Live reported during the turn). */
   usage?: TurnUsage | null;
+  /** The transcription with its markup, when the app's cleaner changed it. */
+  rawTutor?: string;
   /** The auto-check note the code sent with this turn's student line, if any. */
   autoCheck?: string | null;
   /** The full [Board: …] list after the turn, and the short one the tutor reads. */
@@ -217,7 +221,7 @@ export function measure(turns: TurnRecord[], c: BenchCase, policy: PolicyFns): M
     costUsd: costs.length ? Math.round(costs.reduce((a, b) => a + b, 0) * 1000) / 1000 : null,
     callsPerTurn: turns.length ? Math.round((allTools.length / turns.length) * 10) / 10 : 0,
     slowTurns: turns.filter((t) => t.firstAudioMs != null && t.firstAudioMs > SLOW_MS).length,
-    leakTurns: turns.filter((t) => LEAK.test(t.tutor)).length,
+    leakTurns: turns.filter((t) => LEAK.test(t.rawTutor ?? t.tutor)).length,
     repeatTurns: turns.filter((t) => repeatsItself(t.tutor)).length,
     rawLatexAttempts: allTools.filter((x) => x.ok && x.name === "add_student_attempt" && typeof x.args.text === "string" && x.args.text.includes("\\")).length,
     wallMs: turns.reduce((s, t) => s + t.durationMs, 0),

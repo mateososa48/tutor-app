@@ -14,6 +14,7 @@ import type { OpenAIFunctionTool } from "./whiteboard-tools";
 import { checkAnswer, checkBlankInPage, spokenToDigits, type CheckVerdict } from "./answer-check";
 import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
+import { latexToPlain } from "./latex-plain";
 import {
   currentState,
   noteAnswerChecked,
@@ -25,6 +26,8 @@ import {
   type TutorPolicy,
   flowStep,
   looksLikeAnswer,
+  numbersIn,
+  type VerdictMarks,
 } from "./tutor-policy";
 
 const KINDS = ["slip", "misconception", "guess"] as const;
@@ -222,7 +225,8 @@ export function stepOfPage(page: string | null, problem: string, answer: string)
 // holds what was asked (the last callout or "?" line, else the problem), the
 // code checks it and hands the model the verdict: as a note before a typed
 // turn, or on the first tool result of a spoken one (nextReminder).
-const answerKey = (t: string) => t.toLowerCase().replace(/[\s$,]/g, "").replace(/^(isit|itis|its|it's|so|umm?|uh)+/, "").replace(/[?.!]+$/, "");
+const LINE_FILLER = /\b(?:oh+|um+|uh+|hmm+|so|like|wait|ok(?:ay)?|yeah|well|just|then|idk|i think|i guess|maybe|is it|it'?s|its|it is|the answer is|my bad)\b/gi;
+const answerKey = (t: string) => spokenToDigits(t.toLowerCase()).replace(LINE_FILLER, " ").replace(/[\s$,]/g, "").replace(/[?.!]+$/, "");
 
 // "9 minus 8 is 1", "2 times 3 is 6 not 7": arithmetic the student asserts
 // is checked as itself, whatever the board asked (Sept 25 2026: 3.8 judged
@@ -235,6 +239,96 @@ function ownClaim(text: string): { problem: string; answer: string } | null {
   if (!m) return null;
   if (/\b(is|equals?|which|so|=)\b/i.test(m[3])) return null;
   return { problem: m[1].trim(), answer: m[2] };
+}
+
+// ── Code-owned marks (Sept 26 2026) ─────────────────────────────────────
+// The line a checked answer goes up as, in the student's hand: their claim as
+// math ("9 − 8 = 1"), a value with the short thing it answers ("f(3) = 7",
+// "(-3)^2 = 9"), or the core of what they said ("0.5 is bigger"), never a
+// whole chatty sentence.
+
+export function answerLine(problem: string, answer: string): string {
+  const own = ownClaim(answer);
+  const pretty = (t: string) => t.replace(/\s*\*\s*/g, " × ").replace(/\s*-\s*(?=\d|\()/g, (m, off: number, all: string) => (off === 0 || /[=(]\s*$/.test(all.slice(0, off)) ? "-" : " − ")).replace(/\s+/g, " ").trim();
+  if (own) return pretty(`${own.problem} = ${own.answer}`).slice(0, 60);
+  const said = spokenToDigits(answer.replace(/[?!]+/g, " ").replace(/\.{2,}|…/g, " "), { the: true })
+    .split(/\s+(?:because|cause|'cause|cuz|since|bc)\b/i)[0];
+  const tidy = (c: string) => c.replace(LINE_FILLER, " ").replace(/\s+/g, " ").replace(/^[\s,;:.]+|[\s,;:.]+$/g, "").trim();
+  const clauses = said.split(/\s*[,;]\s*|\s+so\s+/i).map(tidy).filter((c) => /\d/.test(c));
+  const core = (clauses.at(-1) ?? tidy(said)).slice(0, 60);
+  if (/^-?\d[\d.,/]*%?$/.test(core)) {
+    // A bare value: say what it answers when that is short math.
+    const call = /(?<![a-z\\])([a-z]\s*\(\s*-?\d+(?:\.\d+)?\s*\))/i.exec(problem);
+    if (call) return `${call[1].replace(/\s+/g, "")} = ${core}`;
+    const asked = spokenToDigits(problem.replace(/\$/g, "").replace(/\s*\?+\s*$/, "").replace(/^\s*(?:what(?:'s| is)|find|compute|work out)\s+/i, "").trim());
+    if (asked.length <= 24 && pureArithmetic(asked) && !asked.includes("=")) return pretty(`${asked} = ${core}`);
+  }
+  return core || answer.trim().slice(0, 60);
+}
+
+/** Plans the board move for a verdict when the page marks answers itself; the sentence tells the model what went up. */
+function planMarks(policy: TutorPolicy, problem: string, answer: string, verdict: CheckVerdict, step: boolean): string {
+  if (!policy.codeMarks || verdict === "cannot_check") return "";
+  const line = answerLine(problem, answer);
+  if (!line) return "";
+  const ring = verdict === "correct" && !step;
+  const strike = ring && policy.lastWrongLine && policy.lastWrongLine !== line ? policy.lastWrongLine : null;
+  policy.pendingMarks = { line, ring, strike };
+  if (ring) policy.lastWrongLine = null;
+  else if (verdict === "incorrect" || verdict === "partial") policy.lastWrongLine = line;
+  return ring
+    ? `"${line}" is on the board in their hand and ringed${strike ? `; their earlier "${strike}" is crossed out` : ""}.`
+    : `"${line}" is on the board in their hand.`;
+}
+
+/**
+ * Runs a verdict's board move through the board's own dispatcher: the line in
+ * their hand, then its ring or the strike through their earlier wrong line
+ * (found by the item id it went up as, remembered in `ids`). Synchronous, so a
+ * page can run it between two of the model's tool calls.
+ */
+export function applyVerdictMarks(
+  marks: VerdictMarks,
+  dispatch: (name: string, args: Record<string, unknown>) => ToolCallResult,
+  ids: Map<string, string>,
+): Array<{ name: string; args: Record<string, unknown>; result: ToolCallResult }> {
+  const done: Array<{ name: string; args: Record<string, unknown>; result: ToolCallResult }> = [];
+  const run = (name: string, args: Record<string, unknown>) => {
+    const result = dispatch(name, args);
+    done.push({ name, args, result });
+    return result;
+  };
+  const wrote = run("add_student_attempt", { text: marks.line });
+  const id = wrote.success ? /\b(?:item|as) (b\d+)\b/.exec(wrote.message ?? "")?.[1] ?? null : null;
+  if (id) ids.set(marks.line, id);
+  if (marks.ring && id) run("circle_item", { target: id, keep: true });
+  const struck = marks.strike ? ids.get(marks.strike) : null;
+  if (struck) run("cross_out_step", { step_label: struck });
+  return done;
+}
+
+// ── The board never gives the answer away (Sept 26 2026) ─────────────────
+// Three runs had the tutor write "12 ÷ 2 = 6" or "0.85 × 72.25 = 61.41" in the
+// turn it asked the student for that number. A tutor line of plain arithmetic
+// whose result the student has not said (and the problem did not give) goes
+// up as "… = ?", which is also the question the auto-check reads their answer
+// against. A worked example (help at H5) shows its results.
+const RESULT_TAIL = /^(.*=)\s*(-?\d+(?:\.\d+)?|-?\\[dt]?frac\{\d+\}\{\d+\}|-?\d+\s*\/\s*\d+)\s*(\\%|%)?\s*$/;
+
+export function withholdResult(policy: TutorPolicy, name: string, args: Record<string, unknown>): { args: Record<string, unknown>; note: string | null } {
+  if (name !== "draw_equation_step" || typeof args.latex !== "string" || policy.boardHelp >= 5) return { args, note: null };
+  const latex = args.latex.trim();
+  const m = RESULT_TAIL.exec(latex);
+  if (!m) return { args, note: null };
+  const before = m[1].slice(0, -1);
+  const lastSide = before.split("=").at(-1) ?? before;
+  if (!pureArithmetic(lastSide)) return { args, note: null };
+  const value = numbersIn(m[2])[0];
+  if (!value || policy.saidNumbers.includes(value)) return { args, note: null };
+  const asked = `${m[1]} ?`;
+  policy.lastAsked = asked;
+  const shown = latexToPlain(asked);
+  return { args: { ...args, latex: asked }, note: `Wrote it as "${shown}": the result is theirs to say. Ask for it; don't say it.` };
 }
 
 export function autoCheck(policy: TutorPolicy, text: string, now: number): string | null {
@@ -255,16 +349,24 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
     recordAttempt(policy, { skill, result: attemptFromVerdict(check.verdict), help, auto: true, problem, step }, now);
     noteAnswerChecked(policy);
     const struck = check.verdict === "correct" && !step && policy.lastWrongAttempt ? ` Cross out their earlier "${policy.lastWrongAttempt}" (cross_out_step).` : "";
+    const marked = planMarks(policy, problem, answer, check.verdict, step);
     if (check.verdict === "correct" && !step) policy.lastWrongAttempt = null;
     else if (check.verdict === "incorrect" || check.verdict === "partial") policy.lastWrongAttempt = t.length > 40 ? `${t.slice(0, 37)}…` : t;
-    const order = check.verdict === "correct"
-      ? `Write it in their hand (add_student_attempt), ring it (circle_item keep=true), then the next thing to do.${struck}`
-      : check.verdict === "partial"
-        ? "Write it in their hand (add_student_attempt), then ask what is still missing."
-        : "Write it in their hand (add_student_attempt), then point at the step it came from and ask; don't say the answer.";
+    // With code-owned marks the board part is done; the order is only what to say.
+    const order = marked
+      ? check.verdict === "correct"
+        ? `${marked} Say what was right in a few words (not "right" alone), then the next thing to do.`
+        : check.verdict === "partial"
+          ? `${marked} Ask what is still missing.`
+          : `${marked} Ask how they got it before anything else; don't correct it yet and don't say the answer.`
+      : check.verdict === "correct"
+        ? `Write it in their hand (add_student_attempt), ring it (circle_item keep=true), then the next thing to do.${struck}`
+        : check.verdict === "partial"
+          ? "Write it in their hand (add_student_attempt), then ask what is still missing."
+          : "Write it in their hand (add_student_attempt), then ask how they got it; don't say the answer.";
     const said = t.length > 60 ? `${t.slice(0, 57)}…` : t;
     const note = `[Answer check, not from the student: "${said}" → ${check.verdict}. ${check.message} ${order}]`;
-    policy.autoChecked = { answer: t, verdict: check.verdict, message: check.message, problem, at: now, note, sent: false, consumed: false };
+    policy.autoChecked = { answer, verdict: check.verdict, message: check.message, problem, at: now, note, sent: false, consumed: false };
     return note;
   }
   return null;
@@ -321,11 +423,17 @@ export function runTutorTool(
   // A right answer after a wrong one strikes the wrong one, now that they
   // have seen it; a wrong one is remembered for that.
   const struck = check.verdict === "correct" && !step && policy.lastWrongAttempt ? ` Then cross_out_step their earlier "${policy.lastWrongAttempt}".` : "";
+  // Code-owned marks: an answer the auto-check already put up is not written twice.
+  const marked = reused
+    ? policy.codeMarks && check.verdict !== "cannot_check" ? ` It is already on the board in their hand${check.verdict === "correct" && !step ? ", ringed" : ""}.` : ""
+    : planMarks(policy, problem, answer, check.verdict, step);
   if (check.verdict === "correct" && !step) policy.lastWrongAttempt = null;
   else if (check.verdict === "incorrect" || check.verdict === "partial") policy.lastWrongAttempt = answer.length > 40 ? `${answer.slice(0, 37)}…` : answer;
   const onBoard = check.verdict === "cannot_check"
     ? ""
-    : check.verdict === "correct" && !step
+    : marked
+      ? ` ${marked.trim()}${check.verdict === "correct" && !step && IS_EQUATION.test(problem) ? " Have them check it by putting the value back in." : ""}`
+      : check.verdict === "correct" && !step
       ? ` Board: add_student_attempt with their exact words, then circle_item on it with keep=true${IS_EQUATION.test(problem) ? ", and have them check it by putting the value back in" : ""}.${struck}`
       : " Board: add_student_attempt with their exact words; no mark on it yet.";
   const wroteWorking = Array.isArray(args.working) && args.working.some((l) => typeof l === "string" && l.trim());

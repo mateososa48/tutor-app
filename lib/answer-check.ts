@@ -128,7 +128,7 @@ function splitAnswers(raw: string): string[] {
 function stripFiller(raw: string): string {
   return raw
     .replace(/[?!]+|\.{2,}|…/g, " ")
-    .replace(/\b(i think|i guess|maybe|probably|um+|uh+|hmm+|oh+|ok|okay|well|like|wait|yeah|so|it'?s|it is|the answer is|answer)\b:?/gi, " ")
+    .replace(/\b(i think|i guess|maybe|probably|um+|uh+|hmm+|oh+|ok|okay|well|like|wait|yeah|so|is it|it'?s|it is|the answer is|answer)\b:?/gi, " ")
     .replace(/\s+/g, " ")
     .replace(/^[\s,;:]+|[\s,;:.]+$/g, "")
     .trim();

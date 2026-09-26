@@ -278,3 +278,33 @@ export class BackendTurnTracker {
     this.setActivity("thinking");
   }
 }
+
+/**
+ * The tutor's words as the student reads them (Sept 26 2026): 3.8's output
+ * transcription sometimes carries LaTeX between dollars ("$f(x)$"), runs of
+ * dashes and HTML comments ("<!-- silence -->"). Streaming-safe: a comment
+ * can span fragments, so the cleaner keeps whether it is inside one.
+ */
+export class SpeechTextCleaner {
+  private inComment = false;
+
+  clean(fragment: string): string {
+    let out = "";
+    let rest = fragment;
+    while (rest) {
+      if (this.inComment) {
+        const end = rest.indexOf("-->");
+        if (end < 0) return out;
+        rest = rest.slice(end + 3);
+        this.inComment = false;
+        continue;
+      }
+      const start = rest.indexOf("<!--");
+      if (start < 0) { out += rest; break; }
+      out += rest.slice(0, start);
+      rest = rest.slice(start + 4);
+      this.inComment = true;
+    }
+    return out.replace(/\$/g, "").replace(/-{3,}/g, " ").replace(/\*\*/g, "");
+  }
+}

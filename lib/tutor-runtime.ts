@@ -8,6 +8,7 @@ import {
   runTutorTool,
   autoCheck,
   takeAutoCheckNote,
+  withholdResult,
 } from "./tutor-tools";
 import {
   boardResultExtras,
@@ -24,7 +25,7 @@ import {
   setSessionFiles,
   type AttemptResult,
   type SessionFile,
-  type TutorPolicy, noteBoardMark } from "./tutor-policy";
+  type TutorPolicy, type VerdictMarks, noteBoardMark } from "./tutor-policy";
 
 export type TeachingMoveType = (typeof TEACHING_MOVE_TYPES)[number];
 export type RemediationStrategy = (typeof REMEDIATION_STRATEGIES)[number];
@@ -92,6 +93,25 @@ export class TutorRuntime {
     this.onWorking = onWorking;
   }
 
+  /**
+   * Code-owned marks (Sept 26 2026): with a sink, a checked answer goes up in
+   * the student's hand and is ringed or has its earlier wrong line struck by
+   * the page, and the verdict tells the model it is done. Without one the
+   * model is asked to do it, as before.
+   */
+  private onMarks?: (marks: VerdictMarks) => void;
+
+  setMarkSink(onMarks?: (marks: VerdictMarks) => void): void {
+    this.onMarks = onMarks;
+    this.policy.codeMarks = Boolean(onMarks);
+  }
+
+  private flushMarks(): void {
+    const marks = this.policy.pendingMarks;
+    this.policy.pendingMarks = null;
+    if (marks) this.onMarks?.(marks);
+  }
+
   constructor(options: TutorRuntimeOptions = {}) {
     this.policy = options.policy ?? createPolicy(options.startedAt ?? Date.now());
     this.onEvent = options.onEvent;
@@ -104,7 +124,30 @@ export class TutorRuntime {
   noteStudentUtterance(text: string, now = Date.now()): void {
     noteStudentUtterance(this.policy, text, now);
     // An answer the board can check is checked here, before the model speaks.
-    autoCheck(this.policy, text, now);
+    const note = autoCheck(this.policy, text, now);
+    if (!note) return;
+    this.flushMarks();
+    // It is evidence like any checked answer (until Sept 26 2026 only the
+    // model's own check_answer calls reached learning evidence, the pet's hop
+    // and the plan box).
+    const auto = this.policy.autoChecked;
+    const attempt = this.policy.attempts.at(-1);
+    if (!auto || !attempt?.auto) return;
+    const rawSkill = attempt.skill;
+    const evidence: LearningAttemptEvidence = {
+      id: eventId("attempt", now),
+      skillKey: resolveSkill(rawSkill)?.key ?? null,
+      rawSkill,
+      problem: auto.problem.slice(0, 300),
+      problemFingerprint: problemFingerprint(auto.problem),
+      studentAnswer: auto.answer.slice(0, 200),
+      result: attempt.result,
+      helpLevel: attempt.help,
+      occurredAt: now,
+      cancelledAt: null,
+    };
+    this.attempts.push(evidence);
+    this.onEvent?.({ type: "attempt.recorded", attempt: evidence });
   }
 
   /** The auto-check's note for a typed line, once; the voice path gets it on the first tool result. */
@@ -124,6 +167,11 @@ export class TutorRuntime {
   /** A highlight, ring or point on the board: H2 help for the next answer. */
   noteBoardMark(): void {
     noteBoardMark(this.policy);
+  }
+
+  /** A board call as it should go up: a result the student has not said becomes "= ?" (with the note to add to its result). */
+  shapeBoardCall(name: string, args: Record<string, unknown>): { args: Record<string, unknown>; note: string | null } {
+    return withholdResult(this.policy, name, args);
   }
 
   noteBoardWrite(name?: string, args?: Record<string, unknown>): void {
@@ -182,6 +230,7 @@ export class TutorRuntime {
     const toolArgs = { ...args, skill: rawSkill, help_level: `H${effectiveHelp}` };
     const result = runTutorTool(name, toolArgs, this.policy, now, callId);
     if (!result?.success) return result;
+    this.flushMarks();
 
     const policyAttempt = callId
       ? [...this.policy.attempts].reverse().find((attempt) => attempt.callId === callId)

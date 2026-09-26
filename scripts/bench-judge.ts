@@ -56,7 +56,7 @@ export type Judgement = {
 
 export const SCORE_KEYS: Array<keyof Scores> = ["diagnosis", "remediation", "pacing", "voice", "board_object", "board_steps", "board_clean", "board_matches_speech"];
 
-const SYSTEM = `You train math tutors, and you are grading one recorded session of an AI voice tutor with a simulated student. The tutor speaks aloud and draws on a shared whiteboard with tools; you get the transcript, every tool call with its arguments and result, what the board listed after each turn, and pictures of the board. Be strict, specific and consistent; judge only what is in the record. Ignore the tutor's tone unless it changes what the student can do.
+const SYSTEM = `You train math tutors, and you are grading one recorded session of an AI voice tutor with a simulated student. The tutor speaks aloud and draws on a shared whiteboard with tools; you get the transcript, every tool call with its arguments and result, what the board listed after each turn, and pictures of the board. Be strict, specific and consistent; judge only what is in the record. Ignore the tutor's tone unless it changes what the student can do. Tool calls marked "[by the app]" or "(the app, not the model)" were made by the tutoring app itself (it writes and marks a checked answer): the student sees one board, so judge the board as the tutor's whoever made the move.
 
 FOR EACH TURN (the student's line and the tutor's reply to it), return:
 - move: the tutor's main move, as in MathDial. "focus" = steers the student's own thinking (asks for their strategy, points at a step, asks for an explanation, asks them to self-correct, changes the question a little); "probing" = asks for a fact or a piece of background; "telling" = reveals a step, the strategy, or the answer; "generic" = greeting, chat, or a question that does no teaching work ("does that make sense?").
@@ -89,7 +89,7 @@ Return JSON only, exactly this shape:
 
 function describeTools(tools: CaseRun["turns"][number]["tools"]): string {
   if (tools.length === 0) return "(none)";
-  return tools.map((t) => `${t.name}(${JSON.stringify(t.args).slice(0, 200)})${t.ok ? "" : ` [ERROR: ${t.result.replace(/^Error: /, "").slice(0, 120)}]`}${t.cancelled ? " [cancelled]" : ""}`).join("; ");
+  return tools.map((t) => `${t.by === "app" ? "[by the app] " : ""}${t.name}(${JSON.stringify(t.args).slice(0, 200)})${t.ok ? "" : ` [ERROR: ${t.result.replace(/^Error: /, "").slice(0, 120)}]`}${t.cancelled ? " [cancelled]" : ""}`).join("; ");
 }
 
 function pickShots(run: CaseRun, max: number): Array<{ turn: number; file: string }> {

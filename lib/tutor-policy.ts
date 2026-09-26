@@ -17,6 +17,9 @@ import { clockCue, clockLabel } from "./session-clock";
 import { isNonAnswer } from "./board-content-rules";
 import { spokenToDigits } from "./answer-check";
 
+/** A checked answer as the board shows it: the line in their hand, a ring when right and final, and the earlier wrong line to strike. */
+export type VerdictMarks = { line: string; ring: boolean; strike: string | null };
+
 // "incorrect": wrong, kind not given. "unchecked": the checker could not
 // judge it, so it counts neither way.
 export type AttemptResult = "correct" | "slip" | "misconception" | "partial" | "guess" | "stuck" | "incorrect" | "unchecked";
@@ -99,6 +102,20 @@ export type TutorPolicy = {
   openingReason: string | null;
   /** Their last wrong answer on the current problem, in their words, until a right one strikes it (Sept 25 2026: superseded attempts sat uncrossed). */
   lastWrongAttempt: string | null;
+  /**
+   * Code-owned marks (Sept 26 2026): when the session page can write on the
+   * board itself, a checked answer goes up in the student's hand and is marked
+   * by the code, not by asking the model (3.8 rang an answer in 1 turn of 50).
+   */
+  codeMarks: boolean;
+  /** The board move a verdict asks for, taken by the runtime and handed to the page. */
+  pendingMarks: VerdictMarks | null;
+  /** The line of their latest wrong answer on this page, crossed out once they get it right. */
+  lastWrongLine: string | null;
+  /** Numbers the student has said since the problem opened, and the page's own: a line may show these as results. */
+  saidNumbers: string[];
+  /** They asked to try one on their own ("can i try one"): the next problem is theirs, until they answer one. */
+  wantsAlone: boolean;
 };
 
 const MAX_ATTEMPTS = 80;
@@ -146,6 +163,11 @@ export function createPolicy(now: number): TutorPolicy {
     autoChecked: null,
     openingReason: null,
     lastWrongAttempt: null,
+    codeMarks: false,
+    pendingMarks: null,
+    lastWrongLine: null,
+    saidNumbers: [],
+    wantsAlone: false,
     drawCount: 0,
   };
 }
@@ -252,6 +274,10 @@ export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.no
   if (!t) return;
   p.studentTurns += 1;
   p.lastUtterance = t;
+  for (const n of numbersIn(t)) if (!p.saidNumbers.includes(n)) p.saidNumbers.push(n);
+  // Sept 26 2026: twice the tutor answered "can i try one on my own" with
+  // "let's do one together"; the student's ask outranks the fading rule.
+  if (ASKS_TO_TRY.test(t)) p.wantsAlone = true;
   if (asksForBoard(t)) p.boardAsk = t.length > 48 ? `${t.slice(0, 45)}…` : t;
   const signals = detectSignals(t);
   for (const s of signals) {
@@ -302,6 +328,7 @@ export function recordAttempt(
   now: number,
 ): void {
   if (input.result === "correct") p.pageRightAnswers += 1;
+  if (!input.step && input.result !== "unchecked") p.wantsAlone = false;
   // One page, one skill (Sept 24 2026): the tutor renamed the skill five
   // times in one session ("comparing…", "equivalent…", "like…"), which reset
   // every count. The page's first checked answer names it for the page.
@@ -451,6 +478,7 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
   const onSkill = p.attempts.filter((a) => a.skill === p.currentSkill && !a.step && a.result !== "unchecked");
   const last = onSkill.at(-1);
   if (!last) return p.missesInRow >= 2 ? { step: "show", next: SHOW_NEXT } : { step: "probe", next: "before teaching: what they already know about it and which part doesn't make sense (unless they said), then their first move on it" };
+  if (p.wantsAlone) return { step: "alone", next: "they asked to try one on their own: start_new_problem with one of the same kind and new numbers now, ask, and only listen; step in only if they are stuck twice" };
   const alone = aloneRight(p);
   const reason = p.reasonSkill === p.currentSkill;
   if (last.result === "correct") {
@@ -639,6 +667,9 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.planStepAdvanced = false;
     p.lastAsked = typeof args?.ask === "string" && args.ask.trim() ? args.ask.trim().slice(0, 200) : null;
     p.lastWrongAttempt = null;
+    p.lastWrongLine = null;
+    // The page's numbers and the line that opened it are given, not results.
+    p.saidNumbers = numbersIn(`${raw} ${typeof args?.ask === "string" ? args.ask : ""} ${p.lastUtterance ?? ""}`);
     p.pageSkill = null;
     p.boardHelp = 0;
     return;
@@ -827,3 +858,19 @@ export function takePlanStep(p: TutorPolicy): boolean {
   p.planStepAdvanced = true;
   return true;
 }
+
+/** The numbers in a line, spoken or written, as plain decimals ("three fourths" and "3/4" both read 0.75). */
+export function numbersIn(text: string): string[] {
+  const plain = spokenToDigits(text.replace(/\\[dt]?frac\{(\d+)\}\{(\d+)\}/g, "$1/$2"), { the: true });
+  const out: string[] = [];
+  for (const m of plain.matchAll(/-?\d+(?:\.\d+)?(?:\/\d+)?/g)) {
+    const [a, b] = m[0].split("/");
+    const v = b ? Number(a) / Number(b) : Number(a);
+    if (!Number.isFinite(v)) continue;
+    const k = String(Math.round(v * 1e6) / 1e6);
+    if (!out.includes(k)) out.push(k);
+  }
+  return out;
+}
+
+const ASKS_TO_TRY = /\b(?:can|could|let|lemme|may)\s+(?:i|me)\s+(?:try|do)\b(?:\s+(?:one|it|another|the next one))?|\bmy turn\b|\b(?:on my own|by myself)\b/i;

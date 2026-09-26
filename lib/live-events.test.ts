@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BackendTurnTracker, TranscriptAssembler, hasBoundarySpace, joinTranscript } from "./live-events";
+import { BackendTurnTracker, TranscriptAssembler, hasBoundarySpace, joinTranscript , SpeechTextCleaner } from "./live-events";
 import type { TutorActivity } from "./live-types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -159,4 +159,13 @@ test("a sentence that starts after a tool call gets its space back", () => {
   assert.equal(joinTranscript("Let's look at what that looks like.", "Here is a circle ", true), "Let's look at what that looks like. Here is a circle ");
   assert.equal(joinTranscript("It is 3.", "5 now", true), "It is 3.5 now");
   assert.equal(joinTranscript("tri", "cky", true), "tricky");
+});
+
+test("the tutor's words lose the markup 3.8 transcribes, across fragments", () => {
+  const c = new SpeechTextCleaner();
+  assert.equal(c.clean("The letter $f$ is the name"), "The letter f is the name");
+  assert.equal(c.clean("What is it?---"), "What is it? ");
+  assert.equal(c.clean("Go on.<!-- Waiting"), "Go on.");
+  assert.equal(c.clean(" for the student -->"), "");
+  assert.equal(c.clean(" Next one."), " Next one.");
 });

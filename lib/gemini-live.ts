@@ -3,10 +3,10 @@ import type { UploadedFile } from "./file-processor";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
 import { marksLast, toolRole } from "./board-items";
-import { hasBoundarySpace, joinTranscript } from "./live-events";
+import { SpeechTextCleaner, hasBoundarySpace, joinTranscript } from "./live-events";
 import { formatMemory, formatTutorState } from "./tutor-policy";
 import { TutorRuntime } from "./tutor-runtime";
-import { BLOCKING_TOOLS, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
+import { BLOCKING_TOOLS, ResponseHold, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
@@ -180,6 +180,10 @@ export class GeminiLiveSession {
   // follows within a second or two; a silent turnComplete waits this long.
   private static readonly SILENT_TURN_MS = 2_500;
   private turnHadAudio = false;
+  /** The tutor's words without the markup 3.8 sometimes transcribes ("$f(x)$", "<!-- … -->"). */
+  private readonly speechText = new SpeechTextCleaner();
+  /** Results that came back before the first sound, waiting for it (one spoken reply per line; Sept 26 2026). */
+  private readonly hold: ResponseHold;
   private awaitingReply = false;
   private nudgesThisTurn = 0;
   private lastInputKind: "text" | "voice" = "voice";
@@ -202,11 +206,19 @@ export class GeminiLiveSession {
     this.asyncTools = options.asyncTools === true;
     this.vad = options.vad;
     this.tutorRuntime = options.runtime ?? new TutorRuntime();
+    this.hold = new ResponseHold(
+      (id, name, result, scheduling) => {
+        this.debug("tool", "tool_response_released", { id, name, scheduling });
+        this.sendToolResponse(id, name, result as ToolCallResult, scheduling);
+      },
+      (name, result, spoken) => toolScheduling(this.model, name, result, this.asyncTools, spoken),
+    );
     this.turns = new TurnTracker(this.model, (summary) => this.debug("turn", "turn_summary", summary as unknown as Record<string, unknown>));
   }
 
   // A new line from the student: nothing heard back yet, no nudge sent yet.
   private newStudentInput(kind: "text" | "voice") {
+    this.hold.onNewInput();
     this.lastInputKind = kind;
     this.turnHadAudio = false;
     this.awaitingReply = true;
@@ -746,6 +758,7 @@ export class GeminiLiveSession {
         if (typeof inlineData?.data === "string") {
           this.turns.noteAudio(pcmBase64Ms(inlineData.data), now);
           this.turnHadAudio = true;
+          this.hold.onAudio();
           this.awaitingReply = false;
           this.clearUnanswered();
           this.callbacks.onAudio(inlineData.data);
@@ -764,7 +777,7 @@ export class GeminiLiveSession {
 
       // Tutor speech transcript, kept exactly as sent (see transcriptEntry).
       const outTx = serverContent.outputTranscription as Record<string, unknown> | undefined;
-      const tutorEntry = typeof outTx?.text === "string" ? this.transcriptEntry("tutor", outTx.text) : null;
+      const tutorEntry = typeof outTx?.text === "string" ? this.transcriptEntry("tutor", this.speechText.clean(outTx.text)) : null;
       if (tutorEntry) {
         this.turns.noteTutorText(tutorEntry.text, tutorEntry.spaced === true, now);
         this.noteTutorTranscript(tutorEntry.text);
@@ -783,6 +796,7 @@ export class GeminiLiveSession {
         this.debug("turn", "turn_complete", { tutorChars: this.tutorTurnText.trim().length });
         if (this.turns.finish("turn_complete", now)) this.scheduleTurnFlush();
         this.finishTutorTurn();
+        this.hold.onTurnComplete(this.turnHadAudio);
         this.callbacks.onTurnComplete?.();
         // The model declared itself done without a sound: nudge soon, unless
         // the sound follows (an early turnComplete mid-reasoning).
@@ -824,6 +838,7 @@ export class GeminiLiveSession {
   private cancelToolCalls(ids: string[]) {
     for (const id of ids) {
       this.cancelledCalls.add(id);
+      this.hold.drop(id);
       const attemptRemoved = this.tutorRuntime.cancelToolCall(id);
       this.debug("tool", "tool_call_cancelled", { id, attemptRemoved });
     }
@@ -904,8 +919,10 @@ export class GeminiLiveSession {
       this.debug("tool", "tool_response_dropped_cancelled", { id, name });
       return;
     }
-    const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio);
-    this.debug("tool", "tool_response_sent", {
+    // Before the first sound, an async result waits for it (ResponseHold).
+    const held = this.hold.offer(id, name, result, this.turnHadAudio);
+    const scheduling = held ? undefined : toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio);
+    this.debug("tool", held ? "tool_response_held" : "tool_response_sent", {
       id,
       name,
       args,
@@ -915,7 +932,7 @@ export class GeminiLiveSession {
       durationMs: Math.round(performance.now() - startedAt),
       scheduling,
     });
-    this.sendToolResponse(id, name, result, scheduling);
+    if (!held) this.sendToolResponse(id, name, result, scheduling);
     // A result with no sound yet: the nudge was disarmed by the call, so it is armed again.
     if (this.awaitingReply && !this.turnHadAudio) this.armUnanswered(this.lastInputKind, GeminiLiveSession.AFTER_TOOL_MS);
   }
@@ -968,6 +985,7 @@ export class GeminiLiveSession {
 
   disconnect() {
     this.manualDisconnect = true;
+    this.hold.dispose();
     this.debug("connection", "disconnect_requested");
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);

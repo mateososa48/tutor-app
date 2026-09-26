@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BLOCKING_TOOLS, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior } from "./live-tool-behavior";
+import { BLOCKING_TOOLS, ResponseHold, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior } from "./live-tool-behavior";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
@@ -42,7 +42,7 @@ test("async results: one that worked is filed silently; a refusal or a warning i
   const m = LIVE_MODELS["3.8"];
   assert.equal(toolScheduling(m, "write_step", { success: true, message: "Wrote it (item b3)." }, true), "SILENT");
   assert.equal(toolScheduling(m, "point_at", { success: true }, true), "SILENT");
-  assert.equal(toolScheduling(m, "record_teaching_move", { success: true, message: "[Tutor state: …]" }, true), "WHEN_IDLE");
+  assert.equal(toolScheduling(m, "record_teaching_move", { success: true, message: "[Tutor state: …]" }, true), "SILENT", "a changed state line is read next turn, not spoken over the reply");
   assert.equal(toolScheduling(m, "ask", { success: false }, true), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "draw_figure", { success: true, message: "Drew it. Careful: 6, 8 and 11 cannot make a right triangle." }, true), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "check_answer", { success: true }, true), undefined);
@@ -61,11 +61,33 @@ test("async tools are the default; ?tools=sync turns them off", () => {
   assert.equal(resolveAsyncTools(null), true);
 });
 
-test("a changed state line comes back when the tutor is idle, and ?vad=patient is the only VAD knob", () => {
+test("a changed state line is filed once the tutor has spoken, and ?vad=patient is the only VAD knob", () => {
   const m = LIVE_MODELS["3.8"];
-  assert.equal(toolScheduling(m, "draw_fraction", { success: true, message: "Drew it (b2). [Tutor state: step TOGETHER · next: …]" }, true), "WHEN_IDLE");
+  assert.equal(toolScheduling(m, "draw_fraction", { success: true, message: "Drew it (b2). [Tutor state: step TOGETHER · next: …]" }, true), "SILENT");
   assert.equal(toolScheduling(m, "draw_fraction", { success: true, message: "Drew it (b2)." }, true), "SILENT");
   assert.deepEqual(resolveLiveVad(new URLSearchParams("vad=patient")), { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", silenceDurationMs: 1200 });
   assert.equal(resolveLiveVad(new URLSearchParams("")), undefined);
   assert.equal(resolveLiveVad(null), undefined);
+});
+
+test("a result that beats the first sound is held: filed SILENT when the tutor talks, WHEN_IDLE once when it stays quiet", async () => {
+  const m = LIVE_MODELS["3.8"];
+  const sent: string[] = [];
+  const hold = new ResponseHold((id, _n, _r, s) => sent.push(`${id}:${s}`), (name, result, spoken) => toolScheduling(m, name, result, true, spoken));
+  assert.equal(hold.offer("a", "start_new_problem", { success: true }, false), true);
+  assert.equal(hold.offer("c", "check_answer", { success: true }, false), false, "blocking tools are never held");
+  hold.onAudio();
+  assert.deepEqual(sent, ["a:SILENT"]);
+  sent.length = 0;
+  hold.offer("b", "draw_grid", { success: true }, false);
+  hold.offer("d", "set_plan", { success: true }, false);
+  hold.onTurnComplete(false);
+  await new Promise((r) => setTimeout(r, ResponseHold.GRACE_MS + 50));
+  assert.deepEqual(sent, ["b:SILENT", "d:WHEN_IDLE"], "a quiet turn wakes the tutor once");
+  sent.length = 0;
+  assert.equal(hold.offer("e", "draw_grid", { success: true }, true), false, "once it is talking nothing is held");
+  hold.offer("f", "draw_grid", { success: false }, false);
+  hold.onNewInput();
+  assert.deepEqual(sent, ["f:WHEN_IDLE"], "a refusal still asks to be heard");
+  hold.dispose();
 });

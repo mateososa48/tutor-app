@@ -53,7 +53,7 @@ import { compareEvents } from "@/lib/session-recording";
 import { joinTranscript } from "@/lib/live-events";
 import { TutorRuntime } from "@/lib/tutor-runtime";
 import { boardFontsSettled, loadBoardFonts } from "@/lib/board-fonts";
-import { stepOfPage } from "@/lib/tutor-tools";
+import { applyVerdictMarks, stepOfPage } from "@/lib/tutor-tools";
 import { takePlanStep } from "@/lib/tutor-policy";
 import { LearningRecorder, loadSessionLearning } from "@/lib/learning-client";
 
@@ -506,6 +506,22 @@ function SessionDetailPage({ id }: { id: string }) {
     });
   }, []);
 
+  // Code-owned marks (Sept 26 2026): a checked answer goes up in the
+  // student's hand, ringed when right and final, and their earlier wrong line
+  // is struck once they have it; the verdict tells the model it is done.
+  // 3.8 rang an answer in 1 turn of 50 when asked to.
+  const verdictIdsRef = useRef(new Map<string, string>());
+  useEffect(() => {
+    tutorRuntime.setMarkSink((marks) => {
+      const startedAt = performance.now();
+      const done = applyVerdictMarks(marks, (name, args) => dispatchWhiteboardTool(name, args, { whiteboard: whiteboardRef.current }), verdictIdsRef.current);
+      for (const d of done) recordToolCall(d.name, d.args, d.result, startedAt, "app-mark");
+      scheduleBoardFrame(900);
+      scheduleRecordingFrame();
+    });
+    return () => tutorRuntime.setMarkSink();
+  }, [tutorRuntime, recordToolCall, scheduleBoardFrame, scheduleRecordingFrame]);
+
   // look_at_board: the picture reaches the tutor before the answer does (it
   // used to be sent after, so the tutor answered from an older picture).
   const lookAtBoard = useCallback(async (): Promise<ToolCallResult> => {
@@ -559,10 +575,13 @@ function SessionDetailPage({ id }: { id: string }) {
       }
       // A new problem after a right answer on this one checks the plan's step off before the board is redrawn.
       if (name === "start_new_problem" && takePlanStep(tutorRuntime.policy)) whiteboardRef.current?.planAnswered?.();
-      let result = dispatchWhiteboardTool(name, args, {
+      // A result the student has not said goes up as "= ?" (Sept 26 2026).
+      const shaped = tutorRuntime.shapeBoardCall(name, args);
+      let result = dispatchWhiteboardTool(name, shaped.args, {
         whiteboard: whiteboardRef.current,
         callId,
       });
+      if (result.success && shaped.note) result = { success: true, message: `${result.message ?? "Done"} ${shaped.note}` };
       if (result.success) {
         scheduleBoardFrame(900);
         // The short list, and only when the board changed since the tutor last
@@ -580,7 +599,7 @@ function SessionDetailPage({ id }: { id: string }) {
         }
       }
       if (sessionRef.current?.boardFrames !== "auto") scheduleRecordingFrame();
-      recordToolCall(name, args, result, startedAt, callId);
+      recordToolCall(name, shaped.args, result, startedAt, callId);
       return result;
     },
     [lookAtBoard, lookAtWorksheet, recordToolCall, scheduleBoardFrame, scheduleRecordingFrame, tutorRuntime],

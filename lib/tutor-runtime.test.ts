@@ -105,3 +105,18 @@ test("a refused teaching move names the moves it accepts, so the model can fix t
   assert.ok(bad && !bad.success);
   assert.match(bad && !bad.success ? bad.error : "", /one of: focusing_question, point, strategy_hint/);
 });
+
+test("an auto-checked answer is evidence and goes to the mark sink", () => {
+  const runtime = new TutorRuntime({ startedAt: 0 });
+  const events: TutoringDomainEvent[] = [];
+  const marks: unknown[] = [];
+  runtime.setEventSink((e) => events.push(e));
+  runtime.setMarkSink((m) => marks.push(m));
+  runtime.noteBoardWrite("add_callout", { text: "What is 12 / 2?" });
+  runtime.noteStudentUtterance("is it 6?", 1000);
+  const recorded = events.filter((e) => e.type === "attempt.recorded");
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].type === "attempt.recorded" && recorded[0].attempt.result, "correct");
+  assert.deepEqual(marks, [{ line: "12 / 2 = 6", ring: true, strike: null }]);
+  assert.match(runtime.takeAutoCheckNote() ?? "", /ringed/);
+});

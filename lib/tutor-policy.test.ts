@@ -389,3 +389,16 @@ test("a new problem after a checked right answer checks the plan's step off, onc
   p.planStepAdvanced = true;
   assert.equal(takePlanStep(p), false, "already checked off by the right answer itself");
 });
+
+test("a student who asks to try one alone gets one alone, until they answer it", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "2 cups make 12, so 5 cups is 15", 0);
+  recordAttempt(p, { skill: "ratios", result: "misconception", help: 1, problem: "12/2*5" }, 1000);
+  recordAttempt(p, { skill: "ratios", result: "correct", help: 3, problem: "12/2*5" }, 2000);
+  assert.equal(flowStep(p)?.step, "together", "a helped answer is followed by one together");
+  noteStudentUtterance(p, "can i try one on my own", 3000);
+  assert.equal(flowStep(p)?.step, "alone");
+  assert.match(flowStep(p)?.next ?? "", /they asked to try one on their own/);
+  recordAttempt(p, { skill: "ratios", result: "correct", help: 0, problem: "6*3" }, 4000);
+  assert.equal(p.wantsAlone, false);
+});

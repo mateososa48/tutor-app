@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LEGACY_TUTOR_TOOL_DECLARATIONS, TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLARATIONS, TUTOR_TOOL_NAMES, attemptFromVerdict, runTutorTool, autoCheck, takeAutoCheckNote } from "./tutor-tools";
+import { LEGACY_TUTOR_TOOL_DECLARATIONS, TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLARATIONS, TUTOR_TOOL_NAMES, attemptFromVerdict, runTutorTool, autoCheck, takeAutoCheckNote, answerLine, applyVerdictMarks, withholdResult } from "./tutor-tools";
 import { SESSION_TOOL_NAMES } from "./session-tools";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { buildBackendInstructions, buildGeminiInstructions } from "./tutor-prompts";
@@ -263,4 +263,71 @@ test("a spoken question with number words is kept for the auto-check", () => {
   assert.equal(p.lastSpokenQuestion, "What is negative three squared?");
   const note = autoCheck(p, "um... 9?", 1000);
   assert.ok(note && /→ correct/.test(note), note ?? "no note");
+});
+
+// Sept 26 2026: code-owned marks.
+test("a checked answer goes up as a short line in their hand, not their whole sentence", () => {
+  assert.equal(answerLine("f(3) where f(x) = 2x + 1", "so f(3) is just put 3 in, so 7?"), "f(3) = 7");
+  assert.equal(answerLine("9 - 8", "oh wait so 9 minus 8 is 1?"), "9 − 8 = 1");
+  assert.equal(answerLine("Which is bigger: 0.35 or 0.5?", "fifty cents is bigger so 0.5 is bigger"), "0.5 is bigger");
+  assert.equal(answerLine("What is negative three squared?", "um... 9?"), "(-3)^2 = 9");
+  assert.equal(answerLine("2 cups make 12 cookies. How many for 5 cups?", "wait 5 cups would be 30 not 15"), "5 cups would be 30 not 15");
+  assert.equal(answerLine("What is 12 / 2?", "is it 6?"), "12 / 2 = 6");
+  assert.equal(answerLine("How much is it worth after a year?", "idk 85?"), "85");
+});
+
+test("with code-owned marks the verdict plans the board move and says it is done", () => {
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  noteBoardWrite(p, "add_callout", { text: "What is 5 × 6?" });
+  const wrong = autoCheck(p, "35", 0);
+  assert.ok(wrong && /"5 × 6 = 35" is on the board in their hand\. Ask how they got it/.test(wrong), wrong ?? "");
+  assert.deepEqual(p.pendingMarks, { line: "5 × 6 = 35", ring: false, strike: null });
+  p.pendingMarks = null;
+  const right = autoCheck(p, "oh 30", 1000);
+  assert.ok(right && /"5 × 6 = 30" is on the board in their hand and ringed; their earlier "5 × 6 = 35" is crossed out/.test(right), right ?? "");
+  assert.deepEqual(p.pendingMarks, { line: "5 × 6 = 30", ring: true, strike: "5 × 6 = 35" });
+  assert.ok(!/add_student_attempt|circle_item/.test(right!), "no board order for the model");
+  p.pendingMarks = null;
+  const r = runTutorTool("check_answer", { problem: "5 * 6", student_answer: "30", skill: "multiplication" }, p, 2000);
+  assert.ok(r && r.success && /already on the board in their hand, ringed/.test(r.message ?? ""), r && r.success ? r.message : "");
+  assert.equal(p.pendingMarks, null, "not written twice");
+});
+
+test("the marks run through the board: line, then ring by id, then the strike by the wrong line's id", () => {
+  const calls: string[] = [];
+  let n = 0;
+  const dispatch = (name: string, args: Record<string, unknown>) => {
+    calls.push(`${name} ${JSON.stringify(args)}`);
+    return name === "add_student_attempt" ? { success: true as const, message: `Student's attempt written in their hand (item b${++n})` } : { success: true as const, message: "ok" };
+  };
+  const ids = new Map<string, string>();
+  applyVerdictMarks({ line: "5 × 6 = 35", ring: false, strike: null }, dispatch, ids);
+  applyVerdictMarks({ line: "5 × 6 = 30", ring: true, strike: "5 × 6 = 35" }, dispatch, ids);
+  assert.deepEqual(calls, [
+    'add_student_attempt {"text":"5 × 6 = 35"}',
+    'add_student_attempt {"text":"5 × 6 = 30"}',
+    'circle_item {"target":"b2","keep":true}',
+    'cross_out_step {"step_label":"b1"}',
+  ]);
+});
+
+test("a result the student has not said goes up as = ?, and becomes the question", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "it was 2 cups for 12 cookies and 5 cups, i put 15", 0);
+  noteBoardWrite(p, "start_new_problem", { title: "Cookies", problem: "2 cups make 12 cookies. How many from 5 cups?" });
+  const r = withholdResult(p, "draw_equation_step", { latex: "12 \\div 2 = 6" });
+  assert.equal(r.args.latex, "12 \\div 2 = ?");
+  assert.match(r.note ?? "", /the result is theirs to say/);
+  assert.equal(p.lastAsked, "12 \\div 2 = ?");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "2 \\times 6 = 12" }).note, null, "12 is given in the problem");
+  noteStudentUtterance(p, "oh 6 for each cup", 1000);
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "12 \\div 2 = 6" }).note, null, "they said 6");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "y = 2x + 1" }).note, null, "not arithmetic");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "5 \\times 6 = 30" }).args.latex, "5 \\times 6 = ?");
+  const q = createPolicy(0);
+  noteStudentUtterance(q, "b squared is -9", 0);
+  assert.equal(withholdResult(q, "draw_equation_step", { latex: "(-3)^2 = 9" }).args.latex, "(-3)^2 = ?", "saying -9 is not saying 9");
+  q.boardHelp = 5;
+  assert.equal(withholdResult(q, "draw_equation_step", { latex: "(-3)^2 = 9" }).note, null, "a worked example shows its results");
 });
