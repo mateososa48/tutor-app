@@ -122,6 +122,10 @@ export type TutorPolicy = {
   planSet: boolean;
   planNudged: boolean;
   problemNudged: boolean;
+  /** Pictures drawn and tutor turns taken since this problem opened, and whether the note asked for a picture. */
+  pagePictures: number;
+  pageTurns: number;
+  pictureNudged: boolean;
 };
 
 const MAX_ATTEMPTS = 80;
@@ -178,6 +182,9 @@ export function createPolicy(now: number): TutorPolicy {
     planSet: false,
     planNudged: false,
     problemNudged: false,
+    pagePictures: 0,
+    pageTurns: 0,
+    pictureNudged: false,
     drawCount: 0,
   };
 }
@@ -684,6 +691,7 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
   p.unwrittenMath = null;
   p.drawCount += 1;
   if (name === "set_plan") p.planSet = true;
+  if (name && PICTURE_TOOLS.has(name)) p.pagePictures += 1;
   // What was asked on the board, so an answer can be checked against it.
   if (name === "add_callout" && typeof args?.text === "string" && args.text.trim()) p.lastAsked = args.text.trim().slice(0, 200);
   if (name === "draw_equation_step" && typeof args?.latex === "string" && /\?/.test(args.latex)) p.lastAsked = args.latex.trim().slice(0, 200);
@@ -693,6 +701,9 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.pageRightAnswers = 0;
     p.planStepAdvanced = false;
     p.problemNudged = false;
+    p.pagePictures = 0;
+    p.pageTurns = 0;
+    p.pictureNudged = false;
     p.lastAsked = typeof args?.ask === "string" && args.ask.trim() ? args.ask.trim().slice(0, 200) : null;
     p.lastWrongAttempt = null;
     p.lastWrongLine = null;
@@ -926,6 +937,8 @@ export function turnNote(p: TutorPolicy, tutorText: string, drew: boolean, marke
   if (!text) return null;
   const orders: string[] = [];
   const closing = p.signalTurn.closing === p.studentTurns || /\b(bye|see you|talk soon|good night|have a great)\b/i.test(text);
+  // A goodbye needs nothing more.
+  if (closing) return null;
   const board = boardNote(p, text, drew, marked);
   if (board) orders.push(board.replace(/^\[Board note, not from the student: /, "").replace(/\]$/, ""));
   if (!closing && !givesTask(text)) orders.push("your last turn ended with nothing for them to do: end the next one with one question or one small task");
@@ -933,6 +946,13 @@ export function turnNote(p: TutorPolicy, tutorText: string, drew: boolean, marke
   if (!pageMath && !p.problemNudged && p.studentTurns >= 2 && numbersIn(p.lastUtterance ?? "").length >= 2 && POSES_PROBLEM.test(p.lastUtterance ?? "")) {
     p.problemNudged = true;
     orders.push("their problem is not on the board: put it up first (start_new_problem with problem= as they said it)");
+  }
+  p.pageTurns += 1;
+  // Sept 26 2026: the judges' lowest score was "board object" (2.2): whole
+  // problems went by in equations and words with nothing drawn.
+  if (pageMath && p.pagePictures === 0 && p.pageTurns >= 3 && !p.pictureNudged) {
+    p.pictureNudged = true;
+    orders.push("three turns on this problem and no picture of it: draw the thing it is about (a table, a number line, a grid, bars, a graph, the shape) and point at it as you talk");
   }
   if (pageMath && !p.planSet && !p.planNudged && p.studentTurns >= 3) {
     p.planNudged = true;

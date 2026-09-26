@@ -442,3 +442,14 @@ test("three steps right in a row: finish the problem in one go", () => {
   for (const [i, prob] of ["(-3)^2", "9 - 8", "sqrt(1)"].entries()) recordAttempt(p, { skill: "quadratic formula", result: "correct", help: 0, problem: prob, step: true }, i * 1000);
   assert.match(flowStep(p)?.next ?? "", /finish the rest of the problem in one go/);
 });
+
+test("three turns on a problem with no picture: the note asks for the picture, once", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Decay", problem: "100 * 0.85^3" });
+  noteBoardWrite(p, "set_plan", { steps: "a | b" });
+  noteBoardWrite(p, "draw_equation_step", { latex: "100 \\times 0.85 = ?" });
+  assert.doesNotMatch(turnNote(p, "What is 100 times 0.85?", true, false) ?? "", /no picture/);
+  assert.doesNotMatch(turnNote(p, "And after two years?", true, false) ?? "", /no picture/);
+  assert.match(turnNote(p, "And after three years?", true, false) ?? "", /no picture of it/);
+  assert.doesNotMatch(turnNote(p, "What about four?", true, false) ?? "", /no picture/);
+});
