@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBoardItems, highlightSizeFor, highlightSwipeFor, itemLabelFrom, matchVariants, mergeLineRects, normalizeForMatch, swipePoints, parseTargetList, resolveItemTarget, ringPoints, RING_OVERLAP, toolRole, type BoardItem } from "./board-items";
+import { formatBoardItems, highlightSizeFor, highlightSwipeFor, itemLabelFrom, matchVariants, mergeLineRects, normalizeForMatch, swipePoints, parseTargetList, resolveItemTarget, ringPoints, RING_OVERLAP, toolRole, marksLast, type BoardItem } from "./board-items";
 
 const item = (id: string, tool: string, label: string, owner: "tutor" | "student" = "tutor"): BoardItem => ({
   id, tool, label, shapeIds: [`shape:${id}`], eqItemIds: [], owner, createdAt: 0,
@@ -194,4 +194,9 @@ test("a single glyph gets a short horizontal swipe, not a vertical blob", () => 
   // A stacked fraction (tall and narrow, but not one glyph) still gets the vertical swipe.
   const stacked = highlightSwipeFor({ x: 300, y: 100, w: 16, h: 50 });
   assert.equal(new Set(stacked.points.map((p) => Math.round(p.x))).size, 1);
+});
+
+test("a batch runs its marks after its drawings, each side in its own order", () => {
+  const batch = [{ name: "check_answer" }, { name: "circle_item" }, { name: "add_student_attempt" }, { name: "point_at" }, { name: "draw_equation_step" }];
+  assert.deepEqual(marksLast(batch, (c) => c.name).map((c) => c.name), ["check_answer", "add_student_attempt", "draw_equation_step", "circle_item", "point_at"]);
 });

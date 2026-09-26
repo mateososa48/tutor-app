@@ -2,7 +2,7 @@ import { liveWhiteboardDeclarations, type ToolDeclaration } from "./whiteboard-t
 import type { UploadedFile } from "./file-processor";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
-import { toolRole } from "./board-items";
+import { marksLast, toolRole } from "./board-items";
 import { hasBoundarySpace, joinTranscript } from "./live-events";
 import { formatMemory, formatTutorState } from "./tutor-policy";
 import { TutorRuntime } from "./tutor-runtime";
@@ -801,7 +801,7 @@ export class GeminiLiveSession {
     // Tool calls, in order, on their own queue.
     const toolCall = msg.toolCall as Record<string, unknown> | undefined;
     if (toolCall) {
-      const calls = (toolCall.functionCalls as Array<Record<string, unknown>> | undefined) ?? [];
+      const calls = marksLast((toolCall.functionCalls as Array<Record<string, unknown>> | undefined) ?? [], (c) => String(c.name ?? ""));
       for (const call of calls) {
         const id = call.id as string;
         const name = call.name as string;

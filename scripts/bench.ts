@@ -84,6 +84,7 @@ async function loadModules(promptPath: string, promptRev: string) {
     import("../lib/board-content-rules"),
   ]);
   setToolRole(items.toolRole);
+  orderBatch = (calls) => items.marksLast(calls, (c) => c.name);
   let prompts: Prompts;
   let intake: Intake;
   let promptName: string;
@@ -150,6 +151,8 @@ type Part = { text: string } | { inlineData: { mimeType: string; data: string } 
 
 const UNANSWERED_EVENT =
   "Session event: the student just answered and you have not replied. Reply now in a sentence or two and go on with the lesson; if what they said was only \"ok\" or \"yeah\", take it as ready and give them the next thing to do.";
+/** The client's order for one batch of calls (marks after drawings); set once the lib modules are loaded. */
+let orderBatch: (calls: Array<{ name: string }>) => Array<{ name: string }> = (calls) => calls;
 const TURN_DEBOUNCE_MS = 1_600; // the client's TURN_FINISH_DEBOUNCE_MS
 const TOOL_TIMEOUT_MS = 3_000; // the client's TOOL_TIMEOUT_MS (blocking tools)
 const UNANSWERED_MS = 4_000; // typed input
@@ -310,7 +313,7 @@ class LiveTutor {
     }
     if (msg.toolCall?.functionCalls) {
       this.clearUnanswered();
-      for (const c of msg.toolCall.functionCalls) {
+      for (const c of orderBatch(msg.toolCall.functionCalls) as typeof msg.toolCall.functionCalls) {
         const id = c.id ?? `c${++this.toolSeq}`;
         const rec: ToolRecord = { name: c.name, args: c.args ?? {}, callId: id, atMs: ms, beforeSpeech: this.turn.audioChunks === 0, ok: true, result: "", durationMs: 0 };
         this.turn.tools.push(rec);

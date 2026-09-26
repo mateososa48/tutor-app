@@ -679,8 +679,17 @@ function approx(v: number): string {
 const PICTURE_WORDS = /\b(shaded|shown|pictured|picture|diagram|drawn|number line)\b/i;
 const QUESTION_LEAD = /^\s*(?:what(?:'s|\s+is)|whats|find|calculate|compute|work\s+out)\s+(?:the\s+value\s+of\s+)?/i;
 
+// "f(3)" with no rule for f (Sept 25 2026: read as f × 3 with f sampled at 2,
+// "With f = 2, f(3) is 6", and the tutor took the nonsense for a verdict).
+const BARE_FUNCTION_CALL = /(?<![\\a-z])([a-z])\s*\(\s*-?\d+(?:\.\d+)?\s*\)/i;
+
 function readProblem(problem: string): string | AnswerCheck {
-  let s = stripUnitWords(substituteFunctionEval(problem) ?? problem);
+  const substituted = substituteFunctionEval(problem);
+  if (!substituted && !problem.includes("=")) {
+    const call = BARE_FUNCTION_CALL.exec(problem);
+    if (call) return cannot(`"${call[0].trim()}" needs the rule ${call[1]} follows: put it in the problem (problem="${call[0].trim()} where ${call[1]}(x) = …").`);
+  }
+  let s = stripUnitWords(substituted ?? problem);
   const led = QUESTION_LEAD.test(s);
   if (led) s = s.replace(QUESTION_LEAD, "");
   // With an "=" a "?" is a box ("3/4 = 6/?"); without one it is a question mark.

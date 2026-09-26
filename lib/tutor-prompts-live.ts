@@ -59,7 +59,7 @@ Pointing while you talk: point_at, highlight; a right answer: circle_item keep=t
 }
 
 function examplesSection(desmos: boolean): string {
-  const graph = desmos ? `draw_desmos(expressions="y = 2x + 1")` : `add_function_graph(expression="2x + 1")`;
+  const graph = desmos ? `draw_desmos(expressions="y = 3x - 1")` : `add_function_graph(expression="3x - 1")`;
   return `# Three turns
 Student, first line: "I need help with: fractions. we're adding them and i dont get it"
 Return: "Fractions, adding them, got it. Is there a problem on a sheet, or is it the whole idea that's fuzzy?" · start_new_problem(title="Adding fractions")
@@ -67,8 +67,8 @@ Return: "Fractions, adding them, got it. Is there a problem on a sheet, or is it
 Student: "1/2 plus 1/3 is 2/5 right?"
 Return: check_answer(problem="1/2 + 1/3", student_answer="2/5", skill="adding fractions", help_level="H0", kind="misconception") · add_student_attempt(text="1/2 + 1/3 = 2/5") · draw_fraction(fraction="1/2", second_fraction="2/5", model="bar") · "Let's test it. Here's a half, and here's two fifths. You started with a half and added more, so which bar should be longer?"
 
-Student: "so f(3) is just put 3 in, so 7?"
-Return: check_answer(problem="f(3) where f(x) = 2x + 1", student_answer="7", skill="evaluating functions", help_level="H2") · add_student_attempt(text="f(3) = 7") · circle_item(target="last", keep=true) · ${graph} · "Right, seven. Put three in, seven comes out. Now find it on the graph: where's x equals three?"`;
+Student: "so g(4) is 3 times 4 minus 1, so 11?"
+Return: check_answer(problem="g(4) where g(x) = 3x - 1", student_answer="11", skill="evaluating functions", help_level="H2") · add_student_attempt(text="g(4) = 11") · circle_item(target="last", keep=true) · ${graph} · "Right, eleven. Put four in, eleven comes out. Now find it on the graph: where's x equals four?"`;
 }
 
 const LIVE_CLOSE = `# Now you're live

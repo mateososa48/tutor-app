@@ -231,6 +231,17 @@ export function toolRole(name: string): ToolRole {
   return TOOL_ROLES[name] ?? "draw";
 }
 
+/**
+ * One batch of tool calls with its marks (point, ring, highlight, cross out)
+ * after everything else, in their own order: a mark targets what a drawing in
+ * the same batch puts up (Sept 25 2026: 3.8 ringed "38.6" one call before it
+ * wrote the attempt, and the ring was refused).
+ */
+export function marksLast<T>(calls: T[], nameOf: (call: T) => string): T[] {
+  const rank = (c: T) => (toolRole(nameOf(c)) === "mark" ? 1 : 0);
+  return [...calls].sort((a, b) => rank(a) - rank(b));
+}
+
 // ── Highlighter ─────────────────────────────────────────────────────────────
 
 /**

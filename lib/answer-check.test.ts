@@ -307,3 +307,11 @@ test("spoken powers and roots", () => {
   assert.equal(checkAnswer("what's the square root of sixteen?", "4").verdict, "correct");
   assert.equal(checkAnswer("two cubed", "8").verdict, "correct");
 });
+
+test("a function applied to a number with no rule is not read as a product", () => {
+  const r = checkAnswer("f(3)", "7");
+  assert.equal(r.verdict, "cannot_check");
+  assert.match(r.message, /needs the rule f follows/);
+  assert.equal(checkAnswer("2(3)+1", "7").verdict, "correct", "digits before the bracket are a product");
+  assert.equal(checkAnswer("f(3) where f(x) = x + 2", "5").verdict, "correct");
+});
