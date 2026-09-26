@@ -104,3 +104,16 @@ test("a second reply to the same line is muted once a reply ended on a question 
   g.onTurnComplete(false, "", task);
   assert.equal(g.muted, false, "a quiet turn end never mutes");
 });
+
+test("speech over a muted reply keeps it muted until the server cuts it off", () => {
+  const task = (t: string) => /\?\s*$/.test(t);
+  const g = new ReplyGate();
+  g.onTurnComplete(true, "Is there a sheet, or the idea?", task);
+  g.onNewInput(true);
+  assert.equal(g.muted, true, "the old second reply is still arriving");
+  g.onBoundary();
+  assert.equal(g.muted, false, "cut off: the next reply is theirs");
+  g.onTurnComplete(true, "Which is bigger?", task);
+  g.onNewInput(false);
+  assert.equal(g.muted, false, "nothing arriving: open at once");
+});

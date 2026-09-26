@@ -189,6 +189,8 @@ export class GeminiLiveSession {
   /** One spoken reply per student line: a second reply is not played (ReplyGate, Sept 26 2026). */
   private readonly gate = new ReplyGate();
   private droppedAudioChunks = 0;
+  /** When the model last sent audio, played or muted: is a generation still arriving? */
+  private lastModelAudioAt = 0;
   private awaitingReply = false;
   private nudgesThisTurn = 0;
   private lastInputKind: "text" | "voice" = "voice";
@@ -224,7 +226,9 @@ export class GeminiLiveSession {
 
   // A new line from the student: nothing heard back yet, no nudge sent yet.
   private newStudentInput(kind: "text" | "voice") {
-    this.gate.onNewInput();
+    // Typed text interrupts any generation itself; speech over a muted reply
+    // waits for the server to cut it off.
+    this.gate.onNewInput(kind === "voice" && Date.now() - this.lastModelAudioAt < 400);
     this.inputSeq += 1;
     this.lastInputKind = kind;
     this.turnHadAudio = false;
@@ -804,6 +808,7 @@ export class GeminiLiveSession {
       for (const part of parts) {
         const inlineData = part.inlineData as Record<string, unknown> | undefined;
         if (typeof inlineData?.data === "string") {
+          this.lastModelAudioAt = now;
           // A second reply to the same line is not played (ReplyGate).
           if (this.gate.muted) {
             if (this.droppedAudioChunks++ === 0) this.debug("turn", "second_reply_dropped", {});
@@ -819,6 +824,7 @@ export class GeminiLiveSession {
 
       // Model was interrupted by student speech — flush audio queue
       if (serverContent.interrupted) {
+        this.gate.onBoundary();
         console.log("[Gemini] Interrupted");
         this.debug("turn", "interrupted");
         if (this.turns.finish("interrupted", now)) this.scheduleTurnFlush();

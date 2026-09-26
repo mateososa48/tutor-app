@@ -27,6 +27,11 @@
 //   --hold             hold early async results until the first sound (ResponseHold; tried and rejected)
 //   --nogate           play a second reply to the same line (the app mutes it: ReplyGate)
 //   --nonotes          no note between turns (TutorRuntime.turnNote)
+//   --voice            the student speaks: each line after the first is synthesized
+//                      (macOS say) and streamed as microphone audio, as in a spoken
+//                      session; the turn is timed from the end of their speech
+//   --vad patient      the app's ?vad=patient voice-activity setting (with --voice)
+//   --kidvoice name    the macOS voice for --voice (default Samantha; --kidrate 180 words a minute)
 //   --coach model      a coach (lib/tutor-coach) reads the lesson after each tutor
 //                      turn and adds one order to the note (e.g. gemini-3.5-flash)
 //   --turns N          student turns per case (default: the case's own)
@@ -152,6 +157,7 @@ type LiveMessage = {
   serverContent?: {
     modelTurn?: { parts?: Array<{ text?: string; thought?: boolean; inlineData?: { data?: string } }> };
     outputTranscription?: { text?: string };
+    inputTranscription?: { text?: string };
     interrupted?: boolean;
     turnComplete?: boolean;
   };
@@ -173,6 +179,34 @@ const ESCALATE_EVENT = "Session event: still nothing said since the student's la
 const TURN_CAP_MS = 75_000;
 /** --save-audio: write each turn's speech as <case>-t<N>.wav, to hear what was actually said. */
 const SAVE_AUDIO = process.argv.includes("--save-audio");
+
+/**
+ * --voice: a student line as 16 kHz mono PCM, spoken by macOS `say` (the
+ * "Junior" voice, a little quick, the way a kid talks). Cached by text.
+ */
+const speechCache = new Map<string, Buffer>();
+async function synth(text: string, dir: string): Promise<Buffer> {
+  const hit = speechCache.get(text);
+  if (hit) return hit;
+  const { execFileSync } = await import("node:child_process");
+  const base = path.join(dir, `speech-${speechCache.size}`);
+  execFileSync("say", ["-v", arg("kidvoice", "Samantha"), "-r", arg("kidrate", "180"), "-o", `${base}.aiff`, text.replace(/[<>]/g, " ")]);
+  execFileSync("afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", `${base}.aiff`, `${base}.wav`]);
+  const file = fs.readFileSync(`${base}.wav`);
+  // Find the data chunk (afconvert may add a padding chunk before it).
+  let at = 12;
+  let pcm = file.subarray(44);
+  while (at + 8 <= file.length) {
+    const id = file.toString("ascii", at, at + 4);
+    const size = file.readUInt32LE(at + 4);
+    if (id === "data") { pcm = file.subarray(at + 8, at + 8 + size); break; }
+    at += 8 + size + (size % 2);
+  }
+  fs.rmSync(`${base}.aiff`, { force: true });
+  fs.rmSync(`${base}.wav`, { force: true });
+  speechCache.set(text, pcm);
+  return pcm;
+}
 
 function wav(chunks: string[], rate = 24_000): Buffer {
   const pcm = Buffer.concat(chunks.map((c) => Buffer.from(c, "base64")));
@@ -202,6 +236,8 @@ type LiveTurn = {
   durationMs: number;
   /** The turn's audio, base64 PCM chunks at 24 kHz (kept only with --save-audio). */
   audio: string[];
+  /** What Gemini heard the student say (--voice: its input transcription of the synthesized line). */
+  heard: string;
 };
 
 class LiveTutor {
@@ -237,10 +273,15 @@ class LiveTutor {
   }
 
   private readonly hold: HoldLike | null;
+  /** --voice: the student's line as 16 kHz PCM, being streamed by the mic loop. */
+  private voicePcm: Buffer | null = null;
+  private voiceAt = 0;
+  private voiceDone: (() => void) | null = null;
   /** The app's caption cleaner (lib/live-events SpeechTextCleaner), when given. */
   speech: { clean(text: string): string } | null = null;
   /** The app's ReplyGate (one spoken reply per line) and the test it closes on, when given. */
-  gate: { onNewInput(): void; onTurnComplete(hadAudio: boolean, text: string, givesTask: (t: string) => boolean): void; readonly muted: boolean } | null = null;
+  gate: { onNewInput(generating?: boolean): void; onBoundary(): void; onTurnComplete(hadAudio: boolean, text: string, givesTask: (t: string) => boolean): void; readonly muted: boolean } | null = null;
+  private lastModelAudioAt = 0;
   givesTask: (t: string) => boolean = () => false;
   droppedChunks = 0;
 
@@ -250,7 +291,7 @@ class LiveTutor {
   }
 
   private static emptyTurn(): LiveTurn {
-    return { said: "", raw: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0, audio: [] };
+    return { heard: "", said: "", raw: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0, audio: [] };
   }
 
   open(): Promise<void> {
@@ -270,6 +311,8 @@ class LiveTutor {
             outputAudioTranscription: {},
             sessionResumption: {},
             contextWindowCompression: this.compression,
+            // --vad patient: the app's ?vad=patient (END_SENSITIVITY_LOW, 1200 ms of silence).
+            ...(arg("vad", "") === "patient" ? { realtimeInputConfig: { automaticActivityDetection: { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", silenceDurationMs: 1200 } } } : {}),
           },
         }));
       });
@@ -295,8 +338,17 @@ class LiveTutor {
       const ws = this.ws as unknown as { readyState?: number; send(data: string): void } | null;
       if (!ws || ws.readyState !== 1) return;
       const n = 640;
-      const buf = Buffer.alloc(n * 2);
-      for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round((Math.random() * 2 - 1) * 8), i * 2);
+      let buf: Buffer;
+      if (this.voicePcm && this.voiceAt < this.voicePcm.length) {
+        // --voice: the student's line, 40 ms at a time, as a microphone sends it.
+        buf = Buffer.alloc(n * 2);
+        this.voicePcm.copy(buf, 0, this.voiceAt, Math.min(this.voicePcm.length, this.voiceAt + n * 2));
+        this.voiceAt += n * 2;
+        if (this.voiceAt >= this.voicePcm.length) { this.voicePcm = null; const done = this.voiceDone; this.voiceDone = null; done?.(); }
+      } else {
+        buf = Buffer.alloc(n * 2);
+        for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round((Math.random() * 2 - 1) * 8), i * 2);
+      }
       ws.send(JSON.stringify({ realtimeInput: { audio: { data: buf.toString("base64"), mimeType: "audio/pcm;rate=16000" } } }));
     }, 40);
   }
@@ -306,6 +358,27 @@ class LiveTutor {
   }
 
   /** A user turn: the opening (with files) or a typed line. Returns a promise for the tutor's whole turn. */
+  /**
+   * --voice: the student's line spoken into the microphone (synthesized). The
+   * turn is timed from the end of the speech, as a kid's pause would be, and
+   * `onSpoken` runs then (the app reads the utterance about there).
+   */
+  async voiceTurn(pcm: Buffer, onSpoken?: () => void): Promise<LiveTurn> {
+    this.hold?.onNewInput();
+    this.gate?.onNewInput(Date.now() - this.lastModelAudioAt < 400);
+    this.turn = LiveTutor.emptyTurn();
+    this.turnCompleteSeen = false;
+    this.idleReplyAt = null;
+    this.nudges = 0;
+    this.turnStart = Date.now();
+    await new Promise<void>((resolve) => { this.voicePcm = pcm; this.voiceAt = 0; this.voiceDone = resolve; });
+    this.turnStart = Date.now();
+    onSpoken?.();
+    this.armUnanswered(8_000);
+    this.cap = setTimeout(() => { this.turn.timedOut = true; this.finishTurn(); }, TURN_CAP_MS);
+    return new Promise((resolve) => { this.resolveTurn = resolve; });
+  }
+
   userTurn(parts: Part[], arm = true): Promise<LiveTurn> {
     this.hold?.onNewInput();
     this.gate?.onNewInput();
@@ -384,6 +457,7 @@ class LiveTutor {
     if (!sc) return;
     for (const p of sc.modelTurn?.parts ?? []) {
       if (p.inlineData?.data) {
+        this.lastModelAudioAt = Date.now();
         if (this.gate?.muted) { this.droppedChunks++; continue; }
         this.turn.audioChunks++;
         this.hold?.onAudio();
@@ -393,8 +467,10 @@ class LiveTutor {
         this.bump();
       }
     }
+    if (sc.inputTranscription?.text) this.turn.heard += sc.inputTranscription.text;
     if (sc.outputTranscription?.text && !this.gate?.muted) { this.turn.raw += sc.outputTranscription.text; this.turn.said += this.speech?.clean(sc.outputTranscription.text) ?? sc.outputTranscription.text; this.bump(); }
     if (sc.interrupted) {
+      this.gate?.onBoundary();
       // The student's line cut a generation short (the tail of a WHEN_IDLE reply,
       // Maya r2 turn 8): the answer to the line is a fresh generation, so wait for it.
       this.turn.interrupted = true;
@@ -550,7 +626,7 @@ const summaryOf = (page: Page, compact: boolean) => page.evaluate((c) => (window
 
 // ── One case ───────────────────────────────────────────────────────────────
 
-async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; hold: boolean; notes: boolean; coach: string; tag: string }): Promise<CaseRun> {
+async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; hold: boolean; notes: boolean; coach: string; voice: boolean; tag: string }): Promise<CaseRun> {
   const tag = opts.tag;
   const { page, errors } = await openBoard(opts.browser, opts.base, opts.w, opts.h);
   const runtime = new m.runtime.TutorRuntime({ startedAt: Date.now() });
@@ -725,6 +801,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     const turn: TurnRecord = {
       n: i + 1,
       student: studentText,
+      ...(opts.voice && t.heard.trim() ? { heard: t.heard.replace(/\s+/g, " ").trim() } : {}),
       tutor: said,
       ...(rawSaid !== said ? { rawTutor: rawSaid } : {}),
       tools: t.tools,
@@ -763,15 +840,29 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     // A kid who has said goodbye twice is gone (Maya said "bye" three times into 14 turns).
     const bye = (t: string) => /^\s*(?:ok(?:ay)?\s+)?(?:bye|cya|see ya|thanks?,? bye|ok thanks|thank you|thx)\b/i.test(t);
     if (bye(studentText) && turns.length && bye(turns[turns.length - 1].student)) { console.log(`  (${c.name} has left)`); break; }
-    runtime.noteStudentUtterance(studentText);
-    // The app's typed path: a checked answer goes in as a note before the line.
-    pendingAuto = runtime.takeAutoCheckNote();
     pendingNote = [nextNote, coached].filter(Boolean).join("\n") || null;
-    await markChain;
-    const context = [pendingAuto, pendingNote].filter(Boolean).join("\n");
-    if (context) live.sendNote(context);
-    pending = live.userTurn([{ text: studentText }]);
-    live.noteAppTools(pendingApp.splice(0));
+    if (opts.voice) {
+      // The app's voice path: the note goes in as the student starts talking;
+      // the utterance is read when they stop, and a checked answer's note rides
+      // on the tutor's first tool result (nextReminder), never as a message.
+      pendingAuto = null;
+      const pcm = await synth(studentText, opts.out);
+      if (pendingNote) live.sendNote(pendingNote);
+      const said = studentText;
+      pending = live.voiceTurn(pcm, () => {
+        runtime.noteStudentUtterance(said);
+        void markChain.then(() => live.noteAppTools(pendingApp.splice(0)));
+      });
+    } else {
+      runtime.noteStudentUtterance(studentText);
+      // The app's typed path: a checked answer goes in as a note before the line.
+      pendingAuto = runtime.takeAutoCheckNote();
+      await markChain;
+      const context = [pendingAuto, pendingNote].filter(Boolean).join("\n");
+      if (context) live.sendNote(context);
+      pending = live.userTurn([{ text: studentText }]);
+      live.noteAppTools(pendingApp.splice(0));
+    }
   }
   const finalBoard = await exportBoard(page, 1600);
   if (finalBoard) fs.writeFileSync(path.join(opts.out, `${tag}-board.jpg`), Buffer.from(finalBoard, "base64"));
@@ -800,7 +891,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
 function caseMarkdown(c: BenchCase, r: CaseRun): string {
   const L = [`# ${c.name}, ${c.grade} (${c.id})`, "", `Intake: "${c.topic}" · ${c.minutes} min${c.worksheet ? " · worksheet attached" : ""}`, "", `Hidden brief: ${c.brief}`, "", `Outcome wanted: ${c.outcome}`, ""];
   for (const t of r.turns) {
-    L.push(`## Turn ${t.n}`, "", `**${c.name}:** ${t.student}`, "");
+    L.push(`## Turn ${t.n}`, "", `**${c.name}:** ${t.student}${t.heard && t.heard.toLowerCase().replace(/[^a-z0-9]/g, "") !== t.student.toLowerCase().replace(/[^a-z0-9]/g, "") ? ` _(the tutor heard: "${t.heard}")_` : ""}`, "");
     if (t.autoCheck || t.turnNote) L.push(`_(the app, to the tutor only: ${[t.autoCheck, t.turnNote].filter(Boolean).join(" ")})_`, "");
     L.push(`**Tutor:** ${t.tutor || (t.timedOut ? "(timed out)" : "(said nothing)")}${t.nudged ? " _(after the unanswered nudge)_" : ""}`, "");
     for (const x of t.tools) L.push(`- ${x.by === "app" ? "_(the app, not the model)_ " : ""}\`${x.name}(${JSON.stringify(x.args).slice(0, 220)})\` ${x.ok ? "→" : "✗"} ${x.result.split("\n[Board:")[0].replace(/\s+/g, " ").slice(0, 240)}${x.by === "app" || x.beforeSpeech ? "" : " _(after it started talking)_"}`);
@@ -930,7 +1021,7 @@ async function main() {
         console.log(`\n=== ${c.name}, ${c.grade} (${tag}): "${c.topic}"`);
         let run: CaseRun;
         try {
-          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: process.argv.includes("--hold"), notes: !process.argv.includes("--nonotes"), coach: arg("coach", ""), tag });
+          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: process.argv.includes("--hold"), notes: !process.argv.includes("--nonotes"), coach: arg("coach", ""), voice: process.argv.includes("--voice"), tag });
         } catch (err) {
           console.log(`  failed: ${err instanceof Error ? err.message : String(err)}`);
           continue;

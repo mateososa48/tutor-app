@@ -191,14 +191,33 @@ export function resolveLiveVad(search: { get(name: string): string | null } | nu
  */
 export class ReplyGate {
   private closed = false;
+  private reopenAtBoundary = false;
 
-  /** The student said something: the tutor's next reply is theirs to hear. */
-  onNewInput(): void {
+  /**
+   * The student said something: the tutor's next reply is theirs to hear. If
+   * a muted reply is still arriving (`generating`), the gate opens only when
+   * that generation is cut off or ends (onBoundary): opening at once let the
+   * old second reply play over the student (the voice benchmark, Sept 26 2026).
+   */
+  onNewInput(generating = false): void {
+    if (this.closed && generating) {
+      this.reopenAtBoundary = true;
+      return;
+    }
+    this.closed = false;
+    this.reopenAtBoundary = false;
+  }
+
+  /** The generation in flight was interrupted or completed. */
+  onBoundary(): void {
+    if (!this.reopenAtBoundary) return;
+    this.reopenAtBoundary = false;
     this.closed = false;
   }
 
   /** The tutor finished a generation: `text` is what it said in this turn so far. */
   onTurnComplete(hadAudio: boolean, text: string, givesTask: (text: string) => boolean): void {
+    if (this.reopenAtBoundary) return this.onBoundary();
     if (hadAudio && text.trim() && givesTask(text)) this.closed = true;
   }
 
