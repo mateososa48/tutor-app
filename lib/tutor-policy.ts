@@ -68,6 +68,9 @@ export type TutorPolicy = {
   resultsSinceFilesReminder: number;
   /** The problem on the board now (start_problem), so a checked step inside it is not taken for a finished problem. */
   pageProblem: string | null;
+  /** Checked right answers on this page, and whether the plan's step was already checked off for it (Sept 25 2026). */
+  pageRightAnswers: number;
+  planStepAdvanced: boolean;
   /** The skill of the first answer checked on this page: later ones are filed under it (labels drift). */
   pageSkill: string | null;
   /** The memory line as last sent (it rides on a result only when it changes). */
@@ -131,6 +134,8 @@ export function createPolicy(now: number): TutorPolicy {
     filesRemindedAt: now,
     resultsSinceFilesReminder: 0,
     pageProblem: null,
+    pageRightAnswers: 0,
+    planStepAdvanced: false,
     pageSkill: null,
     memorySent: "",
     boardHelp: 0,
@@ -296,6 +301,7 @@ export function recordAttempt(
   input: { skill: string; result: AttemptResult; help: number; note?: string; callId?: string; auto?: boolean; problem?: string; step?: boolean },
   now: number,
 ): void {
+  if (input.result === "correct") p.pageRightAnswers += 1;
   // One page, one skill (Sept 24 2026): the tutor renamed the skill five
   // times in one session ("comparing…", "equivalent…", "like…"), which reset
   // every count. The page's first checked answer names it for the page.
@@ -629,6 +635,8 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
   if (name === "start_problem" || name === "start_new_problem") {
     const raw = typeof args?.problem === "string" ? args.problem : typeof args?.title === "string" ? args.title : "";
     p.pageProblem = raw.trim() ? raw.trim().slice(0, 200) : null;
+    p.pageRightAnswers = 0;
+    p.planStepAdvanced = false;
     p.lastAsked = typeof args?.ask === "string" && args.ask.trim() ? args.ask.trim().slice(0, 200) : null;
     p.lastWrongAttempt = null;
     p.pageSkill = null;
@@ -805,4 +813,17 @@ export function boardNote(p: TutorPolicy, tutorText: string, drew: boolean, mark
     return "[Board note, not from the student: a whole turn with no board move. Next turn, draw or mark the thing you talk about first, then speak.]";
   }
   return null;
+}
+
+/**
+ * A new problem is opening: the plan's current step is done when the page
+ * being left had a checked right answer and nothing checked the step off yet
+ * (Sept 25 2026: the model never calls set_plan(step=), and a word problem's
+ * answer is a "step of the page" to the checker, so the box sat on step 1 all
+ * session in 100 benchmark turns). Call before the new problem is drawn.
+ */
+export function takePlanStep(p: TutorPolicy): boolean {
+  if (p.pageRightAnswers === 0 || p.planStepAdvanced) return false;
+  p.planStepAdvanced = true;
+  return true;
 }

@@ -54,6 +54,7 @@ import { joinTranscript } from "@/lib/live-events";
 import { TutorRuntime } from "@/lib/tutor-runtime";
 import { boardFontsSettled, loadBoardFonts } from "@/lib/board-fonts";
 import { stepOfPage } from "@/lib/tutor-tools";
+import { takePlanStep } from "@/lib/tutor-policy";
 import { LearningRecorder, loadSessionLearning } from "@/lib/learning-client";
 
 type Mode = "loading" | "notfound" | "lobby" | "live" | "review";
@@ -339,7 +340,10 @@ function SessionDetailPage({ id }: { id: string }) {
       // and a finished problem (not a step of it) checks the plan's step.
       if (event.type === "attempt.recorded" && event.attempt.result === "correct") {
         setCelebrateKey((k) => k + 1);
-        if (!stepOfPage(tutorRuntime.policy.pageProblem, event.attempt.problem, event.attempt.studentAnswer)) whiteboardRef.current?.planAnswered?.();
+        if (!stepOfPage(tutorRuntime.policy.pageProblem, event.attempt.problem, event.attempt.studentAnswer)) {
+          whiteboardRef.current?.planAnswered?.();
+          tutorRuntime.policy.planStepAdvanced = true;
+        }
       }
     });
     // Their spoken working, passed with check_answer: written in their hand
@@ -553,6 +557,8 @@ function SessionDetailPage({ id }: { id: string }) {
           return result;
         });
       }
+      // A new problem after a right answer on this one checks the plan's step off before the board is redrawn.
+      if (name === "start_new_problem" && takePlanStep(tutorRuntime.policy)) whiteboardRef.current?.planAnswered?.();
       let result = dispatchWhiteboardTool(name, args, {
         whiteboard: whiteboardRef.current,
         callId,
@@ -577,7 +583,7 @@ function SessionDetailPage({ id }: { id: string }) {
       recordToolCall(name, args, result, startedAt, callId);
       return result;
     },
-    [lookAtBoard, lookAtWorksheet, recordToolCall, scheduleBoardFrame, scheduleRecordingFrame],
+    [lookAtBoard, lookAtWorksheet, recordToolCall, scheduleBoardFrame, scheduleRecordingFrame, tutorRuntime],
   );
 
   // Calls cancelled while they waited for the board's fonts: never drawn.

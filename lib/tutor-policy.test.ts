@@ -24,7 +24,7 @@ import {
   cancelAttempt,
   noteAnswerChecked,
   noteTutorTurn,
-  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep } from "./tutor-policy";
+  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep, takePlanStep } from "./tutor-policy";
 
 const T0 = 1_000_000;
 
@@ -374,4 +374,18 @@ test("the opening asks about the idea the student already gave", () => {
   noteStudentUtterance(q, "I need help with: ratios", 0);
   noteStudentUtterance(q, "the whole idea", 0);
   assert.match(formatTutorState(q, 0), /no teaching yet: ask what exactly they want/);
+});
+
+test("a new problem after a checked right answer checks the plan's step off, once", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Ratios", problem: "2 cups make 12 cookies. How many for 5 cups?" });
+  assert.equal(takePlanStep(p), false, "nothing right yet");
+  recordAttempt(p, { skill: "ratios", result: "correct", help: 1, problem: "12/2*5" }, 1000);
+  assert.equal(takePlanStep(p), true);
+  assert.equal(takePlanStep(p), false, "only once per page");
+  noteBoardWrite(p, "start_new_problem", { title: "Your turn" });
+  assert.equal(takePlanStep(p), false, "the new page starts clean");
+  recordAttempt(p, { skill: "ratios", result: "correct", help: 1, problem: "4*6" }, 2000);
+  p.planStepAdvanced = true;
+  assert.equal(takePlanStep(p), false, "already checked off by the right answer itself");
 });

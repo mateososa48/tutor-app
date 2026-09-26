@@ -509,6 +509,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   runtime.setEventSink((event) => {
     if (event.type !== "attempt.recorded" || event.attempt.result !== "correct") return;
     if (m.tutorTools.stepOfPage(runtime.policy.pageProblem, event.attempt.problem, event.attempt.studentAnswer)) return;
+    runtime.policy.planStepAdvanced = true;
     void page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
   });
 
@@ -564,6 +565,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       lastLook = { fileId: file.id, page: choice.page };
       return { success: true, message: m.sessionTools.worksheetShown(choice.file, choice.page) };
     } else {
+      if (name === "start_new_problem" && m.policy.takePlanStep(runtime.policy)) await page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
       result = await page.evaluate(({ name, args, callId }) => (window as BoardWindow).__chalkDispatch?.(name, args, callId) ?? { success: false, error: "no dispatcher on the page" }, { name, args, callId });
       if (result.success) {
         scheduleFrame(900);
