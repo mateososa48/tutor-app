@@ -24,7 +24,8 @@
 //   --set main|heldout|all  the six the redesign reads (default), the four held
 //                      out for gates (slope, triangle, divide, logs), or all ten
 //   --save-audio       write each turn's speech as <case>-t<N>.wav
-//   --nohold           send async results at once, as before the app's ResponseHold
+//   --hold             hold early async results until the first sound (ResponseHold; tried and rejected)
+//   --nogate           play a second reply to the same line (the app mutes it: ReplyGate)
 //   --nonotes          no note between turns (TutorRuntime.turnNote)
 //   --coach model      a coach (lib/tutor-coach) reads the lesson after each tutor
 //                      turn and adds one order to the note (e.g. gemini-3.5-flash)
@@ -238,6 +239,10 @@ class LiveTutor {
   private readonly hold: HoldLike | null;
   /** The app's caption cleaner (lib/live-events SpeechTextCleaner), when given. */
   speech: { clean(text: string): string } | null = null;
+  /** The app's ReplyGate (one spoken reply per line) and the test it closes on, when given. */
+  gate: { onNewInput(): void; onTurnComplete(hadAudio: boolean, text: string, givesTask: (t: string) => boolean): void; readonly muted: boolean } | null = null;
+  givesTask: (t: string) => boolean = () => false;
+  droppedChunks = 0;
 
   private sendResponse(id: string, name: string, result: ToolCallResult, scheduling: string | undefined) {
     this.send({ toolResponse: { functionResponses: [{ id, name, response: { output: result }, ...(scheduling ? { scheduling } : {}) }] } });
@@ -303,6 +308,7 @@ class LiveTutor {
   /** A user turn: the opening (with files) or a typed line. Returns a promise for the tutor's whole turn. */
   userTurn(parts: Part[], arm = true): Promise<LiveTurn> {
     this.hold?.onNewInput();
+    this.gate?.onNewInput();
     this.turn = LiveTutor.emptyTurn();
     this.turnStart = Date.now();
     this.turnCompleteSeen = false;
@@ -378,6 +384,7 @@ class LiveTutor {
     if (!sc) return;
     for (const p of sc.modelTurn?.parts ?? []) {
       if (p.inlineData?.data) {
+        if (this.gate?.muted) { this.droppedChunks++; continue; }
         this.turn.audioChunks++;
         this.hold?.onAudio();
         if (SAVE_AUDIO) this.turn.audio.push(p.inlineData.data);
@@ -386,7 +393,7 @@ class LiveTutor {
         this.bump();
       }
     }
-    if (sc.outputTranscription?.text) { this.turn.raw += sc.outputTranscription.text; this.turn.said += this.speech?.clean(sc.outputTranscription.text) ?? sc.outputTranscription.text; this.bump(); }
+    if (sc.outputTranscription?.text && !this.gate?.muted) { this.turn.raw += sc.outputTranscription.text; this.turn.said += this.speech?.clean(sc.outputTranscription.text) ?? sc.outputTranscription.text; this.bump(); }
     if (sc.interrupted) {
       // The student's line cut a generation short (the tail of a WHEN_IDLE reply,
       // Maya r2 turn 8): the answer to the line is a fresh generation, so wait for it.
@@ -394,6 +401,7 @@ class LiveTutor {
       this.idleReplyAt = Date.now();
     }
     if (sc.turnComplete) {
+      this.gate?.onTurnComplete(this.turn.audioChunks > 0, this.turn.said, this.givesTask);
       this.turnCompleteSeen = true;
       this.hold?.onTurnComplete(this.turn.audioChunks > 0);
       this.turnCompleteAt = Date.now();
@@ -410,7 +418,8 @@ class LiveTutor {
     this.debounce = setTimeout(() => {
       this.debounce = null;
       if (!this.turnCompleteSeen || this.pendingTools > 0) return;
-      if (this.idleReplyAt !== null && this.turnCompleteAt < this.idleReplyAt) {
+      // A second reply the gate will drop is not worth waiting for.
+      if (this.idleReplyAt !== null && this.turnCompleteAt < this.idleReplyAt && !this.gate?.muted) {
         const left = IDLE_REPLY_MS - (Date.now() - this.idleReplyAt);
         if (left > 0) { this.debounce = setTimeout(() => { this.debounce = null; this.idleReplyAt = null; this.bump(); }, left); return; }
         this.idleReplyAt = null;
@@ -671,6 +680,10 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken), opts.hold ? (send) => new m.behavior.ResponseHold(send as never, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken)) : undefined);
   const events = await import("../lib/live-events");
   if (typeof events.SpeechTextCleaner === "function") live.speech = new events.SpeechTextCleaner();
+  if (!process.argv.includes("--nogate") && typeof m.behavior.ReplyGate === "function") {
+    live.gate = new m.behavior.ReplyGate();
+    live.givesTask = m.policy.givesTask;
+  }
   const startedAt = Date.now();
   await live.open();
   runtime.startClock();
@@ -917,7 +930,7 @@ async function main() {
         console.log(`\n=== ${c.name}, ${c.grade} (${tag}): "${c.topic}"`);
         let run: CaseRun;
         try {
-          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: !process.argv.includes("--nohold"), notes: !process.argv.includes("--nonotes"), coach: arg("coach", ""), tag });
+          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: process.argv.includes("--hold"), notes: !process.argv.includes("--nonotes"), coach: arg("coach", ""), tag });
         } catch (err) {
           console.log(`  failed: ${err instanceof Error ? err.message : String(err)}`);
           continue;

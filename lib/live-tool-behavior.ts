@@ -60,6 +60,12 @@ export function toolScheduling(model: string, name: string, result: { success: b
 }
 
 /**
+ * TRIED AND REJECTED as the app's behaviour (Sept 26 2026; kept for the
+ * bench's --hold): holding early results until the first sound. 3.8 often
+ * waits for a non-blocking result before it speaks, so a held result left it
+ * silent until the nudge: 9 of 39 benchmark turns took over 8 s to the first
+ * sound (the baseline: 1 of 84). ReplyGate below replaced it.
+ *
  * One spoken reply per student line (Sept 26 2026). A non-blocking result
  * that comes back before the tutor has made a sound is held, not sent: sent
  * WHEN_IDLE it made 3.8 answer the line and then talk again once idle, and
@@ -171,4 +177,33 @@ export function resolveLiveVad(search: { get(name: string): string | null } | nu
   const v = search?.get("vad")?.trim().toLowerCase();
   if (v === "patient") return { endOfSpeechSensitivity: "END_SENSITIVITY_LOW", silenceDurationMs: 1200 };
   return undefined;
+}
+
+/**
+ * One spoken reply per student line, enforced where it is heard (Sept 26
+ * 2026). A result sent WHEN_IDLE before the tutor spoke makes 3.8 answer the
+ * line and then, once idle, speak again ("…sheet or the idea? Where do you
+ * usually get stuck…?"; "…Find the slope… The assistant gave the student a new
+ * problem…", both in the saved audio). Once the tutor has finished a reply
+ * that ends on a question or a task, anything more it says before the student
+ * speaks again is not played and not captioned. A reply that ends without a
+ * task ("Let's look at this.") leaves the gate open for the real one.
+ */
+export class ReplyGate {
+  private closed = false;
+
+  /** The student said something: the tutor's next reply is theirs to hear. */
+  onNewInput(): void {
+    this.closed = false;
+  }
+
+  /** The tutor finished a generation: `text` is what it said in this turn so far. */
+  onTurnComplete(hadAudio: boolean, text: string, givesTask: (text: string) => boolean): void {
+    if (hadAudio && text.trim() && givesTask(text)) this.closed = true;
+  }
+
+  /** True while more speech would be a second reply to the same line. */
+  get muted(): boolean {
+    return this.closed;
+  }
 }

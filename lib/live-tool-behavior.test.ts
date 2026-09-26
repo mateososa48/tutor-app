@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BLOCKING_TOOLS, ResponseHold, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior } from "./live-tool-behavior";
+import { BLOCKING_TOOLS, ReplyGate, ResponseHold, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior } from "./live-tool-behavior";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
@@ -90,4 +90,17 @@ test("a result that beats the first sound is held: filed SILENT when the tutor t
   hold.onNewInput();
   assert.deepEqual(sent, ["f:WHEN_IDLE"], "a refusal still asks to be heard");
   hold.dispose();
+});
+
+test("a second reply to the same line is muted once a reply ended on a question or a task", () => {
+  const task = (t: string) => /\?\s*$/.test(t) || /^(try|find)/i.test(t.trim().split(/(?<=[.!?])\s+/).at(-1) ?? "");
+  const g = new ReplyGate();
+  g.onTurnComplete(true, "Let's look at this.", task);
+  assert.equal(g.muted, false, "no task yet: the real reply may follow");
+  g.onTurnComplete(true, "Let's look at this. Do you have a sheet, or the idea?", task);
+  assert.equal(g.muted, true);
+  g.onNewInput();
+  assert.equal(g.muted, false);
+  g.onTurnComplete(false, "", task);
+  assert.equal(g.muted, false, "a quiet turn end never mutes");
 });
