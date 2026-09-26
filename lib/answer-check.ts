@@ -667,6 +667,8 @@ export function spokenToDigits(text: string, opts: { the?: boolean } = {}): stri
     .replace(/(\d|\))\s+(plus|times|multiplied by|divided by)\s+(?=[-\d(])/gi, (_m, a: string, op: string) =>
       `${a} ${op.toLowerCase() === "plus" ? "+" : op.toLowerCase() === "divided by" ? "/" : "*"} `,
     )
+    // "point thirty five", "point three five": how kids say 0.35 (Sept 26 2026).
+    .replace(/(?:\b0\s+)?\bpoint\s+(\d+(?:\s+\d)*)\b/gi, (_m, d: string) => `0.${d.replace(/\s+/g, "")}`)
     // "negative three squared" is (-3)^2, "the square root of 16" is sqrt(16)
     // (Sept 25 2026: the tutor asks these aloud and the auto-check read neither).
     .replace(/(-?\d+(?:\.\d+)?|\))\s+squared\b/gi, "($1)^2")

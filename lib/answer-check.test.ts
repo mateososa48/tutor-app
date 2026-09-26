@@ -327,3 +327,9 @@ test("a comparison claim answered with a named value", () => {
   assert.equal(checkAnswer("0.5 > 0.35", "0.5 is bigger").verdict, "correct");
   assert.equal(checkAnswer("0.5 > 0.35", "0.35 is bigger").verdict, "incorrect");
 });
+
+test("kid decimals: point thirty five", () => {
+  assert.equal(spokenToDigits("i put point thirty five"), "i put 0.35");
+  assert.equal(spokenToDigits("point three five"), "0.35");
+  assert.equal(checkAnswer("Which is bigger, 0.35 or 0.5?", "point five").verdict, "correct");
+});

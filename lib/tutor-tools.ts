@@ -418,7 +418,7 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
   // "which is bigger, 0.35 or 0.5, and i put 0.35": the problem and their
   // answer in one line (Sept 26 2026: no case asked how the student got an
   // answer they reported, because nothing checked it).
-  const reported = REPORTED.exec(t);
+  const reported = REPORTED.exec(spokenToDigits(t, { the: true }));
   if (reported && /\d/.test(reported[1]) && /\d|\b(?:same|equal)\b/i.test(reported[2])) candidates.push({ problem: reported[1].replace(/^(?:it (?:was|asked|said)|the (?:problem|question) (?:was|said|asked)|like)\s+/i, "").trim(), answer: reported[2] });
   for (const c of [policy.lastAsked, policy.lastSpokenQuestion, page]) if (c && c.trim()) candidates.push({ problem: c, answer: t });
   for (const { problem, answer } of candidates) {
