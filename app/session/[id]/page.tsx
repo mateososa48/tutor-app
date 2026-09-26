@@ -186,6 +186,9 @@ function SessionDetailPage({ id }: { id: string }) {
   // Async board tools on Gemini 3.8 (?tools=async), off until a session shows they help.
   const [asyncTools] = useState(() => resolveAsyncTools(searchParams));
   const [liveVad] = useState(() => resolveLiveVad(searchParams));
+  // The coach between turns (lib/tutor-coach), opt-in with ?coach=1 until the benchmark decides.
+  const [coachOn] = useState(() => searchParams?.get("coach") === "1");
+  const coachTopicRef = useRef("");
   // How fast the tutor's voice plays. Only the Gemini client can change it.
   const [tutorSpeed, setTutorSpeed] = useTutorSpeed();
   const speechRateRef = useRef(tutorSpeedRate(tutorSpeed));
@@ -1097,7 +1100,13 @@ function SessionDetailPage({ id }: { id: string }) {
     };
 
     const live: TutorClient = provider === "gemini"
-      ? new GeminiTutorSession(callbacks, { model: liveModel, runtime: tutorRuntime, asyncTools, vad: liveVad })
+      ? new GeminiTutorSession(callbacks, {
+          model: liveModel,
+          runtime: tutorRuntime,
+          asyncTools,
+          vad: liveVad,
+          coach: coachOn ? { topic: () => coachTopicRef.current, board: () => whiteboardRef.current?.getBoardSummary?.(true) ?? "" } : undefined,
+        })
       : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;
     live.setSpeechRate?.(speechRateRef.current);
@@ -1129,7 +1138,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, asyncTools, liveVad, tutorRuntime]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, asyncTools, liveVad, coachOn, tutorRuntime]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);
@@ -1303,6 +1312,7 @@ function SessionDetailPage({ id }: { id: string }) {
       const handoff = isNew ? takeIntake(id) : null;
       if (handoff) {
         setActiveIntake(handoff.intake, handoff.files.length);
+        coachTopicRef.current = handoff.intake.topic ?? "";
         // The time they chose keeps the tutor's clock (lib/session-clock.ts).
         tutorRuntime.setPlannedMinutes(handoff.intake.minutes ?? null);
         if (handoff.files.length > 0) {

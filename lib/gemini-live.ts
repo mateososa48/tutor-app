@@ -8,6 +8,7 @@ import { formatMemory, formatTutorState } from "./tutor-policy";
 import { TutorRuntime } from "./tutor-runtime";
 import { BLOCKING_TOOLS, ReplyGate, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
 import { givesTask } from "./tutor-policy";
+import type { CoachTurn } from "./tutor-coach";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
@@ -202,7 +203,15 @@ export class GeminiLiveSession {
   private static readonly ASYNC_TOOL_TIMEOUT_MS = 6_000;
   private readonly vad: LiveVadConfig | undefined;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig }) {
+  /** The coach between turns (lib/tutor-coach, /api/coach), when the session asks for it (?coach=1). */
+  private readonly coach: { topic: () => string; board: () => string } | undefined;
+  private coachHistory: CoachTurn[] = [];
+  private lastStudentLine = "";
+  private turnTools: string[] = [];
+  private inputSeq = 0;
+
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string } }) {
+    this.coach = options.coach;
     this.callbacks = callbacks;
     this.systemInstruction = options.systemInstruction;
     this.voiceName = options.voiceName;
@@ -216,6 +225,7 @@ export class GeminiLiveSession {
   // A new line from the student: nothing heard back yet, no nudge sent yet.
   private newStudentInput(kind: "text" | "voice") {
     this.gate.onNewInput();
+    this.inputSeq += 1;
     this.lastInputKind = kind;
     this.turnHadAudio = false;
     this.awaitingReply = true;
@@ -397,6 +407,7 @@ export class GeminiLiveSession {
   }
 
   sendText(text: string): boolean {
+    this.lastStudentLine = text;
     this.tutorRuntime.noteStudentUtterance(text);
     this.newStudentInput("text");
     // A checked answer and the note for this turn go in first, as context the
@@ -548,7 +559,10 @@ export class GeminiLiveSession {
   private flushStudentUtterance() {
     const text = this.studentUtterance.trim();
     this.studentUtterance = "";
-    if (text) this.tutorRuntime.noteStudentUtterance(text);
+    if (text) {
+      this.lastStudentLine = text;
+      this.tutorRuntime.noteStudentUtterance(text);
+    }
   }
 
   private noteTutorTranscript(text: string) {
@@ -578,10 +592,34 @@ export class GeminiLiveSession {
     const marked = this.turnMarked;
     this.tutorRuntime.noteTutorTurn(tutorText, drew, marked);
     this.pendingTurnNote = this.tutorRuntime.turnNote(tutorText, drew, marked) ?? this.pendingTurnNote;
+    this.coachHistory = [...this.coachHistory, { student: this.lastStudentLine, tutor: tutorText, tools: this.turnTools }].slice(-8);
+    this.turnTools = [];
+    if (this.coach) this.askCoach();
     this.turnDrew = false;
     this.turnMarked = false;
     const line = formatTutorState(this.tutorRuntime.policy, Date.now());
     if (line) this.debug("pacing", "tutor_state", { line });
+  }
+
+  // The coach reads the lesson while the student thinks; its order joins the
+  // note for the next turn if it arrives before the student speaks again.
+  private askCoach() {
+    const seq = this.inputSeq;
+    const body = {
+      topic: this.coach!.topic(),
+      turns: this.coachHistory,
+      board: this.coach!.board(),
+      state: formatTutorState(this.tutorRuntime.policy, Date.now()),
+    };
+    void fetch("/api/coach", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { note?: string | null } | null) => {
+        const note = j?.note;
+        if (!note || this.manualDisconnect || seq !== this.inputSeq) return;
+        this.pendingTurnNote = [this.pendingTurnNote, note].filter(Boolean).join("\n");
+        this.debug("pacing", "coach", { note });
+      })
+      .catch(() => undefined);
   }
 
   // The session's files, for the worksheet reminder in tool results.
@@ -903,6 +941,7 @@ export class GeminiLiveSession {
         // Piggyback the memory, a changed [Tutor state] and any nudges onto
         // board results, so they stay in context without extra turns.
         if (result.success) {
+          if (toolRole(name) === "draw" || toolRole(name) === "mark") this.turnTools.push(name);
           if (toolRole(name) === "draw") {
             this.turnDrew = true;
             this.tutorRuntime.noteBoardWrite(name, args);
