@@ -197,7 +197,10 @@ export function attemptFromVerdict(verdict: CheckVerdict, kind?: string): Attemp
  * about 25% of 80 is a problem of its own (quick practice said out loud).
  */
 export function stepOfPage(page: string | null, problem: string, answer: string): boolean {
-  if (!page) return false;
+  // A page headed by its topic ("Ratios and rates") has no problem to be a
+  // step of (Sept 26 2026: every answer on such a page was taken for a step
+  // and never ringed).
+  if (!page || !/\d/.test(page)) return false;
   // An answer that is still a sum or a product ("27/90 + 10/90") is a move
   // on the way, not the answer (it was ringed green as if it were, Sept 23).
   if (/[\d)]\s*[-+×*÷]\s*[\d(]/.test(answer.replace(/\s*\/\s*/g, "/"))) return true;
@@ -315,8 +318,35 @@ export function applyVerdictMarks(
 // against. A worked example (help at H5) shows its results.
 const RESULT_TAIL = /^(.*=)\s*(-?\d+(?:\.\d+)?|-?\\[dt]?frac\{\d+\}\{\d+\}|-?\d+\s*\/\s*\d+)\s*(\\%|%)?\s*$/;
 
+// A caption that states a result ("1 cup makes 6 cookies", "total = 60") says
+// it before they do, the same way; the number after the verb goes "?".
+const CAPTION_KEYS = ["label", "caption", "second_label", "total"];
+const STATED_RESULT = /\b(makes?|is|are|equals?|gives?|costs?|weighs?|=)(\s+)(-?\d+(?:\.\d+)?(?:\/\d+)?)/gi;
+
+function withholdCaptions(policy: TutorPolicy, args: Record<string, unknown>): { args: Record<string, unknown>; note: string | null } {
+  let changed: string | null = null;
+  const out = { ...args };
+  for (const key of CAPTION_KEYS) {
+    const v = out[key];
+    if (typeof v !== "string") continue;
+    const next = v.replace(STATED_RESULT, (m, verb: string, gap: string, num: string) => {
+      const value = numbersIn(num)[0];
+      if (!value || policy.saidNumbers.includes(value)) return m;
+      changed = num;
+      return `${verb}${gap}?`;
+    });
+    out[key] = next;
+  }
+  return changed ? { args: out, note: `The caption says "?" where it had ${changed}: that is theirs to find. Ask for it.` } : { args, note: null };
+}
+
 export function withholdResult(policy: TutorPolicy, name: string, args: Record<string, unknown>): { args: Record<string, unknown>; note: string | null } {
-  if (name !== "draw_equation_step" || typeof args.latex !== "string" || policy.boardHelp >= 5) return { args, note: null };
+  if (policy.boardHelp >= 5) return { args, note: null };
+  if (name !== "draw_equation_step" && name !== "add_student_attempt" && name !== "start_new_problem" && name !== "set_plan") {
+    const captions = withholdCaptions(policy, args);
+    if (captions.note) return captions;
+  }
+  if (name !== "draw_equation_step" || typeof args.latex !== "string") return { args, note: null };
   const latex = args.latex.trim();
   const m = RESULT_TAIL.exec(latex);
   if (!m) return { args, note: null };

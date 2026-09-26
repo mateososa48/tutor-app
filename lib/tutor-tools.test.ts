@@ -331,3 +331,17 @@ test("a result the student has not said goes up as = ?, and becomes the question
   q.boardHelp = 5;
   assert.equal(withholdResult(q, "draw_equation_step", { latex: "(-3)^2 = 9" }).note, null, "a worked example shows its results");
 });
+
+test("a caption that states a result they have not said says ? instead", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Cookies", problem: "2 cups make 12 cookies. How many from 5 cups?" });
+  const r = withholdResult(p, "draw_icons", { icon: "cookie", count: 12, group_size: 6, label: "1 cup makes 6 cookies" });
+  assert.equal(r.args.label, "1 cup makes ? cookies");
+  assert.equal(r.args.count, 12, "the picture itself is untouched");
+  assert.equal(withholdResult(p, "draw_icons", { icon: "cookie", count: 12, label: "12 cookies" }).note, null);
+  assert.equal(withholdResult(p, "draw_icons", { icon: "cup", count: 2, label: "2 cups make 12 cookies" }).note, null, "given in the problem");
+});
+
+test("a page headed by its topic has no problem to be a step of", () => {
+  assert.equal(stepOfPage("Ratios and rates", "5 * 6", "30"), false);
+});
