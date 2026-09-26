@@ -117,6 +117,12 @@ export function resolveItemTarget(items: BoardItem[], target: string): BoardItem
     const item = items[i];
     if (item.label.toLowerCase().includes(t) || itemKind(item.tool) === t || (ts.length >= 2 && squash(item.label).includes(ts))) return item;
   }
+  // The tutor's own LaTeX ("(-3)^2 = 9") against the plain label "(-3)² = 9"
+  // (Sept 26 2026: a ring on a line the tutor had just written was refused).
+  const tm = normalizeForMatch(target);
+  if (tm.length >= 2) {
+    for (let i = items.length - 1; i >= 0; i--) if (normalizeForMatch(items[i].label).includes(tm)) return items[i];
+  }
   // "3 | 4" or "sides 3, 4": every token has to appear somewhere in the label.
   const tokens = t.split(/[\s|,;:]+/).filter(Boolean);
   if (tokens.length > 0) {

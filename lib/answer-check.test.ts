@@ -315,3 +315,10 @@ test("a function applied to a number with no rule is not read as a product", () 
   assert.equal(checkAnswer("2(3)+1", "7").verdict, "correct", "digits before the bracket are a product");
   assert.equal(checkAnswer("f(3) where f(x) = x + 2", "5").verdict, "correct");
 });
+
+test("a plus-or-minus problem is checked against both of its values", () => {
+  assert.equal(checkAnswer("\\frac{3 \\pm 1}{4}", "1 and 1/2").verdict, "correct");
+  assert.equal(checkAnswer("(3 ± 1)/4", "x = 1 or x = 0.5").verdict, "correct");
+  assert.equal(checkAnswer("(3 ± 1)/4", "1").verdict, "partial");
+  assert.equal(checkAnswer("(3 ± 1)/4", "2 and 1").verdict, "incorrect");
+});

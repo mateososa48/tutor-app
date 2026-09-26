@@ -281,7 +281,7 @@ test("with code-owned marks the verdict plans the board move and says it is done
   p.codeMarks = true;
   noteBoardWrite(p, "add_callout", { text: "What is 5 × 6?" });
   const wrong = autoCheck(p, "35", 0);
-  assert.ok(wrong && /"5 × 6 = 35" is on the board in their hand\. Ask how they got it/.test(wrong), wrong ?? "");
+  assert.ok(wrong && /"5 × 6 = 35" is on the board in their hand\. Don't say right or yes\. Ask how they got it/.test(wrong), wrong ?? "");
   assert.deepEqual(p.pendingMarks, { line: "5 × 6 = 35", ring: false, strike: null });
   p.pendingMarks = null;
   const right = autoCheck(p, "oh 30", 1000);

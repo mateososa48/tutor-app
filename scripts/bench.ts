@@ -25,6 +25,7 @@
 //                      out for gates (slope, triangle, divide, logs), or all ten
 //   --save-audio       write each turn's speech as <case>-t<N>.wav
 //   --nohold           send async results at once, as before the app's ResponseHold
+//   --nonotes          no note between turns (TutorRuntime.turnNote)
 //   --turns N          student turns per case (default: the case's own)
 //   --label name       the run's name (default: the date and time)
 //   --live 3.8|3.1|id  the Live model (default: the app's DEFAULT_LIVE_MODEL)
@@ -537,7 +538,7 @@ const summaryOf = (page: Page, compact: boolean) => page.evaluate((c) => (window
 
 // ── One case ───────────────────────────────────────────────────────────────
 
-async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; hold: boolean; tag: string }): Promise<CaseRun> {
+async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base: string; liveModel: string; studentModel: string; turns: number; out: string; w: number; h: number; asyncTools: boolean; fullTools: boolean; hold: boolean; notes: boolean; tag: string }): Promise<CaseRun> {
   const tag = opts.tag;
   const { page, errors } = await openBoard(opts.browser, opts.base, opts.w, opts.h);
   const runtime = new m.runtime.TutorRuntime({ startedAt: Date.now() });
@@ -684,6 +685,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   const turns: TurnRecord[] = [];
   let studentText = opening;
   let pendingAuto: string | null = null;
+  let pendingNote: string | null = null;
   let pending = live.userTurn(parts, false);
   for (let i = 0; i < opts.turns; i++) {
     const t = await pending;
@@ -699,7 +701,11 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     const said = t.said.replace(/\s+/g, " ").trim();
     const rawSaid = t.raw.replace(/\s+/g, " ").trim();
     if (SAVE_AUDIO && t.audio.length) fs.writeFileSync(path.join(opts.out, `${tag}-t${i + 1}.wav`), wav(t.audio));
-    runtime.noteTutorTurn(said, t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "draw"), t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "mark"));
+    const turnDrew = t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "draw");
+    const turnMarked = t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "mark");
+    runtime.noteTutorTurn(said, turnDrew, turnMarked);
+    // The note for the next turn, as the app sends it (TutorRuntime.turnNote), when --notes is on.
+    const nextNote = opts.notes && typeof runtime.turnNote === "function" ? runtime.turnNote(said, turnDrew, turnMarked) : null;
     const turn: TurnRecord = {
       n: i + 1,
       student: studentText,
@@ -715,6 +721,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       promptTokens: t.promptTokens,
       usage: t.usage,
       autoCheck: pendingAuto,
+      ...(pendingNote ? { turnNote: pendingNote } : {}),
       board: await summaryOf(page, false),
       boardCompact: await summaryOf(page, true),
       shot,
@@ -731,8 +738,10 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     runtime.noteStudentUtterance(studentText);
     // The app's typed path: a checked answer goes in as a note before the line.
     pendingAuto = runtime.takeAutoCheckNote();
+    pendingNote = nextNote;
     await markChain;
-    if (pendingAuto) live.sendNote(pendingAuto);
+    const context = [pendingAuto, pendingNote].filter(Boolean).join("\n");
+    if (context) live.sendNote(context);
     pending = live.userTurn([{ text: studentText }]);
     live.noteAppTools(pendingApp.splice(0));
   }
@@ -763,7 +772,9 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
 function caseMarkdown(c: BenchCase, r: CaseRun): string {
   const L = [`# ${c.name}, ${c.grade} (${c.id})`, "", `Intake: "${c.topic}" · ${c.minutes} min${c.worksheet ? " · worksheet attached" : ""}`, "", `Hidden brief: ${c.brief}`, "", `Outcome wanted: ${c.outcome}`, ""];
   for (const t of r.turns) {
-    L.push(`## Turn ${t.n}`, "", `**${c.name}:** ${t.student}`, "", `**Tutor:** ${t.tutor || (t.timedOut ? "(timed out)" : "(said nothing)")}${t.nudged ? " _(after the unanswered nudge)_" : ""}`, "");
+    L.push(`## Turn ${t.n}`, "", `**${c.name}:** ${t.student}`, "");
+    if (t.autoCheck || t.turnNote) L.push(`_(the app, to the tutor only: ${[t.autoCheck, t.turnNote].filter(Boolean).join(" ")})_`, "");
+    L.push(`**Tutor:** ${t.tutor || (t.timedOut ? "(timed out)" : "(said nothing)")}${t.nudged ? " _(after the unanswered nudge)_" : ""}`, "");
     for (const x of t.tools) L.push(`- ${x.by === "app" ? "_(the app, not the model)_ " : ""}\`${x.name}(${JSON.stringify(x.args).slice(0, 220)})\` ${x.ok ? "→" : "✗"} ${x.result.split("\n[Board:")[0].replace(/\s+/g, " ").slice(0, 240)}${x.by === "app" || x.beforeSpeech ? "" : " _(after it started talking)_"}`);
     L.push("", `Board: ${t.boardCompact || "(empty)"}`, "", `![turn ${t.n}](${t.boardShot ?? t.shot})`, "");
   }
@@ -891,7 +902,7 @@ async function main() {
         console.log(`\n=== ${c.name}, ${c.grade} (${tag}): "${c.topic}"`);
         let run: CaseRun;
         try {
-          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: !process.argv.includes("--nohold"), tag });
+          run = await runCase(m, c, { browser, base, liveModel, studentModel, turns: turnsArg || c.turns, out, w, h, asyncTools, fullTools, hold: !process.argv.includes("--nohold"), notes: !process.argv.includes("--nonotes"), tag });
         } catch (err) {
           console.log(`  failed: ${err instanceof Error ? err.message : String(err)}`);
           continue;

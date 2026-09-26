@@ -14,6 +14,7 @@ import {
   boardResultExtras,
   cancelAttempt,
   boardNote,
+  turnNote,
   createPolicy,
   normalizeSkill,
   noteBoardWrite,
@@ -157,6 +158,11 @@ export class TutorRuntime {
 
   noteTutorTurn(text: string, drew: boolean, marked = false): void {
     noteTutorTurn(this.policy, text, drew, marked);
+  }
+
+  /** The note for the tutor's next turn (lib/tutor-policy turnNote), or null. */
+  turnNote(text: string, drew: boolean, marked = false): string | null {
+    return turnNote(this.policy, text, drew, marked);
   }
 
   /** The private note to send between turns when the board was left alone, or null. */

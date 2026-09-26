@@ -191,14 +191,14 @@ function checkInequalityClaim(problem: string, answer: string): AnswerCheck | nu
   const smaller = a > b ? m[3] : m[1];
   const wantsBigger = op === ">" || op === ">=";
   const said = cleanAnswer(stripFiller(spokenToDigits(answer.replace(/\$/g, ""))));
-  if (YES.test(said)) return holds ? { verdict: "correct", message: `Correct: ${m[1]} ${op} ${m[3]} holds.` } : { verdict: "incorrect", message: `Incorrect: ${m[1]} ${op} ${m[3]} does not hold. (For you only: ${bigger} is the bigger one. Don't say it; help them find the mistake.)` };
-  if (NO.test(said)) return holds ? { verdict: "incorrect", message: `Incorrect: ${m[1]} ${op} ${m[3]} does hold. (For you only: ${bigger} is the bigger one. Don't say it; help them find the mistake.)` } : { verdict: "correct", message: `Correct: ${m[1]} ${op} ${m[3]} does not hold.` };
+  if (YES.test(said)) return holds ? { verdict: "correct", message: `Correct: ${m[1]} ${op} ${m[3]} holds.` } : { verdict: "incorrect", message: `Incorrect: ${m[1]} ${op} ${m[3]} does not hold. (For you only: ${bigger} is the bigger one. Don't say it or write it; help them find the mistake.)` };
+  if (NO.test(said)) return holds ? { verdict: "incorrect", message: `Incorrect: ${m[1]} ${op} ${m[3]} does hold. (For you only: ${bigger} is the bigger one. Don't say it or write it; help them find the mistake.)` } : { verdict: "correct", message: `Correct: ${m[1]} ${op} ${m[3]} does not hold.` };
   const v = readValue(said);
   if (v === null) return cannot(`couldn't read the student's answer "${answer}" as a number or a yes/no.`);
   // A number: the one the claim points at (the bigger for >, the smaller for <).
   const target = wantsBigger ? bigger : smaller;
   if (near(v, readValue(target)!)) return { verdict: "correct", message: `Correct: ${target} is the ${wantsBigger ? "bigger" : "smaller"} of ${m[1]} and ${m[3]}.` };
-  return { verdict: "incorrect", message: `Incorrect: the student's ${said} is not the ${wantsBigger ? "bigger" : "smaller"} of ${m[1]} and ${m[3]}. (For you only: it is ${target}. Don't say it; help them find the mistake.)` };
+  return { verdict: "incorrect", message: `Incorrect: the student's ${said} is not the ${wantsBigger ? "bigger" : "smaller"} of ${m[1]} and ${m[3]}. (For you only: it is ${target}. Don't say it or write it; help them find the mistake.)` };
 }
 
 // "5 cups * 6 cookies" is "5 * 6": a unit word right after a number goes when
@@ -234,8 +234,30 @@ function unTextLatex(s: string): string {
   return s.replace(/\\(?:text|mathrm|textrm)\{([^{}]*)\}/g, " $1 ").replace(/\\[,;:!]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+// "(3 ± 1)/4": both branches are the answer (Sept 26 2026: the final step of
+// every quadratic-formula problem came back cannot_check, so it was judged by ear).
+const PLUS_MINUS = /±|\\pm\b|\+\s*\/\s*-|\+-/;
+
+function checkPlusMinus(problem: string, answer: string): AnswerCheck | null {
+  if (!PLUS_MINUS.test(problem) || problem.includes("=")) return null;
+  const plus = readValue(problem.replace(PLUS_MINUS, "+"));
+  const minus = readValue(problem.replace(PLUS_MINUS, "-"));
+  if (plus === null || minus === null) return null;
+  const said = splitAnswers(stripFiller(spokenToDigits(answer.replace(/\$/g, ""), { the: true }))).map((a) => readValue(cleanAnswer(a))).filter((v): v is number => v !== null);
+  if (!said.length) return cannot(`couldn't read the student's answer "${answer}" as numbers.`);
+  const wanted = [plus, minus];
+  const hit = wanted.filter((w) => said.some((v) => near(v, w)));
+  const extra = said.filter((v) => !wanted.some((w) => near(v, w)));
+  const both = `${approx(plus)} and ${approx(minus)}`;
+  if (hit.length === 2 && !extra.length) return { verdict: "correct", message: `Correct: the two values are ${both}.` };
+  if (hit.length >= 1 && !extra.length) return { verdict: "partial", message: `Partial: that is one of the two (for you only: ${both}). Ask for the other sign.` };
+  return { verdict: "incorrect", message: `Incorrect: the student's answer is not ${plus === minus ? approx(plus) : "either value"}. (For you only: ${both}. Don't say it or write it; help them find the mistake.)` };
+}
+
 export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck {
   problem = unTextLatex(problem ?? "");
+  const pm = checkPlusMinus(problem, studentAnswer ?? "");
+  if (pm) return pm;
   const claimed = checkInequalityClaim(problem, studentAnswer);
   if (claimed) return claimed;
   // "25\\%" is the board's LaTeX for 25%: the tutor copies it from there.
@@ -297,7 +319,7 @@ function checkWithBlank(problem: string, answer: string): AnswerCheck | null {
   const value = new RegExp(`For you only: ${letter} = (.+?)\\. Don't`).exec(solved.message)?.[1];
   return {
     verdict: "incorrect",
-    message: `Incorrect: ${said} in the box makes the two sides ${formatNumber(lv)} and ${formatNumber(rv)}.${value ? ` (For you only: the box is ${value}. Don't say it; help them find the mistake.)` : ""}`,
+    message: `Incorrect: ${said} in the box makes the two sides ${formatNumber(lv)} and ${formatNumber(rv)}.${value ? ` (For you only: the box is ${value}. Don't say it or write it; help them find the mistake.)` : ""}`,
   };
 }
 
@@ -337,7 +359,7 @@ export function checkBlankInPage(page: string, problem: string, answer: string):
   if (near(want, got, 1e-9)) return { verdict: "correct", message: `Correct: ${said} is ${where}.` };
   return {
     verdict: "incorrect",
-    message: `Incorrect: ${said} is not ${expr} here. (For you only: ${expr} is ${formatNumber(want)}, since ${letter} = ${formatNumber(solutions[0])}. Don't say it; help them find the mistake.)`,
+    message: `Incorrect: ${said} is not ${expr} here. (For you only: ${expr} is ${formatNumber(want)}, since ${letter} = ${formatNumber(solutions[0])}. Don't say it or write it; help them find the mistake.)`,
   };
 }
 
@@ -384,7 +406,7 @@ function checkEquation(left: string, right: string, problem: string, answer: str
     return { verdict: "correct", message: `Correct: ${said} makes both sides of ${problem} equal.` };
   }
   const lv = fl(wrong.v), rv = fr(wrong.v);
-  const hint = allSolutions ? ` (For you only: ${allSolutions}. Don't say it; help them find the mistake.)` : solutions?.length === 0 ? " (For you only: it has no real solution.)" : "";
+  const hint = allSolutions ? ` (For you only: ${allSolutions}. Don't say it or write it; help them find the mistake.)` : solutions?.length === 0 ? " (For you only: it has no real solution.)" : "";
   // "the right side is 11", not "the right side 11 is 11".
   const side = (label: string, text: string, hasLetter: boolean, value: number) =>
     hasLetter || !/^\s*-?\d+(\.\d+)?\s*$/.test(text) ? `the ${label} side ${text.trim()} is ${formatNumber(value)}` : `the ${label} side is ${formatNumber(value)}`;
@@ -417,7 +439,7 @@ function checkExpression(problem: string, answer: string): AnswerCheck {
     }
     return {
       verdict: "incorrect",
-      message: `Incorrect: the student's ${raw} is ${formatNumber(av)}. (For you only: ${problem} = ${formatNumber(pv)}. Don't say it; help them find the mistake.)`,
+      message: `Incorrect: the student's ${raw} is ${formatNumber(av)}. (For you only: ${problem} = ${formatNumber(pv)}. Don't say it or write it; help them find the mistake.)`,
     };
   }
 
@@ -744,14 +766,14 @@ function checkHowMany(problem: string, answer: string): AnswerCheck | null {
     }
     return {
       verdict: "incorrect",
-      message: `Incorrect: the student's ${said} is not ${amountShown}. (For you only: ${truth}. Don't say it; help them find the mistake.)`,
+      message: `Incorrect: the student's ${said} is not ${amountShown}. (For you only: ${truth}. Don't say it or write it; help them find the mistake.)`,
     };
   } else got = readValue(said);
   if (got === null) return cannot(`couldn't read the student's answer "${answer}" as a number.`);
   if (near(got, count)) return { verdict: "correct", message: `Correct: ${truth} (${formatNumber(count).replace(/ \(.*\)$/, "")}/${per}).` };
   return {
     verdict: "incorrect",
-    message: `Incorrect: the student said ${many(got)}, which is ${formatNumber(got / per)}, not ${amountShown}. (For you only: ${truth}. Don't say it; help them find the mistake.)`,
+    message: `Incorrect: the student said ${many(got)}, which is ${formatNumber(got / per)}, not ${amountShown}. (For you only: ${truth}. Don't say it or write it; help them find the mistake.)`,
   };
 }
 
@@ -816,7 +838,7 @@ function checkComparison(problem: string, answer: string): AnswerCheck | null {
     if (pick.kind === "equal") return { verdict: "correct", message: `Correct: ${truth}.` };
     return {
       verdict: "incorrect",
-      message: `Incorrect: the student picked ${choices[pick.index].shown}. (For you only: ${truth}. Don't say it; help them find the mistake.)`,
+      message: `Incorrect: the student picked ${choices[pick.index].shown}. (For you only: ${truth}. Don't say it or write it; help them find the mistake.)`,
     };
   }
   if (winners.length > 1) return cannot(`two of the choices in "${problem}" are equal.`);
@@ -826,14 +848,14 @@ function checkComparison(problem: string, answer: string): AnswerCheck | null {
   if (pick.kind === "equal") {
     return {
       verdict: "incorrect",
-      message: `Incorrect: the student said they are equal. (For you only: ${truth}: ${values}. Don't say it; help them find the mistake.)`,
+      message: `Incorrect: the student said they are equal. (For you only: ${truth}: ${values}. Don't say it or write it; help them find the mistake.)`,
     };
   }
   const chosen = choices[pick.index];
   if (chosen === winner) return { verdict: "correct", message: `Correct: ${truth}.` };
   return {
     verdict: "incorrect",
-    message: `Incorrect: the student picked ${chosen.shown} as the ${choices.length === 2 ? how.than : how.most} one. (For you only: ${truth}: ${values}. Don't say it; help them find the mistake.)`,
+    message: `Incorrect: the student picked ${chosen.shown} as the ${choices.length === 2 ? how.than : how.most} one. (For you only: ${truth}: ${values}. Don't say it or write it; help them find the mistake.)`,
   };
 }
 

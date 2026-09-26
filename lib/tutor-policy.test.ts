@@ -24,7 +24,7 @@ import {
   cancelAttempt,
   noteAnswerChecked,
   noteTutorTurn,
-  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep, takePlanStep } from "./tutor-policy";
+  setSessionFiles, claimsUnderstanding, noteBoardWrite, flowStep, takePlanStep, turnNote, givesTask, praiseOpener } from "./tutor-policy";
 
 const T0 = 1_000_000;
 
@@ -401,4 +401,44 @@ test("a student who asks to try one alone gets one alone, until they answer it",
   assert.match(flowStep(p)?.next ?? "", /they asked to try one on their own/);
   recordAttempt(p, { skill: "ratios", result: "correct", help: 0, problem: "6*3" }, 4000);
   assert.equal(p.wantsAlone, false);
+});
+
+test("the turn note: nothing to do, their problem not up, no plan, bare praise; at most two orders", () => {
+  assert.equal(givesTask("Right. Now, what is 12 divided by 2?"), true);
+  assert.equal(givesTask("Great. Try the next one on your own."), true);
+  assert.equal(givesTask("Five cups would make 30 cookies."), false);
+  assert.equal(praiseOpener("Right. Now what's next?"), "Right.");
+  assert.equal(praiseOpener("Right, nine. Now what?"), null, "naming the value is fine");
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "hi", 0);
+  noteStudentUtterance(p, "it was 2 cups of flour for 12 cookies and how many for 5 cups", 1000);
+  noteBoardWrite(p, "start_new_problem", { title: "Ratios and rates" });
+  const n = turnNote(p, "That is a common way to think about it.", false, false);
+  assert.ok(n && /nothing for them to do/.test(n) && /their problem is not on the board/.test(n), n ?? "");
+  assert.equal(turnNote(p, "What do you get for one cup?", true, false), null, "asked once, not again");
+  const q = createPolicy(0);
+  noteBoardWrite(q, "start_new_problem", { title: "Cookies", problem: "2 cups make 12 cookies. How many from 5 cups?" });
+  for (const t of ["a", "b", "c"]) noteStudentUtterance(q, t, 0);
+  assert.match(turnNote(q, "How many does one cup make?", true, false) ?? "", /no plan yet/);
+  noteBoardWrite(q, "set_plan", { steps: "a | b" });
+  noteTutorTurn(q, "Right. How many for 3 cups?", true, false);
+  assert.match(turnNote(q, "Right. How many for 3 cups?", true, false) ?? "", /you said "Right\."/);
+  assert.equal(turnNote(q, "Bye, see you next time!", false, false), null, "a goodbye needs nothing");
+});
+
+test("a student who opens with a question starts from it, not from a sheet-or-idea question", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "I need help with: functions. like f(x). i dont get what it even is or why its not f times x", 0);
+  assert.match(p.openingQuestion ?? "", /why its not f times x/i);
+  assert.match(flowStep(p)?.next ?? "", /they came with a question/);
+  const q = createPolicy(0);
+  noteStudentUtterance(q, "I need help with: decimals. my teacher marked my answer wrong", 0);
+  assert.equal(q.openingQuestion, null);
+});
+
+test("three steps right in a row: finish the problem in one go", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Formula", problem: "2x^2 - 3x + 1 = 0" });
+  for (const [i, prob] of ["(-3)^2", "9 - 8", "sqrt(1)"].entries()) recordAttempt(p, { skill: "quadratic formula", result: "correct", help: 0, problem: prob, step: true }, i * 1000);
+  assert.match(flowStep(p)?.next ?? "", /finish the rest of the problem in one go/);
 });

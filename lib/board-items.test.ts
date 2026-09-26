@@ -200,3 +200,8 @@ test("a batch runs its marks after its drawings, each side in its own order", ()
   const batch = [{ name: "check_answer" }, { name: "circle_item" }, { name: "add_student_attempt" }, { name: "point_at" }, { name: "draw_equation_step" }];
   assert.deepEqual(marksLast(batch, (c) => c.name).map((c) => c.name), ["check_answer", "add_student_attempt", "draw_equation_step", "circle_item", "point_at"]);
 });
+
+test("a target in the tutor's own LaTeX finds the plain label", () => {
+  const items = [{ id: "b1", tool: "draw_equation_step", label: "(-3)² = 9", owner: "tutor", createdAt: 0, shapeIds: [], eqItemIds: [] }] as unknown as BoardItem[];
+  assert.equal(resolveItemTarget(items, "(-3)^2 = 9")?.id, "b1");
+});

@@ -374,7 +374,10 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
     const check = checkAnswer(problem, answer);
     if (check.verdict === "cannot_check") continue;
     const skill = policy.currentSkill ?? policy.pageSkill ?? "unnamed skill";
-    const help = Math.max(suggestHelp(policy)?.level ?? 1, policy.boardHelp);
+    // What the board gave them on this problem, not a guess: an answer found
+    // with no picture or shown step is found alone (Sept 26 2026: the old
+    // floor of H1 meant no auto-checked answer ever counted toward ALONE or UP).
+    const help = policy.boardHelp;
     const step = stepOfPage(policy.pageProblem, problem, answer);
     recordAttempt(policy, { skill, result: attemptFromVerdict(check.verdict), help, auto: true, problem, step }, now);
     noteAnswerChecked(policy);
@@ -388,7 +391,7 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
         ? `${marked} Say what was right in a few words (not "right" alone), then the next thing to do.`
         : check.verdict === "partial"
           ? `${marked} Ask what is still missing.`
-          : `${marked} Ask how they got it before anything else; don't correct it yet and don't say the answer.`
+          : `${marked} Don't say right or yes. Ask how they got it before anything else; don't correct it yet and don't say the answer.`
       : check.verdict === "correct"
         ? `Write it in their hand (add_student_attempt), ring it (circle_item keep=true), then the next thing to do.${struck}`
         : check.verdict === "partial"
@@ -462,8 +465,10 @@ export function runTutorTool(
   const onBoard = check.verdict === "cannot_check"
     ? ""
     : marked
-      ? ` ${marked.trim()}${check.verdict === "correct" && !step && IS_EQUATION.test(problem) ? " Have them check it by putting the value back in." : ""}`
-      : check.verdict === "correct" && !step
+      ? ` ${marked.trim()}${check.verdict !== "correct" ? " Don't say right or yes; ask how they got it." : ""}${check.verdict === "correct" && !step && IS_EQUATION.test(problem) ? " Have them check it by putting the value back in." : ""}`
+      : check.verdict !== "correct"
+        ? " Don't say right or yes. Board: add_student_attempt with their exact words; no mark on it yet."
+        : check.verdict === "correct" && !step
       ? ` Board: add_student_attempt with their exact words, then circle_item on it with keep=true${IS_EQUATION.test(problem) ? ", and have them check it by putting the value back in" : ""}.${struck}`
       : " Board: add_student_attempt with their exact words; no mark on it yet.";
   const wroteWorking = Array.isArray(args.working) && args.working.some((l) => typeof l === "string" && l.trim());

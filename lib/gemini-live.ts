@@ -180,6 +180,8 @@ export class GeminiLiveSession {
   // follows within a second or two; a silent turnComplete waits this long.
   private static readonly SILENT_TURN_MS = 2_500;
   private turnHadAudio = false;
+  /** The note for the tutor's next turn (TutorRuntime.turnNote), sent before the student's next line. */
+  private pendingTurnNote: string | null = null;
   /** The tutor's words without the markup 3.8 sometimes transcribes ("$f(x)$", "<!-- … -->"). */
   private readonly speechText = new SpeechTextCleaner();
   /** Results that came back before the first sound, waiting for it (one spoken reply per line; Sept 26 2026). */
@@ -402,12 +404,16 @@ export class GeminiLiveSession {
   sendText(text: string): boolean {
     this.tutorRuntime.noteStudentUtterance(text);
     this.newStudentInput("text");
-    // A checked answer goes in first, as a note the model reads with the line.
+    // A checked answer and the note for this turn go in first, as context the
+    // model reads with the line (never mid-reply: any clientContent message
+    // interrupts a generation in progress).
     const note = this.tutorRuntime.takeAutoCheckNote();
-    if (note) {
-      this.debug("tool", "auto_check", { note: note.slice(0, 200) });
-      this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: note }] }], turnComplete: false } });
-    }
+    if (note) this.debug("tool", "auto_check", { note: note.slice(0, 200) });
+    const turnNote = this.pendingTurnNote;
+    this.pendingTurnNote = null;
+    if (turnNote) this.debug("pacing", "turn_note", { note: turnNote });
+    const context = [note, turnNote].filter(Boolean).join("\n");
+    if (context) this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: context }] }], turnComplete: false } });
     const sent = this.sendUserTurn([{ text }], "text");
     if (sent) this.armUnanswered("text");
     return sent;
@@ -516,6 +522,14 @@ export class GeminiLiveSession {
   }
 
   private noteStudentTranscript(text: string) {
+    // The student started talking: the tutor is not generating, so the note for
+    // its next turn can go in now without cutting anything off.
+    if (this.pendingTurnNote && !this.studentUtterance.trim()) {
+      const note = this.pendingTurnNote;
+      this.pendingTurnNote = null;
+      this.debug("pacing", "turn_note", { note });
+      this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: note }] }], turnComplete: false } });
+    }
     this.clearTurnTimer();
     this.turns.noteStudentVoice(Date.now());
     // Restarted by every fragment, so it counts from when they stop talking.
@@ -568,6 +582,7 @@ export class GeminiLiveSession {
     const drew = this.turnDrew;
     const marked = this.turnMarked;
     this.tutorRuntime.noteTutorTurn(tutorText, drew, marked);
+    this.pendingTurnNote = this.tutorRuntime.turnNote(tutorText, drew, marked) ?? this.pendingTurnNote;
     this.turnDrew = false;
     this.turnMarked = false;
     const line = formatTutorState(this.tutorRuntime.policy, Date.now());

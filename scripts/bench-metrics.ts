@@ -36,6 +36,8 @@ export type TurnRecord = {
   usage?: TurnUsage | null;
   /** The transcription with its markup, when the app's cleaner changed it. */
   rawTutor?: string;
+  /** The note for this turn the app sent with the student's line (TutorRuntime.turnNote), if any. */
+  turnNote?: string;
   /** The auto-check note the code sent with this turn's student line, if any. */
   autoCheck?: string | null;
   /** The full [Board: …] list after the turn, and the short one the tutor reads. */

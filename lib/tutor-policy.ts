@@ -100,6 +100,8 @@ export type TutorPolicy = {
   autoChecked: { answer: string; verdict: string; message: string; problem: string; at: number; note: string; sent: boolean; consumed: boolean } | null;
   /** The idea the student stated in the opening, before any skill ("cuz you add 3"), so PROBE asks about it instead of "what do you know". */
   openingReason: string | null;
+  /** A question the student opened with ("why is it f(x) and not f times x"): the lesson starts from it. */
+  openingQuestion: string | null;
   /** Their last wrong answer on the current problem, in their words, until a right one strikes it (Sept 25 2026: superseded attempts sat uncrossed). */
   lastWrongAttempt: string | null;
   /**
@@ -116,6 +118,10 @@ export type TutorPolicy = {
   saidNumbers: string[];
   /** They asked to try one on their own ("can i try one"): the next problem is theirs, until they answer one. */
   wantsAlone: boolean;
+  /** A plan is on the board; and whether the turn note already asked for one, or for their problem, on this page. */
+  planSet: boolean;
+  planNudged: boolean;
+  problemNudged: boolean;
 };
 
 const MAX_ATTEMPTS = 80;
@@ -162,12 +168,16 @@ export function createPolicy(now: number): TutorPolicy {
     lastSpokenQuestion: null,
     autoChecked: null,
     openingReason: null,
+    openingQuestion: null,
     lastWrongAttempt: null,
     codeMarks: false,
     pendingMarks: null,
     lastWrongLine: null,
     saidNumbers: [],
     wantsAlone: false,
+    planSet: false,
+    planNudged: false,
+    problemNudged: false,
     drawCount: 0,
   };
 }
@@ -294,6 +304,12 @@ export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.no
   if (p.currentSkill && givesReason(t)) p.reasonSkill = p.currentSkill;
   // Their idea, stated before any skill is set: the opening asks about it.
   if (!p.currentSkill && p.attempts.length === 0 && givesReason(t)) p.openingReason = t.length > 70 ? `${t.slice(0, 67)}…` : t;
+  // Sept 26 2026: Marcus opened with "why is it f(x) and not f times x" and was
+  // asked "a sheet, or the idea?" in both runs; his question is the lesson.
+  if (p.studentTurns <= 2 && p.attempts.length === 0 && !p.openingQuestion) {
+    const q = OPENING_QUESTION.exec(t);
+    if (q) p.openingQuestion = q[0].trim().slice(0, 90);
+  }
   if (p.currentSkill && signals.includes("idk") && isNonAnswer(t)) {
     const last = p.attempts.at(-1);
     recordAttempt(p, { skill: p.currentSkill, result: "stuck", help: last?.help ?? 1, auto: true }, now);
@@ -460,6 +476,11 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
   const recent = [...p.attempts].reverse().find((a) => a.result !== "unchecked");
   if (recent?.step) {
     if (p.missesInRow >= 2) return { step: "show", next: SHOW_NEXT };
+    // Three steps right in a row with no help: they have the procedure (Sept 26
+    // 2026: every step of a quadratic was its own turn for a student who knew it).
+    const tail = [...p.attempts].reverse();
+    const run = tail.findIndex((a) => !(a.step && a.result === "correct" && a.help <= 1));
+    if ((run < 0 ? tail.length : run) >= 3) return { step: "together", next: "they have this procedure: let them finish the rest of the problem in one go, then check their final answer" };
     if (recent.result === "correct") return { step: "together", next: "that step is done, not the problem: the next step of this same problem is theirs (ask for the next line), help only where they stall" };
     return { step: "together", next: "point at the exact spot in this step and let them fix it" };
   }
@@ -471,6 +492,7 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
       // They already said their idea (Sept 25 2026: Marcus was asked "what do
       // you already know" right after saying it): ask about that instead.
       if (p.openingReason) return { step: "open", next: `they already said their idea ("${p.openingReason}"): say it back in their words and ask where it came from, no "what do you know"; then one small show-me problem on it` };
+      if (p.openingQuestion) return { step: "open", next: `they came with a question ("${p.openingQuestion}"): no "a sheet or the idea?"; ask what they think it means now, then answer it with the board, one small example they work` };
       return { step: "open", next: "no teaching yet: ask what exactly they want (a sheet, or the whole idea), then what they already know and where it stops making sense; one question a turn; then the plan in one breath and one small show-me problem" };
     }
     return null;
@@ -614,8 +636,12 @@ const PRAISE_OPENER_RE = /^\s*(exactly|spot on|perfect|great job|good job|nice j
 // it", "You've really got this down" slipped past the opener check).
 const PRAISE_ANYWHERE_RE = /\b(you nailed it|nailed it|you've (?:really )?got this(?: down)?|you got this down|perfectly|you're (?:so )?(?:smart|a natural|a genius)|great job|awesome job|amazing job|fantastic|brilliant)\b/i;
 
+// "Right." or "Great!" as a whole sentence names nothing (Sept 26 2026: the
+// judges flagged these in every run; "Right, nine" names the value and passes).
+const BARE_ACK_RE = /^\s*(right|great|good|yes|yep|yeah|correct|nice|cool|awesome|perfect)\s*[.!]+(?=\s|$)/i;
+
 export function praiseOpener(text: string): string | null {
-  const m = PRAISE_OPENER_RE.exec(text) ?? PRAISE_ANYWHERE_RE.exec(text);
+  const m = PRAISE_OPENER_RE.exec(text) ?? BARE_ACK_RE.exec(text) ?? PRAISE_ANYWHERE_RE.exec(text);
   return m ? m[0].trim() : null;
 }
 
@@ -657,6 +683,7 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
 export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<string, unknown>): void {
   p.unwrittenMath = null;
   p.drawCount += 1;
+  if (name === "set_plan") p.planSet = true;
   // What was asked on the board, so an answer can be checked against it.
   if (name === "add_callout" && typeof args?.text === "string" && args.text.trim()) p.lastAsked = args.text.trim().slice(0, 200);
   if (name === "draw_equation_step" && typeof args?.latex === "string" && /\?/.test(args.latex)) p.lastAsked = args.latex.trim().slice(0, 200);
@@ -665,6 +692,7 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.pageProblem = raw.trim() ? raw.trim().slice(0, 200) : null;
     p.pageRightAnswers = 0;
     p.planStepAdvanced = false;
+    p.problemNudged = false;
     p.lastAsked = typeof args?.ask === "string" && args.ask.trim() ? args.ask.trim().slice(0, 200) : null;
     p.lastWrongAttempt = null;
     p.lastWrongLine = null;
@@ -874,3 +902,54 @@ export function numbersIn(text: string): string[] {
 }
 
 const ASKS_TO_TRY = /\b(?:can|could|let|lemme|may)\s+(?:i|me)\s+(?:try|do)\b(?:\s+(?:one|it|another|the next one))?|\bmy turn\b|\b(?:on my own|by myself)\b/i;
+
+// ── The turn note (Sept 26 2026) ───────────────────────────────────────────
+// Reminders that ride on tool results never arrive when the tutor makes no
+// tool call, and several of the judges' findings were exactly that: a turn
+// that ended on a statement with nothing for the student to do, a problem the
+// student said out loud that never went on the board, a session with no plan.
+// One short note after the tutor's turn, sent before the student's next line
+// (typed: with the line; voice: when they start talking), at most two orders.
+
+// A last sentence that gives the student something: a question, or an order.
+const TASK_START = /^(?:now\s+|so\s+|ok(?:ay)?,?\s+|next,?\s+)?(?:try|find|tell|show|write|give|put|work|count|look|say|go|pick|circle|draw|check|compare|think|plug|multiply|divide|add|subtract|solve|figure|use|start|take|walk|explain|guess|read|point|ring|move|drag|finish|do)\b/i;
+
+export function givesTask(text: string): boolean {
+  const sentences = text.trim().split(/(?<=[.!?])\s+/).filter((s) => s.trim());
+  const last = (sentences.at(-1) ?? "").trim();
+  if (!last) return false;
+  return last.endsWith("?") || TASK_START.test(last);
+}
+
+export function turnNote(p: TutorPolicy, tutorText: string, drew: boolean, marked: boolean): string | null {
+  const text = tutorText.trim();
+  if (!text) return null;
+  const orders: string[] = [];
+  const closing = p.signalTurn.closing === p.studentTurns || /\b(bye|see you|talk soon|good night|have a great)\b/i.test(text);
+  const board = boardNote(p, text, drew, marked);
+  if (board) orders.push(board.replace(/^\[Board note, not from the student: /, "").replace(/\]$/, ""));
+  if (!closing && !givesTask(text)) orders.push("your last turn ended with nothing for them to do: end the next one with one question or one small task");
+  const pageMath = Boolean(p.pageProblem && /\d/.test(p.pageProblem));
+  if (!pageMath && !p.problemNudged && p.studentTurns >= 2 && numbersIn(p.lastUtterance ?? "").length >= 2 && POSES_PROBLEM.test(p.lastUtterance ?? "")) {
+    p.problemNudged = true;
+    orders.push("their problem is not on the board: put it up first (start_new_problem with problem= as they said it)");
+  }
+  if (pageMath && !p.planSet && !p.planNudged && p.studentTurns >= 3) {
+    p.planNudged = true;
+    orders.push("no plan yet: say the plan in one breath and write it (set_plan, 2 or 3 steps)");
+  }
+  if (p.praiseOpener) {
+    orders.push(`you said "${p.praiseOpener}": next time say what was right, or just go on`);
+    p.praiseOpener = null;
+  }
+  if (p.askedPermission) {
+    orders.push(`you asked "${p.askedPermission}": you lead, give them the next thing to do`);
+    p.askedPermission = null;
+  }
+  if (!orders.length) return null;
+  return `[Note for your next turn, not from the student: ${orders.slice(0, 2).join("; ")}.]`;
+}
+
+// A real question about the math in their opening line: "why is it…", "how
+// come…", "what does … mean", "is log(2) + log(3) = log(5)?".
+const OPENING_QUESTION = /\b(?:why (?:is|it'?s|its|does|do|are|would|did|can'?t|isn'?t|doesn'?t)|how come|what (?:does|do) [^.?!]{1,40} mean|what(?:'s| is) the difference|is [^.?!]{2,40}\?)[^.?!]*\??/i;
