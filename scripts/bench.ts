@@ -345,7 +345,12 @@ class LiveTutor {
       }
     }
     if (sc.outputTranscription?.text) { this.turn.said += sc.outputTranscription.text; this.bump(); }
-    if (sc.interrupted) this.turn.interrupted = true;
+    if (sc.interrupted) {
+      // The student's line cut a generation short (the tail of a WHEN_IDLE reply,
+      // Maya r2 turn 8): the answer to the line is a fresh generation, so wait for it.
+      this.turn.interrupted = true;
+      this.idleReplyAt = Date.now();
+    }
     if (sc.turnComplete) {
       this.turnCompleteSeen = true;
       this.turnCompleteAt = Date.now();
