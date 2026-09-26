@@ -106,3 +106,13 @@ test("tables fit, points label, and bad items are refused with a fix", () => {
   assert.match((build({ expressions: "y=x", xMin: 5, xMax: 1 }) as { error: string }).error, /x_max/);
   assert.match((build({ expressions: Array.from({ length: 9 }, (_, i) => `y=${i}x`).join(";") }) as { error: string }).error, /At most 8/);
 });
+
+test("a function definition names its function; it is not a slider", () => {
+  const g = build({ expressions: "f(x)=2x" });
+  assert.ok(!("error" in g), "error" in g ? g.error : "");
+  assert.equal(g.spec.sliders?.length ?? 0, 0);
+  assert.ok(!g.described.some((d) => /slider/.test(d)), g.described.join(" | "));
+  const still = build({ expressions: "y=mx+2" });
+  assert.ok(!("error" in still));
+  assert.deepEqual(still.spec.sliders?.map((s) => s.name), ["m"], "a bare letter is still a slider");
+});

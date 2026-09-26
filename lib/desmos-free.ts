@@ -273,6 +273,11 @@ export function buildFreeGraph(input: FreeInput): FreeGraph | { error: string } 
       for (const v of itemLetters(item.latex)) if (!/^[xy]\d+$/.test(v)) regressionLetters.add(v);
     }
     if (item.kind === "assignment") defined.add(item.latex.trim()[0]);
+    // "f(x)=2x" defines f: a function name, not a letter with no value (Sept 25
+    // 2026: it drew a slider "f = 1" beside the curve, and the tutor then said
+    // "f isn't a number" while pointing at it).
+    const fn = /^\s*([a-zA-Z])\s*(?:\\left)?\(\s*[a-zA-Z]\s*(?:\\right)?\)\s*=/.exec(item.latex);
+    if (fn) defined.add(fn[1]);
     if (item.kind === "expression" && !/(^|[^a-zA-Z\\])x/.test(item.latex.replace(/\\[a-zA-Z]+/g, " "))) {
       return { error: `"${item.raw}" has nothing to draw (no x). A number goes in a label; a curve needs x, as "y=2x+1".` };
     }
