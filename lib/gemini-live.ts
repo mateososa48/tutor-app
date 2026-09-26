@@ -120,11 +120,9 @@ function liveDeclarationOf(decl: ToolDeclaration): ToolDeclaration {
 
 export function openingEvent(studentText: string, fileCount: number): string {
   return (
-    "Session event: initial_start_with_context.\n" +
-    "The live tutoring session has just started. The student answered a few questions before it opened, and their " +
-    "message follows. Don't greet at length. Your first reply is the OPEN step, not teaching: acknowledge what they said in a few words, " +
-    "then ask what exactly they want (a problem on a sheet, or the whole idea). Nothing on the board yet but a page for the topic. " +
-    (fileCount > 0 ? "The attached files are the work they mean; read them first.\n\n" : "\n\n") +
+    "Session event: the session just started; the student's intake message follows. " +
+    "OPEN: a few words back, then ask which they want (a problem on a sheet, or the whole idea); a page for the topic on the board, nothing else yet. " +
+    (fileCount > 0 ? "The attached files are their work; read them first.\n\n" : "\n\n") +
     `Student: ${studentText}`
   );
 }

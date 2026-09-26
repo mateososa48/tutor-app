@@ -166,34 +166,18 @@ export function intakeInstructions(intake: SessionIntake, fileCount: number): st
   const lesson = lessonByKey(intake.lessonKey);
   if (lesson && topic === lessonTopic(lesson)) lines.push(lessonPlan(lesson));
   else if (topic) lines.push(`The student said what they need before starting: "${topic}"`);
-  // Mateo, Sept 22 2026: the tutor dived straight into the first problem on
-  // the sheet. Aristotle asks what they need and what they already know,
-  // every time, and builds the teaching on the answer. Spelled out here, not
-  // only in the prompt: on 3.1 the first order it meets wins (Sept 24, a
-  // session opened on the show-me problem with no question asked).
-  lines.push(
-    "Open, don't dive in. Your first reply: acknowledge what they said in a few words, then ask what exactly they want (a problem on a sheet, or the whole idea); a page for the topic on the board, nothing else. Second reply: what they already know about it and where it stops making sense. Only then teach: say the plan in one breath and start with one small show-me problem.",
-  );
-  // Where to look for the gap (round C): the skill the topic names, what
-  // comes before it, and small show-me problems for the probe that follows
-  // the opening (lib/skill-map.ts). Words only, never recorded as evidence.
+  // The OPEN order and the plan live in the prompt's lesson (Sept 25 2026:
+  // they were stated five times across the prompt, this block, the opening
+  // event and the state line; 3.8 skims a rulebook and follows one order).
+  // Where to look for the gap: the skill the topic names, what comes before
+  // it, and small show-me problems (lib/skill-map.ts). Words only.
   const brief = topic ? topicBrief(topic) : "";
-  if (brief) lines.push(`For after the opening, not your first reply: ${brief} The one you ask goes on the board: start_new_problem, then write it.`);
+  if (brief) lines.push(`For after the opening: ${brief} The one you ask goes on the board with start_new_problem.`);
   if (fileCount > 0) {
-    lines.push(
-      `They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence, and ask which problem first. When they pick one: look_at_worksheet, start_new_problem with the problem exactly as printed (problem=), and before any first move ask what they already know about that kind and where it stops making sense.`,
-    );
+    lines.push(`They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence and ask which problem first; look_at_worksheet, then start_new_problem with it exactly as printed.`);
   }
-  // Round C (Sept 24 2026): the plan is sized to the time they said they
-  // have, said in one breath, and written as one line on the board.
+  // The plan is sized to the time they said they have.
   const minutes = intake.minutes;
-  if (minutes) {
-    lines.push(
-      `They have ${minutes} minutes today. Size the plan to it: roughly one step per ten minutes, and keep the last few minutes for a quick check and today's rule. [Tutor state] shows the clock; when it says to wrap up, wrap up.`,
-    );
-  }
-  lines.push(
-    `The plan comes only once you know where they are: two to four short steps, said in one breath and written with set_plan ("What fractions are | Adding them | Practice"), then the first step; set_plan(step=2) when you move on. Never a plan or a problem in your first reply.`,
-  );
+  if (minutes) lines.push(`They have ${minutes} minutes today: roughly one plan step per ten minutes, the last few for a quick check and today's rule. [Tutor state] shows the clock; when it says to wrap up, wrap up.`);
   return lines.join("\n");
 }

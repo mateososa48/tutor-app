@@ -46,6 +46,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 import { buildGeminiInstructions } from "../lib/tutor-prompts";
+import { buildLiveInstructions } from "../lib/tutor-prompts-live";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "../lib/whiteboard-tools";
 import { TUTOR_TOOL_DECLARATIONS } from "../lib/tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "../lib/session-tools";
@@ -67,7 +68,7 @@ let instructions = "";
 async function loadInstructions() {
   const promptModule = process.env.PROMPT
     ? ((await import(pathToFileURL(path.resolve(process.env.PROMPT)).href)) as typeof import("../lib/tutor-prompts"))
-    : { buildGeminiInstructions };
+    : { buildGeminiInstructions: buildLiveInstructions };
   instructions = promptModule.buildGeminiInstructions({ displayName: "Sam", gradeLevel: "Middle school (6–8)", learningPrefs: {} } as never, [], intake ? { session: intakeInstructions(intake, 0) } : {});
 }
 const conversation: string[] = [];

@@ -4,7 +4,8 @@ import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
-import { buildGeminiInstructions, buildGreetingLine, buildResumeLine, type StudentProfile } from "@/lib/tutor-prompts";
+import { buildGreetingLine, buildResumeLine, type StudentProfile } from "@/lib/tutor-prompts";
+import { buildLiveInstructions } from "@/lib/tutor-prompts-live";
 import { intakeInstructions, isSessionLength, type SessionIntake } from "@/lib/session-intake";
 import { geminiVoiceFor } from "@/lib/voice-settings";
 import { loadLearningOverview } from "@/lib/learning-overview";
@@ -82,7 +83,8 @@ export async function POST(req: NextRequest) {
   // "Now you're live", so they win over the general instructions, and the
   // greeting is dropped: the student's opening message arrives instead (see
   // app/session/[id]/page.tsx).
-  const instructions = buildGeminiInstructions(profile, notes, {
+  // The prompt written for gemini-3.8-live (Sept 25 2026); buildGeminiInstructions is the old one.
+  const instructions = buildLiveInstructions(profile, notes, {
     learnerBrief: learning.brief,
     session: intake ? intakeInstructions(intake, fileCount) : undefined,
   });

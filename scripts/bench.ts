@@ -102,9 +102,11 @@ async function loadModules(promptPath: string, promptRev: string) {
     intake = await import("../lib/session-intake");
     promptName = promptPath;
   } else {
-    prompts = await import("../lib/tutor-prompts");
+    // What the app sends: the Live prompt (lib/tutor-prompts-live.ts).
+    const livePrompts = await import("../lib/tutor-prompts-live");
+    prompts = { ...(await import("../lib/tutor-prompts")), buildGeminiInstructions: livePrompts.buildLiveInstructions } as Prompts;
     intake = await import("../lib/session-intake");
-    promptName = "lib/tutor-prompts.ts (working tree)";
+    promptName = "lib/tutor-prompts-live.ts (working tree)";
   }
   return { tools, tutorTools, sessionTools, behavior, items, runtime, live, policy, rules, prompts, intake, promptName };
 }

@@ -47,10 +47,9 @@ test("the instructions set the language, quote the topic and open by asking, not
   const text = intakeInstructions(intake({ topic: "Solving for x", language: "de" }), 0);
   assert.match(text, /speak and write on the board in German/);
   assert.match(text, /"Solving for x"/);
-  assert.match(text, /Open, don't dive in\. Your first reply: acknowledge what they said in a few words, then ask what exactly they want/);
+  assert.doesNotMatch(text, /Open, don't dive in/, "the OPEN order lives in the prompt's lesson now, once");
   assert.ok(text.indexOf("Open, don't dive in") < text.indexOf("For after the opening"), "the opening comes before the show-me problems");
-  assert.match(text, /Never a plan or a problem in your first reply/);
-  assert.match(text, /say the plan in one breath/);
+  assert.doesNotMatch(text, /Never a plan or a problem in your first reply|say the plan in one breath/);
   assert.doesNotMatch(text, /pictures/);
 });
 
@@ -59,7 +58,7 @@ test("the time they have sizes the plan, and old intakes without it still work",
   assert.deepEqual([...SESSION_LENGTHS], [10, 15, 20, 30, 45, 60]);
   assert.ok(isSessionLength(45) && !isSessionLength(25) && !isSessionLength("20"));
   const text = intakeInstructions(intake({ topic: "Slope", minutes: 30 }), 0);
-  assert.match(text, /They have 30 minutes today\. Size the plan to it/);
+  assert.match(text, /They have 30 minutes today: roughly one plan step per ten minutes/);
   assert.match(text, /when it says to wrap up, wrap up/);
   const old = intakeInstructions({ topic: "Slope", language: "en", fileNames: [] }, 0);
   assert.doesNotMatch(old, /minutes today/);
