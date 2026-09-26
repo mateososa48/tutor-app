@@ -20,7 +20,10 @@
 // turn, summary.json, and report.md.
 //
 // Flags:
-//   --cases a,b        which students (default: all six)
+//   --cases a,b        which students (default: every one in the set)
+//   --set main|heldout|all  the six the redesign reads (default), the four held
+//                      out for gates (slope, triangle, divide, logs), or all ten
+//   --save-audio       write each turn's speech as <case>-t<N>.wav
 //   --turns N          student turns per case (default: the case's own)
 //   --label name       the run's name (default: the date and time)
 //   --live 3.8|3.1|id  the Live model (default: the app's DEFAULT_LIVE_MODEL)
@@ -49,7 +52,7 @@ import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
-import { CASES, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+import { CASES, HELDOUT, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
@@ -162,6 +165,18 @@ const SILENT_TURN_MS = 2_500; // a silent turnComplete waits this long for the s
 const IDLE_REPLY_MS = 5_000; // a WHEN_IDLE result makes the model speak again after its turnComplete: wait this long for that
 const ESCALATE_EVENT = "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing.";
 const TURN_CAP_MS = 75_000;
+/** --save-audio: write each turn's speech as <case>-t<N>.wav, to hear what was actually said. */
+const SAVE_AUDIO = process.argv.includes("--save-audio");
+
+function wav(chunks: string[], rate = 24_000): Buffer {
+  const pcm = Buffer.concat(chunks.map((c) => Buffer.from(c, "base64")));
+  const head = Buffer.alloc(44);
+  head.write("RIFF", 0); head.writeUInt32LE(36 + pcm.length, 4); head.write("WAVE", 8);
+  head.write("fmt ", 12); head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22);
+  head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34);
+  head.write("data", 36); head.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([head, pcm]);
+}
 
 type LiveTurn = {
   said: string;
@@ -175,6 +190,8 @@ type LiveTurn = {
   usage: TurnUsage | null;
   tools: ToolRecord[];
   durationMs: number;
+  /** The turn's audio, base64 PCM chunks at 24 kHz (kept only with --save-audio). */
+  audio: string[];
 };
 
 class LiveTutor {
@@ -206,7 +223,7 @@ class LiveTutor {
   ) {}
 
   private static emptyTurn(): LiveTurn {
-    return { said: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0 };
+    return { said: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0, audio: [] };
   }
 
   open(): Promise<void> {
@@ -339,6 +356,7 @@ class LiveTutor {
     for (const p of sc.modelTurn?.parts ?? []) {
       if (p.inlineData?.data) {
         this.turn.audioChunks++;
+        if (SAVE_AUDIO) this.turn.audio.push(p.inlineData.data);
         this.turn.firstAudioMs ??= ms;
         this.clearUnanswered();
         this.bump();
@@ -626,6 +644,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     const tutorView = await exportBoard(page, 896);
     if (tutorView) fs.writeFileSync(path.join(opts.out, `${tag}-t${i + 1}-board.jpg`), Buffer.from(tutorView, "base64"));
     const said = t.said.replace(/\s+/g, " ").trim();
+    if (SAVE_AUDIO && t.audio.length) fs.writeFileSync(path.join(opts.out, `${tag}-t${i + 1}.wav`), wav(t.audio));
     runtime.noteTutorTurn(said, t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "draw"), t.tools.some((x) => x.ok && m.items.toolRole(x.name) === "mark"));
     const turn: TurnRecord = {
       n: i + 1,
@@ -710,7 +729,7 @@ async function rejudge(label: string, judgeModel: string, all: boolean) {
   const runs: CaseRun[] = [];
   // Every case file in the folder, in case order, runs -r2… after their first.
   const files = fs.readdirSync(out).filter((f) => f.endsWith(".json") && f !== "summary.json" && !f.endsWith(".judge.json"));
-  const order = (f: string) => { const base = f.replace(/\.json$/, "").replace(/-r\d+$/, ""); const i = CASES.findIndex((c) => c.id === base); return `${i < 0 ? 99 : i}-${f}`; };
+  const order = (f: string) => { const base = f.replace(/\.json$/, "").replace(/-r\d+$/, ""); const i = [...CASES, ...HELDOUT].findIndex((c) => c.id === base); return `${String(i < 0 ? 99 : i).padStart(2, "0")}-${f}`; };
   for (const f of files.sort((a, b) => order(a).localeCompare(order(b)))) {
     const tag = f.replace(/\.json$/, "");
     const c = caseById(tag.replace(/-r\d+$/, ""));
@@ -775,8 +794,11 @@ async function main() {
   const out = path.resolve(arg("out", path.join("bench", "runs", label)));
   const base = arg("base", "http://localhost:3300");
   const only = arg("cases", "").split(",").map((s) => s.trim()).filter(Boolean);
-  const cases = CASES.filter((c) => only.length === 0 || only.includes(c.id));
-  if (cases.length === 0) throw new Error(`No case matches ${only.join(",")}. Options: ${CASES.map((c) => c.id).join(", ")}`);
+  // --set main (default: the six the redesign reads), heldout (four it never reads), or all.
+  const set = arg("set", "main");
+  const pool = set === "heldout" ? HELDOUT : set === "all" ? [...CASES, ...HELDOUT] : CASES;
+  const cases = pool.filter((c) => only.length === 0 || only.includes(c.id));
+  if (cases.length === 0) throw new Error(`No case matches ${only.join(",")}. Options: ${pool.map((c) => c.id).join(", ")}`);
   const turnsArg = Number(arg("turns", "0"));
   const studentModel = arg("student", "gemini-3.5-flash-lite");
   const judgeModel = arg("judge", "gemini-3.5-flash");

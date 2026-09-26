@@ -77,7 +77,7 @@ export const CASES: BenchCase[] = [
       "Did the tutor draw the two amounts as pieces (a hundredths grid, a number line, or coins) rather than only state a rule?",
       "Did the tutor work on the problem Maya brought (0.35 vs 0.5) rather than a problem of its own?",
     ],
-    turns: 8,
+    turns: 14,
   },
   {
     id: "recipe",
@@ -103,7 +103,7 @@ export const CASES: BenchCase[] = [
       "Did the tutor draw the ratio (a table, a double number line, a tape diagram, or rows of cookies) that shows what stays the same?",
       "Did the tutor use Jayden's own 15 to find the additive idea, rather than just say it was wrong?",
     ],
-    turns: 8,
+    turns: 14,
   },
   {
     id: "worksheet",
@@ -131,7 +131,7 @@ export const CASES: BenchCase[] = [
       "Did the tutor draw a number line (or thermometer) for at least one of the problems, and use it?",
       "Did the tutor mark Sofia's wrong answers only after she had said them, and leave her right ones alone?",
     ],
-    turns: 9,
+    turns: 14,
   },
   {
     id: "function",
@@ -157,7 +157,7 @@ export const CASES: BenchCase[] = [
       "Did the tutor answer the actual question (why not f times x) instead of teaching a lesson on functions in general?",
       "Did the tutor keep to one question at a time and give Marcus something to do each turn?",
     ],
-    turns: 8,
+    turns: 14,
   },
   {
     id: "quadratic",
@@ -184,7 +184,7 @@ export const CASES: BenchCase[] = [
       "Did the tutor avoid generic praise and name what was right instead?",
       "Did the tutor size the session to 30 minutes with a plan and get to a second problem?",
     ],
-    turns: 9,
+    turns: 14,
   },
   {
     id: "decay",
@@ -211,7 +211,123 @@ export const CASES: BenchCase[] = [
       "Did the tutor raise the challenge (the multiplier or the formula) once Ethan had it, rather than keep explaining?",
       "Did the answer (not 45%; about 38.6%) come from Ethan rather than from the tutor?",
     ],
-    turns: 8,
+    turns: 14,
+  },
+];
+
+// ── Held out (Sept 26 2026) ────────────────────────────────────────────────
+// Four students the tutor is never tuned on: the redesign reads the six above
+// to find what to fix, and these only at a gate, so a fix that works for
+// Maya's decimals and nothing else shows up as a gap here. Same research
+// base: slope as run over rise and sign slips (Stump 2001; Moschkovich
+// 1999), the slanted side as a triangle's height (Clements & Battista; the
+// "altitude" error in NAEP items), "division makes smaller" for fractions
+// (Fischbein et al. 1985; Tirosh 2000), and logs treated as linear (the
+// "log of a sum" error, Kenney 2005).
+export const HELDOUT: BenchCase[] = [
+  {
+    id: "slope",
+    name: "Diego",
+    grade: "8th grade",
+    age: 13,
+    topic: "slope from two points. i did (2,5) and (6,13) and got 1/2",
+    minutes: 20,
+    brief:
+      "You are Diego, 13, in 8th grade. The problem was the slope of the line through (2, 5) and (6, 13). You did 6 − 2 = 4 on top and 13 − 5 = 8 on the bottom and got 4/8 = 1/2. You think slope is \"the x change over the y change\" because x comes first. You're good at subtracting and you like graphs, you just never connected slope to how steep a line looks. You talk fast and a little sarcastic.",
+    anchors: [
+      "When the tutor asks what you need, say the problem: the slope through (2,5) and (6,13), and that you got 1/2.",
+      "The first time the tutor asks how you did it, say \"x goes first so 4 over 8\".",
+      "If the tutor just says \"it's rise over run\", say \"ok but why tho, x is first\" and keep your 1/2.",
+      "Once you get it, check it yourself: \"so from (6,13) if i go 1 right i go up 2?\"",
+    ],
+    convincedBy:
+      "Seeing the line on a graph with the steps drawn: go 4 right and 8 up, and noticing the line is steep, climbing 2 for every 1 across, which a slope of 1/2 can't be. A picture where you count the rise and the run convinces you; a rule does not.",
+    outcome:
+      "Diego finds the slope 2 himself, says in his own words that slope is how much it goes up for each step right, and checks it with a step on the graph or a new pair of points.",
+    checks: [
+      "Did the tutor ask how Diego got 1/2 before correcting it?",
+      "Did the tutor graph the two points and the line, with the rise and the run shown, rather than only state a formula?",
+      "Did Diego compute the right slope himself rather than hear it from the tutor?",
+    ],
+    turns: 14,
+  },
+  {
+    id: "triangle",
+    name: "Lily",
+    grade: "6th grade",
+    age: 11,
+    topic: "area of triangles. i keep getting them wrong",
+    minutes: 15,
+    brief:
+      "You are Lily, 11, in 6th grade. Your homework had a triangle with base 10 cm and height 6 cm (and a slanted side of 7 cm), and you wrote 60, because area is length times width. On another one you multiplied the base by the slanted side. The sheet is in your backpack at home but you remember the numbers. You like drawing and you think in pictures; formulas you forget. You're polite and a bit shy; you say \"um\" a lot.",
+    anchors: [
+      "When the tutor asks what you need, say the triangle: base 10, height 6, and a slanted side 7, and that you got 60.",
+      "The first time the tutor asks how, say \"um length times width\".",
+      "If the tutor just says \"it's half base times height\", ask \"why half tho\" and don't use it yet.",
+      "Once you get it, try one yourself without being asked: \"so base 8 height 5 is 20?\"",
+    ],
+    convincedBy:
+      "Seeing the triangle drawn inside a 10 by 6 rectangle and noticing it takes up exactly half of it (or two copies making the rectangle). Then half makes sense and you use the height, not the slanted side.",
+    outcome:
+      "Lily explains that a triangle is half of the rectangle around it, gets 30 for the homework triangle, and does a new one right by herself using the height, not the slanted side.",
+    checks: [
+      "Did the tutor ask how Lily got 60 before correcting it?",
+      "Did the tutor draw the triangle with its base and height (ideally inside its rectangle), rather than only state the formula?",
+      "Did the tutor deal with which side is the height (the slanted 7 is not it)?",
+    ],
+    turns: 14,
+  },
+  {
+    id: "divide",
+    name: "Ava",
+    grade: "7th grade",
+    age: 12,
+    topic: "dividing fractions. why is 1/2 divided by 1/4 bigger??",
+    minutes: 20,
+    brief:
+      "You are Ava, 12, in 7th grade. Your teacher said 1/2 ÷ 1/4 = 2 and you wrote 1/8, because dividing always makes things smaller, and you multiplied the tops and the bottoms. You can do keep-change-flip if someone reminds you, but you think it's a trick and it bugs you that the answer is bigger. You're curious and a bit stubborn; you want the WHY, not the steps.",
+    anchors: [
+      "When the tutor asks what you need, say the problem: 1/2 divided by 1/4, you got 1/8, your teacher says 2, and you want to know why it's bigger.",
+      "If the tutor starts with keep-change-flip, say \"i know the trick but WHY is it bigger\".",
+      "If the tutor asks how many of something fit into something, answer it seriously.",
+      "Once you get it, try one: \"so 3 divided by 1/2 is 6 cuz 6 halves fit in 3?\"",
+    ],
+    convincedBy:
+      "Seeing how many quarters fit into a half on a bar or a circle (two of them), so \"divided by 1/4\" means \"how many quarters fit\". Being told the rule again does nothing.",
+    outcome:
+      "Ava says in her own words that dividing by 1/4 asks how many quarters fit, sees why the answer is 2, and does a new one like 3 ÷ 1/2 = 6 with the reason.",
+    checks: [
+      "Did the tutor answer the WHY (how many fit) rather than only restate keep-change-flip?",
+      "Did the tutor draw the fractions (bars or circles) showing how many quarters fit in a half?",
+      "Did Ava do a new one herself with a reason?",
+    ],
+    turns: 14,
+  },
+  {
+    id: "logs",
+    name: "Noah",
+    grade: "12th grade",
+    age: 17,
+    topic: "logs. is log(2) + log(3) = log(5)? my answer key says no",
+    minutes: 20,
+    brief:
+      "You are Noah, 17, in 12th grade precalc. You wrote log(2) + log(3) = log(5) on a problem and the key says log(6). You think log works like multiplying by a number, so it spreads over a sum. You know how to use a calculator and you know log(100) = 2 and log(10) = 1. You're a bit tired and want the rule fast, but you'll engage if it's quick and makes sense.",
+    anchors: [
+      "When the tutor asks what you need, say it: you wrote log(2) + log(3) = log(5), the key says log(6), why.",
+      "If the tutor just states the product rule, say \"ok but why is it times and not plus\".",
+      "If the tutor asks you to try numbers you know (like log 10 and log 100), do it.",
+      "Once you get it, test it: \"so log(4) + log(25) is 2 cuz 4 times 25 is 100?\"",
+    ],
+    convincedBy:
+      "Trying it with numbers you know: log(10) + log(10) = 2, but log(20) is not 2 while log(100) is, or seeing that a log counts the zeros (powers of 10), and multiplying adds zeros. A quick check with numbers convinces you; a proof in symbols doesn't.",
+    outcome:
+      "Noah explains that logs turn multiplying into adding (log(a) + log(b) = log(ab)) with his own check using numbers he knows, and uses it on a new one.",
+    checks: [
+      "Did the tutor get Noah to test his rule on numbers he knows, rather than only state the product rule?",
+      "Did the tutor put the check on the board (the numbers, or the graph of log) rather than only talk?",
+      "Did Noah apply the rule to a new case himself?",
+    ],
+    turns: 14,
   },
 ];
 
@@ -258,7 +374,7 @@ const WORKSHEET_HTML = `<!doctype html>
 for (const c of CASES) if (c.worksheet) c.worksheet.html = WORKSHEET_HTML;
 
 export function caseById(id: string): BenchCase | undefined {
-  return CASES.find((c) => c.id === id);
+  return CASES.find((c) => c.id === id) ?? HELDOUT.find((c) => c.id === id);
 }
 
 export function intakeFor(c: BenchCase): SessionIntake {
