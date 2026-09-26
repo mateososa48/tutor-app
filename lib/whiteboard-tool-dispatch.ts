@@ -26,7 +26,7 @@ import {
   parseSlopeRun,
   FIGURE_KINDS,
 } from "@/lib/board-diagrams";
-import { parseTargetList, toolRole } from "@/lib/board-items";
+import { isHeadingItem, parseTargetList, toolRole } from "@/lib/board-items";
 import {
   attemptProblem,
   boardLines,
@@ -99,6 +99,8 @@ const BOX_BODY_LINES = 3;
 const CALLOUT_MAX = 120;
 // Separates a result from a follow-up sentence that should come after the item id.
 const NEXT = "\u241e";
+/** A drawing younger than this is kept when a new heading arrives. */
+const FRESH_WORK_MS = 30_000;
 
 function countLines(body: string): number {
   return body.split(/\n|\s\|\s/).map((l) => l.trim()).filter(Boolean).length;
@@ -172,6 +174,32 @@ export function dispatchWhiteboardTool(
   // 24 2026: a worksheet problem took four calls before the first word, and
   // the functions went up as a handwritten note). The heading is placed
   // first, then each line, then the question, each its own item.
+  // A new heading seconds after a drawing would erase it (Sept 25 2026: the
+  // cookies went up and came down in one turn). Fresh work stays: the heading
+  // opens a section beside it instead, and the result says so.
+  if (name === "start_new_problem" && ctx.whiteboard?.itemsSnapshot) {
+    const now = Date.now();
+    const fresh = ctx.whiteboard.itemsSnapshot().filter((it) => it.owner === "tutor" && !isHeadingItem(it) && now - it.createdAt < FRESH_WORK_MS);
+    if (fresh.length > 0 && typeof args.title === "string" && args.title.trim()) {
+      const section = dispatchWhiteboardTool("start_board_section", { title: args.title }, ctx);
+      if (section.success) {
+        const rest: string[] = [`Kept the board: what you drew ${Math.round((now - Math.max(...fresh.map((it) => it.createdAt))) / 1000)} s ago is still up, and "${args.title}" opened as a section beside it.`];
+        const problemText = typeof args.problem === "string" ? args.problem.trim() : "";
+        if (problemText && /[\d=+\-−×÷*/^\\<>]/.test(problemText)) {
+          for (const line of splitSteps(problemText).map((l) => l.trim()).filter(Boolean).slice(0, 6)) {
+            const r = dispatchWhiteboardTool("draw_equation_step", { latex: line }, ctx);
+            if (r.success) rest.push((r.message ?? "").replace(/\n\[Board:[\s\S]*$/, "").trim());
+          }
+        }
+        if (typeof args.ask === "string" && args.ask.trim()) {
+          const r = dispatchWhiteboardTool("add_callout", { text: args.ask }, ctx);
+          if (r.success) rest.push((r.message ?? "").replace(/\n\[Board:[\s\S]*$/, "").trim());
+        }
+        rest.push("To clear the board on purpose, erase_items first.");
+        return ok(rest.join(" "));
+      }
+    }
+  }
   if (name === "start_new_problem" && ((typeof args.problem === "string" && args.problem.trim()) || (typeof args.ask === "string" && args.ask.trim()))) {
     const { problem, ask, ...rest } = args;
     // The topic is not the problem (Sept 25 2026: 3.8 passed problem="Decimals"
@@ -412,6 +440,15 @@ function dispatchInner(
       const problem = attemptProblem(attempt);
       if (problem) return fail(problem);
       const column = opt(args, "column"); if (column.error) return column.error;
+      // LaTeX in their words (Sept 25 2026: "x = \\frac{-(-3) \\pm …}" went up
+      // in handwriting, backslashes and all) is typeset as their line.
+      if (/\\[a-zA-Z]|[{}^_]/.test(attempt)) {
+        const lines = splitLatexLines(attempt).map(normalizeLatex).filter(Boolean);
+        board.withDirectMeta({ owner: "student", tutorReferenceLabel: attempt }, () =>
+          lines.forEach((line, i) => board.drawEquationStep(line, i === lines.length - 1 ? "their answer" : undefined, pickColumn(column.value))),
+        );
+        return ok(`Student's attempt ${lines.map(latexToPlain).join(" / ")} typeset as their line.`);
+      }
       // Student attempts are student-owned even though the tutor calls the
       // tool, so later corrections never overwrite the student's work.
       board.withDirectMeta({ owner: "student" }, () =>
@@ -528,7 +565,10 @@ function dispatchInner(
         jumps.length ? `${jumps.length} hop arrow${jumps.length === 1 ? "" : "s"}` : "",
         hasSecond ? `second scale ${secondMin} to ${secondMax}${secondLabel.value ? ` (${secondLabel.value})` : ""} lined up underneath` : "",
       ].filter(Boolean);
-      return ok(`${bits.join("; ")}.`);
+      // A bare line (Sept 25 2026: drawn for "-7 - 4" with nothing on it, then
+      // "narrated"): say so, with the two ways to mark it.
+      const bare = marks.length === 0 && intervals.length === 0 && jumps.length === 0;
+      return ok(`${bits.join("; ")}.${bare ? " Nothing is marked on it yet: points= puts dots on it, jumps= draws a move (\"-7>-11\")." : ""}`);
     }
 
     case "draw_figure": {

@@ -64,21 +64,24 @@ after(() => {
 function fakeWritingBoard() {
   let n = 0;
   const log: string[] = [];
+  const items: Array<{ id: string; tool: string; label: string; owner: "tutor" | "student"; createdAt: number; shapeIds: string[]; eqItemIds: string[] }> = [];
   const board = {
     beginItem: (tool: string) => ({ tool, shapes: new Set<string>(), eqs: new Set<string>() }),
     endItem: () => `b${++n}`,
     withDirectMeta: <T,>(_meta: unknown, fn: () => T) => fn(),
     takeNotes: () => [],
-    itemsSnapshot: () => [],
+    itemsSnapshot: () => items,
     startNewProblem: (title: string) => log.push(`title:${title}`),
     drawEquationStep: (latex: string) => log.push(`eq:${latex}`),
     addCallout: (text: string) => log.push(`callout:${text}`),
     addTextNote: (text: string) => log.push(`note:${text}`),
     drawGrid: (o: { shaded: number; shadeRows?: number; shadeColumns?: number }) => log.push(`grid:${o.shaded}/${o.shadeRows}/${o.shadeColumns}`),
+    addStudentAttempt: (text: string) => log.push(`attempt:${text}`),
+    startBoardSection: (title: string) => log.push(`section:${title}`),
     setPens: () => {},
     setPlacement: () => {},
   };
-  return { board: board as unknown as WhiteboardHandle, log };
+  return { board: board as unknown as WhiteboardHandle, log, items };
 }
 
 test("start_new_problem writes the problem, typeset, and the first question in one call", () => {
@@ -144,4 +147,32 @@ test("a note that is really math goes up as typeset lines", () => {
   const words = dispatchWhiteboardTool("add_text_note", { text: "Same size pieces first" }, { whiteboard: f.board });
   assert.equal(words.success, true, msg(words));
   assert.equal(f.log.at(-1), "note:Same size pieces first");
+});
+
+// Sept 25 2026, from the Phase 1 and 3 runs.
+test("an attempt with LaTeX in it is typeset as their line, not handwritten backslashes", () => {
+  const f = fakeWritingBoard();
+  const r = dispatchWhiteboardTool("add_student_attempt", { text: "x = \\frac{-(-3) \\pm \\sqrt{(-3)^2 - 4(2)(1)}}{2(2)}" }, { whiteboard: f.board });
+  assert.equal(r.success, true, msg(r));
+  assert.match(f.log.at(-1) ?? "", /^eq:/);
+  assert.match(msg(r), /typeset as their line/);
+  const plain = dispatchWhiteboardTool("add_student_attempt", { text: "-7 - 4 = 11" }, { whiteboard: f.board });
+  assert.equal(plain.success, true);
+  assert.equal(f.log.at(-1), "attempt:-7 - 4 = 11", "plain math stays in their hand");
+});
+
+test("a new heading seconds after a drawing keeps the drawing and opens a section", () => {
+  const f = fakeWritingBoard();
+  f.items.push({ id: "b1", tool: "start_new_problem", label: "Ratios", owner: "tutor", createdAt: Date.now() - 60_000, shapeIds: [], eqItemIds: [] });
+  f.items.push({ id: "b2", tool: "draw_icons", label: "12 cookies", owner: "tutor", createdAt: Date.now() - 5_000, shapeIds: [], eqItemIds: [] });
+  const r = dispatchWhiteboardTool("start_new_problem", { title: "Your turn", problem: "3 cups = ?", ask: "How many cookies?" }, { whiteboard: f.board });
+  assert.equal(r.success, true, msg(r));
+  assert.match(msg(r), /Kept the board: what you drew 5 s ago is still up, and "Your turn" opened as a section beside it/);
+  assert.match(msg(r), /erase_items first/);
+  assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["section", "eq", "callout"]);
+  const old = fakeWritingBoard();
+  old.items.push({ id: "b1", tool: "draw_icons", label: "12 cookies", owner: "tutor", createdAt: Date.now() - 120_000, shapeIds: [], eqItemIds: [] });
+  const cleared = dispatchWhiteboardTool("start_new_problem", { title: "Next problem" }, { whiteboard: old.board });
+  assert.equal(old.log.at(-1), "title:Next problem", "old work is cleared as before");
+  assert.match(msg(cleared), /Cleared the board/);
 });
