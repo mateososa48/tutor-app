@@ -126,7 +126,7 @@ export const PICTURE_TOOLS = new Set<string>([
 // The same claim the board eval counts (scripts/board-eval.ts), plus "this
 // number line" style references.
 const CLAIMS_BOARD = /\b(on the board|i(?:'ve| have) (?:drawn|written|put)|i drew|i wrote|look at the (?:board|picture|diagram|graph|triangle|table|number line|grid|circle|bars?)|as you can see|from the picture|(?:this|the) (?:number line|graph|table|diagram|picture) (?:here|shows|i)|see (?:the|this) (?:number line|graph|table|diagram|picture))\b/i;
-const ASKS_WHAT_THEY_KNOW = /\b(already know|what do you know|what you know|where (?:it|does it|do you|things?) (?:stop|start|get|go)|which part|what (?:is|was|part is|parts? are) (?:confusing|tricky|hard|the (?:tricky|hard|confusing) (?:part|bit))|what did you (?:do|try|get|put|write)|how did you (?:get|do|work)|walk me through|what have you tried|what (?:do|did) you think|tell me what you (?:did|tried|know|think))\b/i;
+const ASKS_WHAT_THEY_KNOW = /\b(already know|what do you know|what you know|what do you remember|stops? making sense|where (?:did |do )?(?:it|does it|do you|things?) (?:stop|start|get|go)|which part|what (?:is|was|part is|parts? are) (?:confusing|tricky|hard|the (?:tricky|hard|confusing) (?:part|bit))|what did you (?:do|try|get|put|write)|how did you (?:get|do|work)|walk me through|what have you tried|what (?:do|did) you think|tell me what you (?:did|tried|know|think))\b/i;
 const OPENING_ALLOWED = new Set(["start_new_problem", "look_at_worksheet", "add_callout", "look_at_board", "remember_about_student"]);
 // What a kid would hear that is not speech: LaTeX between dollars, markup, a
 // stage direction, or a tool call read aloud ("set_plan(steps=…").
@@ -170,7 +170,8 @@ export function measure(turns: TurnRecord[], c: BenchCase, policy: PolicyFns): M
   const drewPicture = (t: TurnRecord) => ok(t, (x) => PICTURE_TOOLS.has(x.name));
   const marked = (t: TurnRecord) => ok(t, (x) => roleOf(x.name) === "mark");
   const first = turns[0];
-  const openingAsked = Boolean(first) && /\?/.test(first.tutor) && !first.tools.some((x) => x.ok && (!OPENING_ALLOWED.has(x.name) || (x.name === "start_new_problem" && typeof x.args.problem === "string" && x.args.problem.trim())));
+  // A question, and no plan or picture before it: the problem written as given is not teaching (Sept 25 2026).
+  const openingAsked = Boolean(first) && /\?/.test(first.tutor) && !first.tools.some((x) => x.ok && !OPENING_ALLOWED.has(x.name));
   const askedWhatTheyKnow = turns.slice(0, 3).some((t) => ASKS_WHAT_THEY_KNOW.test(t.tutor));
   const planTurn = turns.find((t) => ok(t, (x) => x.name === "set_plan" && typeof x.args.steps === "string"))?.n ?? null;
   const problemTurn = turns.find((t) => ok(t, (x) => (x.name === "start_new_problem" && typeof x.args.problem === "string" && x.args.problem.trim() !== "") || x.name === "draw_equation_step" || PICTURE_TOOLS.has(x.name)))?.n ?? null;

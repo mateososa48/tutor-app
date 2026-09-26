@@ -11,7 +11,7 @@
 
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer, checkBlankInPage, type CheckVerdict } from "./answer-check";
+import { checkAnswer, checkBlankInPage, spokenToDigits, type CheckVerdict } from "./answer-check";
 import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import {
@@ -224,18 +224,34 @@ export function stepOfPage(page: string | null, problem: string, answer: string)
 // turn, or on the first tool result of a spoken one (nextReminder).
 const answerKey = (t: string) => t.toLowerCase().replace(/[\s$,]/g, "").replace(/^(isit|itis|its|it's|so|umm?|uh)+/, "").replace(/[?.!]+$/, "");
 
+// "9 minus 8 is 1", "2 times 3 is 6 not 7": arithmetic the student asserts
+// is checked as itself, whatever the board asked (Sept 25 2026: 3.8 judged
+// these by ear). A chained claim ("3 + 1 is 4 over 4 which is 1") is left
+// alone: "is 4/4" could be (3 + 1)/4 as easily as 4/4.
+const CLAIM = /(-?\d[\d.\/]*(?:\s*[-+*/^]\s*-?\d[\d.\/]*)+)\s*(?:is|=|equals|makes|gives)\s*(-?\d[\d.\/]*)(.*)$/i;
+
+function ownClaim(text: string): { problem: string; answer: string } | null {
+  const m = CLAIM.exec(spokenToDigits(text.replace(/[?!]+/g, " ")));
+  if (!m) return null;
+  if (/\b(is|equals?|which|so|=)\b/i.test(m[3])) return null;
+  return { problem: m[1].trim(), answer: m[2] };
+}
+
 export function autoCheck(policy: TutorPolicy, text: string, now: number): string | null {
   const t = text.trim();
   if (!t || !looksLikeAnswer(t) || isNonAnswer(t)) return null;
   // A topic heading is not a problem; the spoken question usually is.
   const page = policy.pageProblem && /[\d=+\-−×÷*/^\\<>]/.test(policy.pageProblem) ? policy.pageProblem : null;
-  const candidates = [policy.lastAsked, policy.lastSpokenQuestion, page].filter((c): c is string => Boolean(c && c.trim()));
-  for (const problem of candidates) {
-    const check = checkAnswer(problem, t);
+  const candidates: Array<{ problem: string; answer: string }> = [];
+  const own = ownClaim(t);
+  if (own) candidates.push(own);
+  for (const c of [policy.lastAsked, policy.lastSpokenQuestion, page]) if (c && c.trim()) candidates.push({ problem: c, answer: t });
+  for (const { problem, answer } of candidates) {
+    const check = checkAnswer(problem, answer);
     if (check.verdict === "cannot_check") continue;
     const skill = policy.currentSkill ?? policy.pageSkill ?? "unnamed skill";
     const help = Math.max(suggestHelp(policy)?.level ?? 1, policy.boardHelp);
-    const step = stepOfPage(policy.pageProblem, problem, t);
+    const step = stepOfPage(policy.pageProblem, problem, answer);
     recordAttempt(policy, { skill, result: attemptFromVerdict(check.verdict), help, auto: true, problem, step }, now);
     noteAnswerChecked(policy);
     const struck = check.verdict === "correct" && !step && policy.lastWrongAttempt ? ` Cross out their earlier "${policy.lastWrongAttempt}" (cross_out_step).` : "";

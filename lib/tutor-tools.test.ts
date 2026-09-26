@@ -245,3 +245,22 @@ test("auto-check reads the tutor's spoken question when nothing was asked on the
   noteBoardWrite(q, "start_new_problem", { title: "Decimals" });
   assert.equal(autoCheck(q, "0.5", 0), null, "a topic heading is not a problem to check against");
 });
+
+// Sept 25 2026, from Priya's Phase 4 session: the code checks what a student asserts.
+test("the student's own arithmetic claim is auto-checked without a question on the board", () => {
+  const p = createPolicy(0);
+  const right = autoCheck(p, "oh wait so 9 minus 8 is 1?", 0);
+  assert.ok(right && /"oh wait so 9 minus 8 is 1\?" → correct/.test(right), right ?? "no note");
+  const wrong = autoCheck(createPolicy(0), "wait 2 times 3 is 7", 0);
+  assert.ok(wrong && /→ incorrect/.test(wrong), wrong ?? "no note");
+  assert.equal(autoCheck(createPolicy(0), "so 3 plus 1 is 4 over 4 which is 1", 0), null, "a chained claim is ambiguous");
+  assert.equal(autoCheck(createPolicy(0), "so 0.2 is like 20 cents", 0), null, "no operation, no claim");
+});
+
+test("a spoken question with number words is kept for the auto-check", () => {
+  const p = createPolicy(0);
+  noteTutorTurn(p, "Careful there. What is negative three squared?", false);
+  assert.equal(p.lastSpokenQuestion, "What is negative three squared?");
+  const note = autoCheck(p, "um... 9?", 1000);
+  assert.ok(note && /→ correct/.test(note), note ?? "no note");
+});

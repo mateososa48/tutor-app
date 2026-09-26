@@ -127,7 +127,7 @@ function splitAnswers(raw: string): string[] {
 // Spoken filler around the whole answer: "um, 5/6? I think" → "5/6".
 function stripFiller(raw: string): string {
   return raw
-    .replace(/[?!]+/g, " ")
+    .replace(/[?!]+|\.{2,}|…/g, " ")
     .replace(/\b(i think|i guess|maybe|probably|um+|uh+|hmm+|oh+|ok|okay|well|like|wait|yeah|so|it'?s|it is|the answer is|answer)\b:?/gi, " ")
     .replace(/\s+/g, " ")
     .replace(/^[\s,;:]+|[\s,;:.]+$/g, "")
@@ -643,7 +643,12 @@ export function spokenToDigits(text: string, opts: { the?: boolean } = {}): stri
     .join("")
     .replace(/(\d|\))\s+(plus|times|multiplied by|divided by)\s+(?=[-\d(])/gi, (_m, a: string, op: string) =>
       `${a} ${op.toLowerCase() === "plus" ? "+" : op.toLowerCase() === "divided by" ? "/" : "*"} `,
-    );
+    )
+    // "negative three squared" is (-3)^2, "the square root of 16" is sqrt(16)
+    // (Sept 25 2026: the tutor asks these aloud and the auto-check read neither).
+    .replace(/(-?\d+(?:\.\d+)?|\))\s+squared\b/gi, "($1)^2")
+    .replace(/(-?\d+(?:\.\d+)?|\))\s+cubed\b/gi, "($1)^3")
+    .replace(/\b(?:the\s+)?square root of\s+(-?\d+(?:\.\d+)?)/gi, "sqrt($1)");
 }
 
 // Plain number or LaTeX number, spoken or written; null when it is not one.

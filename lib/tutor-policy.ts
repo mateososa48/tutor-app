@@ -15,6 +15,7 @@
 
 import { clockCue, clockLabel } from "./session-clock";
 import { isNonAnswer } from "./board-content-rules";
+import { spokenToDigits } from "./answer-check";
 
 // "incorrect": wrong, kind not given. "unchecked": the checker could not
 // judge it, so it counts neither way.
@@ -598,7 +599,8 @@ export function boardReference(text: string): string | null {
 
 export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marked = false): void {
   // The last question with a number in it, spoken: what an answer answers.
-  const questions = text.split(/(?<=\?)\s+/).map((q) => q.trim()).filter((q) => q.endsWith("?") && /\d/.test(q));
+  // Spoken numbers count ("What is negative three squared?" had no digit and was never kept).
+  const questions = text.split(/(?<=\?)\s+/).map((q) => q.trim()).filter((q) => q.endsWith("?") && /\d/.test(spokenToDigits(q)));
   if (questions.length) {
     const q = questions[questions.length - 1];
     const tail = q.split(/(?<=[.!])\s+/).pop() ?? q;

@@ -300,3 +300,10 @@ test("a comparison copied off the board, with the kid's whole sentence", () => {
   assert.equal(checkAnswer("Which is bigger: 0.35 or 0.5?", "wait 0.35").verdict, "incorrect");
   assert.equal(checkAnswer("Which is bigger: 0.35 or 0.5?", "oh 0.35 and 0.5 are both").verdict, "cannot_check", "both named: no guess");
 });
+
+test("spoken powers and roots", () => {
+  assert.equal(checkAnswer("What is negative three squared?", "9").verdict, "correct");
+  assert.equal(checkAnswer("What is negative three squared?", "-9").verdict, "incorrect");
+  assert.equal(checkAnswer("what's the square root of sixteen?", "4").verdict, "correct");
+  assert.equal(checkAnswer("two cubed", "8").verdict, "correct");
+});
