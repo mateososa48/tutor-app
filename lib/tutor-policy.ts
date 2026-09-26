@@ -114,6 +114,8 @@ export type TutorPolicy = {
   pendingMarks: VerdictMarks | null;
   /** The line of their latest wrong answer on this page, crossed out once they get it right. */
   lastWrongLine: string | null;
+  /** Lines the app has already put up for this problem (a second check of the same answer marks nothing). */
+  markedLines: string[];
   /** Numbers the student has said since the problem opened, and the page's own: a line may show these as results. */
   saidNumbers: string[];
   /** They asked to try one on their own ("can i try one"): the next problem is theirs, until they answer one. */
@@ -177,6 +179,7 @@ export function createPolicy(now: number): TutorPolicy {
     codeMarks: false,
     pendingMarks: null,
     lastWrongLine: null,
+    markedLines: [],
     saidNumbers: [],
     wantsAlone: false,
     planSet: false,
@@ -707,6 +710,7 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.lastAsked = typeof args?.ask === "string" && args.ask.trim() ? args.ask.trim().slice(0, 200) : null;
     p.lastWrongAttempt = null;
     p.lastWrongLine = null;
+    p.markedLines = [];
     // The page's numbers and the line that opened it are given, not results.
     p.saidNumbers = numbersIn(`${raw} ${typeof args?.ask === "string" ? args.ask : ""} ${p.lastUtterance ?? ""}`);
     p.pageSkill = null;

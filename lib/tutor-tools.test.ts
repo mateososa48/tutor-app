@@ -269,7 +269,9 @@ test("a spoken question with number words is kept for the auto-check", () => {
 test("a checked answer goes up as a short line in their hand, not their whole sentence", () => {
   assert.equal(answerLine("f(3) where f(x) = 2x + 1", "so f(3) is just put 3 in, so 7?"), "f(3) = 7");
   assert.equal(answerLine("9 - 8", "oh wait so 9 minus 8 is 1?"), "9 − 8 = 1");
-  assert.equal(answerLine("Which is bigger: 0.35 or 0.5?", "fifty cents is bigger so 0.5 is bigger"), "0.5 is bigger");
+  assert.equal(answerLine("Which is bigger: 0.35 or 0.5?", "fifty cents is bigger so 0.5 is bigger"), "0.5 > 0.35");
+  assert.equal(answerLine("0.8 vs 0.75", "0.8 is bigger than 0.75?"), "0.8 > 0.75");
+  assert.equal(answerLine("0.35 \\text{ vs } 0.5", "0.35 is bigger"), "0.35 > 0.5");
   assert.equal(answerLine("What is negative three squared?", "um... 9?"), "(-3)^2 = 9");
   assert.equal(answerLine("2 cups make 12 cookies. How many for 5 cups?", "wait 5 cups would be 30 not 15"), "5 cups would be 30 not 15");
   assert.equal(answerLine("What is 12 / 2?", "is it 6?"), "12 / 2 = 6");
@@ -344,4 +346,16 @@ test("a caption that states a result they have not said says ? instead", () => {
 
 test("a page headed by its topic has no problem to be a step of", () => {
   assert.equal(stepOfPage("Ratios and rates", "5 * 6", "30"), false);
+});
+
+test("the same answer checked twice goes up once", () => {
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  noteBoardWrite(p, "add_callout", { text: "What is 12 / 2?" });
+  autoCheck(p, "is it 6?", 0);
+  assert.ok(p.pendingMarks);
+  p.pendingMarks = null;
+  const r = runTutorTool("check_answer", { problem: "12 / 2", student_answer: "6", skill: "division" }, p, 1000);
+  assert.ok(r && r.success && /already on the board/.test(r.message ?? ""), r && r.success ? r.message : "");
+  assert.equal(p.pendingMarks, null);
 });

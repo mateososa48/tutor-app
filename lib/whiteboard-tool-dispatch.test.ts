@@ -176,3 +176,13 @@ test("a new heading seconds after a drawing keeps the drawing and opens a sectio
   assert.equal(old.log.at(-1), "title:Next problem", "old work is cleared as before");
   assert.match(msg(cleared), /Cleared the board/);
 });
+
+test("a new problem kept beside fresh work is headed by the problem when its title is already up", () => {
+  const f = fakeWritingBoard();
+  f.items.push({ id: "b1", tool: "start_new_problem", label: "Comparing Decimals", owner: "tutor", createdAt: Date.now() - 60_000, shapeIds: [], eqItemIds: [] });
+  f.items.push({ id: "b2", tool: "draw_grid", label: "0.35", owner: "tutor", createdAt: Date.now() - 5_000, shapeIds: [], eqItemIds: [] });
+  const r = dispatchWhiteboardTool("start_new_problem", { title: "Comparing Decimals", problem: "0.6 vs 0.45", ask: "Which is bigger?" }, { whiteboard: f.board });
+  assert.equal(r.success, true, msg(r));
+  assert.match(msg(r), /"0.6 vs 0.45" opened as a section/);
+  assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["section", "callout"], "the problem is the heading, not a second line");
+});

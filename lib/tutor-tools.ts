@@ -259,6 +259,14 @@ export function answerLine(problem: string, answer: string): string {
   const tidy = (c: string) => c.replace(LINE_FILLER, " ").replace(/\s+/g, " ").replace(/^[\s,;:.]+|[\s,;:.]+$/g, "").trim();
   const clauses = said.split(/\s*[,;]\s*|\s+so\s+/i).map(tidy).filter((c) => /\d/.test(c));
   const core = (clauses.at(-1) ?? tidy(said)).slice(0, 60);
+  // A comparison carries both numbers (Sept 26 2026: "0.8 is bigger" went up
+  // under 0.35 vs 0.5 and read as a wrong answer to it).
+  const pair = /(-?\d[\d.]*(?:\/\d+)?)\s*(?:vs\.?|versus|or|,|and)\s*(-?\d[\d.]*(?:\/\d+)?)/i.exec(spokenToDigits(problem.replace(/\\text\{\s*vs\s*\}/g, " vs ")));
+  const picked = /^(-?\d[\d.]*(?:\/\d+)?)\s+(?:is|'s)\s+(?:the\s+)?(bigger|greater|larger|more|higher|smaller|less|lower)\b(?:\s+than\s+(-?\d[\d.]*(?:\/\d+)?))?/i.exec(core);
+  if (picked) {
+    const other = picked[3] ?? (pair ? (pair[1] === picked[1] ? pair[2] : pair[2] === picked[1] ? pair[1] : null) : null);
+    if (other) return `${picked[1]} ${/^(smaller|less|lower)$/i.test(picked[2]) ? "<" : ">"} ${other}`;
+  }
   if (/^-?\d[\d.,/]*%?$/.test(core)) {
     // A bare value: say what it answers when that is short math.
     const call = /(?<![a-z\\])([a-z]\s*\(\s*-?\d+(?:\.\d+)?\s*\))/i.exec(problem);
@@ -275,6 +283,10 @@ function planMarks(policy: TutorPolicy, problem: string, answer: string, verdict
   const line = answerLine(problem, answer);
   if (!line) return "";
   const ring = verdict === "correct" && !step;
+  // The same answer checked twice (the auto-check, then the model): up once.
+  const key = `${line}|${ring}`;
+  if (policy.markedLines.includes(key)) return `"${line}" is already on the board in their hand${ring ? " and ringed" : ""}.`;
+  policy.markedLines.push(key);
   const strike = ring && policy.lastWrongLine && policy.lastWrongLine !== line ? policy.lastWrongLine : null;
   policy.pendingMarks = { line, ring, strike };
   if (ring) policy.lastWrongLine = null;

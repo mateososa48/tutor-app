@@ -181,11 +181,16 @@ export function dispatchWhiteboardTool(
     const now = Date.now();
     const fresh = ctx.whiteboard.itemsSnapshot().filter((it) => it.owner === "tutor" && !isHeadingItem(it) && now - it.createdAt < FRESH_WORK_MS);
     if (fresh.length > 0 && typeof args.title === "string" && args.title.trim()) {
-      const section = dispatchWhiteboardTool("start_board_section", { title: args.title }, ctx);
+      const problemText = typeof args.problem === "string" ? args.problem.trim() : "";
+      // The same title again ("Comparing Decimals" three times across one board,
+      // Sept 26 2026): the problem itself heads the new section when it is short.
+      const sameTitle = ctx.whiteboard.itemsSnapshot().some((it) => isHeadingItem(it) && it.label.trim().toLowerCase() === args.title!.toString().trim().toLowerCase());
+      const shortProblem = problemText && problemText.length <= 32 && !/\\[a-z]/i.test(problemText) && !problemText.includes("|") ? problemText : null;
+      const title = sameTitle ? shortProblem ?? "Next one" : String(args.title);
+      const section = dispatchWhiteboardTool("start_board_section", { title }, ctx);
       if (section.success) {
-        const rest: string[] = [`Kept the board: what you drew ${Math.round((now - Math.max(...fresh.map((it) => it.createdAt))) / 1000)} s ago is still up, and "${args.title}" opened as a section beside it.`];
-        const problemText = typeof args.problem === "string" ? args.problem.trim() : "";
-        if (problemText && /[\d=+\-−×÷*/^\\<>]/.test(problemText)) {
+        const rest: string[] = [`Kept the board: what you drew ${Math.round((now - Math.max(...fresh.map((it) => it.createdAt))) / 1000)} s ago is still up, and "${title}" opened as a section beside it.`];
+        if (problemText && title !== problemText && /[\d=+\-−×÷*/^\\<>]/.test(problemText)) {
           for (const line of splitSteps(problemText).map((l) => l.trim()).filter(Boolean).slice(0, 6)) {
             const r = dispatchWhiteboardTool("draw_equation_step", { latex: line }, ctx);
             if (r.success) rest.push((r.message ?? "").replace(/\n\[Board:[\s\S]*$/, "").trim());
