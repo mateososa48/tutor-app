@@ -231,6 +231,8 @@ export function stepOfPage(page: string | null, problem: string, answer: string)
 const LINE_FILLER = /\b(?:oh+|um+|uh+|hmm+|so|like|wait|ok(?:ay)?|yeah|well|just|then|idk|i think|i guess|maybe|is it|it'?s|its|it is|the answer is|my bad)\b/gi;
 const answerKey = (t: string) => spokenToDigits(t.toLowerCase()).replace(LINE_FILLER, " ").replace(/[\s$,]/g, "").replace(/[?.!]+$/, "");
 
+const REPORTED = /^(.*?\d.*?)[,.;]?\s+(?:and\s+|but\s+)?i\s+(?:put|got|said|wrote|answered|did|picked)\s+(.+?)(?:\s+(?:because|cause|cuz|since)\b.*)?$/i;
+
 // "9 minus 8 is 1", "2 times 3 is 6 not 7": arithmetic the student asserts
 // is checked as itself, whatever the board asked (Sept 25 2026: 3.8 judged
 // these by ear). A chained claim ("3 + 1 is 4 over 4 which is 1") is left
@@ -266,6 +268,12 @@ export function answerLine(problem: string, answer: string): string {
   if (picked) {
     const other = picked[3] ?? (pair ? (pair[1] === picked[1] ? pair[2] : pair[2] === picked[1] ? pair[1] : null) : null);
     if (other) return `${picked[1]} ${/^(smaller|less|lower)$/i.test(picked[2]) ? "<" : ">"} ${other}`;
+  }
+  // A bare pick in a which-is-bigger question ("i put 0.35") is the comparison it claims.
+  const asksWhich = /\b(bigger|greater|larger|more|higher|smaller|less|lower|fewer)\b/i.exec(problem);
+  if (pair && asksWhich && /^-?\d[\d.]*(?:\/\d+)?$/.test(core) && (core === pair[1] || core === pair[2])) {
+    const other = core === pair[1] ? pair[2] : pair[1];
+    return `${core} ${/^(smaller|less|lower|fewer)$/i.test(asksWhich[1]) ? "<" : ">"} ${other}`;
   }
   if (/^-?\d[\d.,/]*%?$/.test(core)) {
     // A bare value: say what it answers when that is short math.
@@ -381,6 +389,11 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
   const candidates: Array<{ problem: string; answer: string }> = [];
   const own = ownClaim(t);
   if (own) candidates.push(own);
+  // "which is bigger, 0.35 or 0.5, and i put 0.35": the problem and their
+  // answer in one line (Sept 26 2026: no case asked how the student got an
+  // answer they reported, because nothing checked it).
+  const reported = REPORTED.exec(t);
+  if (reported && /\d/.test(reported[1]) && /\d|\b(?:same|equal)\b/i.test(reported[2])) candidates.push({ problem: reported[1].replace(/^(?:it (?:was|asked|said)|the (?:problem|question) (?:was|said|asked)|like)\s+/i, "").trim(), answer: reported[2] });
   for (const c of [policy.lastAsked, policy.lastSpokenQuestion, page]) if (c && c.trim()) candidates.push({ problem: c, answer: t });
   for (const { problem, answer } of candidates) {
     const check = checkAnswer(problem, answer);

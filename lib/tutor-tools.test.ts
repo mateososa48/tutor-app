@@ -359,3 +359,14 @@ test("the same answer checked twice goes up once", () => {
   assert.ok(r && r.success && /already on the board/.test(r.message ?? ""), r && r.success ? r.message : "");
   assert.equal(p.pendingMarks, null);
 });
+
+test("a reported answer is checked against the problem in the same line", () => {
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  const n = autoCheck(p, "it was which is bigger, 0.35 or 0.5, and i put 0.35", 0);
+  assert.ok(n && /→ incorrect/.test(n) && /Ask how they got it/.test(n), n ?? "");
+  assert.deepEqual(p.pendingMarks, { line: "0.35 > 0.5", ring: false, strike: null });
+  const q = createPolicy(0);
+  const m = autoCheck(q, "2 cups make 12 cookies how many for 5 cups and i got 15 cuz you add 3", 0);
+  assert.equal(m, null, "a word problem the checker cannot read is left alone");
+});

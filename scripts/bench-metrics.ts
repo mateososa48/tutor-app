@@ -141,7 +141,9 @@ const OPENING_ALLOWED = new Set(["start_new_problem", "look_at_worksheet", "add_
 // Markup, a tool call read out, or the tutor narrating itself in the third
 // person (Sept 26 2026: "The assistant gave the student a new problem…" was in
 // the saved audio, 11.9 s of it, not only in the transcript).
-const LEAK = /\$[^$\n]{1,80}\$|<!--|<no speech|<\/?[a-z]+>|\b[a-z_]+\((?:[a-z_]+=|")|-{3,}|\bthe (?:assistant|tutor|ai|model|student|user) (?:gave|asked|said|is|was|has|had|wants|will|should|needs|just|then|provided|explained|responded|answered)\b|\b(?:response|output|message):\s*[\[{a-z]|\b[a-z]+_[a-z_]+\{|\*[A-Z][a-z]+(?:\/[A-Z][a-z]+)?\*:|\blet'?s execute\b/i;
+// Dollar-sign LaTeX is not spoken (the saved audio, Sept 26 2026) and the
+// captions strip it, so it is not a leak; what is heard is.
+const LEAK = /<!--|<no speech|<\/?[a-z]+>|\b[a-z_]+\((?:[a-z_]+=|")|-{3,}|\bthe (?:assistant|tutor|ai|model|student|user) (?:gave|asked|said|is|was|has|had|wants|will|should|needs|just|then|provided|explained|responded|answered)\b|\b(?:response|output|message):\s*[\[{a-z]|\b[a-z]+_[a-z_]+\{|\*[A-Z][a-z]+(?:\/[A-Z][a-z]+)?\*:|\blet'?s execute\b/i;
 // A sentence of six or more words said twice in one turn (Sept 25 2026, 3.8:
 // "split that into two equations… And now, split that into two equations…").
 function repeatsItself(text: string): boolean {
