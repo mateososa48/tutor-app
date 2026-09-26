@@ -134,7 +134,10 @@ const ASKS_WHAT_THEY_KNOW = /\b(already know|what do you know|what you know|what
 const OPENING_ALLOWED = new Set(["start_new_problem", "look_at_worksheet", "add_callout", "look_at_board", "remember_about_student"]);
 // What a kid would hear that is not speech: LaTeX between dollars, markup, a
 // stage direction, or a tool call read aloud ("set_plan(steps=…").
-const LEAK = /\$[^$\n]{1,80}\$|<!--|<no speech|<\/?[a-z]+>|\b[a-z_]+\((?:[a-z_]+=|")|-{3,}/i;
+// Markup, a tool call read out, or the tutor narrating itself in the third
+// person (Sept 26 2026: "The assistant gave the student a new problem…" was in
+// the saved audio, 11.9 s of it, not only in the transcript).
+const LEAK = /\$[^$\n]{1,80}\$|<!--|<no speech|<\/?[a-z]+>|\b[a-z_]+\((?:[a-z_]+=|")|-{3,}|\bthe (?:assistant|tutor|ai|model|student|user) (?:gave|asked|said|is|was|has|had|wants|will|should|needs|just|then|provided|explained|responded|answered)\b/i;
 // A sentence of six or more words said twice in one turn (Sept 25 2026, 3.8:
 // "split that into two equations… And now, split that into two equations…").
 function repeatsItself(text: string): boolean {

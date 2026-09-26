@@ -725,6 +725,9 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     if (live.closed) { console.log(`  (session closed: ${live.closed})`); break; }
     if (i === opts.turns - 1) break;
     studentText = await studentLine(opts.studentModel, c, turns, tutorView);
+    // A kid who has said goodbye twice is gone (Maya said "bye" three times into 14 turns).
+    const bye = (t: string) => /^\s*(?:ok(?:ay)?\s+)?(?:bye|cya|see ya|thanks?,? bye|ok thanks|thank you|thx)\b/i.test(t);
+    if (bye(studentText) && turns.length && bye(turns[turns.length - 1].student)) { console.log(`  (${c.name} has left)`); break; }
     runtime.noteStudentUtterance(studentText);
     // The app's typed path: a checked answer goes in as a note before the line.
     pendingAuto = runtime.takeAutoCheckNote();
