@@ -297,6 +297,8 @@ class LiveTutor {
   gate: { onNewInput(generating?: boolean): void; onBoundary(): void; onTurnComplete(hadAudio: boolean, text: string, givesTask: (t: string) => boolean): void; onCheckAfterReply?(text: string, verdict: string, givesTask: (t: string) => boolean): void; readonly muted: boolean } | null = null;
   /** The app's note on a check made after the reply (CHECK_AFTER_REPLY_NOTE), when the revision has one. */
   checkAfterReplyNote = "";
+  /** The app's note on a result that wakes an unfinished reply (finishReplyNote), when the revision has one. */
+  finishReplyNote: ((spoken: boolean, gaveTask: boolean, scheduling: string | undefined) => string | null) | null = null;
   private lastModelAudioAt = 0;
   givesTask: (t: string) => boolean = () => false;
   droppedChunks = 0;
@@ -484,7 +486,13 @@ class LiveTutor {
           this.pendingTools--;
           if (VERBOSE) console.log(`      ${ms}ms ${c.name}(${JSON.stringify(c.args ?? {}).slice(0, 100)}) ${result.success ? "→" : "✗"} ${rec.result.split("\n")[0].slice(0, 120)}`);
           // Before the first sound an async result waits for it, as in the app (ResponseHold).
-          if (!this.hold?.offer(id, c.name, result, this.turn.audioChunks > 0)) this.sendResponse(id, c.name, result, this.scheduling(c.name, result, this.turn.audioChunks > 0, lastOfBatch, this.givesTask(this.turn.said)));
+          const spokenNow = this.turn.audioChunks > 0;
+          const gaveTask = this.givesTask(this.turn.said);
+          const sched = this.scheduling(c.name, result, spokenNow, lastOfBatch, gaveTask);
+          // As the app: a result that wakes an unfinished reply says to add only the question.
+          const finish = result.success && this.finishReplyNote ? this.finishReplyNote(spokenNow, gaveTask, sched) : null;
+          if (finish && result.success) result = { ...result, message: `${result.message ?? ""}\n${finish}` };
+          if (!this.hold?.offer(id, c.name, result, spokenNow)) this.sendResponse(id, c.name, result, sched);
           if (this.turn.audioChunks === 0) this.armUnanswered(AFTER_TOOL_MS);
         });
       }
@@ -819,6 +827,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     live.gate = new m.behavior.ReplyGate();
     live.givesTask = m.policy.givesTask;
     live.checkAfterReplyNote = (m.behavior as { CHECK_AFTER_REPLY_NOTE?: string }).CHECK_AFTER_REPLY_NOTE ?? "";
+    live.finishReplyNote = ((m.behavior as { finishReplyNote?: (s: boolean, g: boolean, x: string | undefined) => string | null }).finishReplyNote) ?? null;
   }
   const startedAt = Date.now();
   await live.open();

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BLOCKING_TOOLS, ReplyGate, ResponseHold, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior, verdictContradicts} from "./live-tool-behavior";
+import { BLOCKING_TOOLS, ReplyGate, ResponseHold, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior, verdictContradicts, finishReplyNote} from "./live-tool-behavior";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
@@ -66,6 +66,13 @@ test("a check made after the reply mutes the continuation, unless the verdict co
   assert.equal(unfinished.muted, false, "a reply that gave them nothing to do may go on");
   assert.equal(verdictContradicts("Hmm, not quite. Which is bigger?", "Verdict: correct."), true);
   assert.equal(verdictContradicts("How'd you get that?", "Verdict: incorrect."), false);
+});
+
+test("a result that wakes an unfinished reply says to add only the question", () => {
+  assert.match(finishReplyNote(true, false, "WHEN_IDLE") ?? "", /Add only the one question or task now.*don't repeat/);
+  assert.equal(finishReplyNote(true, true, "SILENT"), null);
+  assert.equal(finishReplyNote(false, false, "WHEN_IDLE"), null, "before any speech the wake is the reply itself");
+  assert.equal(finishReplyNote(true, false, "SILENT"), null, "only the batch's waking result carries it");
 });
 
 test("before the first sound, a batch of calls wakes the model once: only its last result", () => {

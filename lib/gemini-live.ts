@@ -6,7 +6,7 @@ import { marksLast, toolRole } from "./board-items";
 import { SpeechTextCleaner, hasBoundarySpace, joinTranscript } from "./live-events";
 import { formatMemory, formatTutorState } from "./tutor-policy";
 import { TutorRuntime } from "./tutor-runtime";
-import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
+import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, finishReplyNote, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
 import { givesTask } from "./tutor-policy";
 import type { CoachTurn } from "./tutor-coach";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
@@ -1048,7 +1048,10 @@ export class GeminiLiveSession {
       this.debug("tool", "tool_response_dropped_cancelled", { id, name });
       return;
     }
-    const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio, lastOfBatch, givesTask(this.replyText));
+    const replyGaveTask = givesTask(this.replyText);
+    const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio, lastOfBatch, replyGaveTask);
+    const finish = result.success ? finishReplyNote(this.turnHadAudio, replyGaveTask, scheduling) : null;
+    if (finish && result.success) result = { ...result, message: `${result.message ?? ""}\n${finish}` };
     this.debug("tool", "tool_response_sent", {
       id,
       name,

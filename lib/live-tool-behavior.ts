@@ -209,6 +209,17 @@ export function verdictContradicts(said: string, verdict: string): boolean {
   return false;
 }
 
+/**
+ * The note on a result that wakes an unfinished reply (toolScheduling with
+ * replyGaveTask false): woken with nothing said about why, 3.8 said the whole
+ * reply again ("That's correct, twenty-five minus twenty-four is one. Now, let's
+ * substitute…" twice, Sept 26 2026). Null when the result does not wake it for that.
+ */
+export function finishReplyNote(spoken: boolean, replyGaveTask: boolean, scheduling: ToolScheduling | undefined): string | null {
+  return spoken && !replyGaveTask && scheduling === "WHEN_IDLE" ? FINISH_REPLY_NOTE : null;
+}
+export const FINISH_REPLY_NOTE = "(Your reply so far gave them nothing to do. Add only the one question or task now, in a sentence; don't repeat what you said.)";
+
 /** The note a check_answer result carries when the tutor has already replied this turn. */
 export const CHECK_AFTER_REPLY_NOTE = "(You have already replied this turn: say nothing more unless this verdict changes what you told them.)";
 
