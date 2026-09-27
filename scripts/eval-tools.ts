@@ -49,10 +49,10 @@ export function runEvalTool(name: string, args: Record<string, unknown>, ctx: Ev
   return { ok: true, message: `${result.message ?? "Done"}.\n[Board: ${ctx.board.handle.getBoardSummary()}]${extra ? `\n${extra}` : ""}` };
 }
 
-export function readGeminiKey(): string {
+export function readGeminiKey(name = "GEMINI_API_KEY"): string {
   const env = fs.readFileSync(".env.local", "utf8");
-  const key = env.split("\n").find((l) => l.startsWith("GEMINI_API_KEY="))?.slice("GEMINI_API_KEY=".length).trim().replace(/^["']|["']$/g, "");
-  if (!key) throw new Error("GEMINI_API_KEY missing in .env.local");
+  const key = env.split("\n").find((l) => l.startsWith(`${name}=`))?.slice(name.length + 1).trim().replace(/^["']|["']$/g, "");
+  if (!key) throw new Error(`${name} missing in .env.local`);
   return key;
 }
 

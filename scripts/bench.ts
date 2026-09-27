@@ -37,6 +37,8 @@
 //                      documented channel) instead of clientContent user turns;
 //                      a note rides in front of the line it goes with
 //   --promptadd "…"    a line appended to the system instruction (A/B a rule)
+//   --textkey NAME     the student model's key from .env.local (e.g. GEMINI_API_KEY_2);
+//                      the Live tutor stays on GEMINI_API_KEY
 //   --kidvoice name    the macOS voice for --voice (default Samantha; --kidrate 180 words a minute)
 //   --coach model      a coach (lib/tutor-coach) reads the lesson after each tutor
 //                      turn and adds one order to the note (e.g. gemini-3.5-flash)
@@ -566,7 +568,9 @@ class LiveTutor {
 // ── Text models (the student, and any judge that is not Gemini) ────────────
 
 export type ModelCall = { model: string; system: string; text: string; images?: Array<{ mimeType: string; data: string }>; json?: boolean; temperature?: number; maxTokens?: number };
-const ai = new GoogleGenAI({ apiKey: KEY });
+// --textkey NAME: the student (and a Gemini judge) on another key from .env.local,
+// so a second account's free text quota can carry a run; Live stays on KEY.
+const ai = new GoogleGenAI({ apiKey: arg("textkey", "") ? readGeminiKey(arg("textkey", "")) : KEY });
 export const modelUsage = { calls: 0, prompt: 0, output: 0 };
 
 export async function callModel(c: ModelCall): Promise<string> {
