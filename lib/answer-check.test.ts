@@ -333,3 +333,8 @@ test("kid decimals: point thirty five", () => {
   assert.equal(spokenToDigits("point three five"), "0.35");
   assert.equal(checkAnswer("Which is bigger, 0.35 or 0.5?", "point five").verdict, "correct");
 });
+
+test("a question with words before its math", () => {
+  assert.equal(checkAnswer("Now, for the second year, what's fifteen percent of seventeen thousand?", "2550").verdict, "correct");
+  assert.equal(checkAnswer("For the second year, what's 15% of 17000?", "2500").verdict, "incorrect");
+});

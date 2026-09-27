@@ -709,13 +709,26 @@ const QUESTION_LEAD = /^\s*(?:what(?:'s|\s+is)|whats|find|calculate|compute|work
 const BARE_FUNCTION_CALL = /(?<![\\a-z])([a-z])\s*\(\s*-?\d+(?:\.\d+)?\s*\)/i;
 
 function readProblem(problem: string): string | AnswerCheck {
+  // "Now, for the second year, what's 15% of 17000?": the question is what
+  // follows its last "what's" (Sept 26 2026: Ethan's right 2550 went unchecked).
+  // Only for a question with words in front: one that starts with its lead
+  // keeps it, so QUESTION_LEAD below still refuses "Find 2x + 3".
+  let cut = false;
+  if (!QUESTION_LEAD.test(problem)) {
+    const spoken = spokenToDigits(problem);
+    const lead = /^.*\b(?:what(?:'s| is)|how much is|find|calculate|compute|work out)\s+(?=.*\d)/i.exec(spoken);
+    if (lead && lead[0].length < spoken.length) {
+      problem = spoken.slice(lead[0].length);
+      cut = true;
+    }
+  }
   const substituted = substituteFunctionEval(problem);
   if (!substituted && !problem.includes("=")) {
     const call = BARE_FUNCTION_CALL.exec(problem);
     if (call) return cannot(`"${call[0].trim()}" needs the rule ${call[1]} follows: put it in the problem (problem="${call[0].trim()} where ${call[1]}(x) = …").`);
   }
   let s = stripUnitWords(substituted ?? problem);
-  const led = QUESTION_LEAD.test(s);
+  const led = QUESTION_LEAD.test(s) || cut;
   if (led) s = s.replace(QUESTION_LEAD, "");
   // With an "=" a "?" is a box ("3/4 = 6/?"); without one it is a question mark.
   if (!s.includes("=")) s = s.replace(/\s*\?+\s*$/, "");
