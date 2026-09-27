@@ -486,3 +486,10 @@ test("a number named with 'is' is not arithmetic to write", () => {
   assert.deepEqual(spokenBoardMoves(p, "Okay, number six is negative twelve divided by four."), []);
   assert.deepEqual(spokenBoardMoves(p, "Right, thirteen minus five is eight."), [{ name: "draw_equation_step", args: { latex: "13 - 5 = 8" } }]);
 });
+
+test("spoken arithmetic goes up only when it is true", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Decimals", problem: "0.8 vs 0.75" });
+  assert.deepEqual(spokenBoardMoves(p, "Eight tenths is eighty hundredths."), []);
+  assert.deepEqual(spokenBoardMoves(p, "So three times six is eighteen."), [{ name: "draw_equation_step", args: { latex: "3 \\times 6 = 18" } }]);
+});

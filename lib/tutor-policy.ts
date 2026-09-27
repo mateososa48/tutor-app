@@ -15,7 +15,7 @@
 
 import { clockCue, clockLabel } from "./session-clock";
 import { isNonAnswer } from "./board-content-rules";
-import { spokenToDigits } from "./answer-check";
+import { checkAnswer, spokenToDigits } from "./answer-check";
 
 /** A checked answer as the board shows it: the line in their hand, a ring when right and final, and the earlier wrong line to strike. */
 export type VerdictMarks = { line: string; ring: boolean; strike: string | null };
@@ -1043,8 +1043,11 @@ export function spokenBoardMoves(p: TutorPolicy, text: string): BoardMove[] {
     const nums = numbersIn(plain);
     // Only real arithmetic: "number six is negative twelve divided by four"
     // matched "six is negative twelve" and went up as "6 = -12" (Sept 26 2026).
-    const lhs = plain.split("=")[0];
-    if (nums.length >= 2 && /[+×*/^]|\\times|\\div|\d\s*-\s*\d|sqrt/.test(lhs) && !onBoard(nums)) {
+    const [lhs, rhs] = plain.split("=");
+    // And only a true one: "eight tenths is eighty hundredths" read as
+    // "8/10 = 80" (Sept 26 2026); the checker has to agree with it.
+    const holds = Boolean(rhs?.trim()) && checkAnswer(lhs, rhs.trim()).verdict === "correct";
+    if (nums.length >= 2 && /[+×*/^]|\\times|\\div|\d\s*-\s*\d|sqrt/.test(lhs) && holds && !onBoard(nums)) {
       moves.push({ name: "draw_equation_step", args: { latex: plain } });
       for (const n of nums) if (!p.boardNumbers.includes(n)) p.boardNumbers.push(n);
       p.unwrittenMath = null;
