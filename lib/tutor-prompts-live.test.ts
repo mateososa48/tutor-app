@@ -17,7 +17,7 @@ test("the Live prompt is a third of the old one and names only tools a Live sess
   for (const must of ["# Who you are", "# How you talk", "# How a turn goes", "# The lesson", "# What draws what", "# Boundaries", "# This student", "# Three turns", "# Now you're live"]) assert.ok(text.includes(must), must);
   // 3.8 ends a generation at a drawing call made before any speech, so the
   // voice comes first and only the blocking check may precede it (Sept 26 2026).
-  assert.match(text, /Your voice comes first/);
+  assert.match(text, /Then your voice: say your whole reply/);
   assert.match(text, /say your whole reply, ending with the one thing they do next, then draw and mark/);
   assert.match(text, /When they gave an answer, call check_answer first, before any words/);
   assert.match(text, /Never check after you've spoken/);
