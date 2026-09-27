@@ -305,6 +305,8 @@ export class SpeechTextCleaner {
       rest = rest.slice(start + 4);
       this.inComment = true;
     }
-    return out.replace(/\$/g, "").replace(/-{3,}/g, " ").replace(/\*\*/g, "");
+    // "•" arrived as a whole tutor turn in a spoken session (Sept 26 2026):
+    // list bullets are markup, never words.
+    return out.replace(/\$/g, "").replace(/-{3,}/g, " ").replace(/\*\*/g, "").replace(/[•◦▪]/g, "");
   }
 }

@@ -169,3 +169,9 @@ test("the tutor's words lose the markup 3.8 transcribes, across fragments", () =
   assert.equal(c.clean(" for the student -->"), "");
   assert.equal(c.clean(" Next one."), " Next one.");
 });
+
+test("speech cleaner drops list bullets, which 3.8 sometimes sends as a whole turn", () => {
+  const c = new SpeechTextCleaner();
+  assert.equal(c.clean("•").trim(), "");
+  assert.equal(c.clean("• Add the tops"), " Add the tops");
+});
