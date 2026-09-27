@@ -299,13 +299,17 @@ function planMarks(policy: TutorPolicy, problem: string, answer: string, verdict
   if (policy.markedLines.includes(key)) return `"${line}" is already on the board in their hand${ring ? " and ringed" : ""}.`;
   policy.markedLines.push(key);
   // Their wrong line is struck by a right answer to the same question (the
-  // same numbers in it), not by a right answer to the next step.
+  // same numbers in it), or by any finished right answer after it: they have
+  // moved past it. Not by a right answer to a step, which may be the fix under
+  // way. (Sept 27 2026: a final right answer to the next problem used to clear
+  // the wrong line without striking it, so Maya's "0.35 > 0.5" stayed up all
+  // session after she said "the blue one is bigger" and got 0.8 > 0.75.)
   const sameQuestion = (a: string | null, b: string) => {
     if (!a) return false;
     const na = numbersIn(a).sort().join(",");
     return Boolean(na) && na === numbersIn(b).sort().join(",");
   };
-  const strike = ring && policy.lastWrongLine && policy.lastWrongLine !== line && sameQuestion(policy.lastWrongProblem, problem) ? policy.lastWrongLine : null;
+  const strike = ring && policy.lastWrongLine && policy.lastWrongLine !== line && (sameQuestion(policy.lastWrongProblem, problem) || !step) ? policy.lastWrongLine : null;
   policy.pendingMarks = { line, ring, strike };
   if (strike || (ring && !step)) {
     policy.lastWrongLine = null;

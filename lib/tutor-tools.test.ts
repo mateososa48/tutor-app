@@ -296,6 +296,20 @@ test("with code-owned marks the verdict plans the board move and says it is done
   assert.equal(p.pendingMarks, null, "not written twice");
 });
 
+test("a finished right answer to the next problem strikes the wrong line left from the last one", () => {
+  // Maya: "0.35 > 0.5" was wrong; her fix was "the blue one", which nothing can
+  // check; her next checked answer, 0.8 > 0.75, is right. Her old line is struck.
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  const wrong = runTutorTool("check_answer", { problem: "which is bigger, 0.35 or 0.5", student_answer: "0.35", skill: "comparing decimals" }, p, 0);
+  assert.ok(wrong && wrong.success, "checked");
+  assert.deepEqual(p.pendingMarks, { line: "0.35 > 0.5", ring: false, strike: null });
+  p.pendingMarks = null;
+  const right = runTutorTool("check_answer", { problem: "which is bigger, 0.8 or 0.75", student_answer: "0.8", skill: "comparing decimals" }, p, 60_000);
+  assert.ok(right && right.success && /their earlier "0\.35 > 0\.5" is crossed out/.test(right.message ?? ""), right && right.success ? right.message : "");
+  assert.deepEqual(p.pendingMarks, { line: "0.8 > 0.75", ring: true, strike: "0.35 > 0.5" });
+});
+
 test("the marks run through the board: line, then ring by id, then the strike by the wrong line's id", () => {
   const calls: string[] = [];
   let n = 0;
