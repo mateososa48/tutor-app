@@ -515,7 +515,7 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
       // They already said their idea (Sept 25 2026: Marcus was asked "what do
       // you already know" right after saying it): ask about that instead.
       if (p.openingReason) return { step: "open", next: `they already said their idea ("${p.openingReason}"): say it back in their words and ask where it came from, no "what do you know"; then one small show-me problem on it` };
-      if (p.openingQuestion) return { step: "open", next: `they came with a question ("${p.openingQuestion}"): no "a sheet or the idea?"; ask what they think it means now, then answer it with the board, one small example they work` };
+      if (p.openingQuestion) return { step: "open", next: `they came with a question ("${p.openingQuestion}"): no "a sheet or the idea?"; ask what they think it means now, then answer exactly that question on the board (if it is "why X and not Y", show where Y breaks), then one small example they work` };
       return { step: "open", next: "no teaching yet: ask what exactly they want (a sheet, or the whole idea), then what they already know and where it stops making sense; one question a turn; then the plan in one breath and one small show-me problem" };
     }
     return null;
