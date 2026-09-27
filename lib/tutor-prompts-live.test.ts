@@ -18,7 +18,8 @@ test("the Live prompt is a third of the old one and names only tools a Live sess
   // 3.8 ends a generation at a drawing call made before any speech, so the
   // voice comes first and only the blocking check may precede it (Sept 26 2026).
   assert.match(text, /Your voice comes first/);
-  assert.match(text, /The one call that may come before your first words is check_answer/);
+  assert.match(text, /say your whole reply, ending with the one thing they do next, then draw and mark/);
+  assert.match(text, /The one call that may come before your words is check_answer/);
   assert.doesNotMatch(text, /name the move to yourself/, "no self-talk: 3.8 speaks what it plans");
   assert.match(text, /A bare number is an answer: reply to it/);
   assert.match(text, /never a tool's name or arguments, never LaTeX/);
@@ -29,6 +30,9 @@ test("the Live prompt is a third of the old one and names only tools a Live sess
   for (const line of text.split("\n").filter((l) => l.startsWith("Return: "))) {
     const first = line.slice("Return: ".length).split(" · ")[0];
     assert.ok(first.startsWith('"') || first.startsWith("check_answer("), `example opens with ${first.slice(0, 30)}`);
+    // …and says the whole reply in one piece: a call mid-reply ends 3.8's generation.
+    const spoken = line.slice("Return: ".length).split(" · ").filter((p) => p.startsWith('"'));
+    assert.ok(spoken.length <= 1, `example splits its reply around a call: ${line.slice(0, 60)}`);
   }
   assert.match(text, /If they've already said their idea/);
   assert.match(text, /named Sofia/);

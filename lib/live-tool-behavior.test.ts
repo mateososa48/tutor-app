@@ -60,6 +60,10 @@ test("before the first sound, a batch of calls wakes the model once: only its la
   assert.equal(toolScheduling(m, "point_at", done, true, false, true), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "point_at", done, true, true, false), "SILENT", "after the first sound nothing wakes it");
   assert.equal(toolScheduling(m, "draw_fraction", { success: false }, true, true, false), "WHEN_IDLE", "a refusal after speech still gets a (muted) chance to fix the drawing");
+  // Mid-reply ("Let's test that." then a drawing): the reply has given them nothing to do yet, so the result wakes it to finish.
+  assert.equal(toolScheduling(m, "draw_fraction", done, true, true, true, false), "WHEN_IDLE");
+  assert.equal(toolScheduling(m, "draw_fraction", done, true, true, false, false), "SILENT", "one wake per batch");
+  assert.equal(toolScheduling(m, "draw_fraction", done, true, true, true, true), "SILENT", "a finished reply is not woken");
 });
 
 test("async tools are the default; ?tools=sync turns them off", () => {

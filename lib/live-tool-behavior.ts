@@ -47,7 +47,7 @@ export type ToolScheduling = "SILENT" | "WHEN_IDLE";
  * re-triggers it the moment it is idle; once it is talking, a result that
  * worked is filed silently.
  */
-export function toolScheduling(model: string, name: string, result: { success: boolean; message?: string }, asyncTools = false, spoken = true, lastOfBatch = true): ToolScheduling | undefined {
+export function toolScheduling(model: string, name: string, result: { success: boolean; message?: string }, asyncTools = false, spoken = true, lastOfBatch = true, replyGaveTask = true): ToolScheduling | undefined {
   if (!asyncTools || liveToolMode(model) !== "scheduled" || BLOCKING_TOOLS.has(name)) return undefined;
   // Before the first sound, one wake per batch of calls: every WHEN_IDLE starts
   // a new generation, and a turn that opened with three calls was woken three
@@ -57,6 +57,11 @@ export function toolScheduling(model: string, name: string, result: { success: b
   if (!spoken) return lastOfBatch ? "WHEN_IDLE" : "SILENT";
   if (!result.success) return "WHEN_IDLE";
   if (/\bCareful:/.test(result.message ?? "")) return "WHEN_IDLE";
+  // A call made mid-reply ends 3.8's generation, and a silent result never
+  // resumes it: "Let's test that." + a drawing, then nothing (Sept 26 2026,
+  // the first speech-first candidate). Until the reply has given them
+  // something to do, the batch's last result wakes it to finish.
+  if (!replyGaveTask) return lastOfBatch ? "WHEN_IDLE" : "SILENT";
   // Once it has spoken, a changed [Tutor state] is filed too: it is read on
   // the next turn. WHEN_IDLE made it speak a second time after its reply
   // (Sept 26 2026: "…sheet or the idea? Where do you usually get stuck…?",

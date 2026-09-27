@@ -1040,7 +1040,7 @@ export class GeminiLiveSession {
       this.debug("tool", "tool_response_dropped_cancelled", { id, name });
       return;
     }
-    const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio, lastOfBatch);
+    const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio, lastOfBatch, givesTask(this.replyText));
     this.debug("tool", "tool_response_sent", {
       id,
       name,
