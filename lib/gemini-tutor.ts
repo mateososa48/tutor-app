@@ -218,9 +218,9 @@ export class GeminiTutorSession {
     this.session = session;
 
     if (opts.micStream) {
-      const capture = new AudioCapture((base64) => {
+      const capture = new AudioCapture((base64, rate) => {
         // Muted: the same length of a quiet room, never nothing (quietFrame).
-        session.sendAudio(this.muted ? quietFrame(Math.floor((base64.length * 3) / 8)) : base64);
+        session.sendAudio(this.muted ? quietFrame(Math.floor((base64.length * 3) / 8)) : base64, rate);
       }, 16000);
       this.capture = capture;
       await capture.start(opts.micStream);

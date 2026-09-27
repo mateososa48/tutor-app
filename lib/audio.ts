@@ -42,16 +42,17 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-// Captures mic audio and calls onChunk with base64 PCM at the requested sample rate
+// Captures mic audio and calls onChunk with base64 PCM and the rate it ran at
+// (the requested one unless the browser rounded it)
 export class AudioCapture {
   private audioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;
   // ScriptProcessorNode is deprecated but works for prototypes across all browsers
   private processor: ScriptProcessorNode | null = null;
-  private onChunk: (base64: string) => void;
+  private onChunk: (base64: string, rate: number) => void;
   private sampleRate: number;
 
-  constructor(onChunk: (base64: string) => void, sampleRate = 16000) {
+  constructor(onChunk: (base64: string, rate: number) => void, sampleRate = 16000) {
     this.onChunk = onChunk;
     this.sampleRate = sampleRate;
   }
@@ -69,13 +70,17 @@ export class AudioCapture {
     // Browsers may round to the nearest supported rate.
     this.audioContext = new AudioContext({ sampleRate: this.sampleRate });
     const source = this.audioContext.createMediaStreamSource(this.stream);
-    this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+    // 512 samples is 32 ms at 16 kHz: Google's guidance is 20-40 ms chunks, and
+    // 4096 (256 ms) held the end of every sentence back by up to a quarter second.
+    this.processor = this.audioContext.createScriptProcessor(512, 1, 1);
+    // What the browser actually gave us, which labels every chunk.
+    const rate = this.audioContext.sampleRate;
 
     this.processor.onaudioprocess = (e) => {
       const float32 = e.inputBuffer.getChannelData(0);
       const pcm = float32ToPCM16(float32);
       const base64 = arrayBufferToBase64(pcm.buffer as ArrayBuffer);
-      this.onChunk(base64);
+      this.onChunk(base64, rate);
     };
 
     source.connect(this.processor);

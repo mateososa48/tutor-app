@@ -145,6 +145,16 @@ export class GeminiLiveSession {
   /** Async board tools on 3.8 (`?tools=async`, lib/live-tool-behavior.ts). */
   private readonly asyncTools: boolean;
   private tutorTurnText = "";
+  /**
+   * Everything the tutor has said since the student's last line, for the reply
+   * gate at turnComplete. Not tutorTurnText: that one is cleared by the
+   * finish-check timer 1.6 s after the last transcript fragment, and the
+   * transcript runs well ahead of the audio, so by turnComplete it was always
+   * empty and the gate never closed in the app (found Sept 26 2026 in the
+   * first spoken end-to-end session: "…which bar should be longer?" was
+   * followed by an audible second reply asking it again).
+   */
+  private replyText = "";
   // What the student said since the tutor last spoke. Transcripts arrive in
   // fragments, so signals (frustrated, bored, unsure…) are read once the tutor answers.
   private studentUtterance = "";
@@ -181,6 +191,9 @@ export class GeminiLiveSession {
   // 3.8 sends turnComplete while it is still reasoning, and the sound
   // follows within a second or two; a silent turnComplete waits this long.
   private static readonly SILENT_TURN_MS = 2_500;
+  // A student fragment this soon after the last one, once the tutor has begun
+  // answering, belongs to the line being answered.
+  private static readonly LATE_FRAGMENT_MS = 2_000;
   private turnHadAudio = false;
   /** The note for the tutor's next turn (TutorRuntime.turnNote), sent before the student's next line. */
   private pendingTurnNote: string | null = null;
@@ -192,6 +205,13 @@ export class GeminiLiveSession {
   /** When the model last sent audio, played or muted: is a generation still arriving? */
   private lastModelAudioAt = 0;
   private awaitingReply = false;
+  /** Setup acknowledged on the current socket: nothing but setup goes out before (Google's handshake rule). */
+  private ready = false;
+  /** Tool calls queued or running: a silent turnComplete with one still out is not a silence. */
+  private pendingTools = 0;
+  /** The last student transcript fragment, and whether the server cut the tutor off since it spoke. */
+  private lastStudentFragmentAt = 0;
+  private interruptedSinceAudio = false;
   private nudgesThisTurn = 0;
   private lastInputKind: "text" | "voice" = "voice";
   private usageSamples = 0;
@@ -232,6 +252,8 @@ export class GeminiLiveSession {
     this.inputSeq += 1;
     this.lastInputKind = kind;
     this.turnHadAudio = false;
+    this.replyText = "";
+    this.interruptedSinceAudio = false;
     this.awaitingReply = true;
     this.nudgesThisTurn = 0;
   }
@@ -313,6 +335,7 @@ export class GeminiLiveSession {
     // read that let a later message be handled first (shuffled transcripts).
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    this.ready = false;
 
     console.log(
       resumeHandle
@@ -407,10 +430,12 @@ export class GeminiLiveSession {
     });
   }
 
-  sendAudio(base64: string): boolean {
+  /** A microphone chunk, at the rate the capture really ran at. Dropped until setup is acknowledged. */
+  sendAudio(base64: string, rate = 16000): boolean {
+    if (!this.ready) return false;
     return this.send({
       realtimeInput: {
-        audio: { data: base64, mimeType: "audio/pcm;rate=16000" },
+        audio: { data: base64, mimeType: `audio/pcm;rate=${rate}` },
       },
     });
   }
@@ -546,10 +571,22 @@ export class GeminiLiveSession {
       this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: note }] }], turnComplete: false } });
     }
     this.clearTurnTimer();
-    this.turns.noteStudentVoice(Date.now());
-    // Restarted by every fragment, so it counts from when they stop talking.
-    this.newStudentInput("voice");
-    this.armUnanswered("voice");
+    const now = Date.now();
+    // A fragment that finishes the line the tutor is already answering (input
+    // transcription lags the audio, and nothing orders it against the reply):
+    // the tutor has spoken since, nobody cut it off, and the last fragment was
+    // moments ago. It is not a new line, so it neither reopens the reply gate
+    // nor arms a "you have not replied" nudge (Sept 26 2026 audit).
+    const late = this.turnHadAudio && !this.interruptedSinceAudio && now - this.lastStudentFragmentAt < GeminiLiveSession.LATE_FRAGMENT_MS;
+    this.lastStudentFragmentAt = now;
+    this.turns.noteStudentVoice(now);
+    if (late) {
+      this.debug("turn", "late_student_fragment", { text: text.slice(0, 80) });
+    } else {
+      // Restarted by every fragment, so it counts from when they stop talking.
+      this.newStudentInput("voice");
+      this.armUnanswered("voice");
+    }
     this.studentUtterance = joinTranscript(this.studentUtterance, text, this.spacedTranscripts);
     this.tutorTurnText = "";
     this.turnDrew = false;
@@ -578,6 +615,7 @@ export class GeminiLiveSession {
     if (!text.trim()) return;
     this.flushStudentUtterance();
     this.tutorTurnText = joinTranscript(this.tutorTurnText, text, this.spacedTranscripts);
+    this.replyText = joinTranscript(this.replyText, text, this.spacedTranscripts);
     this.scheduleTurnFinishCheck();
   }
 
@@ -750,6 +788,7 @@ export class GeminiLiveSession {
 
     // Setup handshake complete
     if (msg.setupComplete) {
+      this.ready = true;
       this.reconnectAttempts = 0;
       console.log(
         this.hasReportedConnected
@@ -829,6 +868,7 @@ export class GeminiLiveSession {
 
       // Model was interrupted by student speech — flush audio queue
       if (serverContent.interrupted) {
+        this.interruptedSinceAudio = true;
         this.gate.onBoundary();
         console.log("[Gemini] Interrupted");
         this.debug("turn", "interrupted");
@@ -855,16 +895,30 @@ export class GeminiLiveSession {
         this.callbacks.onTranscript(studentEntry);
       }
 
+      // Why the server ended or holds a turn (never read before Sept 26 2026:
+      // a malformed call, "need more input" and a rejected response all looked
+      // like a tutor that went quiet).
+      const reason = serverContent.turnCompleteReason ?? serverContent.waitingForInput ?? serverContent.interactionStatus;
+      if (reason !== undefined) {
+        this.debug("turn", "server_turn_state", {
+          turnCompleteReason: serverContent.turnCompleteReason,
+          waitingForInput: serverContent.waitingForInput,
+          interactionStatus: serverContent.interactionStatus,
+        });
+      }
       if (serverContent.turnComplete === true) {
-        this.debug("turn", "turn_complete", { tutorChars: this.tutorTurnText.trim().length });
+        this.debug("turn", "turn_complete", { tutorChars: this.replyText.trim().length, pendingTools: this.pendingTools, ...(serverContent.turnCompleteReason ? { reason: serverContent.turnCompleteReason } : {}) });
         if (this.turns.finish("turn_complete", now)) this.scheduleTurnFlush();
-        this.gate.onTurnComplete(this.turnHadAudio, this.tutorTurnText, givesTask);
+        this.gate.onTurnComplete(this.turnHadAudio, this.replyText, givesTask);
+        this.replyText = "";
         this.droppedAudioChunks = 0;
         this.finishTutorTurn();
         this.callbacks.onTurnComplete?.();
         // The model declared itself done without a sound: nudge soon, unless
         // the sound follows (an early turnComplete mid-reasoning).
-        if (this.awaitingReply && !this.turnHadAudio && this.nudgesThisTurn === 0) this.armUnanswered(this.lastInputKind, GeminiLiveSession.SILENT_TURN_MS);
+        // Not while a call is still out: its result re-arms the nudge itself
+        // (the bench always had this guard; the app did not, Sept 26 2026).
+        if (this.awaitingReply && !this.turnHadAudio && this.nudgesThisTurn === 0 && this.pendingTools === 0) this.armUnanswered(this.lastInputKind, GeminiLiveSession.SILENT_TURN_MS);
       }
     }
 
@@ -887,9 +941,11 @@ export class GeminiLiveSession {
         if (!id || !name) continue;
         this.turns.noteToolCall(name, now);
         this.clearUnanswered();
+        this.pendingTools += 1;
         this.toolChain = this.toolChain
           .then(() => this.runToolCall(id, name, args))
-          .catch((err) => this.debug("error", "tool_chain_failed", { id, name, message: err instanceof Error ? err.message : String(err) }));
+          .catch((err) => this.debug("error", "tool_chain_failed", { id, name, message: err instanceof Error ? err.message : String(err) }))
+          .finally(() => { this.pendingTools = Math.max(0, this.pendingTools - 1); });
       }
     }
 
