@@ -45,6 +45,11 @@ export function prepareExpression(raw: string): Prepared {
   s = s.replace(/\bof\b/g, "*");
   // Mixed numbers: "2 1/2" is two and a half.
   s = s.replace(/(^|[^\d.])(\d+)\s+(\d+)\s*\/\s*(\d+)/g, "$1($2+$3/$4)");
+  // A tight numeric fraction is one number: "1/2 / 1/6" is a half divided by a
+  // sixth (3), not ((1/2)/1)/6 (Sept 27 2026: the checker read it left to right,
+  // said 1/12, and the tutor told Ava her right 3 was wrong). Not after a power
+  // sign or before one ("3/2^2" is 3/4), and not inside a tight chain ("6/2/3").
+  s = s.replace(/(^|[^\d.)/^])(\d+(?:\.\d+)?)\/(\d+(?:\.\d+)?)(?![\d.]|\s*\^)/g, "$1($2/$3)");
   // Anything else like "3 4" is ambiguous; never guess.
   if (/\d\s+\d/.test(s)) return { ok: false, reason: "numbers separated by a space" };
   if (/[^0-9a-z.+\-*/^()\s,]/.test(s)) return { ok: false, reason: "symbols it can't read" };

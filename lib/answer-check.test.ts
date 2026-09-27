@@ -338,3 +338,14 @@ test("a question with words before its math", () => {
   assert.equal(checkAnswer("Now, for the second year, what's fifteen percent of seventeen thousand?", "2550").verdict, "correct");
   assert.equal(checkAnswer("For the second year, what's 15% of 17000?", "2500").verdict, "incorrect");
 });
+
+test("a tight fraction is one number: a half divided by a sixth is 3", () => {
+  assert.equal(checkAnswer("1/2 / 1/6", "3").verdict, "correct");
+  assert.equal(checkAnswer("1/2 ÷ 1/6", "3").verdict, "correct");
+  assert.equal(checkAnswer("1/2 / 1/6", "1/12").verdict, "incorrect");
+  assert.equal(checkAnswer("12 / 2/3", "18").verdict, "correct");
+  assert.equal(checkAnswer("3/2^2", "3/4").verdict, "correct", "a power binds first");
+  assert.equal(checkAnswer("2 1/2 + 1/2", "3").verdict, "correct", "mixed numbers still read");
+  assert.equal(checkAnswer("6/2/3", "1").verdict, "correct", "a tight chain stays left to right");
+  assert.equal(checkAnswer("12/2*5", "30").verdict, "correct");
+});
