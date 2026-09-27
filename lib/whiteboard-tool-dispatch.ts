@@ -264,7 +264,7 @@ export function dispatchWhiteboardTool(
     const labels = plan.steps.map((s) => s.label);
     const sentence = labels.length > 1 ? `First ${labels[0].toLowerCase()}, then ${labels.slice(1, -1).map((l) => l.toLowerCase()).join(", then ")}${labels.length > 2 ? ", then " : ""}${labels.at(-1)!.toLowerCase()}.` : `${labels[0]}.`;
     const said = parsed
-      ? `The plan is up. Say: "${sentence}" Then start step 1: ${labels[0]}.`
+      ? `The plan is up (${sentence.replace(/\.$/, "")}); step 1 is ${labels[0]}.`
       : `On step ${plan.current} now: ${labels[plan.current - 1] ?? ""}.`;
     return ok(`${said} ${planSummary(plan)}${notes.length ? ` (${notes.join("; ")})` : ""}`);
   }

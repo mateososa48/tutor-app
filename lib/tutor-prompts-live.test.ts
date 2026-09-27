@@ -15,11 +15,21 @@ test("the Live prompt is a third of the old one and names only tools a Live sess
   const named = new Set([...text.matchAll(/\b([a-z]+(?:_[a-z]+)+)\b/g)].map((m) => m[1]).filter((n) => /^(add|draw|start|set|point|circle|cross|erase|look|remember|check|highlight)_/.test(n)));
   for (const n of named) assert.ok(declared.has(n), `${n} is named in the Live prompt but not declared to a Live session`);
   for (const must of ["# Who you are", "# How you talk", "# How a turn goes", "# The lesson", "# What draws what", "# Boundaries", "# This student", "# Three turns", "# Now you're live"]) assert.ok(text.includes(must), must);
-  assert.match(text, /Never more than two tool calls before you speak again/);
+  // 3.8 ends a generation at a drawing call made before any speech, so the
+  // voice comes first and only the blocking check may precede it (Sept 26 2026).
+  assert.match(text, /Your voice comes first/);
+  assert.match(text, /The one call that may come before your first words is check_answer/);
+  assert.doesNotMatch(text, /name the move to yourself/, "no self-talk: 3.8 speaks what it plans");
   assert.match(text, /A bare number is an answer: reply to it/);
   assert.match(text, /never a tool's name or arguments, never LaTeX/);
   assert.match(text, /Draw the thing the math is about before you explain it/);
-  assert.match(text, /A tool result is an order/);
+  assert.match(text, /Tool results report what happened/);
+  assert.doesNotMatch(text, /A tool result is an order/);
+  // Every example turn speaks before it draws: a drawing call may follow words or check_answer, never open the turn.
+  for (const line of text.split("\n").filter((l) => l.startsWith("Return: "))) {
+    const first = line.slice("Return: ".length).split(" · ")[0];
+    assert.ok(first.startsWith('"') || first.startsWith("check_answer("), `example opens with ${first.slice(0, 30)}`);
+  }
   assert.match(text, /If they've already said their idea/);
   assert.match(text, /named Sofia/);
   assert.match(text, /mixes up numerator and denominator/);

@@ -934,7 +934,8 @@ export class GeminiLiveSession {
     const toolCall = msg.toolCall as Record<string, unknown> | undefined;
     if (toolCall) {
       const calls = marksLast((toolCall.functionCalls as Array<Record<string, unknown>> | undefined) ?? [], (c) => String(c.name ?? ""));
-      for (const call of calls) {
+      for (const [index, call] of calls.entries()) {
+        const lastOfBatch = index === calls.length - 1;
         const id = call.id as string;
         const name = call.name as string;
         const args = (call.args as Record<string, unknown>) ?? {};
@@ -943,7 +944,7 @@ export class GeminiLiveSession {
         this.clearUnanswered();
         this.pendingTools += 1;
         this.toolChain = this.toolChain
-          .then(() => this.runToolCall(id, name, args))
+          .then(() => this.runToolCall(id, name, args, lastOfBatch))
           .catch((err) => this.debug("error", "tool_chain_failed", { id, name, message: err instanceof Error ? err.message : String(err) }))
           .finally(() => { this.pendingTools = Math.max(0, this.pendingTools - 1); });
       }
@@ -964,7 +965,7 @@ export class GeminiLiveSession {
     this.callbacks.onToolCancelled?.(ids);
   }
 
-  private async runToolCall(id: string, name: string, args: Record<string, unknown>) {
+  private async runToolCall(id: string, name: string, args: Record<string, unknown>, lastOfBatch = true) {
     if (this.cancelledCalls.has(id)) {
       this.debug("tool", "tool_call_skipped_cancelled", { id, name });
       return;
@@ -1039,7 +1040,7 @@ export class GeminiLiveSession {
       this.debug("tool", "tool_response_dropped_cancelled", { id, name });
       return;
     }
-    const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio);
+    const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio, lastOfBatch);
     this.debug("tool", "tool_response_sent", {
       id,
       name,

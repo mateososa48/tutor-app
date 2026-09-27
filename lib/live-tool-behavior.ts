@@ -47,9 +47,14 @@ export type ToolScheduling = "SILENT" | "WHEN_IDLE";
  * re-triggers it the moment it is idle; once it is talking, a result that
  * worked is filed silently.
  */
-export function toolScheduling(model: string, name: string, result: { success: boolean; message?: string }, asyncTools = false, spoken = true): ToolScheduling | undefined {
+export function toolScheduling(model: string, name: string, result: { success: boolean; message?: string }, asyncTools = false, spoken = true, lastOfBatch = true): ToolScheduling | undefined {
   if (!asyncTools || liveToolMode(model) !== "scheduled" || BLOCKING_TOOLS.has(name)) return undefined;
-  if (!spoken) return "WHEN_IDLE";
+  // Before the first sound, one wake per batch of calls: every WHEN_IDLE starts
+  // a new generation, and a turn that opened with three calls was woken three
+  // times, each time re-reading an order in the result, re-planning out loud
+  // and saying its reply again (Sept 26 2026 root-cause study, H1). The last
+  // result of the batch wakes it once, with the others already in context.
+  if (!spoken) return lastOfBatch ? "WHEN_IDLE" : "SILENT";
   if (!result.success) return "WHEN_IDLE";
   if (/\bCareful:/.test(result.message ?? "")) return "WHEN_IDLE";
   // Once it has spoken, a changed [Tutor state] is filed too: it is read on

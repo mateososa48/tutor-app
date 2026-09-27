@@ -31,7 +31,8 @@ test("set_plan writes the plan once and says it back; step moves it on", () => {
   const f = fakeBoard();
   const r = dispatchWhiteboardTool("set_plan", { steps: "What fractions are | Adding them | Practice" }, { whiteboard: f.board });
   assert.equal(r.success, true, msg(r));
-  assert.match(msg(r), /The plan is up\. Say: "First what fractions are, then adding them, then practice\." Then start step 1: What fractions are/);
+  assert.match(msg(r), /The plan is up \(First what fractions are, then adding them, then practice\); step 1 is What fractions are/);
+  assert.doesNotMatch(msg(r), /Say:/, "a result reports; it never scripts what to say (a second wake re-planned out loud)");
   assert.match(msg(r), /Plan: 1 What fractions are \(now\) · 2 Adding them · 3 Practice/);
   const on2 = dispatchWhiteboardTool("set_plan", { step: 2 }, { whiteboard: f.board });
   assert.equal(on2.success, true, msg(on2));
@@ -112,10 +113,10 @@ test("a topic passed as the problem is not written as one", () => {
   assert.match(msg(real), /The problem is up, typeset/);
 });
 
-test("set_plan says the sentence to say, and a re-sent plan only moves the step", () => {
+test("set_plan reports the plan, and a re-sent plan only moves the step", () => {
   const f = fakeBoard();
   const first = dispatchWhiteboardTool("set_plan", { steps: "Compare | Add | Practice" }, { whiteboard: f.board });
-  assert.match(msg(first), /Say: "First compare, then add, then practice\." Then start step 1: Compare/);
+  assert.match(msg(first), /The plan is up \(First compare, then add, then practice\); step 1 is Compare/);
   const again = dispatchWhiteboardTool("set_plan", { steps: "Compare | Add | Practice" }, { whiteboard: f.board });
   assert.equal(again.success, true, msg(again));
   assert.match(msg(again), /already on the board, on step 1/);

@@ -53,6 +53,15 @@ test("async results: one that worked is filed silently; a refusal or a warning i
   assert.equal(toolScheduling(m, "check_answer", { success: true }, true, false), undefined);
 });
 
+test("before the first sound, a batch of calls wakes the model once: only its last result", () => {
+  const m = LIVE_MODELS["3.8"];
+  const done = { success: true, message: "Drew it (item b2)." };
+  assert.equal(toolScheduling(m, "draw_fraction", done, true, false, false), "SILENT");
+  assert.equal(toolScheduling(m, "point_at", done, true, false, true), "WHEN_IDLE");
+  assert.equal(toolScheduling(m, "point_at", done, true, true, false), "SILENT", "after the first sound nothing wakes it");
+  assert.equal(toolScheduling(m, "draw_fraction", { success: false }, true, true, false), "WHEN_IDLE", "a refusal after speech still gets a (muted) chance to fix the drawing");
+});
+
 test("async tools are the default; ?tools=sync turns them off", () => {
   assert.equal(resolveAsyncTools(new URLSearchParams("tools=async")), true);
   assert.equal(resolveAsyncTools(new URLSearchParams("tools=blocking")), false);

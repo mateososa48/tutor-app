@@ -272,7 +272,7 @@ class LiveTutor {
     private readonly compression: unknown,
     private readonly onTool: (name: string, args: Record<string, unknown>, id: string) => Promise<ToolCallResult>,
     /** The app's scheduling for a result (lib/live-tool-behavior toolScheduling), or nothing for blocking tools. */
-    private readonly scheduling: (name: string, result: ToolCallResult, spoken: boolean) => string | undefined = () => undefined,
+    private readonly scheduling: (name: string, result: ToolCallResult, spoken: boolean, lastOfBatch: boolean) => string | undefined = () => undefined,
     /** The app's ResponseHold (one spoken reply per line), built around this client's sender. */
     makeHold?: (send: (id: string, name: string, result: ToolCallResult, scheduling: string) => void) => HoldLike,
   ) {
@@ -456,7 +456,9 @@ class LiveTutor {
     }
     if (msg.toolCall?.functionCalls) {
       this.clearUnanswered();
-      for (const c of orderBatch(msg.toolCall.functionCalls) as typeof msg.toolCall.functionCalls) {
+      const batch = orderBatch(msg.toolCall.functionCalls) as typeof msg.toolCall.functionCalls;
+      for (const [index, c] of batch.entries()) {
+        const lastOfBatch = index === batch.length - 1;
         const id = c.id ?? `c${++this.toolSeq}`;
         const rec: ToolRecord = { name: c.name, args: c.args ?? {}, callId: id, atMs: ms, beforeSpeech: this.turn.audioChunks === 0, ok: true, result: "", durationMs: 0 };
         this.turn.tools.push(rec);
@@ -470,7 +472,7 @@ class LiveTutor {
           this.pendingTools--;
           if (VERBOSE) console.log(`      ${ms}ms ${c.name}(${JSON.stringify(c.args ?? {}).slice(0, 100)}) ${result.success ? "→" : "✗"} ${rec.result.split("\n")[0].slice(0, 120)}`);
           // Before the first sound an async result waits for it, as in the app (ResponseHold).
-          if (!this.hold?.offer(id, c.name, result, this.turn.audioChunks > 0)) this.sendResponse(id, c.name, result, this.scheduling(c.name, result, this.turn.audioChunks > 0));
+          if (!this.hold?.offer(id, c.name, result, this.turn.audioChunks > 0)) this.sendResponse(id, c.name, result, this.scheduling(c.name, result, this.turn.audioChunks > 0, lastOfBatch));
           if (this.turn.audioChunks === 0) this.armUnanswered(AFTER_TOOL_MS);
         });
       }
@@ -795,7 +797,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     return result;
   };
 
-  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken), opts.hold ? (send) => new m.behavior.ResponseHold(send as never, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken)) : undefined);
+  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken, lastOfBatch) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken, lastOfBatch), opts.hold ? (send) => new m.behavior.ResponseHold(send as never, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken)) : undefined);
   const events = await import("../lib/live-events");
   if (typeof events.SpeechTextCleaner === "function") live.speech = new events.SpeechTextCleaner();
   if (!process.argv.includes("--nogate") && typeof m.behavior.ReplyGate === "function") {
