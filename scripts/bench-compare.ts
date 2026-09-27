@@ -45,6 +45,7 @@ const ROWS: Row[] = [
   { name: "turns over 8 s to first sound", cell: (s) => String(s.totals.slowTurns ?? "–"), num: (s) => s.totals.slowTurns ?? null, up: "bad" },
   { name: "transcript leaks", cell: (s) => String(s.totals.leakTurns ?? "–"), num: (s) => s.totals.leakTurns ?? null, up: "bad" },
   { name: "turns that repeat a sentence", cell: (s) => String(s.totals.repeatTurns ?? "–"), num: (s) => s.totals.repeatTurns ?? null, up: "bad" },
+  { name: "second replies muted by the gate (turns)", cell: (s) => String(s.totals.mutedTurns ?? "–"), num: (s) => s.totals.mutedTurns ?? null, up: "bad" },
   { name: "attempts written as raw LaTeX", cell: (s) => String(s.totals.rawLatexAttempts ?? "–"), num: (s) => s.totals.rawLatexAttempts ?? null, up: "bad" },
   { name: "judge: telling moves", cell: (s) => pct(s.totals.judge.telling, s.totals.judge.turns), num: (s) => Math.round((100 * s.totals.judge.telling) / Math.max(1, s.totals.judge.turns)), up: "bad" },
   { name: "judge: focus moves", cell: (s) => pct(s.totals.judge.focus, s.totals.judge.turns), num: (s) => Math.round((100 * s.totals.judge.focus) / Math.max(1, s.totals.judge.turns)), up: "good" },

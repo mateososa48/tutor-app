@@ -38,6 +38,9 @@ export type TurnRecord = {
   rawTutor?: string;
   /** --voice: what Gemini heard the student say. */
   heard?: string;
+  /** A second reply the reply gate kept from the student (ms of audio, and its words). */
+  mutedMs?: number;
+  mutedText?: string;
   /** The note for this turn the app sent with the student's line (TutorRuntime.turnNote), if any. */
   turnNote?: string;
   /** The auto-check note the code sent with this turn's student line, if any. */
@@ -100,6 +103,9 @@ export type Metrics = {
   leakTurns: number;
   /** Turns where the tutor said the same sentence twice. */
   repeatTurns: number;
+  /** Turns with a second reply the gate kept from the student, and its audio in seconds. */
+  mutedTurns: number;
+  mutedSeconds: number;
   /** Student attempts written with a backslash in them (raw LaTeX in handwriting). */
   rawLatexAttempts: number;
   wallMs: number;
@@ -232,6 +238,8 @@ export function measure(turns: TurnRecord[], c: BenchCase, policy: PolicyFns): M
     slowTurns: turns.filter((t) => t.firstAudioMs != null && t.firstAudioMs > SLOW_MS).length,
     leakTurns: turns.filter((t) => LEAK.test(t.rawTutor ?? t.tutor)).length,
     repeatTurns: turns.filter((t) => repeatsItself(t.tutor)).length,
+    mutedTurns: turns.filter((t) => (t.mutedMs ?? 0) > 0).length,
+    mutedSeconds: Math.round(turns.reduce((s, t) => s + (t.mutedMs ?? 0), 0) / 100) / 10,
     rawLatexAttempts: allTools.filter((x) => x.ok && x.name === "add_student_attempt" && typeof x.args.text === "string" && x.args.text.includes("\\")).length,
     wallMs: turns.reduce((s, t) => s + t.durationMs, 0),
   };

@@ -53,6 +53,8 @@ export type Totals = {
   slowTurns: number;
   leakTurns: number;
   repeatTurns: number;
+  mutedTurns: number;
+  mutedSeconds: number;
   rawLatexAttempts: number;
   wallMs: number;
   judge: {
@@ -130,6 +132,8 @@ export function totals(runs: CaseRun[]): Totals {
     slowTurns: sum((m) => m.slowTurns ?? 0),
     leakTurns: sum((m) => m.leakTurns ?? 0),
     repeatTurns: sum((m) => m.repeatTurns ?? 0),
+    mutedTurns: sum((m) => m.mutedTurns ?? 0),
+    mutedSeconds: Math.round(sum((m) => m.mutedSeconds ?? 0) * 10) / 10,
     rawLatexAttempts: sum((m) => m.rawLatexAttempts ?? 0),
     wallMs: runs.reduce((s, r) => s + r.wallMs, 0),
     judge: {
@@ -195,6 +199,7 @@ export function buildReport(input: RunInput): { report: string; summary: Summary
     `| turns over 8 s to the first sound | ${t.slowTurns} |`,
     `| transcript leaks (LaTeX, markup, tool syntax) | ${t.leakTurns} |`,
     `| turns that repeat a sentence | ${t.repeatTurns} |`,
+    `| second replies the gate kept from the student (turns, seconds) | ${t.mutedTurns} · ${t.mutedSeconds} s |`,
     `| attempts written as raw LaTeX | ${t.rawLatexAttempts} |`,
     `| session time | ${Math.round(t.wallMs / 1000)}s |`,
   );

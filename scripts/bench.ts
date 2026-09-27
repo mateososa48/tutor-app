@@ -245,6 +245,9 @@ type LiveTurn = {
   audio: string[];
   /** What Gemini heard the student say (--voice: its input transcription of the synthesized line). */
   heard: string;
+  /** A second reply the gate kept from the student: its audio in ms and its words (the model still has them in context). */
+  mutedMs: number;
+  muted: string;
 };
 
 class LiveTutor {
@@ -300,7 +303,7 @@ class LiveTutor {
   }
 
   private static emptyTurn(): LiveTurn {
-    return { heard: "", said: "", raw: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0, audio: [] };
+    return { heard: "", said: "", raw: "", firstAudioMs: null, audioChunks: 0, interrupted: false, nudged: false, timedOut: false, promptTokens: null, usage: null, tools: [], durationMs: 0, audio: [], mutedMs: 0, muted: "" };
   }
 
   open(): Promise<void> {
@@ -483,7 +486,7 @@ class LiveTutor {
     for (const p of sc.modelTurn?.parts ?? []) {
       if (p.inlineData?.data) {
         this.lastModelAudioAt = Date.now();
-        if (this.gate?.muted) { this.droppedChunks++; continue; }
+        if (this.gate?.muted) { this.droppedChunks++; this.turn.mutedMs += Math.round((Buffer.from(p.inlineData.data, "base64").length / 2 / 24000) * 1000); continue; }
         this.turn.audioChunks++;
         this.hold?.onAudio();
         if (SAVE_AUDIO) this.turn.audio.push(p.inlineData.data);
@@ -493,6 +496,7 @@ class LiveTutor {
       }
     }
     if (sc.inputTranscription?.text) this.turn.heard += sc.inputTranscription.text;
+    if (sc.outputTranscription?.text && this.gate?.muted) this.turn.muted += sc.outputTranscription.text;
     if (sc.outputTranscription?.text && !this.gate?.muted) { this.turn.raw += sc.outputTranscription.text; this.turn.said += this.speech?.clean(sc.outputTranscription.text) ?? sc.outputTranscription.text; this.bump(); }
     if (sc.interrupted) {
       this.gate?.onBoundary();
@@ -848,6 +852,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       ...(opts.voice && t.heard.trim() ? { heard: t.heard.replace(/\s+/g, " ").trim() } : {}),
       tutor: said,
       ...(rawSaid !== said ? { rawTutor: rawSaid } : {}),
+      ...(t.mutedMs > 0 ? { mutedMs: t.mutedMs, mutedText: t.muted.replace(/\s+/g, " ").trim() } : {}),
       tools: t.tools,
       firstAudioMs: t.firstAudioMs,
       durationMs: t.durationMs,
