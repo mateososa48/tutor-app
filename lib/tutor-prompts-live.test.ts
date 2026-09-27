@@ -19,7 +19,8 @@ test("the Live prompt is a third of the old one and names only tools a Live sess
   // voice comes first and only the blocking check may precede it (Sept 26 2026).
   assert.match(text, /Your voice comes first/);
   assert.match(text, /say your whole reply, ending with the one thing they do next, then draw and mark/);
-  assert.match(text, /The one call that may come before your words is check_answer/);
+  assert.match(text, /When they gave an answer, call check_answer first, before any words/);
+  assert.match(text, /Never check after you've spoken/);
   assert.doesNotMatch(text, /name the move to yourself/, "no self-talk: 3.8 speaks what it plans");
   assert.match(text, /A bare number is an answer: reply to it/);
   assert.match(text, /never a tool's name or arguments, never LaTeX/);

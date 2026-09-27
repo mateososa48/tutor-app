@@ -199,6 +199,19 @@ export function resolveLiveVad(search: { get(name: string): string | null } | nu
  * speaks again is not played and not captioned. A reply that ends without a
  * task ("Let's look at this.") leaves the gate open for the real one.
  */
+/** Did the reply already said commit to the opposite of the checker's verdict? */
+export function verdictContradicts(said: string, verdict: string): boolean {
+  const v = /Verdict:\s*(correct|incorrect|partial|cannot_check)/.exec(verdict)?.[1];
+  const confirms = /\b(?:yes|yep|yeah|right|correct|exactly|that's it|perfect|nice|good job|got it right)\b/i.test(said);
+  const doubts = /\b(?:not quite|not right|not correct|no,|nope|actually|almost|close,|hmm|let's check)\b/i.test(said);
+  if (v === "incorrect" || v === "partial") return confirms && !doubts;
+  if (v === "correct") return doubts && !confirms;
+  return false;
+}
+
+/** The note a check_answer result carries when the tutor has already replied this turn. */
+export const CHECK_AFTER_REPLY_NOTE = "(You have already replied this turn: say nothing more unless this verdict changes what you told them.)";
+
 export class ReplyGate {
   private closed = false;
   private reopenAtBoundary = false;
@@ -229,6 +242,19 @@ export class ReplyGate {
   onTurnComplete(hadAudio: boolean, text: string, givesTask: (text: string) => boolean): void {
     if (this.reopenAtBoundary) return this.onBoundary();
     if (hadAudio && text.trim() && givesTask(text)) this.closed = true;
+  }
+
+  /**
+   * A blocking check_answer made after the reply was said: 3.8 goes on in the
+   * same generation once the verdict is back, and said its reply again ("…which
+   * amount is bigger?Comparing fifty cents…") or answered its own question
+   * (Sept 26 2026, speech-first candidate). What follows is muted unless the
+   * verdict contradicts what it said (a "yes" to a wrong answer must be taken
+   * back, and a "not quite" to a right one).
+   */
+  onCheckAfterReply(text: string, verdict: string, givesTask: (text: string) => boolean): void {
+    if (!text.trim() || !givesTask(text) || verdictContradicts(text, verdict)) return;
+    this.closed = true;
   }
 
   /** True while more speech would be a second reply to the same line. */

@@ -294,7 +294,9 @@ class LiveTutor {
   /** The app's caption cleaner (lib/live-events SpeechTextCleaner), when given. */
   speech: { clean(text: string): string } | null = null;
   /** The app's ReplyGate (one spoken reply per line) and the test it closes on, when given. */
-  gate: { onNewInput(generating?: boolean): void; onBoundary(): void; onTurnComplete(hadAudio: boolean, text: string, givesTask: (t: string) => boolean): void; readonly muted: boolean } | null = null;
+  gate: { onNewInput(generating?: boolean): void; onBoundary(): void; onTurnComplete(hadAudio: boolean, text: string, givesTask: (t: string) => boolean): void; onCheckAfterReply?(text: string, verdict: string, givesTask: (t: string) => boolean): void; readonly muted: boolean } | null = null;
+  /** The app's note on a check made after the reply (CHECK_AFTER_REPLY_NOTE), when the revision has one. */
+  checkAfterReplyNote = "";
   private lastModelAudioAt = 0;
   givesTask: (t: string) => boolean = () => false;
   droppedChunks = 0;
@@ -471,6 +473,11 @@ class LiveTutor {
         const started = Date.now();
         const timeout = new Promise<ToolCallResult>((resolve) => setTimeout(() => resolve({ success: false, error: "That took too long to finish; carry on and try it again later if you still need it." }), TOOL_TIMEOUT_MS));
         void Promise.race([this.onTool(c.name, c.args ?? {}, id).catch((e: unknown) => ({ success: false as const, error: e instanceof Error ? e.message : String(e) })), timeout]).then((result) => {
+          // As the app: a check made after the reply mutes the rest of that generation unless the verdict takes back what it said.
+          if (c.name === "check_answer" && this.turn.audioChunks > 0 && result.success && this.gate?.onCheckAfterReply) {
+            this.gate.onCheckAfterReply(this.turn.said, result.message ?? "", this.givesTask);
+            if (this.checkAfterReplyNote) result = { ...result, message: `${result.message ?? ""}\n${this.checkAfterReplyNote}` };
+          }
           rec.ok = result.success;
           rec.result = result.success ? result.message ?? "Done" : `Error: ${result.error}`;
           rec.durationMs = Date.now() - started;
@@ -811,6 +818,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   if (!process.argv.includes("--nogate") && typeof m.behavior.ReplyGate === "function") {
     live.gate = new m.behavior.ReplyGate();
     live.givesTask = m.policy.givesTask;
+    live.checkAfterReplyNote = (m.behavior as { CHECK_AFTER_REPLY_NOTE?: string }).CHECK_AFTER_REPLY_NOTE ?? "";
   }
   const startedAt = Date.now();
   await live.open();

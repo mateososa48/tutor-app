@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BLOCKING_TOOLS, ReplyGate, ResponseHold, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior } from "./live-tool-behavior";
+import { BLOCKING_TOOLS, ReplyGate, ResponseHold, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior, verdictContradicts} from "./live-tool-behavior";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
@@ -51,6 +51,21 @@ test("async results: one that worked is filed silently; a refusal or a warning i
   assert.equal(toolScheduling(m, "write_step", { success: true, message: "Wrote it (item b3)." }, true, false), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "write_step", { success: true, message: "Wrote it (item b3)." }, true, true), "SILENT");
   assert.equal(toolScheduling(m, "check_answer", { success: true }, true, false), undefined);
+});
+
+test("a check made after the reply mutes the continuation, unless the verdict contradicts the reply", () => {
+  const gives = (t: string) => /\?\s*$/.test(t.trim());
+  const g = new ReplyGate();
+  g.onCheckAfterReply("So which amount is bigger?", "Verdict: cannot_check. …", gives);
+  assert.equal(g.muted, true, "the reply gave them a question; the continuation would be a second reply");
+  const yes = new ReplyGate();
+  yes.onCheckAfterReply("Yes, that's right! What's next?", "Verdict: incorrect. The student's 2/5 …", gives);
+  assert.equal(yes.muted, false, "a yes to a wrong answer has to be taken back");
+  const unfinished = new ReplyGate();
+  unfinished.onCheckAfterReply("Let's look at that.", "Verdict: correct.", gives);
+  assert.equal(unfinished.muted, false, "a reply that gave them nothing to do may go on");
+  assert.equal(verdictContradicts("Hmm, not quite. Which is bigger?", "Verdict: correct."), true);
+  assert.equal(verdictContradicts("How'd you get that?", "Verdict: incorrect."), false);
 });
 
 test("before the first sound, a batch of calls wakes the model once: only its last result", () => {

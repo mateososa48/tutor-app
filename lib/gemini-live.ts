@@ -6,7 +6,7 @@ import { marksLast, toolRole } from "./board-items";
 import { SpeechTextCleaner, hasBoundarySpace, joinTranscript } from "./live-events";
 import { formatMemory, formatTutorState } from "./tutor-policy";
 import { TutorRuntime } from "./tutor-runtime";
-import { BLOCKING_TOOLS, ReplyGate, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
+import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
 import { givesTask } from "./tutor-policy";
 import type { CoachTurn } from "./tutor-coach";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
@@ -981,6 +981,14 @@ export class GeminiLiveSession {
       if (tutorTool) {
         // App-owned: check_answer, answered with the [Tutor state] line.
         result = tutorTool;
+        // Checked after the reply was said: 3.8 goes on in the same generation
+        // once this is back, so the rest is muted unless the verdict takes back
+        // what it said (ReplyGate.onCheckAfterReply).
+        if (name === "check_answer" && this.turnHadAudio && result.success) {
+          this.gate.onCheckAfterReply(this.replyText, result.message ?? "", givesTask);
+          result = { ...result, message: `${result.message ?? ""}\n${CHECK_AFTER_REPLY_NOTE}` };
+          if (this.gate.muted) this.debug("turn", "check_after_reply_muted", {});
+        }
       } else if (name === "remember_about_student") {
         // App-owned tool: record a durable student-model fact and echo the
         // full memory back so it refreshes in the model's context.
