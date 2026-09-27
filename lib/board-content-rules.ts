@@ -175,7 +175,12 @@ function claimedValue(fingerprint: string): string | null {
 export function findDuplicate(tool: string, fingerprint: string, items: FingerprintedItem[]): string | null {
   const since = items.slice(items.map((i) => i.tool).lastIndexOf("start_new_problem") + 1);
   if (tool === "add_student_attempt") {
-    const exact = since.find((i) => i.content === fingerprint)?.id;
+    // An answer belongs to its problem: a new section beside kept work is a new
+    // problem too (Sept 26 2026: a right "2" to the second problem was taken
+    // for the first problem's "2", and the app ringed the old one).
+    const section = items.map((i) => i.tool).lastIndexOf("start_board_section");
+    const scope = section >= 0 ? items.slice(section + 1).filter((i) => since.includes(i)) : since;
+    const exact = scope.find((i) => i.content === fingerprint)?.id;
     if (exact) return exact;
     // The app writes a checked answer as a short line ("f(3) = 7") before the
     // model gets to it (Sept 26 2026); the model's "7" or "f(3) = 7, right?"
@@ -183,7 +188,7 @@ export function findDuplicate(tool: string, fingerprint: string, items: Fingerpr
     // value, among the two newest attempts.
     const n = claimedValue(fingerprint);
     if (!n) return null;
-    const recent = since.filter((i) => i.tool === tool && i.content).slice(-2);
+    const recent = scope.filter((i) => i.tool === tool && i.content).slice(-2);
     return recent.reverse().find((i) => claimedValue(i.content!) === n)?.id ?? null;
   }
   if (TEXT_TOOLS.has(tool)) {

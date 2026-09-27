@@ -104,3 +104,14 @@ test("an attempt the app wrote is not written again when the model sends the sam
   const wrongThenRight = [{ id: "b5", tool: "add_student_attempt", content: fp("0.35") }];
   assert.equal(findDuplicate("add_student_attempt", fp("0.5 > 0.35"), wrongThenRight), null, "a comparison is not the earlier bare 0.35");
 });
+
+test("an answer to a new section's problem is not the old problem's answer", () => {
+  const fp = (t: string) => contentFingerprint("add_student_attempt", t);
+  const items = [
+    { id: "b1", tool: "start_new_problem", content: undefined },
+    { id: "b4", tool: "add_student_attempt", content: fp("2") },
+    { id: "b9", tool: "start_board_section", content: undefined },
+  ];
+  assert.equal(findDuplicate("add_student_attempt", fp("2"), items), null);
+  assert.equal(findDuplicate("add_student_attempt", fp("2"), [...items, { id: "b11", tool: "add_student_attempt", content: fp("2") }]), "b11");
+});
