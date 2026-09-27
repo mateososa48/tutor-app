@@ -31,6 +31,12 @@
 //                      (macOS say) and streamed as microphone audio, as in a spoken
 //                      session; the turn is timed from the end of their speech
 //   --vad patient      the app's ?vad=patient voice-activity setting (with --voice)
+//   --apiv v1beta      the Live endpoint version (default v1alpha, what the app uses;
+//                      Google's current docs show only v1beta)
+//   --textvia realtime typed lines, notes and nudges as realtimeInput.text (the
+//                      documented channel) instead of clientContent user turns;
+//                      a note rides in front of the line it goes with
+//   --promptadd "…"    a line appended to the system instruction (A/B a rule)
 //   --kidvoice name    the macOS voice for --voice (default Samantha; --kidrate 180 words a minute)
 //   --coach model      a coach (lib/tutor-coach) reads the lesson after each tutor
 //                      turn and adds one order to the note (e.g. gemini-3.5-flash)
@@ -175,6 +181,7 @@ const AFTER_TOOL_MS = 6_000; // the client re-arms the nudge after a silent tool
 const ESCALATE_MS = 10_000; // one escalation after an unanswered nudge
 const SILENT_TURN_MS = 2_500; // a silent turnComplete waits this long for the sound
 const IDLE_REPLY_MS = 5_000; // a WHEN_IDLE result makes the model speak again after its turnComplete: wait this long for that
+const REALTIME_TEXT = arg("textvia", "") === "realtime";
 const ESCALATE_EVENT = "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing.";
 const TURN_CAP_MS = 75_000;
 /** --save-audio: write each turn's speech as <case>-t<N>.wav, to hear what was actually said. */
@@ -299,7 +306,7 @@ class LiveTutor {
   open(): Promise<void> {
     const t0 = Date.now();
     return new Promise((resolve, reject) => {
-      const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${KEY}`;
+      const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.${arg("apiv", "v1alpha")}.GenerativeService.BidiGenerateContent?key=${KEY}`;
       const ws = new WebSocket(url);
       this.ws = ws;
       ws.on("open", () => {
@@ -389,7 +396,16 @@ class LiveTutor {
     this.turnCompleteSeen = false;
     this.idleReplyAt = null;
     this.nudges = 0;
-    this.send({ clientContent: { turns: [{ role: "user", parts }], turnComplete: true } });
+    const text = parts.length === 1 && "text" in parts[0] && typeof parts[0].text === "string" ? parts[0].text : null;
+    if (REALTIME_TEXT && text !== null) {
+      // --textvia realtime: the documented channel; a waiting note goes in front.
+      const note = this.heldNote;
+      this.heldNote = null;
+      this.send({ realtimeInput: { text: note ? `${note}\n\n${text}` : text } });
+    } else {
+      if (this.heldNote) { this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: this.heldNote }] }], turnComplete: false } }); this.heldNote = null; }
+      this.send({ clientContent: { turns: [{ role: "user", parts }], turnComplete: true } });
+    }
     if (arm) this.armUnanswered();
     this.cap = setTimeout(() => { this.turn.timedOut = true; this.finishTurn(); }, TURN_CAP_MS);
     return new Promise((resolve) => { this.resolveTurn = resolve; });
@@ -401,8 +417,12 @@ class LiveTutor {
 
   /** A private note the model reads without answering (a user turn left open). */
   sendNote(text: string) {
+    // --textvia realtime: held and sent in front of the next line (a
+    // clientContent turn left open would wait for a clientContent close).
+    if (REALTIME_TEXT) { this.heldNote = this.heldNote ? `${this.heldNote}\n${text}` : text; return; }
     this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: false } });
   }
+  private heldNote: string | null = null;
 
   private nudges = 0;
   private armUnanswered(afterMs = UNANSWERED_MS) {
@@ -415,7 +435,7 @@ class LiveTutor {
     this.nudges += 1;
     this.turn.nudged = true;
     const text = this.nudges === 1 ? UNANSWERED_EVENT : this.nudges === 2 || !this.lastLine ? ESCALATE_EVENT : `The student said: "${this.lastLine.slice(0, 200)}". Answer them now, out loud, in a sentence or two.`;
-    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } });
+    this.send(REALTIME_TEXT ? { realtimeInput: { text } } : { clientContent: { turns: [{ role: "user", parts: [{ text }] }], turnComplete: true } });
     if (this.nudges < 3) this.armUnanswered(ESCALATE_MS);
   }
   private clearUnanswered() {
@@ -642,7 +662,8 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     runtime.setSessionFiles(files.map((f) => ({ label: f.label, name: f.name, pages: 1 })));
   }
   const profile = { displayName: c.name, gradeLevel: c.grade, learningPrefs: {} };
-  const system = m.prompts.buildGeminiInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true });
+  const promptAdd = arg("promptadd", "");
+  const system = m.prompts.buildGeminiInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true }) + (promptAdd ? `\n\n${promptAdd}` : "");
   // Exactly what the app sends (the Live diet since Sept 25 2026; --fulltools for every declaration).
   const declarations = m.behavior.withToolBehavior(opts.fullTools ? [...m.tools.WHITEBOARD_TOOL_DECLARATIONS, ...m.tutorTools.TUTOR_TOOL_DECLARATIONS, ...m.sessionTools.SESSION_TOOL_DECLARATIONS] : m.live.liveToolDeclarations(), opts.liveModel, opts.asyncTools);
 

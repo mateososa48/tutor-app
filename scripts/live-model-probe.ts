@@ -284,8 +284,10 @@ function probe(model: string, thinkingConfig: Record<string, unknown> | null): P
         saidAtTurnStart = r.said.length;
         if (process.env.TIMELINE) console.log(`   ${ms}ms turnComplete (audio ${r.audioChunks}, tools ${r.toolCalls.length})`);
         if (process.env.TIMELINE && NEXT.length === 0) return;
-        // The speech often follows the tool responses, so only stop once we have heard something.
-        if (r.audioChunks > 0 && NEXT.length > 0) {
+        // The speech often follows the tool responses, so only stop once we have
+        // heard something in THIS turn (audioStarted resets with each line; the
+        // cumulative count moved on at a tool-only turnComplete, Sept 26 2026).
+        if (audioStarted && NEXT.length > 0) {
           conversation.push(`Tutor: ${r.said.replace(/\s+/g, " ").trim()}`);
           r.said = "";
           saidAtTurnStart = 0;
@@ -296,7 +298,7 @@ function probe(model: string, thinkingConfig: Record<string, unknown> | null): P
           sendLine(ws as unknown as Sock, line);
           return;
         }
-        if (r.audioChunks > 0) {
+        if (audioStarted) {
           if (conversation.length) conversation.push(`Tutor: ${r.said.replace(/\s+/g, " ").trim()}`);
           clearTimeout(timer);
           done();
