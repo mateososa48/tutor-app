@@ -33,11 +33,19 @@ async function plan(model: string, fallback: string, key: string, system: string
   for (const m of [model, fallback].filter(Boolean)) {
     const t0 = Date.now();
     for (let attempt = 0; attempt < 3; attempt++) {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
-        method: "POST",
-        headers: { "x-goog-api-key": key, "content-type": "application/json" },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: arg("thinking", "low") } } }),
-      });
+      let r: Response;
+      try {
+        r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
+          method: "POST",
+          headers: { "x-goog-api-key": key, "content-type": "application/json" },
+          body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: arg("thinking", "low") } } }),
+          signal: AbortSignal.timeout(30_000),
+        });
+      } catch {
+        // A reset connection or a hung call (one killed a run at 32 of 59): try again.
+        await new Promise((res) => setTimeout(res, 2000 * (attempt + 1)));
+        continue;
+      }
       if (r.status === 503 || r.status === 429) { await new Promise((res) => setTimeout(res, 2000 * (attempt + 1))); continue; }
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
       const reply = j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
@@ -72,6 +80,10 @@ async function main() {
     }
   }
   const limit = Number(arg("limit", "0")) || Infinity;
+  // --resume: keep the moments a run that died already planned.
+  const jsonOut = out.replace(/\.md$/, ".json");
+  const done = new Map<string, Record<string, unknown>>();
+  if (process.argv.includes("--resume") && fs.existsSync(jsonOut)) for (const x of JSON.parse(fs.readFileSync(jsonOut, "utf8")) as Array<Record<string, unknown>>) if (x.planner) done.set(String(x.id), x);
   for (const pick of picks) {
     if (moments.length >= limit) break;
     {
@@ -88,6 +100,8 @@ async function main() {
         return miss || REASON.test(t.student);
       }).slice(0, perCase);
       for (const t of picked) {
+        const id = `${path.basename(dir)}/${caseId}/t${t.n}`;
+        if (done.has(id)) { moments.push(done.get(id)!); continue; }
         const i = run.turns.indexOf(t);
         const before = run.turns.slice(0, i);
         const turns: PlannerTurn[] = before.map((x) => ({ student: x.student, tutor: x.tutor, tools: x.tools.filter((y) => y.ok !== false && !y.by).map((y) => y.name) }));
@@ -111,6 +125,7 @@ async function main() {
           plannerMs: r.ms,
         });
         console.log(`${moments.length}. ${String(moments.at(-1)!.id)} (${r.model}, ${r.ms} ms): ${r.order ?? "(none)"}`);
+        fs.writeFileSync(jsonOut, JSON.stringify(moments, null, 1));
       }
     }
   }
@@ -125,7 +140,7 @@ async function main() {
     `**Planner's order:** ${m.planner ?? "(none)"} _(${m.plannerModel}, ${m.plannerMs} ms)_`,
   ].filter(Boolean).join("\n\n")).join("\n\n---\n\n");
   fs.writeFileSync(out, `# Planner offline check\n\nModel ${model} (fallback ${fallback}), ${moments.length} moments.\n\n${md}\n`);
-  fs.writeFileSync(out.replace(/\.md$/, ".json"), JSON.stringify(moments, null, 1));
+  fs.writeFileSync(jsonOut, JSON.stringify(moments, null, 1));
   const ms = moments.map((m) => Number(m.plannerMs)).filter(Boolean).sort((a, b) => a - b);
   console.log(`\nwrote ${out}: ${moments.length} moments, planner median ${ms[Math.floor(ms.length / 2)] ?? "-"} ms, worst ${ms.at(-1) ?? "-"} ms`);
 }

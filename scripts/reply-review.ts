@@ -73,7 +73,7 @@ function build() {
     }
   }
   const mixed = shuffle(moments, seed);
-  const batches = Math.max(1, Math.ceil(mixed.length / 10));
+  const batches = Math.max(1, Math.ceil(mixed.length / Number(flag("size", "10"))));
   const files: string[][] = Array.from({ length: batches }, () => []);
   mixed.forEach((m, k) => files[k % batches].push(`### Moment ${k + 1} ${m.text}`));
   files.forEach((b, k) => fs.writeFileSync(`${out}-batch${k + 1}.md`, `${b.join("\n\n---\n\n")}\n`));
@@ -108,7 +108,7 @@ function buildOrders() {
     }
   }
   const mixed = shuffle(moments.filter((m) => !m.text.includes("(no order:")), seed);
-  const batches = Math.max(1, Math.ceil(mixed.length / 10));
+  const batches = Math.max(1, Math.ceil(mixed.length / Number(flag("size", "10"))));
   const files: string[][] = Array.from({ length: batches }, () => []);
   mixed.forEach((m, k) => files[k % batches].push(`### Moment ${k + 1} ${m.text}`));
   files.forEach((b, k) => fs.writeFileSync(`${out}-batch${k + 1}.md`, `${b.join("\n\n---\n\n")}\n`));
