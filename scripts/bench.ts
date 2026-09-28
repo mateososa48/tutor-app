@@ -590,7 +590,7 @@ const PLAN_MODELS = arg("plan", "").split(",").map((s) => s.trim()).filter(Boole
 const PLAN_TIME_MS = Number(arg("plantime", "3000"));
 
 /** The planner's order for this reply, or null when no model answered usably in time. */
-async function planOrder(text: string): Promise<string | null> {
+async function planOrder(text: string, verdict: string | null = null): Promise<string | null> {
   const key = arg("textkey", "") ? readGeminiKey(arg("textkey", "")) : KEY;
   const deadline = Date.now() + PLAN_TIME_MS;
   for (const model of PLAN_MODELS) {
@@ -607,7 +607,7 @@ async function planOrder(text: string): Promise<string | null> {
       });
       if (!r.ok) continue;
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
-      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "");
+      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
       if (note) return note;
     } catch {
       /* timed out or failed: the next model, or the app's own note */
@@ -983,7 +983,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
           board: turn.boardCompact,
           state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
           reminders: pendingNote,
-        }));
+        }), pendingAuto);
         pendingPlanMs = Date.now() - t0;
         if (order) pendingNote = order;
       }

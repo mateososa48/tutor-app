@@ -50,3 +50,12 @@ test("the planner's rules put diagnosis first and never let it hand over the ans
   assert.match(PLANNER_SYSTEM, /never ask for add_student_attempt of an answer/);
   assert.match(PLANNER_SYSTEM, /never ask them to write, draw or shade/);
 });
+
+test("an order that calls an answer right is dropped unless the checker said correct", () => {
+  const order = 'Say: "Seventy dollars and twenty-five cents is right for year two. What is fifteen percent of that?"';
+  assert.equal(plannerNote(order), null, "no verdict: the planner may not judge");
+  assert.equal(plannerNote(order, '[Answer check, not from the student: "70.25" → incorrect.]'), null);
+  assert.ok(plannerNote(order, '[Answer check, not from the student: "72.25" → correct.]'));
+  assert.ok(plannerNote(order, "Verdict: correct. Correct: 85 - 12.75 = 72.25"));
+  assert.ok(plannerNote('Say: "How did you get seventy point two five?"'), "asking is always fine");
+});

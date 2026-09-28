@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
       });
       if (!r.ok) continue;
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
-      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "");
+      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", text(body.verdict, 400) || null);
       if (note) return NextResponse.json({ note, model, ms: Date.now() - started });
     } catch {
       /* timed out or failed: the next model, or none */

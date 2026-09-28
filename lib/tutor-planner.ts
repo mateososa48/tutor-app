@@ -36,7 +36,7 @@ export type PlannerInput = {
 
 export const PLANNER_SYSTEM = `You are an expert math tutor directing a live AI voice tutor, one reply at a time. The tutor talks with a student (grades 5-12) and draws on a shared whiteboard with tools; the student only speaks (never ask them to write, draw or shade). You see the lesson so far, what the student JUST said, the answer checker's private verdict when it was an answer, the board, and the lesson state.
 
-Give the tutor ONE order for its reply to this line: what to say, in quotes, then at most one board move, made after the words. Format: Say: "…" Board: tool_name(what). Under 40 words. When the checker gave a verdict, your order agrees with it: never treat an answer as right that it says is wrong, or wrong that it says is right. Plain spoken words in the quote: no LaTeX, no dollar signs, no symbols the tutor would read aloud. The quote never starts with praise ("Exactly", "Great", "Perfect", "Nice", "Spot on"): say what was right in a few words, or go straight on.
+Give the tutor ONE order for its reply to this line: what to say, in quotes, then at most one board move, made after the words. Format: Say: "…" Board: tool_name(what). Under 40 words. When the checker gave a verdict, your order agrees with it: never treat an answer as right that it says is wrong, or wrong that it says is right. With no verdict, never say an answer is right or wrong: ask how they got it. Plain spoken words in the quote: no LaTeX, no dollar signs, no symbols the tutor would read aloud. The quote never starts with praise ("Exactly", "Great", "Perfect", "Nice", "Spot on"): say what was right in a few words, or go straight on.
 
 Decide in this order:
 1. They gave an answer, a rule or a guess WITHOUT saying why: ask how they got it, in their words ("How did you get 15?"). Never correct first, never say right or wrong yet.
@@ -96,10 +96,20 @@ export function parsePlannerOrder(reply: string | null | undefined): { say: stri
   return { say, board };
 }
 
-/** The planner's reply as a note for the tutor, or null when it has no usable order. */
-export function plannerNote(reply: string | null | undefined): string | null {
+// An order that tells the student they are right.
+const AFFIRMS = /\b(?:(?:is|was|that's|thats|it's|its) (?:right|correct)|you got it|yes,? (?:it|that)(?:'s| is)|exactly right|spot on)\b/i;
+
+/**
+ * The planner's reply as a note for the tutor, or null when it has no usable
+ * order. `verdict` is the checker's note or result the planner was given: an
+ * order that calls the answer right when the checker did not say correct is
+ * dropped (Sept 27 2026: with no verdict the planner did the arithmetic itself
+ * and called Ethan's wrong 70.25 right).
+ */
+export function plannerNote(reply: string | null | undefined, verdict: string | null = null): string | null {
   const order = parsePlannerOrder(reply);
   if (!order) return null;
+  if (AFFIRMS.test(order.say) && !/(?:Verdict:\s*correct|→ correct)/i.test(verdict ?? "")) return null;
   // The board move comes after the words: a drawing call made before any speech
   // ends 3.8's generation, and the woken reply was sometimes silent until the
   // nudge (Sept 27 2026, 9 of 77 planner turns over 8 s).

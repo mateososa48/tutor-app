@@ -23,7 +23,7 @@ type JudgeTurn = { turn: number; move?: string; targeted?: string; mistake_ident
 
 const REASON = /\b(cuz|cause|because|bc|i put|i got|i did|i think|so it'?s|idk|i don'?t know|wait)\b/i;
 
-async function plan(model: string, fallback: string, key: string, system: string, text: string): Promise<{ order: string | null; model: string; ms: number }> {
+async function plan(model: string, fallback: string, key: string, system: string, text: string, verdict: string | null = null): Promise<{ order: string | null; model: string; ms: number }> {
   for (const m of [model, fallback].filter(Boolean)) {
     const t0 = Date.now();
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -35,7 +35,7 @@ async function plan(model: string, fallback: string, key: string, system: string
       if (r.status === 503 || r.status === 429) { await new Promise((res) => setTimeout(res, 2000 * (attempt + 1))); continue; }
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
       const reply = j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
-      const order = plannerNote(reply);
+      const order = plannerNote(reply, verdict);
       // An unusable reply (reasoning, no quote) falls through to the next model.
       if (order) return { order, model: m, ms: Date.now() - t0 };
       break;
@@ -72,7 +72,7 @@ async function main() {
         const before = run.turns.slice(0, i);
         const turns: PlannerTurn[] = before.map((x) => ({ student: x.student, tutor: x.tutor, tools: x.tools.filter((y) => y.ok !== false && !y.by).map((y) => y.name) }));
         const text = plannerPrompt({ grade: run.grade, topic, turns, line: t.student, verdict: t.autoCheck ?? null, board: before.at(-1)?.boardCompact ?? "", state: null, reminders: t.turnNote ?? null });
-        const r = await plan(model, fallback, key, system, text);
+        const r = await plan(model, fallback, key, system, text, t.autoCheck ?? null);
         const jt = judge.turns?.find((x) => x.turn === t.n);
         moments.push({
           id: `${path.basename(dir)}/${caseId}/t${t.n}`,
