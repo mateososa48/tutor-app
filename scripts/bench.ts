@@ -183,6 +183,7 @@ const UNANSWERED_EVENT =
 let orderBatch: (calls: Array<{ name: string }>) => Array<{ name: string }> = (calls) => calls;
 const TURN_DEBOUNCE_MS = 1_600; // the client's TURN_FINISH_DEBOUNCE_MS
 const TOOL_TIMEOUT_MS = 3_000; // the client's TOOL_TIMEOUT_MS (blocking tools)
+const RUNTIME_TOOLS = new Set(["check_answer", "next_move", "remember_about_student"]);
 const UNANSWERED_MS = 4_000; // typed input
 const AFTER_TOOL_MS = 6_000; // the client re-arms the nudge after a silent tool result
 const ESCALATE_MS = 10_000; // one escalation after an unanswered nudge
@@ -482,7 +483,13 @@ class LiveTutor {
         this.turn.tools.push(rec);
         this.pendingTools++;
         const started = Date.now();
-        const timeout = new Promise<ToolCallResult>((resolve) => setTimeout(() => resolve({ success: false, error: "That took too long to finish; carry on and try it again later if you still need it." }), TOOL_TIMEOUT_MS));
+        // As the app (lib/gemini-live runToolCall): only board and session tools
+        // are raced against the cap; the runtime's own tools (check_answer,
+        // next_move, memory) wait for their answer, the planner included. Raced,
+        // every spoken planner call over 3 s came back "took too long" (v1-on,
+        // Sept 28 2026), which the app never does.
+        const raced = !RUNTIME_TOOLS.has(c.name);
+        const timeout = new Promise<ToolCallResult>((resolve) => { if (raced) setTimeout(() => resolve({ success: false, error: "That took too long to finish; carry on and try it again later if you still need it." }), TOOL_TIMEOUT_MS); });
         void Promise.race([this.onTool(c.name, c.args ?? {}, id).catch((e: unknown) => ({ success: false as const, error: e instanceof Error ? e.message : String(e) })), timeout]).then((result) => {
           // As the app: a check made after the reply mutes the rest of that generation unless the verdict takes back what it said.
           if (c.name === "check_answer" && this.turn.audioChunks > 0 && result.success && this.gate?.onCheckAfterReply) {
