@@ -432,6 +432,10 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
   // and the app wrote "-5 + 8 = -11" in her hand).
   const live = (problem: string) => {
     if (!policy.lastTutorNumbers) return true;
+    // The board's own question stays on the table for the next turn even when
+    // the tutor only says "what does that give you?" (Sept 27 2026: Ethan's
+    // right 72.25 to "85 - 12.75 = ?" went unchecked).
+    if (problem === policy.lastAsked && policy.askedAge <= 1) return true;
     const said = new Set([...policy.lastTutorNumbers, ...numbersIn(spokenToDigits(t))]);
     return numbersIn(problem).every((n) => said.has(n));
   };

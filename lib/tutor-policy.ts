@@ -94,6 +94,9 @@ export type TutorPolicy = {
   drawCount: number;
   /** The last thing the tutor asked on the board (a callout, a line ending in "?"), for the auto-check. */
   lastAsked: string | null;
+  /** The board's question at the end of the last tutor turn, and how many tutor turns it has stood unchanged (0: set in the last turn). */
+  askedAtTurnEnd: string | null;
+  askedAge: number;
   /** The last question the tutor said with a number in it ("Which is bigger, 0.35 or 0.5?"), for the auto-check. */
   lastSpokenQuestion: string | null;
   /** Every number the tutor said in its last turn: what a student's answer can be answering. Null before it has spoken. */
@@ -183,6 +186,8 @@ export function createPolicy(now: number): TutorPolicy {
     lastAsked: null,
     lastSpokenQuestion: null,
     lastTutorNumbers: null,
+    askedAtTurnEnd: null,
+    askedAge: 0,
     autoChecked: null,
     openingReason: null,
     openingQuestion: null,
@@ -693,6 +698,8 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
     p.lastSpokenQuestion = tail.slice(0, 200);
   }
   p.lastTutorNumbers = numbersIn(spokenToDigits(text));
+  p.askedAge = p.lastAsked !== null && p.lastAsked === p.askedAtTurnEnd ? p.askedAge + 1 : 0;
+  p.askedAtTurnEnd = p.lastAsked;
   p.unmarkedReference = marked ? null : boardReference(text);
   const asked = permissionQuestion(text);
   if (asked) p.askedPermission = asked;

@@ -285,7 +285,9 @@ function checkAnswerAsWritten(problem: string, studentAnswer: string): AnswerChe
   if (claimed) return claimed;
   // "25\\%" is the board's LaTeX for 25%: the tutor copies it from there.
   const asked = (problem ?? "").trim().replace(/\\%/g, "%");
-  const heard = (studentAnswer ?? "").trim().replace(/\\%/g, "%");
+  // "9? cuz a negative times a negative is positive": the answer comes before
+  // its reason (Sept 27 2026: the reason made Priya's right 9 unreadable).
+  const heard = (studentAnswer ?? "").trim().replace(/\\%/g, "%").split(/\s*[,;]?\s+(?:because|cause|'cause|cuz|coz|since|bc)\b/i)[0].trim();
   if (!asked || !heard) return cannot("it needs both the problem and the student's answer.");
   // Diagnostic questions an opening asks, before anything is read as math.
   const diagnostic = checkHowMany(asked, heard) ?? checkComparison(asked, heard);

@@ -450,3 +450,17 @@ test("a checked answer is reused only for the same problem", () => {
   const other = runTutorTool("check_answer", { problem: "20 - 7", student_answer: "13", skill: "subtraction" }, p, 500);
   assert.ok(other && other.success && /Verdict: correct/.test(other.message ?? "") && !/already on the board/.test(other.message ?? ""), "a different problem is checked afresh");
 });
+
+test("an answer with its reason is checked, and the board's question holds for a turn", () => {
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  noteTutorTurn(p, "Let's check that b squared part. What is negative 3 times negative 3?", false);
+  const note = autoCheck(p, "um, 9? cuz a negative times a negative is positive?", 0);
+  assert.ok(note && /→ correct/.test(note), note ?? "");
+  const q = createPolicy(0);
+  q.codeMarks = true;
+  noteBoardWrite(q, "add_callout", { text: "85 - 12.75 = ?" });
+  noteTutorTurn(q, "Now subtract that. What does that give you?", false);
+  const n2 = autoCheck(q, "72.25", 0);
+  assert.ok(n2 && /→ correct/.test(n2), n2 ?? "");
+});
