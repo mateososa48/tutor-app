@@ -412,7 +412,8 @@ export function withholdResult(policy: TutorPolicy, name: string, args: Record<s
   return { args: { ...args, latex: asked }, note: `Wrote it as "${shown}": the result is theirs to say. Ask for it; don't say it.` };
 }
 
-export function autoCheck(policy: TutorPolicy, text: string, now: number): string | null {
+/** The problems an answer line may answer, in order, and the line's answer sentence (`t`); null when it is no answer. Pure. */
+function answerCandidates(policy: TutorPolicy, text: string): { t: string; candidates: Array<{ problem: string; answer: string }> } | null {
   const whole = text.trim();
   if (!whole || isNonAnswer(whole)) return null;
   // Kids answer in long lines: "f(2) is 7 and g(2) is 6. so 7 plus 6 is 13? is
@@ -449,6 +450,28 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
   // its first step while the answer to h(x) = 3x - 1 was wrong.
   const own = ownClaim(t);
   if (own) candidates.push(own);
+  return { t, candidates };
+}
+
+/**
+ * The checker's verdict on a line before anything is recorded (the spoken
+ * path plans the reply as soon as the student stops, before the tutor calls a
+ * tool: lib/gemini-live speculate). Null when nothing could be checked.
+ */
+export function previewCheck(policy: TutorPolicy, text: string): string | null {
+  const found = answerCandidates(policy, text);
+  if (!found) return null;
+  for (const { problem, answer } of found.candidates) {
+    const check = checkAnswer(problem, answer);
+    if (check.verdict !== "cannot_check") return `[Answer check, not from the student: "${found.t.length > 60 ? `${found.t.slice(0, 57)}…` : found.t}" → ${check.verdict}. ${check.message}]`;
+  }
+  return null;
+}
+
+export function autoCheck(policy: TutorPolicy, text: string, now: number): string | null {
+  const found = answerCandidates(policy, text);
+  if (!found) return null;
+  const { t, candidates } = found;
   for (const { problem, answer } of candidates) {
     const check = checkAnswer(problem, answer);
     if (check.verdict === "cannot_check") continue;

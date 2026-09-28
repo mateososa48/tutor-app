@@ -295,6 +295,8 @@ class LiveTutor {
   lastLine = "";
   /** What the model has heard of the student's line so far (the voice path's input transcription). */
   get heardNow(): string { return this.turn.heard; }
+  /** Called on every fragment of the student's speech (the app's speculative planner start). */
+  onHeard: (() => void) | null = null;
   /** The tutor has made sound this turn (the app's turnHadAudio). */
   get spokeNow(): boolean { return this.turn.audioChunks > 0; }
   /** --voice: the student's line as 16 kHz PCM, being streamed by the mic loop. */
@@ -528,7 +530,10 @@ class LiveTutor {
         this.bump();
       }
     }
-    if (sc.inputTranscription?.text) this.turn.heard += sc.inputTranscription.text;
+    if (sc.inputTranscription?.text) {
+      this.turn.heard += sc.inputTranscription.text;
+      this.onHeard?.();
+    }
     if (sc.outputTranscription?.text && this.gate?.muted) this.turn.muted += sc.outputTranscription.text;
     if (sc.outputTranscription?.text && !this.gate?.muted) { this.turn.raw += sc.outputTranscription.text; this.turn.said += this.speech?.clean(sc.outputTranscription.text) ?? sc.outputTranscription.text; this.bump(); }
     if (sc.interrupted) {
@@ -822,9 +827,9 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   let lineSeq = 0;
   let plannedFor = -1;
   let plannedOrder: string | null = null;
-  const planLine = async (line: string, verdict: string | null): Promise<string | null> => {
+  const planFor = (line: string, verdict: string | null): Promise<string | null> => {
     const t0 = Date.now();
-    const r = await planOrder(plannerPrompt({
+    return planOrder(plannerPrompt({
       grade: c.grade,
       topic: c.topic,
       turns: turns.map((x) => ({ student: x.student, tutor: x.tutor, tools: x.tools.filter((y) => y.ok && !y.by).map((y) => y.name) })),
@@ -833,12 +838,32 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       board: turns.at(-1)?.boardCompact ?? "",
       state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
       reminders: null,
-    }), verdict);
-    pendingPlanMs = (pendingPlanMs ?? 0) + (Date.now() - t0);
-    pendingPlanModel = r?.model ?? pendingPlanModel;
+    }), verdict).then((r) => {
+      pendingPlanMs = (pendingPlanMs ?? 0) + (Date.now() - t0);
+      pendingPlanModel = r?.model ?? pendingPlanModel;
+      return r?.note ?? null;
+    });
+  };
+  const planLine = async (line: string, verdict: string | null): Promise<string | null> => {
+    const order = await planFor(line, verdict);
     plannedFor = lineSeq;
-    plannedOrder = r?.note ?? null;
-    return plannedOrder;
+    plannedOrder = order;
+    return order;
+  };
+  // The app's speculative start (lib/gemini-live speculate): the planner starts
+  // 350 ms after the last fragment of the student's speech, before any tool call.
+  let spec: { text: string; verdict: string | null; order: Promise<string | null> } | null = null;
+  let specTimer: ReturnType<typeof setTimeout> | null = null;
+  const takeSpec = (line: string) => {
+    const s0 = spec;
+    spec = null;
+    return s0 && s0.text === line.trim() ? s0 : null;
+  };
+  const speculate = () => {
+    const line = live.heardNow.replace(/\s+/g, " ").trim();
+    if (!voicePlan || !line || live.spokeNow || !turns.length || spec?.text === line) return;
+    const verdict = typeof m.tutorTools.previewCheck === "function" ? m.tutorTools.previewCheck(runtime.policy, line) : null;
+    spec = { text: line, verdict, order: planFor(line, verdict) };
   };
   const voiceLine = () => live.heardNow.replace(/\s+/g, " ").trim() || live.lastLine;
   // --voice: the lesson reads what Gemini heard, as the app does
@@ -861,12 +886,19 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       if (!turns.length) return { success: true, message: "Their first line: open as the lesson says (a problem on a sheet, or the whole idea?), then what they already know." };
       const auto = runtime.policy.autoChecked;
       const verdict = auto && !auto.consumed && Date.now() - auto.at < 20_000 ? auto.note : null;
-      const order = plannedFor === lineSeq ? plannedOrder : await planLine(voiceLine(), verdict);
+      const early = plannedFor === lineSeq ? null : takeSpec(voiceLine());
+      const order = plannedFor === lineSeq ? plannedOrder : early ? await early.order : await planLine(voiceLine(), verdict);
+      plannedFor = lineSeq;
+      plannedOrder = order;
       return { success: true, message: [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n") };
     }
     const tutor = runtime.runTool(name, args, now, callId);
     if (tutor && name === "check_answer" && voicePlan && turns.length && !live.spokeNow && tutor.success && plannedFor !== lineSeq) {
-      const order = await planLine(voiceLine(), tutor.message ?? null);
+      const early = takeSpec(voiceLine());
+      const usable = early && (early.verdict || /^Verdict: cannot_check/.test(tutor.message ?? ""));
+      const order = usable ? await early.order : await planLine(voiceLine(), tutor.message ?? null);
+      plannedFor = lineSeq;
+      plannedOrder = order;
       if (order) return { ...tutor, message: `${tutor.message ?? ""}\n${order}` };
     }
     if (tutor) return tutor;
@@ -923,6 +955,11 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   };
 
   const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken, lastOfBatch, replyGaveTask) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken, lastOfBatch, replyGaveTask), opts.hold ? (send) => new m.behavior.ResponseHold(send as never, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken)) : undefined);
+  live.onHeard = () => {
+    if (!voicePlan) return;
+    if (specTimer) clearTimeout(specTimer);
+    specTimer = setTimeout(() => { specTimer = null; speculate(); }, 350);
+  };
   const events = await import("../lib/live-events");
   if (typeof events.SpeechTextCleaner === "function") live.speech = new events.SpeechTextCleaner();
   if (!process.argv.includes("--nogate") && typeof m.behavior.ReplyGate === "function") {
@@ -1026,6 +1063,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       pendingPlanMs = null;
       pendingPlanModel = null;
       lineSeq++;
+      spec = null;
       const pcm = await synth(studentText, opts.out);
       if (pendingNote) live.sendNote(pendingNote);
       voiceUtterance = studentText;

@@ -1,6 +1,6 @@
 import { liveWhiteboardDeclarations, type ToolDeclaration } from "./whiteboard-tools";
 import type { UploadedFile } from "./file-processor";
-import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
+import { TUTOR_TOOL_DECLARATIONS, previewCheck } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
 import { marksLast, toolRole } from "./board-items";
 import { SpeechTextCleaner, hasBoundarySpace, joinTranscript } from "./live-events";
@@ -237,6 +237,14 @@ export class GeminiLiveSession {
   private textChain: Promise<void> = Promise.resolve();
   // The route gives up at 3.2 s; this covers the trip.
   private static readonly PLANNER_MS = 3_600;
+  // The spoken path starts the planner once the student's words stop coming
+  // in, before the tutor calls next_move or check_answer (Sept 28 2026: the
+  // tutor took 1.3-2.3 s to make that call and only then did planning start,
+  // so a planned reply's first word came 5.5 s after the student stopped).
+  private static readonly SPECULATE_MS = 350;
+  private speculateTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The line the planner was started on early, the verdict it was given, and its order. */
+  private speculated: { text: string; verdict: string | null; order: Promise<string | null> } | null = null;
   private coachHistory: CoachTurn[] = [];
   private lastStudentLine = "";
   private turnTools: string[] = [];
@@ -488,6 +496,32 @@ export class GeminiLiveSession {
     return open;
   }
 
+  private armSpeculation() {
+    if (!this.planner) return;
+    if (this.speculateTimer) clearTimeout(this.speculateTimer);
+    this.speculateTimer = setTimeout(() => {
+      this.speculateTimer = null;
+      this.speculate();
+    }, GeminiLiveSession.SPECULATE_MS);
+  }
+
+  /** Start the planner on the line so far, unless the tutor has spoken or it is the lesson's first line. */
+  private speculate() {
+    const line = this.studentUtterance.trim();
+    if (!this.planner || !line || this.turnHadAudio || this.speculated?.text === line) return;
+    if (!this.coachHistory.some((t) => t.student.trim())) return;
+    const verdict = previewCheck(this.tutorRuntime.policy, line);
+    this.speculated = { text: line, verdict, order: this.askPlanner(line, verdict, null) };
+    this.debug("pacing", "planner_speculated", { line: line.slice(0, 80), verdict: Boolean(verdict) });
+  }
+
+  /** The early plan, when it was made on exactly this line. Used once. */
+  private takeSpeculated(line: string) {
+    const spec = this.speculated;
+    this.speculated = null;
+    return spec && spec.text === line.trim() ? spec : null;
+  }
+
   /**
    * next_move: the planner's order for the line just heard (the spoken path; a
    * typed line was planned before it went out, and gets that order back).
@@ -507,7 +541,8 @@ export class GeminiLiveSession {
     if (!this.coachHistory.some((t) => t.student.trim())) return { success: true, message: "Their first line: open as the lesson says (a problem on a sheet, or the whole idea?), then what they already know." };
     const auto = this.tutorRuntime.policy.autoChecked;
     const verdict = auto && !auto.consumed && Date.now() - auto.at < 20_000 ? auto.note : null;
-    const order = this.plannedFor === seq ? this.plannedOrder : await this.askPlanner(this.lastStudentLine, verdict, null);
+    const early = this.plannedFor === seq ? null : this.takeSpeculated(this.lastStudentLine);
+    const order = this.plannedFor === seq ? this.plannedOrder : early ? await early.order : await this.askPlanner(this.lastStudentLine, verdict, null);
     this.plannedFor = seq;
     this.plannedOrder = order;
     const message = [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n");
@@ -680,6 +715,7 @@ export class GeminiLiveSession {
       this.armUnanswered("voice");
     }
     this.studentUtterance = joinTranscript(this.studentUtterance, text, this.spacedTranscripts);
+    if (!late) this.armSpeculation();
     this.tutorTurnText = "";
     this.turnDrew = false;
     this.turnMarked = false;
@@ -1080,7 +1116,10 @@ export class GeminiLiveSession {
         // speaks, so the planner's order for the reply rides in with it.
         if (name === "check_answer" && this.planner && !this.turnHadAudio && result.success && this.plannedFor !== this.inputSeq) {
           const seq = this.inputSeq;
-          const order = await this.askPlanner(this.lastStudentLine, result.message ?? null, null);
+          // The early plan stands when it saw a verdict, or when this check has none to add.
+          const early = this.takeSpeculated(this.lastStudentLine);
+          const usable = early && (early.verdict || /^Verdict: cannot_check/.test(result.message ?? ""));
+          const order = usable ? await early.order : await this.askPlanner(this.lastStudentLine, result.message ?? null, null);
           // A next_move later in this turn gets the same order, not a second plan.
           this.plannedFor = seq;
           this.plannedOrder = order;
@@ -1223,6 +1262,9 @@ export class GeminiLiveSession {
       this.reconnectTimer = null;
     }
     this.clearTurnTimer();
+    if (this.speculateTimer) clearTimeout(this.speculateTimer);
+    this.speculateTimer = null;
+    this.speculated = null;
     this.clearUnanswered();
     if (this.turnFlushTimer) clearTimeout(this.turnFlushTimer);
     this.turnFlushTimer = null;
