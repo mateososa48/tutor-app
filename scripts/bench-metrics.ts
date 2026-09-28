@@ -45,6 +45,7 @@ export type TurnRecord = {
   turnNote?: string;
   /** --plan: how long the planner took before the line went to the tutor (ms). */
   planMs?: number;
+  planModel?: string | null;
   /** The auto-check note the code sent with this turn's student line, if any. */
   autoCheck?: string | null;
   /** The full [Board: …] list after the turn, and the short one the tutor reads. */

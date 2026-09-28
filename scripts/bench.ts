@@ -75,6 +75,7 @@ import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
 import { CASES, HELDOUT, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
+import { hedged } from "../lib/hedge";
 import { PLANNER_SYSTEM, plannerNote, plannerPrompt } from "../lib/tutor-planner";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
@@ -588,34 +589,32 @@ class LiveTutor {
 
 const PLAN_MODELS = arg("plan", "").split(",").map((s) => s.trim()).filter(Boolean);
 const PLAN_TIME_MS = Number(arg("plantime", "3000"));
+// The second model is asked too once the first has not answered by then (lib/hedge).
+const PLAN_HEDGE_MS = Number(arg("planhedge", "1500"));
+// --plankey NAME: the planner on its own key. On the student's key (the default,
+// --textkey or the Live key) the two share one free-tier rate limit, and in
+// n4-on half the turns timed out waiting (Sept 27 2026).
+const PLAN_KEY = arg("plankey", "") || arg("textkey", "");
 
 /** The planner's order for this reply, or null when no model answered usably in time. */
-async function planOrder(text: string, verdict: string | null = null): Promise<string | null> {
-  const key = arg("textkey", "") ? readGeminiKey(arg("textkey", "")) : KEY;
-  const deadline = Date.now() + PLAN_TIME_MS;
-  for (const model of PLAN_MODELS) {
-    const left = deadline - Date.now();
-    if (left < 300) break;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), left);
-    try {
+async function planOrder(text: string, verdict: string | null = null): Promise<{ note: string; model: string } | null> {
+  const key = PLAN_KEY ? readGeminiKey(PLAN_KEY) : KEY;
+  const won = await hedged(
+    PLAN_MODELS,
+    async (model, signal) => {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": key, "content-type": "application/json" },
         body: JSON.stringify({ systemInstruction: { parts: [{ text: PLANNER_SYSTEM }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: "low" } } }),
-        signal: ctrl.signal,
+        signal,
       });
-      if (!r.ok) continue;
+      if (!r.ok) return null;
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
-      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
-      if (note) return note;
-    } catch {
-      /* timed out or failed: the next model, or the app's own note */
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  return null;
+      return plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
+    },
+    { hedgeMs: PLAN_HEDGE_MS, deadlineMs: PLAN_TIME_MS },
+  );
+  return won ? { note: won.value, model: won.model } : null;
 }
 
 // ── Text models (the student, and any judge that is not Gemini) ────────────
@@ -886,6 +885,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   let pendingAuto: string | null = null;
   let pendingNote: string | null = null;
   let pendingPlanMs: number | null = null;
+  let pendingPlanModel: string | null = null;
   let pending = live.userTurn(parts, false);
   for (let i = 0; i < opts.turns; i++) {
     const t = await pending;
@@ -924,7 +924,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       usage: t.usage,
       autoCheck: pendingAuto,
       ...(pendingNote ? { turnNote: pendingNote } : {}),
-      ...(pendingPlanMs != null ? { planMs: pendingPlanMs } : {}),
+      ...(pendingPlanMs != null ? { planMs: pendingPlanMs, planModel: pendingPlanModel } : {}),
       board: await summaryOf(page, false),
       boardCompact: await summaryOf(page, true),
       shot,
@@ -985,7 +985,8 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
           reminders: pendingNote,
         }), pendingAuto);
         pendingPlanMs = Date.now() - t0;
-        if (order) pendingNote = order;
+        pendingPlanModel = order?.model ?? null;
+        if (order) pendingNote = order.note;
       }
       const context = [pendingAuto, pendingNote].filter(Boolean).join("\n");
       if (context) live.sendNote(context);

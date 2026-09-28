@@ -6,6 +6,7 @@
 // and the tutor goes on with the app's own note.
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { hedged } from "@/lib/hedge";
 import { PLANNER_SYSTEM, plannerNote, plannerPrompt, type PlannerTurn } from "@/lib/tutor-planner";
 
 // The small models answer in about 1-2 s; the bigger flash models took 10-37 s
@@ -14,6 +15,10 @@ const MODELS = (process.env.PLANNER_MODELS || "gemini-3.5-flash-lite,gemini-3.1-
 // The planner with low thinking answers in 0.8-2.5 s, a few calls near 3 s; at
 // 2.4 s a spoken answer lost its order about one time in two (Sept 27 2026).
 const DEADLINE_MS = 3_200;
+// The second model is asked too when the first has not answered by then: asked
+// one after another, a slow first model spent the whole deadline and half the
+// turns of one run got no order (Sept 27 2026, lib/hedge).
+const HEDGE_MS = 1_500;
 // A student line every few seconds at most; this only stops a runaway client.
 const PER_MINUTE = 40;
 const recent = new Map<string, number[]>();
@@ -59,12 +64,10 @@ export async function POST(req: NextRequest) {
   });
 
   const started = Date.now();
-  for (const model of MODELS) {
-    const left = DEADLINE_MS - (Date.now() - started);
-    if (left < 300) break;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), left);
-    try {
+  const verdict = text(body.verdict, 400) || null;
+  const won = await hedged(
+    MODELS,
+    async (model, signal) => {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
@@ -73,17 +76,14 @@ export async function POST(req: NextRequest) {
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { temperature: 0.3, maxOutputTokens: 800, thinkingConfig: { thinkingLevel: "low" } },
         }),
-        signal: controller.signal,
+        signal,
       });
-      if (!r.ok) continue;
+      if (!r.ok) return null;
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
-      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", text(body.verdict, 400) || null);
-      if (note) return NextResponse.json({ note, model, ms: Date.now() - started });
-    } catch {
-      /* timed out or failed: the next model, or none */
-    } finally {
-      clearTimeout(timer);
-    }
-  }
+      return plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
+    },
+    { hedgeMs: HEDGE_MS, deadlineMs: DEADLINE_MS },
+  );
+  if (won) return NextResponse.json({ note: won.value, model: won.model, ms: Date.now() - started });
   return NextResponse.json({ note: null, ms: Date.now() - started });
 }
