@@ -37,6 +37,9 @@
 //                      documented channel) instead of clientContent user turns;
 //                      a note rides in front of the line it goes with
 //   --promptadd "…"    a line appended to the system instruction (A/B a rule)
+//   --plan a,b         the planner (lib/tutor-planner): after the student's line, model a
+//                      (then b) gives the tutor one order for this reply, in place of the
+//                      turn note and the coach; typed path only; --plantime ms (3000)
 //   --textkey NAME     the student model's key from .env.local (e.g. GEMINI_API_KEY_2);
 //                      the Live tutor stays on GEMINI_API_KEY
 //   --kidvoice name    the macOS voice for --voice (default Samantha; --kidrate 180 words a minute)
@@ -72,6 +75,7 @@ import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
 import { CASES, HELDOUT, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
+import { PLANNER_SYSTEM, plannerNote, plannerPrompt } from "../lib/tutor-planner";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
@@ -580,6 +584,40 @@ class LiveTutor {
   }
 }
 
+// ── The planner (--plan) ────────────────────────────────────────────────────
+
+const PLAN_MODELS = arg("plan", "").split(",").map((s) => s.trim()).filter(Boolean);
+const PLAN_TIME_MS = Number(arg("plantime", "3000"));
+
+/** The planner's order for this reply, or null when no model answered usably in time. */
+async function planOrder(text: string): Promise<string | null> {
+  const key = arg("textkey", "") ? readGeminiKey(arg("textkey", "")) : KEY;
+  const deadline = Date.now() + PLAN_TIME_MS;
+  for (const model of PLAN_MODELS) {
+    const left = deadline - Date.now();
+    if (left < 300) break;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), left);
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "x-goog-api-key": key, "content-type": "application/json" },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: PLANNER_SYSTEM }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: "low" } } }),
+        signal: ctrl.signal,
+      });
+      if (!r.ok) continue;
+      const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
+      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "");
+      if (note) return note;
+    } catch {
+      /* timed out or failed: the next model, or the app's own note */
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return null;
+}
+
 // ── Text models (the student, and any judge that is not Gemini) ────────────
 
 export type ModelCall = { model: string; system: string; text: string; images?: Array<{ mimeType: string; data: string }>; json?: boolean; temperature?: number; maxTokens?: number };
@@ -847,6 +885,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   let studentText = opening;
   let pendingAuto: string | null = null;
   let pendingNote: string | null = null;
+  let pendingPlanMs: number | null = null;
   let pending = live.userTurn(parts, false);
   for (let i = 0; i < opts.turns; i++) {
     const t = await pending;
@@ -885,6 +924,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       usage: t.usage,
       autoCheck: pendingAuto,
       ...(pendingNote ? { turnNote: pendingNote } : {}),
+      ...(pendingPlanMs != null ? { planMs: pendingPlanMs } : {}),
       board: await summaryOf(page, false),
       boardCompact: await summaryOf(page, true),
       shot,
@@ -929,6 +969,24 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       // The app's typed path: a checked answer goes in as a note before the line.
       pendingAuto = runtime.takeAutoCheckNote();
       await markChain;
+      // --plan: the planner reads this line and gives the one order for the reply,
+      // in place of the turn note and the coach (which become its inputs).
+      pendingPlanMs = null;
+      if (PLAN_MODELS.length) {
+        const t0 = Date.now();
+        const order = await planOrder(plannerPrompt({
+          grade: c.grade,
+          topic: c.topic,
+          turns: turns.map((x) => ({ student: x.student, tutor: x.tutor, tools: x.tools.filter((y) => y.ok && !y.by).map((y) => y.name) })),
+          line: studentText,
+          verdict: pendingAuto,
+          board: turn.boardCompact,
+          state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
+          reminders: pendingNote,
+        }));
+        pendingPlanMs = Date.now() - t0;
+        if (order) pendingNote = order;
+      }
       const context = [pendingAuto, pendingNote].filter(Boolean).join("\n");
       if (context) live.sendNote(context);
       pending = live.userTurn([{ text: studentText }]);

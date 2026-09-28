@@ -43,6 +43,8 @@ export type TurnRecord = {
   mutedText?: string;
   /** The note for this turn the app sent with the student's line (TutorRuntime.turnNote), if any. */
   turnNote?: string;
+  /** --plan: how long the planner took before the line went to the tutor (ms). */
+  planMs?: number;
   /** The auto-check note the code sent with this turn's student line, if any. */
   autoCheck?: string | null;
   /** The full [Board: …] list after the turn, and the short one the tutor reads. */
