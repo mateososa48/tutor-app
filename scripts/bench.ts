@@ -76,7 +76,7 @@ import { GoogleGenAI } from "@google/genai";
 import { CASES, HELDOUT, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { hedged } from "../lib/hedge";
-import { PLANNER_SYSTEM, plannerNote, plannerPrompt } from "../lib/tutor-planner";
+import { NEXT_MOVE_DECLARATION, PLANNER_SYSTEM, plannerNote, plannerPrompt } from "../lib/tutor-planner";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
@@ -292,6 +292,10 @@ class LiveTutor {
   private readonly hold: HoldLike | null;
   /** The student's last line, for the third nudge. */
   lastLine = "";
+  /** What the model has heard of the student's line so far (the voice path's input transcription). */
+  get heardNow(): string { return this.turn.heard; }
+  /** The tutor has made sound this turn (the app's turnHadAudio). */
+  get spokeNow(): boolean { return this.turn.audioChunks > 0; }
   /** --voice: the student's line as 16 kHz PCM, being streamed by the mic loop. */
   private voicePcm: Buffer | null = null;
   private voiceAt = 0;
@@ -587,6 +591,8 @@ class LiveTutor {
 
 // ── The planner (--plan) ────────────────────────────────────────────────────
 
+// --plan a,b: the models in hedge order; "model@KEY_NAME" puts one on its own key
+// (the same model on two keys hedges the free tier's rate limits).
 const PLAN_MODELS = arg("plan", "").split(",").map((s) => s.trim()).filter(Boolean);
 const PLAN_TIME_MS = Number(arg("plantime", "3000"));
 // The second model is asked too once the first has not answered by then (lib/hedge).
@@ -598,10 +604,11 @@ const PLAN_KEY = arg("plankey", "") || arg("textkey", "");
 
 /** The planner's order for this reply, or null when no model answered usably in time. */
 async function planOrder(text: string, verdict: string | null = null): Promise<{ note: string; model: string } | null> {
-  const key = PLAN_KEY ? readGeminiKey(PLAN_KEY) : KEY;
   const won = await hedged(
     PLAN_MODELS,
-    async (model, signal) => {
+    async (spec, signal) => {
+      const [model, keyName] = spec.split("@");
+      const key = keyName ? readGeminiKey(keyName) : PLAN_KEY ? readGeminiKey(PLAN_KEY) : KEY;
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": key, "content-type": "application/json" },
@@ -725,9 +732,12 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   }
   const profile = { displayName: c.name, gradeLevel: c.grade, learningPrefs: {} };
   const promptAdd = arg("promptadd", "");
-  const system = m.prompts.buildGeminiInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true }) + (promptAdd ? `\n\n${promptAdd}` : "");
+  // --voice with --plan: the app's spoken path to the planner (lib/gemini-live
+  // nextMove): next_move is declared and the prompt leads with its rule.
+  const voicePlan = opts.voice && PLAN_MODELS.length > 0;
+  const system = m.prompts.buildGeminiInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true, nextMove: voicePlan } as never) + (promptAdd ? `\n\n${promptAdd}` : "");
   // Exactly what the app sends (the Live diet since Sept 25 2026; --fulltools for every declaration).
-  const declarations = m.behavior.withToolBehavior(opts.fullTools ? [...m.tools.WHITEBOARD_TOOL_DECLARATIONS, ...m.tutorTools.TUTOR_TOOL_DECLARATIONS, ...m.sessionTools.SESSION_TOOL_DECLARATIONS] : m.live.liveToolDeclarations(), opts.liveModel, opts.asyncTools);
+  const declarations = m.behavior.withToolBehavior([...(opts.fullTools ? [...m.tools.WHITEBOARD_TOOL_DECLARATIONS, ...m.tutorTools.TUTOR_TOOL_DECLARATIONS, ...m.sessionTools.SESSION_TOOL_DECLARATIONS] : m.live.liveToolDeclarations()), ...(voicePlan ? [NEXT_MOVE_DECLARATION] : [])] as never, opts.liveModel, opts.asyncTools);
 
   // The page's sinks: the student's spoken working goes up in their hand.
   runtime.setWorkingSink((lines: string[], answer: string) => {
@@ -800,10 +810,47 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     }).catch(() => undefined);
   });
 
+  // The spoken path's planner, as lib/gemini-live runs it: one plan per student
+  // line (lineSeq), asked by next_move or by a check_answer made before any words.
+  let lineSeq = 0;
+  let plannedFor = -1;
+  let plannedOrder: string | null = null;
+  const planLine = async (line: string, verdict: string | null): Promise<string | null> => {
+    const t0 = Date.now();
+    const r = await planOrder(plannerPrompt({
+      grade: c.grade,
+      topic: c.topic,
+      turns: turns.map((x) => ({ student: x.student, tutor: x.tutor, tools: x.tools.filter((y) => y.ok && !y.by).map((y) => y.name) })),
+      line,
+      verdict,
+      board: turns.at(-1)?.boardCompact ?? "",
+      state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
+      reminders: null,
+    }), verdict);
+    pendingPlanMs = (pendingPlanMs ?? 0) + (Date.now() - t0);
+    pendingPlanModel = r?.model ?? pendingPlanModel;
+    plannedFor = lineSeq;
+    plannedOrder = r?.note ?? null;
+    return plannedOrder;
+  };
+  const voiceLine = () => live.heardNow.replace(/\s+/g, " ").trim() || live.lastLine;
+
   const onTool = async (name: string, args: Record<string, unknown>, callId: string): Promise<ToolCallResult> => {
     await markChain;
     const now = Date.now();
+    if (name === "next_move" && voicePlan) {
+      if (live.spokeNow) return { success: true, message: "Nothing new from the student: say nothing more and wait for them." };
+      if (!turns.length) return { success: true, message: "Their first line: open as the lesson says (a problem on a sheet, or the whole idea?), then what they already know." };
+      const auto = runtime.policy.autoChecked;
+      const verdict = auto && !auto.consumed && Date.now() - auto.at < 20_000 ? auto.note : null;
+      const order = plannedFor === lineSeq ? plannedOrder : await planLine(voiceLine(), verdict);
+      return { success: true, message: [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n") };
+    }
     const tutor = runtime.runTool(name, args, now, callId);
+    if (tutor && name === "check_answer" && voicePlan && turns.length && !live.spokeNow && tutor.success && plannedFor !== lineSeq) {
+      const order = await planLine(voiceLine(), tutor.message ?? null);
+      if (order) return { ...tutor, message: `${tutor.message ?? ""}\n${order}` };
+    }
     if (tutor) return tutor;
     if (name === "remember_about_student") {
       runtime.rememberNote(typeof args.note === "string" ? args.note : "");
@@ -957,6 +1004,9 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       // the utterance is read when they stop, and a checked answer's note rides
       // on the tutor's first tool result (nextReminder), never as a message.
       pendingAuto = null;
+      pendingPlanMs = null;
+      pendingPlanModel = null;
+      lineSeq++;
       const pcm = await synth(studentText, opts.out);
       if (pendingNote) live.sendNote(pendingNote);
       const said = studentText;

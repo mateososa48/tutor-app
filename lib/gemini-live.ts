@@ -1079,7 +1079,11 @@ export class GeminiLiveSession {
         // ?plan=1, a spoken answer: the tutor waits for this verdict before it
         // speaks, so the planner's order for the reply rides in with it.
         if (name === "check_answer" && this.planner && !this.turnHadAudio && result.success && this.plannedFor !== this.inputSeq) {
+          const seq = this.inputSeq;
           const order = await this.askPlanner(this.lastStudentLine, result.message ?? null, null);
+          // A next_move later in this turn gets the same order, not a second plan.
+          this.plannedFor = seq;
+          this.plannedOrder = order;
           if (order) result = { ...result, message: `${result.message ?? ""}\n${order}` };
         }
         if (name === "check_answer" && this.turnHadAudio && result.success) {
