@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PLANNER_SYSTEM, parsePlannerOrder, plannerNote, plannerPrompt } from "./tutor-planner";
+import { PLANNER_SYSTEM, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "./tutor-planner";
 
 test("the planner's prompt carries the new line, the private verdict, the board and the reminders", () => {
   const text = plannerPrompt({
@@ -58,4 +58,13 @@ test("an order that calls an answer right is dropped unless the checker said cor
   assert.ok(plannerNote(order, '[Answer check, not from the student: "72.25" → correct.]'));
   assert.ok(plannerNote(order, "Verdict: correct. Correct: 85 - 12.75 = 72.25"));
   assert.ok(plannerNote('Say: "How did you get seventy point two five?"'), "asking is always fine");
+});
+
+test("an early plan still fits a line that grew by a few number-free words", () => {
+  assert.equal(sameLine("35 squares cos 35 is more than 5", "35 squares cos 35 is more than 5."), true);
+  assert.equal(sameLine("I guess five", "I guess five, but I'm not sure"), true);
+  assert.equal(sameLine("I guess five", "I guess five, no wait, six"), false);
+  assert.equal(sameLine("0.45 is bigger", "0.45 is bigger like 45 cents"), false);
+  assert.equal(sameLine("so it's 12", "so it's 12 because you add them and then you get the answer and it works"), false);
+  assert.equal(sameLine("it's 12", "wait it's 12"), false);
 });

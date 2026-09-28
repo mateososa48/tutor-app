@@ -9,7 +9,7 @@ import { TutorRuntime } from "./tutor-runtime";
 import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, finishReplyNote, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
 import { givesTask } from "./tutor-policy";
 import type { CoachTurn } from "./tutor-coach";
-import { NEXT_MOVE_DECLARATION } from "./tutor-planner";
+import { NEXT_MOVE_DECLARATION, sameLine } from "./tutor-planner";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
@@ -508,7 +508,8 @@ export class GeminiLiveSession {
   /** Start the planner on the line so far, unless the tutor has spoken or it is the lesson's first line. */
   private speculate() {
     const line = this.studentUtterance.trim();
-    if (!this.planner || !line || this.turnHadAudio || this.speculated?.text === line) return;
+    // A plan already on its way for this line, give or take a few trailing words, stands.
+    if (!this.planner || !line || this.turnHadAudio || (this.speculated && sameLine(this.speculated.text, line))) return;
     if (!this.coachHistory.some((t) => t.student.trim())) return;
     const verdict = previewCheck(this.tutorRuntime.policy, line);
     this.speculated = { text: line, verdict, order: this.askPlanner(line, verdict, null) };
@@ -519,7 +520,9 @@ export class GeminiLiveSession {
   private takeSpeculated(line: string) {
     const spec = this.speculated;
     this.speculated = null;
-    return spec && spec.text === line.trim() ? spec : null;
+    const fits = spec ? sameLine(spec.text, line) : false;
+    if (spec) this.debug("pacing", fits ? "planner_early_used" : "planner_early_stale", { early: spec.text.slice(0, 60), line: line.slice(0, 80) });
+    return fits ? spec : null;
   }
 
   /**

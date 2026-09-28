@@ -131,3 +131,25 @@ export const NEXT_MOVE_DECLARATION = {
 
 /** The prompt's line for sessions that declare next_move. */
 export const NEXT_MOVE_RULE = "Each time the student says something, call next_move before any words, then follow what it returns: say it in your own voice, then its board move. If it returns nothing, reply yourself.";
+
+/**
+ * Whether a plan made early, on the line as it was when the student stopped
+ * (the spoken path's speculative start), still fits the line the tutor is
+ * answering. Transcript fragments keep arriving after the student stops, so
+ * the line may have grown: a few trailing words with no number in them change
+ * nothing a plan depends on (Sept 28 2026: with exact matching the early plan
+ * was thrown away on most turns and the tutor still waited about 2 s).
+ */
+export function sameLine(early: string, line: string): boolean {
+  const norm = (t: string) => t.toLowerCase().replace(/[^\p{L}\p{N}\s.]/gu, " ").replace(/\s+/g, " ").trim();
+  const a = norm(early);
+  const b = norm(line);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (!b.startsWith(a)) return false;
+  const extra = b.slice(a.length).trim();
+  return extra.split(" ").length <= 6 && !/\d/.test(extra) && !NUMBER_WORD.test(extra);
+}
+
+const NUMBER_WORD = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|half|third|quarter|point|negative|minus|plus|times)\b/i;
+

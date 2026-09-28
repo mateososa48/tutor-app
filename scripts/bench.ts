@@ -76,7 +76,7 @@ import { GoogleGenAI } from "@google/genai";
 import { CASES, HELDOUT, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { hedged } from "../lib/hedge";
-import { NEXT_MOVE_DECLARATION, PLANNER_SYSTEM, plannerNote, plannerPrompt } from "../lib/tutor-planner";
+import { NEXT_MOVE_DECLARATION, PLANNER_SYSTEM, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
@@ -853,15 +853,18 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   // The app's speculative start (lib/gemini-live speculate): the planner starts
   // 350 ms after the last fragment of the student's speech, before any tool call.
   let spec: { text: string; verdict: string | null; order: Promise<string | null> } | null = null;
+  let planEarly: string | null = null;
   let specTimer: ReturnType<typeof setTimeout> | null = null;
   const takeSpec = (line: string) => {
     const s0 = spec;
     spec = null;
-    return s0 && s0.text === line.trim() ? s0 : null;
+    const fits = s0 ? sameLine(s0.text, line) : false;
+    planEarly = s0 ? (fits ? "used" : `stale: "${s0.text.slice(0, 50)}" vs "${line.slice(0, 70)}"`) : "none";
+    return fits ? s0 : null;
   };
   const speculate = () => {
     const line = live.heardNow.replace(/\s+/g, " ").trim();
-    if (!voicePlan || !line || live.spokeNow || !turns.length || spec?.text === line) return;
+    if (!voicePlan || !line || live.spokeNow || !turns.length || (spec && sameLine(spec.text, line))) return;
     const verdict = typeof m.tutorTools.previewCheck === "function" ? m.tutorTools.previewCheck(runtime.policy, line) : null;
     spec = { text: line, verdict, order: planFor(line, verdict) };
   };
@@ -896,6 +899,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     if (tutor && name === "check_answer" && voicePlan && turns.length && !live.spokeNow && tutor.success && plannedFor !== lineSeq) {
       const early = takeSpec(voiceLine());
       const usable = early && (early.verdict || /^Verdict: cannot_check/.test(tutor.message ?? ""));
+      if (early && !usable) planEarly = "no verdict: planned again with the check's";
       const order = usable ? await early.order : await planLine(voiceLine(), tutor.message ?? null);
       plannedFor = lineSeq;
       plannedOrder = order;
@@ -1028,6 +1032,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       autoCheck: pendingAuto,
       ...(pendingNote ? { turnNote: pendingNote } : {}),
       ...(pendingPlanMs != null ? { planMs: pendingPlanMs, planModel: pendingPlanModel } : {}),
+      ...(planEarly ? { planEarly } : {}),
       board: await summaryOf(page, false),
       boardCompact: await summaryOf(page, true),
       shot,
@@ -1064,6 +1069,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       pendingPlanModel = null;
       lineSeq++;
       spec = null;
+      planEarly = null;
       const pcm = await synth(studentText, opts.out);
       if (pendingNote) live.sendNote(pendingNote);
       voiceUtterance = studentText;
