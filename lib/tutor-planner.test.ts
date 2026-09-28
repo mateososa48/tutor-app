@@ -29,7 +29,7 @@ test("the planner starts a lesson with no turns and leaves out what it does not 
 });
 
 test("the planner's reply becomes one bracketed note: its quote and one allowed board move", () => {
-  assert.equal(plannerNote('Say: "How did you get 15?" Board: add_student_attempt("15 cuz you add 3")'), '[Next move, not from the student: Say: "How did you get 15?" Board: add_student_attempt("15 cuz you add 3")]');
+  assert.equal(plannerNote('Say: "How did you get 15?" Board: add_student_attempt("15 cuz you add 3")'), '[Next move, not from the student: Say: "How did you get 15?" After speaking: add_student_attempt("15 cuz you add 3")]');
   assert.equal(plannerNote('Say: "Exactly, fifty cents is more. Which decimal is bigger?"'), '[Next move, not from the student: Say: "Fifty cents is more. Which decimal is bigger?"]', "praise opener cut");
   assert.equal(plannerNote('Say: "Yes, exactly, a negative times a negative is positive. So what is b squared?"'), '[Next move, not from the student: Say: "A negative times a negative is positive. So what is b squared?"]');
   assert.equal(plannerNote('Say: "What comes next?" Board: set_plan("x")'), '[Next move, not from the student: Say: "What comes next?"]', "a tool outside the list is dropped");
@@ -46,5 +46,7 @@ test("the planner's rules put diagnosis first and never let it hand over the ans
   assert.match(PLANNER_SYSTEM, /The quote never starts with praise/);
   assert.match(PLANNER_SYSTEM, /Board tools you may name: add_student_attempt.*No others\./);
   assert.match(PLANNER_SYSTEM, /Never: give the answer, a number they should find, or the rule/);
+  assert.match(PLANNER_SYSTEM, /your order agrees with it/);
+  assert.match(PLANNER_SYSTEM, /never ask for add_student_attempt of an answer/);
   assert.match(PLANNER_SYSTEM, /never ask them to write, draw or shade/);
 });

@@ -188,6 +188,9 @@ function SessionDetailPage({ id }: { id: string }) {
   const [liveVad] = useState(() => resolveLiveVad(searchParams));
   // The coach between turns (lib/tutor-coach), opt-in with ?coach=1 until the benchmark decides.
   const [coachOn] = useState(() => searchParams?.get("coach") === "1");
+  // The planner on each student line (lib/tutor-planner, /api/plan), opt-in with ?plan=1:
+  // it adds up to ~2.5 s before the tutor answers a typed line or a spoken answer.
+  const [planOn] = useState(() => searchParams?.get("plan") === "1");
   const coachTopicRef = useRef("");
   // How fast the tutor's voice plays. Only the Gemini client can change it.
   const [tutorSpeed, setTutorSpeed] = useTutorSpeed();
@@ -1120,6 +1123,7 @@ function SessionDetailPage({ id }: { id: string }) {
           asyncTools,
           vad: liveVad,
           coach: coachOn ? { topic: () => coachTopicRef.current, board: () => whiteboardRef.current?.getBoardSummary?.(true) ?? "" } : undefined,
+          planner: planOn ? { topic: () => coachTopicRef.current, board: () => whiteboardRef.current?.getBoardSummary?.(true) ?? "", grade: () => "" } : undefined,
         })
       : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;
@@ -1152,7 +1156,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, asyncTools, liveVad, coachOn, tutorRuntime]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, asyncTools, liveVad, coachOn, planOn, tutorRuntime]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);

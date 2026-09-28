@@ -30,7 +30,7 @@ async function plan(model: string, fallback: string, key: string, system: string
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": key, "content-type": "application/json" },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: "low" } } }),
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: arg("thinking", "low") } } }),
       });
       if (r.status === 503 || r.status === 429) { await new Promise((res) => setTimeout(res, 2000 * (attempt + 1))); continue; }
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };

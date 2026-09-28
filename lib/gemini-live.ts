@@ -227,13 +227,20 @@ export class GeminiLiveSession {
 
   /** The coach between turns (lib/tutor-coach, /api/coach), when the session asks for it (?coach=1). */
   private readonly coach: { topic: () => string; board: () => string } | undefined;
+  /** The planner on the student's line (lib/tutor-planner, /api/plan), when the session asks for it (?plan=1). */
+  private readonly planner: { topic: () => string; board: () => string; grade: () => string } | undefined;
+  /** Typed lines wait for the planner in order, so a quick second line never overtakes the first. */
+  private textChain: Promise<void> = Promise.resolve();
+  // The route gives up at 2.4 s; this covers the trip.
+  private static readonly PLANNER_MS = 2_900;
   private coachHistory: CoachTurn[] = [];
   private lastStudentLine = "";
   private turnTools: string[] = [];
   private inputSeq = 0;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string } }) {
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: { topic: () => string; board: () => string; grade: () => string } }) {
     this.coach = options.coach;
+    this.planner = options.planner;
     this.callbacks = callbacks;
     this.systemInstruction = options.systemInstruction;
     this.voiceName = options.voiceName;
@@ -452,11 +459,60 @@ export class GeminiLiveSession {
     const turnNote = this.pendingTurnNote;
     this.pendingTurnNote = null;
     if (turnNote) this.debug("pacing", "turn_note", { note: turnNote });
-    const context = [note, turnNote].filter(Boolean).join("\n");
-    if (context) this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: context }] }], turnComplete: false } });
-    const sent = this.sendUserTurn([{ text }], "text");
-    if (sent) this.armUnanswered("text");
-    return sent;
+    if (!this.planner) {
+      const context = [note, turnNote].filter(Boolean).join("\n");
+      if (context) this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: context }] }], turnComplete: false } });
+      const sent = this.sendUserTurn([{ text }], "text");
+      if (sent) this.armUnanswered("text");
+      return sent;
+    }
+    // ?plan=1: the line waits (at most PLANNER_MS) for the planner's one order,
+    // which takes the turn note's place (the note is one of its inputs).
+    const open = this.ws?.readyState === WebSocket.OPEN;
+    this.textChain = this.textChain
+      .then(() => this.askPlanner(text, note, turnNote))
+      .then((order) => {
+        if (this.manualDisconnect) return;
+        const context = [note, order ?? turnNote].filter(Boolean).join("\n");
+        if (context) this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: context }] }], turnComplete: false } });
+        if (this.sendUserTurn([{ text }], "text")) this.armUnanswered("text");
+      })
+      .catch(() => undefined);
+    return open;
+  }
+
+  /** The planner's order for the tutor's reply to this line (/api/plan), or null when none came in time. */
+  private async askPlanner(line: string, verdict: string | null, reminders: string | null): Promise<string | null> {
+    if (!this.planner || !line.trim()) return null;
+    const started = Date.now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GeminiLiveSession.PLANNER_MS);
+    try {
+      const r = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          grade: this.planner.grade(),
+          topic: this.planner.topic(),
+          turns: this.coachHistory,
+          line,
+          verdict,
+          board: this.planner.board(),
+          state: formatTutorState(this.tutorRuntime.policy, Date.now()),
+          reminders,
+        }),
+        signal: controller.signal,
+      });
+      const j = r.ok ? ((await r.json()) as { note?: string | null; model?: string }) : null;
+      const note = j?.note ?? null;
+      this.debug("pacing", "planner", { note, model: j?.model, ms: Date.now() - started });
+      return note;
+    } catch {
+      this.debug("pacing", "planner_missed", { ms: Date.now() - started });
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -984,6 +1040,12 @@ export class GeminiLiveSession {
         // Checked after the reply was said: 3.8 goes on in the same generation
         // once this is back, so the rest is muted unless the verdict takes back
         // what it said (ReplyGate.onCheckAfterReply).
+        // ?plan=1, a spoken answer: the tutor waits for this verdict before it
+        // speaks, so the planner's order for the reply rides in with it.
+        if (name === "check_answer" && this.planner && !this.turnHadAudio && result.success) {
+          const order = await this.askPlanner(this.lastStudentLine, result.message ?? null, null);
+          if (order) result = { ...result, message: `${result.message ?? ""}\n${order}` };
+        }
         if (name === "check_answer" && this.turnHadAudio && result.success) {
           this.gate.onCheckAfterReply(this.replyText, result.message ?? "", givesTask);
           result = { ...result, message: `${result.message ?? ""}\n${CHECK_AFTER_REPLY_NOTE}` };
