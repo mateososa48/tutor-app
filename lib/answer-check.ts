@@ -347,6 +347,13 @@ export function finalValue(answer: string): string | null {
 
 export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck {
   let verdict = checkAnswerAsWritten(problem, studentAnswer);
+  // "fifteen percent of seventy-two twenty-five" is heard as "72 25": read as
+  // 7225, which may be wrong (it could be 72.25), so this reading can confirm
+  // an answer but never call one wrong.
+  if (verdict.verdict === "cannot_check" && /\b\d{1,2}\s+\d{2}\b/.test(spokenToDigits(problem ?? ""))) {
+    const paired = checkAnswerAsWritten(spokenToDigits(problem).replace(/\b(\d{1,2})\s+(\d{2})\b/g, "$1$2"), studentAnswer);
+    if (paired.verdict === "correct") verdict = paired;
+  }
   if (verdict.verdict === "cannot_check") {
     const final = finalValue(studentAnswer ?? "");
     if (final) {
@@ -385,7 +392,7 @@ function checkAnswerAsWritten(problem: string, studentAnswer: string): AnswerChe
   const diagnostic = checkHowMany(asked, heard) ?? checkComparison(asked, heard);
   if (diagnostic) return diagnostic;
   if (PICTURE_WORDS.test(asked)) return cannot(`"${asked}" is about a picture; look at the board.`);
-  const read = readProblem(inlineFunctions(spokenToDigits(asked)) ?? asked);
+  const read = readProblem(verbTask(asked) ?? inlineFunctions(spokenToDigits(asked)) ?? asked);
   if (typeof read !== "string") return read;
   const prob = read;
   // Voice transcripts spell numbers out: "two and a half", "negative four".
@@ -841,6 +848,24 @@ export function questionMath(problem: string): string | null {
   return spoken.slice(lead[0].length).replace(/\s+(?:equal|equals|be|come to|come out to|make|give(?: you)?|leave(?: you)?|get you)\s*(\?*)\s*$/i, "$1");
 }
 
+// "Subtract 1275 from 8500 to get the value after two years.": a step said as a
+// task (Sept 27 2026: every step of Ethan's year-by-year was one, unchecked).
+const VERB_TASK: Array<[RegExp, (a: string, b: string) => string]> = [
+  [/^(?:(?:now|ok(?:ay)?|so|then),?\s+)?(?:subtract|take)\s+(.+?)\s+(?:away\s+)?from\s+(.+?)(?:\s+to\s+(?:get|find)\b.*)?[.?!]*$/i, (a, b) => `${b} - ${a}`],
+  [/^(?:(?:now|ok(?:ay)?|so|then),?\s+)?add\s+(.+?)\s+to\s+(.+?)(?:\s+to\s+(?:get|find)\b.*)?[.?!]*$/i, (a, b) => `${b} + ${a}`],
+  [/^(?:(?:now|ok(?:ay)?|so|then),?\s+)?multiply\s+(.+?)\s+by\s+(.+?)(?:\s+to\s+(?:get|find)\b.*)?[.?!]*$/i, (a, b) => `${a} * ${b}`],
+  [/^(?:(?:now|ok(?:ay)?|so|then),?\s+)?divide\s+(.+?)\s+by\s+(.+?)(?:\s+to\s+(?:get|find)\b.*)?[.?!]*$/i, (a, b) => `${a} / ${b}`],
+];
+
+export function verbTask(problem: string): string | null {
+  const text = spokenToDigits(problem).trim();
+  for (const [re, make] of VERB_TASK) {
+    const m = re.exec(text);
+    if (m && /\d/.test(m[1]) && /\d/.test(m[2]) && !/[a-z]{2,}/i.test(`${m[1]} ${m[2]}`.replace(/\b(?:percent|of)\b/gi, ""))) return make(m[1].trim(), m[2].trim());
+  }
+  return null;
+}
+
 function readProblem(problem: string): string | AnswerCheck {
   // "Now, for the second year, what's 15% of 17000?": the question is what
   // follows its last "what's" (Sept 26 2026: Ethan's right 2550 went unchecked).
@@ -1021,7 +1046,12 @@ function pickChoice(answer: string, choices: Choice[], want: "max" | "min"): Pic
   const unread: Pick = { kind: "cannot", reason: `couldn't tell which choice the student's "${answer}" means.` };
   if (/\b(left|right|top|bottom|above|below)\b/.test(s)) return { kind: "cannot", reason: `"${answer}" depends on how the choices were written; ask them to say the number.` };
   if (/\bseconds\b/.test(s)) return { kind: "cannot", reason: `"${answer}" could be a place or a fraction; ask them to say the number.` };
-  if (/\b(equal|same|neither|equivalent|tie|tied)\b/.test(s)) return { kind: "equal" };
+  if (/\b(equal|same|neither|equivalent|tie|tied)\b/.test(s)) {
+    // "is 0.2 the same as 200 cents? i'm confused" asks about another number;
+    // it does not say the choices are equal.
+    const other = (spokenToDigits(s, { the: true }).match(/-?\d+(?:\.\d+)?(?:\/\d+)?/g) ?? []).some((n) => !choices.some((c) => near(readValue(n) ?? NaN, c.value)));
+    return other ? unread : { kind: "equal" };
+  }
 
   // "1/4 is smaller" answers "which is bigger?" by naming the other one.
   let flip = false;

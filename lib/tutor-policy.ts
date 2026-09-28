@@ -15,7 +15,7 @@
 
 import { clockCue, clockLabel } from "./session-clock";
 import { isNonAnswer } from "./board-content-rules";
-import { functionRulesIn, checkAnswer, spokenToDigits } from "./answer-check";
+import { functionRulesIn, finalValue, checkAnswer, spokenToDigits } from "./answer-check";
 
 /** A checked answer as the board shows it: the line in their hand, a ring when right and final, and the earlier wrong line to strike. */
 export type VerdictMarks = { line: string; ring: boolean; strike: string | null };
@@ -113,6 +113,8 @@ export type TutorPolicy = {
   lastCannot: { answer: string; at: number } | null;
   /** Function rules the tutor has said ("f(x) = x + 5"), by name: a later "what is f(6)?" is checked with them. */
   functionRules: Record<string, string>;
+  /** The value the student's last line ended on ("7225"): what "that" means in "subtract that from 8500". */
+  lastStudentValue: string | null;
   /**
    * Code-owned marks (Sept 26 2026): when the session page can write on the
    * board itself, a checked answer goes up in the student's hand and is marked
@@ -198,6 +200,7 @@ export function createPolicy(now: number): TutorPolicy {
     lastWrongAttempt: null,
     lastCannot: null,
     functionRules: {},
+    lastStudentValue: null,
     codeMarks: false,
     pendingMarks: null,
     lastWrongLine: null,
@@ -322,6 +325,9 @@ export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.no
   p.studentTurns += 1;
   p.lastUtterance = t;
   for (const n of numbersIn(t)) if (!p.saidNumbers.includes(n)) p.saidNumbers.push(n);
+  // The value this line ends on: its one number, or its worked answer's last.
+  const values = numbersIn(spokenToDigits(t));
+  p.lastStudentValue = values.length === 1 ? values[0] : finalValue(t);
   // Sept 26 2026: twice the tutor answered "can i try one on my own" with
   // "let's do one together"; the student's ask outranks the fading rule.
   if (ASKS_TO_TRY.test(t)) p.wantsAlone = true;
@@ -694,7 +700,20 @@ export function boardReference(text: string): string | null {
   return m ? m[0].trim().slice(0, 60) : null;
 }
 
-const SPOKEN_TASK = /^(?:(?:now|ok(?:ay)?|so|alright),?\s+)?(?:try|compare|find|work out|figure out|calculate|compute|solve|evaluate)\b/i;
+const SPOKEN_TASK = /^(?:(?:now|ok(?:ay)?|so|alright|then),?\s+)?(?:try|compare|find|work out|figure out|calculate|compute|solve|evaluate|subtract|add|multiply|divide|take)\b/i;
+
+// "Twelve seventy-five is right. Subtract that from eighty-five hundred.": the
+// "that" is the student's last answer, when the tutor said it back this turn
+// (so it cannot be a number the tutor brought in itself).
+const BACK_REFERENCE = /\b(?:(?:this|that)\s+(?:new\s+|last\s+|final\s+)?(?:value|number|amount|answer|result|total)|that(?=\s+(?:from|by|to|away)\b))/i;
+
+export function withBackReference(ask: string, turn: string, value: string | null): string {
+  if (!value || !BACK_REFERENCE.test(ask)) return ask;
+  const digits = spokenToDigits(turn);
+  // "Twelve seventy-five" is heard as "12 75": a number said in pairs counts too.
+  const said = [...numbersIn(digits), ...numbersIn(digits.replace(/\b(\d{1,2})\s+(\d{2})\b/g, "$1$2"))];
+  return said.includes(value) ? ask.replace(BACK_REFERENCE, value) : ask;
+}
 
 export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marked = false): void {
   // The last question with a number in it, spoken: what an answer answers.
@@ -704,9 +723,12 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
   // ("Try comparing zero point zero five and zero point two.").
   const sentences = text.split(/(?<=[.!?])\s*(?=[A-Z])|(?<=\?)\s+/).map((q) => q.trim()).filter(Boolean);
   const asks = sentences.filter((q) => (q.endsWith("?") || SPOKEN_TASK.test(q)) && /\d/.test(spokenToDigits(q)));
-  if (asks.length) p.lastSpokenQuestion = asks[asks.length - 1].slice(0, 200);
+  if (asks.length) p.lastSpokenQuestion = withBackReference(asks[asks.length - 1], text, p.lastStudentValue).slice(0, 200);
   for (const [name, rule] of Object.entries(functionRulesIn(spokenToDigits(text)))) (p.functionRules ??= {})[name] = rule;
-  p.lastTutorNumbers = numbersIn(spokenToDigits(text));
+  // Numbers said in pairs ("twelve seventy-five") and a "that" the question
+  // resolved to count as said.
+  const spoken = spokenToDigits(text);
+  p.lastTutorNumbers = [...new Set([...numbersIn(spoken), ...numbersIn(spoken.replace(/\b(\d{1,2})\s+(\d{2})\b/g, "$1$2")), ...numbersIn(spokenToDigits(p.lastSpokenQuestion ?? ""))])];
   p.askedAge = p.lastAsked !== null && p.lastAsked === p.askedAtTurnEnd ? p.askedAge + 1 : 0;
   p.askedAtTurnEnd = p.lastAsked;
   p.unmarkedReference = marked ? null : boardReference(text);

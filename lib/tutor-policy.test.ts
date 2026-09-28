@@ -504,3 +504,17 @@ test("the spoken question: glued sentences split, and a spoken task counts", () 
   noteTutorTurn(p, "Nice. Try it on your own.", false);
   assert.equal(p.lastSpokenQuestion, "Try comparing zero point zero five and zero point two.");
 });
+
+test("'that' in a spoken step is the student's last answer, when the tutor said it back", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "1275", 0);
+  noteTutorTurn(p, "Twelve seventy-five is right. Subtract that from eighty-five hundred to get the value after two years.", false);
+  assert.equal(p.lastSpokenQuestion, "Subtract 1275 from eighty-five hundred to get the value after two years.");
+  noteStudentUtterance(p, "8500", 0);
+  noteTutorTurn(p, "Eight thousand five hundred is right. Now, what's fifteen percent of this new value?", false);
+  assert.equal(p.lastSpokenQuestion, "Now, what's fifteen percent of 8500?");
+  // The tutor never said it back: "that" may be the tutor's own number, so it stays.
+  noteStudentUtterance(p, "40", 0);
+  noteTutorTurn(p, "The loss is 300. Subtract that from 1000.", false);
+  assert.equal(p.lastSpokenQuestion, "Subtract that from 1000.");
+});

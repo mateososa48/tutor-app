@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkAnswer, inlineFunctions, finalValue, substituteFunctionEval, stripUnitWords, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
+import { checkAnswer, verbTask, inlineFunctions, finalValue, substituteFunctionEval, stripUnitWords, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
 
 const verdict = (problem: string, answer: string) => checkAnswer(problem, answer).verdict;
 
@@ -402,4 +402,23 @@ test("choices named before 'which one is more'", () => {
   assert.equal(checkAnswer("Eighty cents versus seventy-five cents, which one is more?", "80 cents is definitely more").verdict, "correct");
   assert.equal(checkAnswer("Fifty cents versus thirty-five cents. Which amount is more money?", "35").verdict, "cannot_check");
   assert.equal(checkAnswer("0.8 or 0.75, which one is bigger?", "0.75").verdict, "incorrect");
+});
+
+test("a step said as a task: subtract A from B, add, multiply, divide", () => {
+  assert.equal(checkAnswer("Subtract 1275 from eighty-five hundred to get the value after two years.", "7225").verdict, "correct");
+  assert.equal(checkAnswer("Now take 1275 away from 8500.", "7275").verdict, "incorrect");
+  assert.equal(checkAnswer("Multiply 6 by 5.", "30").verdict, "correct");
+  assert.equal(checkAnswer("Divide 48 by 6 to find the cups.", "8").verdict, "correct");
+  // A task with no numbers to use is left alone.
+  assert.equal(verbTask("Subtract that from the total."), null);
+});
+
+test("a number said in pairs can confirm an answer, never refute one", () => {
+  assert.equal(checkAnswer("What's fifteen percent of seventy-two twenty-five?", "1083.75").verdict, "correct");
+  assert.equal(checkAnswer("What's fifteen percent of seventy-two twenty-five?", "10.8375").verdict, "cannot_check");
+});
+
+test("a confused question about another number is not 'they are equal'", () => {
+  assert.equal(checkAnswer("Which is bigger, 0.2 or 0.125?", "wait, is 0.2 the same as 200 cents? i'm confused.").verdict, "cannot_check");
+  assert.equal(checkAnswer("Which is bigger, 0.5 or 0.50?", "they're the same").verdict, "correct");
 });
