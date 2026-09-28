@@ -500,6 +500,11 @@ export class GeminiLiveSession {
     // called after the greeting, the fallback said "reply yourself", and the
     // greeting was said twice), or after the tutor already replied this turn.
     if (!this.lastStudentLine.trim() || this.turnHadAudio) return { success: true, message: "Nothing new from the student: say nothing more and wait for them." };
+    // Their first line is the lesson's OPEN step, which the prompt does better
+    // than the planner ("Adding fractions can be tricky! Do you already know how
+    // to find a common denominator?" named the method and skipped "a problem on
+    // a sheet, or the whole idea?"); the typed benchmark never planned it either.
+    if (!this.coachHistory.some((t) => t.student.trim())) return { success: true, message: "Their first line: open as the lesson says (a problem on a sheet, or the whole idea?), then what they already know." };
     const auto = this.tutorRuntime.policy.autoChecked;
     const verdict = auto && !auto.consumed && Date.now() - auto.at < 20_000 ? auto.note : null;
     const order = this.plannedFor === seq ? this.plannedOrder : await this.askPlanner(this.lastStudentLine, verdict, null);
