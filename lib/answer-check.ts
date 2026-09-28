@@ -261,6 +261,23 @@ function checkPlusMinus(problem: string, answer: string): AnswerCheck | null {
 }
 
 export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck {
+  const verdict = checkAnswerAsWritten(problem, studentAnswer);
+  if (verdict.verdict !== "incorrect") return verdict;
+  // "3 + 1 / 4" is how a model types "three plus one, over four": read as
+  // written it is 3.25, so a right 1 would be called wrong (Sept 27 2026: the
+  // tutor told Priya her correct (3+1)/4 = 1 needed rethinking). When grouping
+  // everything before the last "/" makes the answer right, say so and ask for
+  // the brackets instead of a verdict.
+  const flat = unTextLatex(problem ?? "").trim();
+  const grouped = /^([^()=/]*[+\-−][^()=/]*?)\s*\/\s*([^()/=+\-−]+)$/.exec(flat);
+  if (grouped && checkAnswerAsWritten(`(${grouped[1]}) / (${grouped[2]})`, studentAnswer).verdict === "correct") {
+    const top = grouped[1].trim(), bottom = grouped[2].trim();
+    return cannot(`"${flat}" reads as ${top} with only the last number over ${bottom}. If the fraction bar covers all of ${top}, call check_answer again with problem="(${top}) / ${bottom}".`);
+  }
+  return verdict;
+}
+
+function checkAnswerAsWritten(problem: string, studentAnswer: string): AnswerCheck {
   problem = unTextLatex(problem ?? "");
   const pm = checkPlusMinus(problem, studentAnswer ?? "");
   if (pm) return pm;

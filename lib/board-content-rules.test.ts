@@ -115,3 +115,13 @@ test("an answer to a new section's problem is not the old problem's answer", () 
   assert.equal(findDuplicate("add_student_attempt", fp("2"), items), null);
   assert.equal(findDuplicate("add_student_attempt", fp("2"), [...items, { id: "b11", tool: "add_student_attempt", content: fp("2") }]), "b11");
 });
+
+test("two equations with the same result are two lines; a bare value still matches its equation", () => {
+  const fp = (t: string) => contentFingerprint("add_student_attempt", t);
+  const items = [
+    { id: "b1", tool: "start_new_problem", content: undefined },
+    { id: "b7", tool: "add_student_attempt", content: fp("9 − 4(2)(1) = 1") },
+  ];
+  assert.equal(findDuplicate("add_student_attempt", fp("4 / 4 = 1"), items), null);
+  assert.equal(findDuplicate("add_student_attempt", fp("1"), items), "b7");
+});

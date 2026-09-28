@@ -186,10 +186,15 @@ export function findDuplicate(tool: string, fingerprint: string, items: Fingerpr
     // model gets to it (Sept 26 2026); the model's "7" or "f(3) = 7, right?"
     // is that answer again when one of the two just contains the other's
     // value, among the two newest attempts.
+    // Only when one of the two is a bare value: two different equations with the
+    // same result are two lines (Sept 27 2026: "4 / 4 = 1" was taken for
+    // "9 − 4(2)(1) = 1", so it was never written and the app ringed the
+    // discriminant instead).
     const n = claimedValue(fingerprint);
     if (!n) return null;
+    const bare = (fp: string) => !fp.slice(fp.indexOf(":") + 1).includes("=");
     const recent = scope.filter((i) => i.tool === tool && i.content).slice(-2);
-    return recent.reverse().find((i) => claimedValue(i.content!) === n)?.id ?? null;
+    return recent.reverse().find((i) => claimedValue(i.content!) === n && (bare(fingerprint) || bare(i.content!)))?.id ?? null;
   }
   if (TEXT_TOOLS.has(tool)) {
     return since.find((i) => i.content === fingerprint)?.id ?? null;

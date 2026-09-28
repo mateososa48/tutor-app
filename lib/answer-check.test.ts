@@ -357,3 +357,13 @@ test("minus a negative is subtraction of a negative, spoken or typed", () => {
   assert.equal(checkAnswer("negative seven plus negative five", "-12").verdict, "correct");
   assert.equal(checkAnswer("negative seven minus four", "-11").verdict, "correct");
 });
+
+test("a precedence slip in the problem never turns a right answer wrong", () => {
+  const r = checkAnswer("3 + 1 / 4", "1");
+  assert.equal(r.verdict, "cannot_check");
+  assert.match(r.message, /call check_answer again with problem="\(3 \+ 1\) \/ 4"/);
+  assert.equal(checkAnswer("3 + 1 / 4", "3.25").verdict, "correct");
+  assert.equal(checkAnswer("(3 + 1) / 4", "1").verdict, "correct");
+  assert.equal(checkAnswer("3 + 1 / 4", "2").verdict, "incorrect", "an answer wrong both ways stays wrong");
+  assert.equal(checkAnswer("1/2 + 1/3", "0.5").verdict, "incorrect", "fractions on the left are not regrouped");
+});
