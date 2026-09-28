@@ -464,3 +464,27 @@ test("an answer with its reason is checked, and the board's question holds for a
   const n2 = autoCheck(q, "72.25", 0);
   assert.ok(n2 && /→ correct/.test(n2), n2 ?? "");
 });
+
+const said = (r: ReturnType<typeof runTutorTool>) => (r && r.success ? r.message ?? "" : "");
+
+test("two numbers with no question: the comparison comes from what was said", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "Which is bigger? 0.35 or 0.5 I put 0.35.", 0);
+  assert.match(said(runTutorTool("check_answer", { problem: "0.35 or 0.5", student_answer: "0.35", skill: "comparing decimals" }, p, 0)), /^Verdict: incorrect/);
+  const q = createPolicy(0);
+  noteStudentUtterance(q, "is it 0.5? cuz it's more", 0);
+  assert.match(said(runTutorTool("check_answer", { problem: "0.35 and 0.5", student_answer: "0.5", skill: "comparing decimals" }, q, 0)), /^Verdict: correct/);
+  // With nothing said about which is asked, it still can't tell.
+  const n = createPolicy(0);
+  noteStudentUtterance(n, "0.35", 0);
+  assert.match(said(runTutorTool("check_answer", { problem: "0.35 or 0.5", student_answer: "0.35", skill: "comparing decimals" }, n, 0)), /^Verdict: cannot_check/);
+});
+
+test("a second cannot_check on the same answer says stop trying", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "0.35", 0);
+  assert.match(said(runTutorTool("check_answer", { problem: "0.35 or 0.5", student_answer: "0.35", skill: "comparing decimals" }, p, 0)), /Call check_answer again/);
+  assert.match(said(runTutorTool("check_answer", { problem: "0.35, 0.5", student_answer: "0.35", skill: "comparing decimals" }, p, 2000)), /Don't call check_answer again for this answer/);
+  // Another answer gets a fresh try.
+  assert.match(said(runTutorTool("check_answer", { problem: "2 + 2", student_answer: "4", skill: "adding" }, p, 3000)), /^Verdict: correct/);
+});

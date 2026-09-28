@@ -834,8 +834,19 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     return plannedOrder;
   };
   const voiceLine = () => live.heardNow.replace(/\s+/g, " ").trim() || live.lastLine;
+  // --voice: the lesson reads what Gemini heard, as the app does
+  // (flushStudentUtterance, at the tutor's first tool call or words), not the
+  // script ("point thirty five" was heard as "0.35" and only that parses).
+  let voiceUtterance: string | null = null;
+  const flushVoice = () => {
+    if (voiceUtterance == null) return;
+    const text = live.heardNow.replace(/\s+/g, " ").trim() || voiceUtterance;
+    voiceUtterance = null;
+    runtime.noteStudentUtterance(text);
+  };
 
   const onTool = async (name: string, args: Record<string, unknown>, callId: string): Promise<ToolCallResult> => {
+    flushVoice();
     await markChain;
     const now = Date.now();
     if (name === "next_move" && voicePlan) {
@@ -936,6 +947,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   let pending = live.userTurn(parts, false);
   for (let i = 0; i < opts.turns; i++) {
     const t = await pending;
+    flushVoice();
     // Let the writing finish and the last picture go out, as a session would.
     await new Promise((r) => setTimeout(r, 400));
     await exportBoard(page, 64);
@@ -1009,9 +1021,8 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       lineSeq++;
       const pcm = await synth(studentText, opts.out);
       if (pendingNote) live.sendNote(pendingNote);
-      const said = studentText;
+      voiceUtterance = studentText;
       pending = live.voiceTurn(pcm, () => {
-        runtime.noteStudentUtterance(said);
         void markChain.then(() => live.noteAppTools(pendingApp.splice(0)));
       });
     } else {

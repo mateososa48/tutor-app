@@ -109,6 +109,8 @@ export type TutorPolicy = {
   openingQuestion: string | null;
   /** Their last wrong answer on the current problem, in their words, until a right one strikes it (Sept 25 2026: superseded attempts sat uncrossed). */
   lastWrongAttempt: string | null;
+  /** The last answer check_answer could not read: a second try on it is refused (each is a blocking round trip). */
+  lastCannot: { answer: string; at: number } | null;
   /**
    * Code-owned marks (Sept 26 2026): when the session page can write on the
    * board itself, a checked answer goes up in the student's hand and is marked
@@ -192,6 +194,7 @@ export function createPolicy(now: number): TutorPolicy {
     openingReason: null,
     openingQuestion: null,
     lastWrongAttempt: null,
+    lastCannot: null,
     codeMarks: false,
     pendingMarks: null,
     lastWrongLine: null,

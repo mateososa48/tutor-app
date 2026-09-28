@@ -483,6 +483,10 @@ export function takeAutoCheckNote(policy: TutorPolicy): string | null {
   return a.note;
 }
 
+const COMPARATIVE = /\b(bigger|larger|greater|more|higher|smaller|less|lower|fewer)\b/i;
+// Only numbers joined by words: "0.35 or 0.5", "0.35 and 0.5", "0.35, 0.5", "0.35 vs 0.5".
+const PAIR_WORDS = /^\s*-?\d+(?:\.\d+)?(?:\/\d+)?\s*(?:or|and|vs\.?|versus|,)\s*-?\d+(?:\.\d+)?(?:\/\d+)?\s*\??\s*$/i;
+
 export function runTutorTool(
   name: string,
   args: Record<string, unknown>,
@@ -511,6 +515,23 @@ export function runTutorTool(
     const page = problemMath(policy.pageProblem);
     const inPage = page ? checkBlankInPage(page, problem, answer) : null;
     if (inPage) check = inPage;
+  }
+  // Two numbers and no question ("0.35 or 0.5", "0.35 and 0.5"): which one is
+  // asked is in what was said ("which is bigger? … I put 0.35"). A spoken
+  // session made three blocking tries at it before its first word (Sept 27 2026).
+  if (!reused && check.verdict === "cannot_check") {
+    const pair = numbersIn(problem);
+    const cmp = COMPARATIVE.exec(`${policy.lastUtterance ?? ""} ${policy.lastSpokenQuestion ?? ""}`)?.[1].toLowerCase();
+    if (pair.length === 2 && cmp && PAIR_WORDS.test(problem)) {
+      const again = checkAnswer(`which is ${cmp}, ${pair[0]} or ${pair[1]}`, answer);
+      if (again.verdict !== "cannot_check") check = again;
+    }
+  }
+  // Tried twice on one answer: judge it without the checker.
+  if (!reused && check.verdict === "cannot_check") {
+    const again = policy.lastCannot && answerKey(policy.lastCannot.answer) === answerKey(answer) && now - policy.lastCannot.at < 60_000;
+    policy.lastCannot = { answer, at: now };
+    if (again) return { success: true, message: `Verdict: cannot_check. Still can't read it. Don't call check_answer again for this answer: judge it yourself from their words and the board, and ask how they got it.` };
   }
   const skill = typeof args.skill === "string" && args.skill.trim() ? args.skill : policy.currentSkill ?? "unnamed skill";
   // The board's own help counts too: an answer found by counting the slices
