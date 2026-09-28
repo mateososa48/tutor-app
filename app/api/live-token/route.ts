@@ -97,6 +97,8 @@ export async function POST(req: NextRequest) {
     voice: geminiVoiceFor(row?.voiceName),
     greeting: intake ? "" : buildGreetingLine(profile, 0),
     resume: buildResumeLine(profile),
+    // The planner plans for this student's grade (lib/tutor-planner).
+    grade: row?.gradeLevel ?? "",
   };
   if (configOnly) return NextResponse.json(config);
 

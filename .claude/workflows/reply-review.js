@@ -1,6 +1,6 @@
 export const meta = {
   name: 'reply-review',
-  description: 'Blind rating of live tutor replies (scripts/reply-review.ts build writes the batches); args: { tag, batches }',
+  description: 'Blind rating of tutor replies (scripts/reply-review.ts build writes the batches); args: { tag, batches } or { contents: [batch text, …] }',
   phases: [{ title: 'Rate', detail: 'one rater per batch of 9-10 live replies' }],
 }
 const RUBRIC = `You are an expert middle- and high-school math tutor rating what a live AI voice tutor actually said and drew in reply to a student, one moment at a time. For each moment you see the last turns, the student's new line, and the tutor's actual reply with its board moves. Judge only the reply.
@@ -15,7 +15,16 @@ Penalize: correcting before diagnosing, telling, praise openers ("Exactly", "Per
 const SCHEMA = { type: 'object', properties: { moments: { type: 'array', items: { type: 'object', properties: { moment: { type: 'integer' }, score: { type: 'number' }, why: { type: 'string' } }, required: ['moment', 'score', 'why'] } } }, required: ['moments'] }
 const dir = '/Users/mateososaalbrecht/tutor-app/bench/runs'
 const tag = args && args.tag ? args.tag : 'rr'
-const count = args && args.batches ? args.batches : 9
+// Inline batches (args.contents) go to an agent type that does not load the
+// project's instructions: the default subagent reads AGENTS.md (about 65k
+// tokens) before rating ten short moments.
+const contents = args && Array.isArray(args.contents) ? args.contents : null
+const count = contents ? contents.length : (args && args.batches ? args.batches : 9)
 phase('Rate')
-const results = await parallel(Array.from({ length: count }, (_, i) => i + 1).map((b) => () => agent(`${RUBRIC}\n\nRead ${dir}/rr-${tag}-batch${b}.md with the Read tool. Each moment is headed "### Moment N"; rate every one, using that number. Do not read any other file in that folder, do not modify files, do not run commands.`, { label: `rate:b${b}`, phase: 'Rate', schema: SCHEMA, model: 'sonnet' })))
+const results = await parallel(Array.from({ length: count }, (_, i) => i).map((i) => () => agent(
+  contents
+    ? `${RUBRIC}\n\nThe moments follow. Each is headed "### Moment N"; rate every one, using that number. Use no tools; answer from this text alone.\n\n${contents[i]}`
+    : `${RUBRIC}\n\nRead ${dir}/rr-${tag}-batch${i + 1}.md with the Read tool. Each moment is headed "### Moment N"; rate every one, using that number. Do not read any other file in that folder, do not modify files, do not run commands.`,
+  { label: `rate:b${i + 1}`, phase: 'Rate', schema: SCHEMA, model: 'sonnet', ...(contents ? { agentType: 'Explore' } : {}) },
+)))
 return results.map((r, i) => ({ batch: i + 1, moments: r ? r.moments : null }))

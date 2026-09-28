@@ -12,7 +12,8 @@ import { TutorRuntime } from "./tutor-runtime";
 // page does not care which one it is talking to. One model both talks and
 // draws; the prompt and voice come from /api/live-token.
 
-type GeminiConfig = { instructions: string; voice: string };
+// `grade` is the profile's, for the planner (lib/tutor-planner reads it).
+type GeminiConfig = { instructions: string; voice: string; grade?: string };
 
 // Gemini sends a turn's audio and its transcript faster than real time, so
 // the caption is revealed in step with playback instead of all at once.
@@ -115,6 +116,13 @@ export class GeminiTutorSession {
     if (next) this.callbacks.onActivity("idle");
   }
 
+  /** The planner option with the grade from the profile when the page has none. */
+  private planner(config: GeminiConfig) {
+    const planner = this.options.planner;
+    if (!planner) return undefined;
+    return { ...planner, grade: () => planner.grade() || config.grade || "" };
+  }
+
   async start(opts: LiveTutorStartOptions): Promise<void> {
     this.debug("connection", "gemini_start", { mode: opts.mode, mic: Boolean(opts.micStream) });
     // What the student answered before the session opened (lib/session-intake):
@@ -213,7 +221,7 @@ export class GeminiTutorSession {
         },
         onDebugEvent: (event) => this.callbacks.onDebugEvent?.(event),
       },
-      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools, vad: this.options.vad, coach: this.options.coach, planner: this.options.planner },
+      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools, vad: this.options.vad, coach: this.options.coach, planner: this.planner(config) },
     );
     this.session = session;
 

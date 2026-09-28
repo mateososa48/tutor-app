@@ -12,6 +12,12 @@
 // tutor actually did and what the judge said, for a review panel to compare.
 // Text calls only, no Live session. --system swaps in another system prompt
 // (a file) to compare planner wordings on the same moments.
+//
+// --moments bench/runs/rr-n4-key.json --root ../tutor-app-cand3/bench/runs: plan
+// exactly the moments a reply review rated (its key's src ids), so planner
+// versions can be blind-rated on the same lines (reply-review.ts build-orders).
+// A planner turn's recorded note is its own order, so reminders are passed only
+// where the note is the app's.
 import fs from "node:fs";
 import path from "node:path";
 import { arg, readGeminiKey } from "./eval-tools";
@@ -53,15 +59,29 @@ async function main() {
   const perCase = Number(arg("per-case", "4"));
   const system = arg("system", "") ? fs.readFileSync(arg("system", ""), "utf8") : PLANNER_SYSTEM;
   const moments: Array<Record<string, unknown>> = [];
-  for (const dir of runs) {
-    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".json") && !f.endsWith(".judge.json") && f !== "summary.json")) {
-      const caseId = file.replace(/\.json$/, "");
-      const run = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")) as { name: string; grade: string; turns: Turn[] };
+  const picks: Array<{ dir: string; caseId: string; n: number | null }> = [];
+  if (arg("moments", "")) {
+    const root = arg("root", "bench/runs");
+    for (const k of JSON.parse(fs.readFileSync(arg("moments", ""), "utf8")) as Array<{ src: string }>) {
+      const [run, caseId, t] = k.src.split("/");
+      picks.push({ dir: path.join(root, run), caseId, n: Number(t.slice(1)) });
+    }
+  } else {
+    for (const dir of runs) {
+      for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".json") && !f.endsWith(".judge.json") && f !== "summary.json")) picks.push({ dir, caseId: file.replace(/\.json$/, ""), n: null });
+    }
+  }
+  const limit = Number(arg("limit", "0")) || Infinity;
+  for (const pick of picks) {
+    if (moments.length >= limit) break;
+    {
+      const { dir, caseId } = pick;
+      const run = JSON.parse(fs.readFileSync(path.join(dir, `${caseId}.json`), "utf8")) as { name: string; grade: string; turns: Turn[] };
       const judgeFile = path.join(dir, `${caseId}.judge.json`);
       let judge: { turns?: JudgeTurn[]; human_tutor_would?: string } = {};
       try { judge = JSON.parse(fs.readFileSync(judgeFile, "utf8")); } catch { /* unjudged */ }
       const topic = run.turns[0]?.student.replace(/^I need help with:\s*/i, "").replace(/\s*Please teach me in \w+\.?$/i, "") ?? "";
-      const picked = run.turns.filter((t, i) => {
+      const picked = pick.n != null ? run.turns.filter((t) => t.n === pick.n) : run.turns.filter((t, i) => {
         if (i === 0) return false;
         const jt = judge.turns?.find((x) => x.turn === t.n);
         const miss = jt && (/telling|generic/.test(jt.move ?? "") || jt.targeted === "no" || jt.mistake_identified === "no" || jt.board_fit === "no");
@@ -71,11 +91,14 @@ async function main() {
         const i = run.turns.indexOf(t);
         const before = run.turns.slice(0, i);
         const turns: PlannerTurn[] = before.map((x) => ({ student: x.student, tutor: x.tutor, tools: x.tools.filter((y) => y.ok !== false && !y.by).map((y) => y.name) }));
-        const text = plannerPrompt({ grade: run.grade, topic, turns, line: t.student, verdict: t.autoCheck ?? null, board: before.at(-1)?.boardCompact ?? "", state: null, reminders: t.turnNote ?? null });
+        const reminders = t.turnNote && !t.turnNote.startsWith("[Next move") ? t.turnNote : null;
+        const text = plannerPrompt({ grade: run.grade, topic, turns, line: t.student, verdict: t.autoCheck ?? null, board: before.at(-1)?.boardCompact ?? "", state: null, reminders });
         const r = await plan(model, fallback, key, system, text, t.autoCheck ?? null);
         const jt = judge.turns?.find((x) => x.turn === t.n);
         moments.push({
           id: `${path.basename(dir)}/${caseId}/t${t.n}`,
+          name: run.name,
+          grade: run.grade,
           student: `${run.name}, ${run.grade}`,
           context: before.slice(-2).map((x) => `Student: ${x.student}\nTutor: ${x.tutor}`).join("\n"),
           line: t.student,
