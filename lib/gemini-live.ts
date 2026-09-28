@@ -231,8 +231,8 @@ export class GeminiLiveSession {
   private readonly planner: { topic: () => string; board: () => string; grade: () => string } | undefined;
   /** Typed lines wait for the planner in order, so a quick second line never overtakes the first. */
   private textChain: Promise<void> = Promise.resolve();
-  // The route gives up at 2.4 s; this covers the trip.
-  private static readonly PLANNER_MS = 2_900;
+  // The route gives up at 3.2 s; this covers the trip.
+  private static readonly PLANNER_MS = 3_600;
   private coachHistory: CoachTurn[] = [];
   private lastStudentLine = "";
   private turnTools: string[] = [];

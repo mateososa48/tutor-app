@@ -11,7 +11,9 @@ import { PLANNER_SYSTEM, plannerNote, plannerPrompt, type PlannerTurn } from "@/
 // The small models answer in about 1-2 s; the bigger flash models took 10-37 s
 // under load on Sept 27 2026, too slow for a live turn.
 const MODELS = (process.env.PLANNER_MODELS || "gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",").map((s) => s.trim()).filter(Boolean);
-const DEADLINE_MS = 2_400;
+// The planner with low thinking answers in 0.8-2.5 s, a few calls near 3 s; at
+// 2.4 s a spoken answer lost its order about one time in two (Sept 27 2026).
+const DEADLINE_MS = 3_200;
 // A student line every few seconds at most; this only stops a runaway client.
 const PER_MINUTE = 40;
 const recent = new Map<string, number[]>();
