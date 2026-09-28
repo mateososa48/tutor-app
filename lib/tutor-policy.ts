@@ -15,7 +15,7 @@
 
 import { clockCue, clockLabel } from "./session-clock";
 import { isNonAnswer } from "./board-content-rules";
-import { checkAnswer, spokenToDigits } from "./answer-check";
+import { functionRulesIn, checkAnswer, spokenToDigits } from "./answer-check";
 
 /** A checked answer as the board shows it: the line in their hand, a ring when right and final, and the earlier wrong line to strike. */
 export type VerdictMarks = { line: string; ring: boolean; strike: string | null };
@@ -111,6 +111,8 @@ export type TutorPolicy = {
   lastWrongAttempt: string | null;
   /** The last answer check_answer could not read: a second try on it is refused (each is a blocking round trip). */
   lastCannot: { answer: string; at: number } | null;
+  /** Function rules the tutor has said ("f(x) = x + 5"), by name: a later "what is f(6)?" is checked with them. */
+  functionRules: Record<string, string>;
   /**
    * Code-owned marks (Sept 26 2026): when the session page can write on the
    * board itself, a checked answer goes up in the student's hand and is marked
@@ -195,6 +197,7 @@ export function createPolicy(now: number): TutorPolicy {
     openingQuestion: null,
     lastWrongAttempt: null,
     lastCannot: null,
+    functionRules: {},
     codeMarks: false,
     pendingMarks: null,
     lastWrongLine: null,
@@ -691,15 +694,18 @@ export function boardReference(text: string): string | null {
   return m ? m[0].trim().slice(0, 60) : null;
 }
 
+const SPOKEN_TASK = /^(?:(?:now|ok(?:ay)?|so|alright),?\s+)?(?:try|compare|find|work out|figure out|calculate|compute|solve|evaluate)\b/i;
+
 export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marked = false): void {
   // The last question with a number in it, spoken: what an answer answers.
   // Spoken numbers count ("What is negative three squared?" had no digit and was never kept).
-  const questions = text.split(/(?<=\?)\s+/).map((q) => q.trim()).filter((q) => q.endsWith("?") && /\d/.test(spokenToDigits(q)));
-  if (questions.length) {
-    const q = questions[questions.length - 1];
-    const tail = q.split(/(?<=[.!])\s+/).pop() ?? q;
-    p.lastSpokenQuestion = tail.slice(0, 200);
-  }
+  // Sentences split even where the transcript glued them ("…decimals now.Which
+  // one is bigger…", Sept 27 2026), and a spoken task counts like a question
+  // ("Try comparing zero point zero five and zero point two.").
+  const sentences = text.split(/(?<=[.!?])\s*(?=[A-Z])|(?<=\?)\s+/).map((q) => q.trim()).filter(Boolean);
+  const asks = sentences.filter((q) => (q.endsWith("?") || SPOKEN_TASK.test(q)) && /\d/.test(spokenToDigits(q)));
+  if (asks.length) p.lastSpokenQuestion = asks[asks.length - 1].slice(0, 200);
+  for (const [name, rule] of Object.entries(functionRulesIn(spokenToDigits(text)))) (p.functionRules ??= {})[name] = rule;
   p.lastTutorNumbers = numbersIn(spokenToDigits(text));
   p.askedAge = p.lastAsked !== null && p.lastAsked === p.askedAtTurnEnd ? p.askedAge + 1 : 0;
   p.askedAtTurnEnd = p.lastAsked;

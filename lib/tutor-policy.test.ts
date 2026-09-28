@@ -493,3 +493,14 @@ test("spoken arithmetic goes up only when it is true", () => {
   assert.deepEqual(spokenBoardMoves(p, "Eight tenths is eighty hundredths."), []);
   assert.deepEqual(spokenBoardMoves(p, "So three times six is eighteen."), [{ name: "draw_equation_step", args: { latex: "3 \\times 6 = 18" } }]);
 });
+
+test("the spoken question: glued sentences split, and a spoken task counts", () => {
+  const p = createPolicy(0);
+  noteTutorTurn(p, "Twenty cents beats nine cents. You've really got the hang of it now.Which one is bigger, zero point seven or zero point sixty-nine?", true);
+  assert.equal(p.lastSpokenQuestion, "Which one is bigger, zero point seven or zero point sixty-nine?");
+  noteTutorTurn(p, "Adding that zero helps. Try comparing zero point zero five and zero point two.", true);
+  assert.equal(p.lastSpokenQuestion, "Try comparing zero point zero five and zero point two.");
+  // A sentence with no number is not a question to check against.
+  noteTutorTurn(p, "Nice. Try it on your own.", false);
+  assert.equal(p.lastSpokenQuestion, "Try comparing zero point zero five and zero point two.");
+});

@@ -172,11 +172,13 @@ const YES = /^\s*(yes|yeah|yep|true|right|correct|it is|its true|that's right)\s
 const NO = /^\s*(no|nope|false|wrong|incorrect|not true|it isn't|it's not)\s*[.!?]*\s*$/i;
 
 // "0.35 vs 0.5", "0.35 or 0.5": which one is asked is in the answer ("0.35 is bigger").
-const PAIR = /^\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:vs\.?|versus|or|,)\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*\??\s*$/i;
+const PAIR = /^\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:vs\.?|versus|or|and|with|to|,)\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*[?.!]?\s*$/i;
+// "Try comparing 0.05 and 0.2.": a task, spoken, with no question mark.
+const COMPARE_TASK = /^\s*(?:(?:now|ok(?:ay)?|so),?\s+)?(?:let'?s\s+|try\s+)?compar(?:e|ing)\s+/i;
 const ANSWER_COMPARATIVE = /\b(bigger|larger|greater|more|higher|smaller|less|lower|fewer)\b/i;
 
 function checkPairClaim(problem: string, answer: string): AnswerCheck | null {
-  const m = PAIR.exec(problem);
+  const m = PAIR.exec(COMPARE_TASK.test(problem) ? spokenToDigits(problem.replace(COMPARE_TASK, "")) : problem);
   if (!m) return null;
   const said = answer.replace(/\$/g, "");
   const cmp = ANSWER_COMPARATIVE.exec(said)?.[1].toLowerCase();
@@ -260,8 +262,98 @@ function checkPlusMinus(problem: string, answer: string): AnswerCheck | null {
   return { verdict: "incorrect", message: `Incorrect: the student's answer is not ${plus === minus ? approx(plus) : "either value"}. (For you only: ${both}. Don't say it or write it; help them find the mistake.)` };
 }
 
+// "if f(x) = x + 5 and g(x) = 3x, what is f(2) + g(2)?": the rules are stated in
+// the question and the asked part applies them (Sept 27 2026: every spoken
+// function question came back cannot_check, because the question was cut to
+// "f(2) + g(2)" and lost its rules). The definitions are read, then each
+// application is replaced, innermost first, by its rule with the argument in
+// place: f(g(3)) → ((3) + 1)^2. Null when anything is left unread.
+const FN_DEF = /\b([a-zA-Z])\s*\(\s*([a-z])\s*\)\s*(?:=|is|equals)\s*/g;
+const FN_BODY_END = /\s*(?:,|;|\?|$|\s+and\s+(?=[a-zA-Z]\s*\(\s*[a-z]\s*\))|\s+(?:what|find|evaluate|so|then|now)\b)/i;
+const FN_ASKED = /\b(?:what(?:'s| is| would be| does| do you get for)?|find|evaluate|compute|calculate)\s+(.+?)\s*(?:equal|be|come out to)?(?:\s+(?:then|now|again|there|here|instead))?\s*\??\s*$/i;
+
+/** The rules a text states, by name: "if f(x) = x + 5 and g(x) = 3x" → { f: "f(x) = x + 5", g: "g(x) = 3x" }. */
+export function functionRulesIn(text: string): Record<string, string> {
+  const rules: Record<string, string> = {};
+  FN_DEF.lastIndex = 0;
+  for (let m = FN_DEF.exec(text); m; m = FN_DEF.exec(text)) {
+    const rest = text.slice(m.index + m[0].length);
+    const end = FN_BODY_END.exec(rest);
+    const body = rest.slice(0, end ? end.index : rest.length).trim().replace(/\.+$/, "");
+    if (body && new RegExp(`(?<![a-zA-Z])${m[2]}(?![a-zA-Z])`).test(body)) rules[m[1]] = `${m[1]}(${m[2]}) = ${body}`;
+  }
+  return rules;
+}
+
+/**
+ * The problem with the rules it applies but does not state, from what was said
+ * before ("What is f(6) then?" after "if f(x) = x + 5…"). Unchanged otherwise.
+ */
+export function withKnownRules(problem: string, rules: Record<string, string> | undefined): string {
+  if (!rules) return problem;
+  const stated = functionRulesIn(spokenToDigits(problem));
+  const missing = Object.keys(rules).filter((n) => !stated[n] && new RegExp(`(?<![a-zA-Z])${n}\\s*\\(\\s*[^a-zA-Z()\\s]`).test(problem));
+  return missing.length ? `${missing.map((n) => rules[n]).join(" and ")}, ${problem}` : problem;
+}
+
+export function inlineFunctions(text: string): string | null {
+  const defs = new Map<string, { v: string; body: string }>();
+  FN_DEF.lastIndex = 0;
+  for (let m = FN_DEF.exec(text); m; m = FN_DEF.exec(text)) {
+    const rest = text.slice(m.index + m[0].length);
+    const end = FN_BODY_END.exec(rest);
+    const body = rest.slice(0, end ? end.index : rest.length).trim().replace(/\.+$/, "");
+    // "h(x) = 8" is an equation to solve, not a rule.
+    if (body && new RegExp(`(?<![a-zA-Z])${m[2]}(?![a-zA-Z])`).test(body)) defs.set(m[1], { v: m[2], body });
+  }
+  if (!defs.size) return null;
+  let expr = FN_ASKED.exec(text)?.[1]?.trim();
+  if (!expr) return null;
+  let applied = false;
+  for (let i = 0; i < 8; i++) {
+    let at = -1;
+    let name = "";
+    for (const n of defs.keys()) {
+      const re = new RegExp(`(?<![a-zA-Z])${n}\\s*\\(`, "g");
+      for (let a = re.exec(expr); a; a = re.exec(expr)) if (a.index > at) { at = a.index; name = n; }
+    }
+    if (at < 0) break;
+    const open = expr.indexOf("(", at);
+    let depth = 0;
+    let close = -1;
+    for (let k = open; k < expr.length; k++) {
+      if (expr[k] === "(") depth++;
+      else if (expr[k] === ")" && --depth === 0) { close = k; break; }
+    }
+    if (close < 0) return null;
+    const arg = expr.slice(open + 1, close);
+    if (/[a-zA-Z]/.test(arg)) return null;
+    const { v, body } = defs.get(name)!;
+    expr = `${expr.slice(0, at)}(${body.replace(new RegExp(`(?<![a-zA-Z])${v}(?![a-zA-Z])`, "g"), `(${arg})`)})${expr.slice(close + 1)}`;
+    applied = true;
+  }
+  return applied && !/[a-zA-Z]/.test(expr.replace(/\b(?:sqrt|abs)\b/g, "")) ? expr : null;
+}
+
+// "so 9 minus 8? which is 1?", "so h(4) is 11? is that right?": the value a
+// worked answer ends on. Tried only when the whole answer can't be read.
+const FINAL_VALUE = /(?:which is|that's|thats|that is|it's|its|is it|is|=|equals|gives(?: you)?|get|got|makes|so)\s+(-?\d[\d,]*(?:\.\d+)?(?:\/\d+)?)\s*[?.!]*\s*(?:(?:is|was) (?:that|it) right\s*[?.!]*|right\s*[?.!]*)?\s*$/i;
+
+export function finalValue(answer: string): string | null {
+  const said = spokenToDigits(answer.split(/\s*[,;]?\s+(?:because|cause|'cause|cuz|coz|since|bc)\b/i)[0]);
+  const m = FINAL_VALUE.exec(said.trim());
+  return m && (said.match(/-?\d[\d,]*(?:\.\d+)?/g) ?? []).length > 1 ? m[1].replace(/,/g, "") : null;
+}
+
 export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck {
-  const verdict = checkAnswerAsWritten(problem, studentAnswer);
+  let verdict = checkAnswerAsWritten(problem, studentAnswer);
+  if (verdict.verdict === "cannot_check") {
+    const final = finalValue(studentAnswer ?? "");
+    if (final) {
+      const again = checkAnswerAsWritten(problem, final);
+      if (again.verdict !== "cannot_check") verdict = again;
+    }
+  }
   if (verdict.verdict !== "incorrect") return verdict;
   // "3 + 1 / 4" is how a model types "three plus one, over four": read as
   // written it is 3.25, so a right 1 would be called wrong (Sept 27 2026: the
@@ -293,7 +385,7 @@ function checkAnswerAsWritten(problem: string, studentAnswer: string): AnswerChe
   const diagnostic = checkHowMany(asked, heard) ?? checkComparison(asked, heard);
   if (diagnostic) return diagnostic;
   if (PICTURE_WORDS.test(asked)) return cannot(`"${asked}" is about a picture; look at the board.`);
-  const read = readProblem(asked);
+  const read = readProblem(inlineFunctions(spokenToDigits(asked)) ?? asked);
   if (typeof read !== "string") return read;
   const prob = read;
   // Voice transcripts spell numbers out: "two and a half", "negative four".
@@ -862,12 +954,16 @@ const COMPARATIVES: Record<string, { want: "max" | "min"; than: string; most: st
 const COMPARATIVE = Object.keys(COMPARATIVES).join("|");
 const WHICH_FIRST = new RegExp(`^which\\s+(?:one\\s+|number\\s+|fraction\\s+|decimal\\s+)?(?:is|'s|are)?\\s*(?:the\\s+)?(${COMPARATIVE})(?:\\s+one)?\\s*(?:[,:;—–]\\s*)?(.+)$`, "i");
 const WHICH_LAST = new RegExp(`^(?:is|which\\s+is)\\s+(.+\\s+or\\s+.+?)\\s+(?:the\\s+)?(${COMPARATIVE})$`, "i");
+const WHICH_TRAILING = new RegExp(`^(?:.*[.!]\\s+)?(.+?)\\s+(?:versus|vs\\.?|or)\\s+(.+?),?\\s+which(?:\\s+one)?\\s+(?:is|'s)\\s+(?:the\\s+)?(${COMPARATIVE})(?:\\s+one)?$`, "i");
 const SAID_COMPARATIVE = new RegExp(`^(.+?)\\s+(?:is|'s|are)\\s+(?:the\\s+)?(${COMPARATIVE})(?:\\s+one)?(?:\\s+than\\s+.+)?$`, "i");
 
 type Choice = { shown: string; value: number };
 
 function checkComparison(problem: string, answer: string): AnswerCheck | null {
   const text = problem.replace(/\$/g, "").replace(/\s*\?+\s*$/, "").replace(/\s+/g, " ").trim();
+  // "Eighty cents versus seventy-five cents, which one is more?": the choices first.
+  const trailing = WHICH_TRAILING.exec(text);
+  if (trailing) return checkComparison(`which is ${trailing[3]}, ${trailing[1]} or ${trailing[2]}`, answer);
   const first = WHICH_FIRST.exec(text);
   const last = first ? null : WHICH_LAST.exec(text);
   if (!first && !last) return null;
@@ -877,7 +973,8 @@ function checkComparison(problem: string, answer: string): AnswerCheck | null {
   if (parts.length < 2 || parts.length > 5) return cannot(`couldn't find the choices in "${problem}".`);
   const choices: Choice[] = [];
   for (const part of parts) {
-    const value = readValue(part);
+    // "Eighty cents": a spoken choice with its unit word.
+    const value = readValue(part) ?? readValue(/^\s*(-?\d+(?:\.\d+)?(?:\/\d+)?)\s+[a-z]+\s*$/i.exec(spokenToDigits(part, { the: true }))?.[1] ?? "");
     if (value === null) return cannot(`couldn't read the choice "${part}" in "${problem}".`);
     choices.push({ shown: shown(part), value });
   }
@@ -919,7 +1016,7 @@ type Pick = { kind: "equal" } | { kind: "pick"; index: number } | { kind: "canno
 
 function pickChoice(answer: string, choices: Choice[], want: "max" | "min"): Pick {
   let s = stripFiller(answer.replace(/\$/g, "").toLowerCase())
-    .split(/\s+(?:because|since|cause|'cause)\s+/)[0]
+    .split(/\s+(?:because|since|cause|'cause|cuz|coz|bc)\s+/)[0]
     .trim();
   const unread: Pick = { kind: "cannot", reason: `couldn't tell which choice the student's "${answer}" means.` };
   if (/\b(left|right|top|bottom|above|below)\b/.test(s)) return { kind: "cannot", reason: `"${answer}" depends on how the choices were written; ask them to say the number.` };
@@ -930,7 +1027,10 @@ function pickChoice(answer: string, choices: Choice[], want: "max" | "min"): Pic
   let flip = false;
   const said = SAID_COMPARATIVE.exec(s);
   if (said) {
-    s = said[1].trim();
+    // "that's 0.09 and 0.10, 0.1 is bigger": the number right before "is bigger".
+    const named = /(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*$/.exec(spokenToDigits(said[1], { the: true }));
+    const many = (spokenToDigits(said[1], { the: true }).match(/-?\d+(?:\.\d+)?(?:\/\d+)?/g) ?? []).length > 1;
+    s = named && many ? named[1] : said[1].trim();
     flip = COMPARATIVES[said[2].toLowerCase()].want !== want;
   }
   s = s.replace(/(\S)\s+(one|number|fraction|decimal|option|choice)$/, "$1").trim();

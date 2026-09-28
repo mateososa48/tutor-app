@@ -11,7 +11,7 @@
 
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer, checkBlankInPage, questionMath, spokenToDigits, type CheckVerdict } from "./answer-check";
+import { checkAnswer, checkBlankInPage, questionMath, spokenToDigits, withKnownRules, type CheckVerdict } from "./answer-check";
 import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import { latexToPlain } from "./latex-plain";
@@ -413,13 +413,17 @@ export function withholdResult(policy: TutorPolicy, name: string, args: Record<s
 }
 
 export function autoCheck(policy: TutorPolicy, text: string, now: number): string | null {
-  const t = text.trim();
-  if (!t || !looksLikeAnswer(t) || isNonAnswer(t)) return null;
+  const whole = text.trim();
+  if (!whole || isNonAnswer(whole)) return null;
+  // Kids answer in long lines: "f(2) is 7 and g(2) is 6. so 7 plus 6 is 13? is
+  // that right?" (Sept 27 2026: 14 of 123 answer lines got a verdict). The last
+  // sentence that reads as an answer is the answer.
+  const answers = looksLikeAnswer(whole) ? [whole] : whole.split(/(?<=[.?!])\s+/).reverse().map((c) => c.trim()).filter((c) => /\d/.test(spokenToDigits(c)) && looksLikeAnswer(c));
+  if (!answers.length) return null;
+  const t = answers[0];
   // A topic heading is not a problem; the spoken question usually is.
   const page = policy.pageProblem && /[\d=+\-−×÷*/^\\<>]/.test(policy.pageProblem) ? policy.pageProblem : null;
   const candidates: Array<{ problem: string; answer: string }> = [];
-  const own = ownClaim(t);
-  if (own) candidates.push(own);
   // "which is bigger, 0.35 or 0.5, and i put 0.35": the problem and their
   // answer in one line (Sept 26 2026: no case asked how the student got an
   // answer they reported, because nothing checked it).
@@ -439,7 +443,12 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
     const said = new Set([...policy.lastTutorNumbers, ...numbersIn(spokenToDigits(t))]);
     return numbersIn(problem).every((n) => said.has(n));
   };
-  for (const c of [policy.lastAsked, policy.lastSpokenQuestion, page]) if (c && c.trim() && live(c)) candidates.push({ problem: c, answer: t });
+  for (const c of [policy.lastAsked, policy.lastSpokenQuestion, page]) if (c && c.trim() && live(c)) for (const a of answers) candidates.push({ problem: withKnownRules(c, policy.functionRules), answer: a });
+  // Their own arithmetic ("9 minus 8 is 1") only when the question can't be
+  // read: checked first, "3 times 4 is 12, so h(4) is 12" was called right by
+  // its first step while the answer to h(x) = 3x - 1 was wrong.
+  const own = ownClaim(t);
+  if (own) candidates.push(own);
   for (const { problem, answer } of candidates) {
     const check = checkAnswer(problem, answer);
     if (check.verdict === "cannot_check") continue;
@@ -507,7 +516,7 @@ export function runTutorTool(
   // stale verdict on "-5 + 8").
   const sameNumbers = (a: string, b: string) => numbersIn(a).sort().join(",") === numbersIn(b).sort().join(",");
   const reused = auto && !auto.consumed && now - auto.at < 60_000 && answerKey(auto.answer) === answerKey(answer) && sameNumbers(auto.problem, problem) ? auto : null;
-  let check = reused ? { verdict: reused.verdict as CheckVerdict, message: reused.message } : checkAnswer(problem, answer);
+  let check = reused ? { verdict: reused.verdict as CheckVerdict, message: reused.message } : checkAnswer(withKnownRules(problem, policy.functionRules), answer);
   if (reused) reused.consumed = true;
   // "x - 2 = ?" on the way through the page's equation: its box holds that
   // side's value at the page's solution.

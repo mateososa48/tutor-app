@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkAnswer, substituteFunctionEval, stripUnitWords, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
+import { checkAnswer, inlineFunctions, finalValue, substituteFunctionEval, stripUnitWords, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
 
 const verdict = (problem: string, answer: string) => checkAnswer(problem, answer).verdict;
 
@@ -366,4 +366,40 @@ test("a precedence slip in the problem never turns a right answer wrong", () => 
   assert.equal(checkAnswer("(3 + 1) / 4", "1").verdict, "correct");
   assert.equal(checkAnswer("3 + 1 / 4", "2").verdict, "incorrect", "an answer wrong both ways stays wrong");
   assert.equal(checkAnswer("1/2 + 1/3", "0.5").verdict, "incorrect", "fractions on the left are not regrouped");
+});
+
+test("rules stated in the question are applied (spoken function questions)", () => {
+  const v = (q: string, a: string) => checkAnswer(q, a).verdict;
+  assert.equal(v("Now, solve this one on your own: if h(x) = 3x - 1, what's h(4)?", "so 3 times 4 is 12, minus 1 is 11? so h(4) is 11?"), "correct");
+  assert.equal(v("if h(x) = 3x - 1, what's h(4)?", "12"), "incorrect");
+  assert.equal(v("if f(x) = x + 5 and g(x) = 3x, what is f(2) + g(2)?", "f(2) is 2+5 which is 7. and g(2) is 3 times 2 which is 6. so 7 plus 6 is 13? is that right?"), "correct");
+  assert.equal(v("if f(x) = x + 5 and g(x) = 3x, what is f(2) + g(2)?", "so it's 12?"), "incorrect");
+  assert.equal(v("Try this one: if f(x) = x^2 and g(x) = x + 1, what is f(g(3))?", "ok so g(3) is 3+1 which is 4. then i put that into f, so 4 squared is 16. is it 16?"), "correct");
+  assert.equal(v("if f(x) = x^2 and g(x) = x + 1, what is f(g(3))?", "10"), "incorrect");
+  // An equation to solve is not a rule: left to the tutor.
+  assert.equal(v("Now try this: if h(x) = 8, what was our input?", "3"), "cannot_check");
+  assert.equal(inlineFunctions("if g(x) = 2x, what's g(3)?"), "(2(3))");
+});
+
+test("a worked answer is read by the value it ends on, only when the whole can't be", () => {
+  assert.equal(checkAnswer("Now what is 9 minus 4 times 2 times 1?", "so it's 9 minus... 4 times 2 times 1? so 9 minus 8? which is 1?").verdict, "correct");
+  assert.equal(checkAnswer("Now what is 9 minus 4 times 2 times 1?", "so 9 minus 8? which is 17?").verdict, "incorrect");
+  assert.equal(finalValue("so 7 plus 6 is 13? is that right?"), "13");
+  assert.equal(finalValue("13"), null);
+  // Two roots stay two roots: the whole answer is read first.
+  assert.equal(checkAnswer("2x^2 - 3x + 1 = 0", "x = 1 and x = 1/2").verdict, "correct");
+});
+
+test("which is bigger: the number named before 'is bigger', and spoken compare tasks", () => {
+  assert.equal(checkAnswer("Which is bigger, zero point zero nine or zero point one?", "oh, that's 0.09 and 0.10. so 0.1 is bigger because 10 cents is more than 9 cents.").verdict, "correct");
+  assert.equal(checkAnswer("Which is bigger, zero point zero nine or zero point one?", "oh, that's 0.09 and 0.10. so 0.09 is bigger").verdict, "incorrect");
+  assert.equal(checkAnswer("Try comparing zero point zero five and zero point two.", "so that would be 0.05 and 0.20... so 0.2 is bigger because 20 cents is way more than 5 cents.").verdict, "correct");
+  assert.equal(checkAnswer("Try comparing zero point zero five and zero point two.", "0.05 is bigger").verdict, "incorrect");
+  assert.equal(checkAnswer("0.35 and 0.5", "0.35").verdict, "cannot_check");
+});
+
+test("choices named before 'which one is more'", () => {
+  assert.equal(checkAnswer("Eighty cents versus seventy-five cents, which one is more?", "80 cents is definitely more").verdict, "correct");
+  assert.equal(checkAnswer("Fifty cents versus thirty-five cents. Which amount is more money?", "35").verdict, "cannot_check");
+  assert.equal(checkAnswer("0.8 or 0.75, which one is bigger?", "0.75").verdict, "incorrect");
 });

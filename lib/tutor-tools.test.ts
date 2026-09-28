@@ -488,3 +488,22 @@ test("a second cannot_check on the same answer says stop trying", () => {
   // Another answer gets a fresh try.
   assert.match(said(runTutorTool("check_answer", { problem: "2 + 2", student_answer: "4", skill: "adding" }, p, 3000)), /^Verdict: correct/);
 });
+
+test("the auto-check reads a long, chatty answer by its answer sentence, and remembers stated rules", () => {
+  const p = createPolicy(0);
+  noteTutorTurn(p, "Let's try one with two functions: if f(x) = x + 5 and g(x) = 3x, what is f(2) + g(2)?", true);
+  noteStudentUtterance(p, "f(2) is 2+5 which is 7. and g(2) is 3 times 2 which is 6. so 7 plus 6 is 13? is that right?", 1000);
+  assert.match(autoCheck(p, "f(2) is 2+5 which is 7. and g(2) is 3 times 2 which is 6. so 7 plus 6 is 13? is that right?", 1000) ?? "", /→ correct/);
+  // Two turns on, "what is f(6)?" is checked with the f the tutor stated.
+  noteTutorTurn(p, "Inner function first. What is f(6) then?", false);
+  noteStudentUtterance(p, "oh, wait, f(6) is just 6 plus 5, so 12? thats kinda cool how you can chain them.", 5000);
+  assert.match(autoCheck(p, "oh, wait, f(6) is just 6 plus 5, so 12? thats kinda cool how you can chain them.", 5000) ?? "", /→ incorrect/);
+});
+
+test("the question is checked before the student's own first step", () => {
+  const p = createPolicy(0);
+  noteTutorTurn(p, "Now, solve this one on your own: if h(x) = 3x - 1, what's h(4)?", true);
+  const line = "so 3 times 4 is 12, so h(4) is 12?";
+  noteStudentUtterance(p, line, 1000);
+  assert.match(autoCheck(p, line, 1000) ?? "", /→ incorrect/);
+});
