@@ -122,11 +122,16 @@ function liveDeclarationOf(decl: ToolDeclaration): ToolDeclaration {
 }
 
 export function openingEvent(studentText: string, fileCount: number): string {
+  // The student's own words first, the order after them in brackets. On Sept
+  // 28 2026 gemini-3.8-live answered an opening that began "Session event: …"
+  // on 2 of 5 tries (the rest: silence, or the socket closed with 1011
+  // "Internal error encountered"), and this one on 7 of 7, with the same
+  // prompt, tools and microphone frames. It had answered the old one every
+  // time the night before.
   return (
-    "Session event: the session just started; the student's intake message follows. " +
-    "OPEN: a few words back, then ask which they want (a problem on a sheet, or the whole idea); a page for the topic on the board, nothing else yet. " +
-    (fileCount > 0 ? "The attached files are their work; read them first.\n\n" : "\n\n") +
-    `Student: ${studentText}`
+    `${studentText}\n\n` +
+    "(The session just started. OPEN: a few words back, then ask which they want: a problem on a sheet, or the whole idea." +
+    (fileCount > 0 ? " The attached files are their work; read them first.)" : ")")
   );
 }
 

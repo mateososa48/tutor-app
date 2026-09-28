@@ -91,7 +91,9 @@ if (!process.env.NEXT_PUBLIC_DESMOS_API_KEY) process.env.NEXT_PUBLIC_DESMOS_API_
 
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const VERBOSE = process.argv.includes("--verbose");
-const KEY = readGeminiKey();
+// --livekey NAME: the Live session on another key from .env.local (a free
+// account runs out of Live sessions for the day; the error is a bare 1011).
+const KEY = readGeminiKey(arg("livekey", "GEMINI_API_KEY"));
 
 // ── Loading the app's own pieces (after the env is in place) ───────────────
 
@@ -1059,7 +1061,15 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
           maxTokens: 120,
         }).then(coachNote).catch(() => null)
       : Promise.resolve(null);
-    studentText = await studentLine(opts.studentModel, c, turns, tutorView);
+    // A student model that fails for good (503 "high demand" after every retry,
+    // Sept 28 2026) ends the session here: the turns already recorded are kept.
+    // Before, the whole case was thrown away with them.
+    try {
+      studentText = await studentLine(opts.studentModel, c, turns, tutorView);
+    } catch (err) {
+      console.log(`  (the student model failed, so the session ends here: ${err instanceof Error ? err.message.slice(0, 120) : String(err)})`);
+      break;
+    }
     const coached = await coaching;
     // A kid who has said goodbye twice is gone (Maya said "bye" three times into 14 turns).
     const bye = (t: string) => /^\s*(?:ok(?:ay)?\s+)?(?:bye|cya|see ya|peace|later|gtg|gotta go|thanks?,? bye|ok thanks|thank you|thx)\b/i.test(t);
