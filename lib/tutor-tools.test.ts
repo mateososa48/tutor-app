@@ -415,3 +415,38 @@ test("the app never rings an existing line that says something else", () => {
   applyVerdictMarks({ line: "f(3) = 7", ring: true, strike: null }, same, new Map());
   assert.deepEqual(calls, ["add_student_attempt", "circle_item"], "the model's own copy of the same answer is ringed");
 });
+
+test("a stale question is never checked: the student answers what the tutor just asked", () => {
+  // Sofia (Sept 27 2026): the page's first problem is -5 + 8; the tutor has moved
+  // on to -7 - 4 and asks "where do you land?"; "negative eleven" is not an
+  // answer to -5 + 8, and nothing may write "-5 + 8 = -11" in her hand.
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  p.pageProblem = "-5 + 8";
+  noteTutorTurn(p, "If you start at negative seven and go four more to the left, where do you land?", false);
+  assert.equal(autoCheck(p, "negative eleven", 0), null);
+  assert.equal(p.pendingMarks, null);
+  // The model's own check of the right problem is a fresh check.
+  const r = runTutorTool("check_answer", { problem: "-7 - 4", student_answer: "-11", skill: "subtracting integers" }, p, 1000);
+  assert.ok(r && r.success && /Verdict: correct/.test(r.message ?? ""), r && r.success ? r.message : "");
+});
+
+test("a spoken question with words in front reads: so what would six minus negative two equal?", () => {
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  p.pageProblem = "-5 + 8";
+  noteTutorTurn(p, "If you're subtracting a negative, it's the same as adding, so what would six minus negative two equal?", false);
+  const note = autoCheck(p, "is it 8?", 0);
+  assert.ok(note && /→ correct/.test(note), note ?? "");
+  assert.equal(p.pendingMarks?.line, "6 − (-2) = 8");
+});
+
+test("a checked answer is reused only for the same problem", () => {
+  const p = createPolicy(0);
+  p.codeMarks = true;
+  noteTutorTurn(p, "What is 5 plus 8?", false);
+  const auto = autoCheck(p, "13", 0);
+  assert.ok(auto && /→ correct/.test(auto));
+  const other = runTutorTool("check_answer", { problem: "20 - 7", student_answer: "13", skill: "subtraction" }, p, 500);
+  assert.ok(other && other.success && /Verdict: correct/.test(other.message ?? "") && !/already on the board/.test(other.message ?? ""), "a different problem is checked afresh");
+});

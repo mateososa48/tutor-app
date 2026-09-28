@@ -506,6 +506,10 @@ type Cardinal = { value: number; end: number };
  * only an answer means ("which is bigger?" "the third").
  */
 export function spokenToDigits(text: string, opts: { the?: boolean } = {}): string {
+  // "six minus negative two" is 6 - (-2): a "minus" or "plus" in front of a
+  // signed number is the operation, never a second sign (Sept 27 2026: it read
+  // "6 -2" = 4, which would have called Sofia's right 8 wrong).
+  text = text.replace(/\b(minus|plus)\s+(?=(?:negative\b|-\s*\d))/gi, (_m, w: string) => (w.toLowerCase() === "minus" ? "- " : "+ "));
   const toks = (text.replace(HYPHENATED, "$1 ").match(TOKEN) ?? []) as string[];
   const isWord = (j: number) => j >= 0 && j < toks.length && /^[a-z]+$/i.test(toks[j]);
   const word = (j: number) => (isWord(j) ? toks[j].toLowerCase() : null);
@@ -713,19 +717,31 @@ const QUESTION_LEAD = /^\s*(?:what(?:'s|\s+is)|whats|find|calculate|compute|work
 // "With f = 2, f(3) is 6", and the tutor took the nonsense for a verdict).
 const BARE_FUNCTION_CALL = /(?<![\\a-z])([a-z])\s*\(\s*-?\d+(?:\.\d+)?\s*\)/i;
 
+/**
+ * The math a spoken question asks for, when words come before it: "…so what
+ * would six minus negative two equal?" is "6 - -2". Null when there is no
+ * such lead ("what's", "what would", "find"…) in front of a number.
+ */
+export function questionMath(problem: string): string | null {
+  if (QUESTION_LEAD.test(problem)) return null;
+  const spoken = spokenToDigits(problem);
+  const lead = /^.*\b(?:what(?:'s| is| would| does| will| do you get(?: for| when you(?: do| take)?)?)|how much is|find|calculate|compute|work out)\s+(?=.*\d)/i.exec(spoken);
+  if (!lead || lead[0].length >= spoken.length) return null;
+  return spoken.slice(lead[0].length).replace(/\s+(?:equal|equals|be|come to|come out to|make|give(?: you)?|leave(?: you)?|get you)\s*(\?*)\s*$/i, "$1");
+}
+
 function readProblem(problem: string): string | AnswerCheck {
   // "Now, for the second year, what's 15% of 17000?": the question is what
   // follows its last "what's" (Sept 26 2026: Ethan's right 2550 went unchecked).
   // Only for a question with words in front: one that starts with its lead
   // keeps it, so QUESTION_LEAD below still refuses "Find 2x + 3".
   let cut = false;
-  if (!QUESTION_LEAD.test(problem)) {
-    const spoken = spokenToDigits(problem);
-    const lead = /^.*\b(?:what(?:'s| is)|how much is|find|calculate|compute|work out)\s+(?=.*\d)/i.exec(spoken);
-    if (lead && lead[0].length < spoken.length) {
-      problem = spoken.slice(lead[0].length);
-      cut = true;
-    }
+  // "…so what would 6 minus -2 equal?" (Sept 27 2026: unread, so Sofia's right
+  // 8 was checked against the page's stale first problem instead).
+  const asked = questionMath(problem);
+  if (asked !== null) {
+    problem = asked;
+    cut = true;
   }
   const substituted = substituteFunctionEval(problem);
   if (!substituted && !problem.includes("=")) {

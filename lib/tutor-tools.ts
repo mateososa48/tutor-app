@@ -11,7 +11,7 @@
 
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer, checkBlankInPage, spokenToDigits, type CheckVerdict } from "./answer-check";
+import { checkAnswer, checkBlankInPage, questionMath, spokenToDigits, type CheckVerdict } from "./answer-check";
 import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import { latexToPlain } from "./latex-plain";
@@ -254,7 +254,8 @@ function ownClaim(text: string): { problem: string; answer: string } | null {
 
 export function answerLine(problem: string, answer: string): string {
   const own = ownClaim(answer);
-  const pretty = (t: string) => t.replace(/\s*\*\s*/g, " × ").replace(/\s*-\s*(?=\d|\()/g, (m, off: number, all: string) => (off === 0 || /[=(]\s*$/.test(all.slice(0, off)) ? "-" : " − ")).replace(/\s+/g, " ").trim();
+  // A signed number after an operation is bracketed: "6 - -2" is written 6 − (-2).
+  const pretty = (t: string) => t.replace(/([-+*/])\s*-\s*(\d[\d.]*)/g, "$1 (-$2)").replace(/\s*\*\s*/g, " × ").replace(/\s*-\s*(?=\d|\()/g, (m, off: number, all: string) => (off === 0 || /[=(]\s*$/.test(all.slice(0, off)) ? "-" : " − ")).replace(/\s+/g, " ").trim();
   if (own) return pretty(`${own.problem} = ${own.answer}`).slice(0, 60);
   const said = spokenToDigits(answer.replace(/[?!]+/g, " ").replace(/\.{2,}|…/g, " "), { the: true })
     .split(/\s+(?:because|cause|'cause|cuz|since|bc)\b/i)[0];
@@ -279,7 +280,7 @@ export function answerLine(problem: string, answer: string): string {
     // A bare value: say what it answers when that is short math.
     const call = /(?<![a-z\\])([a-z]\s*\(\s*-?\d+(?:\.\d+)?\s*\))/i.exec(problem);
     if (call) return `${call[1].replace(/\s+/g, "")} = ${core}`;
-    const asked = spokenToDigits(problem.replace(/\$/g, "").replace(/\s*\?+\s*$/, "").replace(/^\s*(?:what(?:'s| is)|find|compute|work out)\s+/i, "").trim());
+    const asked = spokenToDigits((questionMath(problem.replace(/\$/g, "")) ?? problem.replace(/\$/g, "").replace(/^\s*(?:what(?:'s| is)|find|compute|work out)\s+/i, "")).replace(/\s*\?+\s*$/, "").trim());
     if (asked.length <= 24 && pureArithmetic(asked) && !asked.includes("=")) return pretty(`${asked} = ${core}`);
   }
   return core || answer.trim().slice(0, 60);
@@ -424,7 +425,17 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
   // answer they reported, because nothing checked it).
   const reported = REPORTED.exec(spokenToDigits(t, { the: true }));
   if (reported && /\d/.test(reported[1]) && /\d|\b(?:same|equal)\b/i.test(reported[2])) candidates.push({ problem: reported[1].replace(/^(?:it (?:was|asked|said)|the (?:problem|question) (?:was|said|asked)|like)\s+/i, "").trim(), answer: reported[2] });
-  for (const c of [policy.lastAsked, policy.lastSpokenQuestion, page]) if (c && c.trim()) candidates.push({ problem: c, answer: t });
+  // A question held from before counts only while it is still the one on the
+  // table: its numbers were said in the tutor's last turn, or the student says
+  // them (Sept 27 2026: Sofia's "negative eleven" answered "…where do you land?"
+  // about -7 - 4, the page's stale first problem -5 + 8 was checked instead,
+  // and the app wrote "-5 + 8 = -11" in her hand).
+  const live = (problem: string) => {
+    if (!policy.lastTutorNumbers) return true;
+    const said = new Set([...policy.lastTutorNumbers, ...numbersIn(spokenToDigits(t))]);
+    return numbersIn(problem).every((n) => said.has(n));
+  };
+  for (const c of [policy.lastAsked, policy.lastSpokenQuestion, page]) if (c && c.trim() && live(c)) candidates.push({ problem: c, answer: t });
   for (const { problem, answer } of candidates) {
     const check = checkAnswer(problem, answer);
     if (check.verdict === "cannot_check") continue;
@@ -483,7 +494,11 @@ export function runTutorTool(
   if (!problem.trim() || !answer.trim()) return { success: false, error: "check_answer needs problem and student_answer, both as strings." };
   // The same answer the code checked a moment ago: the same verdict, recorded once.
   const auto = policy.autoChecked;
-  const reused = auto && !auto.consumed && now - auto.at < 60_000 && answerKey(auto.answer) === answerKey(answer) ? auto : null;
+  // …and only for the same problem: a model checking another problem gets a
+  // fresh check (Sept 27 2026: its check of "-7 - 4" got back the auto-check's
+  // stale verdict on "-5 + 8").
+  const sameNumbers = (a: string, b: string) => numbersIn(a).sort().join(",") === numbersIn(b).sort().join(",");
+  const reused = auto && !auto.consumed && now - auto.at < 60_000 && answerKey(auto.answer) === answerKey(answer) && sameNumbers(auto.problem, problem) ? auto : null;
   let check = reused ? { verdict: reused.verdict as CheckVerdict, message: reused.message } : checkAnswer(problem, answer);
   if (reused) reused.consumed = true;
   // "x - 2 = ?" on the way through the page's equation: its box holds that

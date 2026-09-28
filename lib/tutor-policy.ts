@@ -96,6 +96,8 @@ export type TutorPolicy = {
   lastAsked: string | null;
   /** The last question the tutor said with a number in it ("Which is bigger, 0.35 or 0.5?"), for the auto-check. */
   lastSpokenQuestion: string | null;
+  /** Every number the tutor said in its last turn: what a student's answer can be answering. Null before it has spoken. */
+  lastTutorNumbers: string[] | null;
   /** A student line the code checked itself (Sept 25 2026), with the note the model gets. */
   autoChecked: { answer: string; verdict: string; message: string; problem: string; at: number; note: string; sent: boolean; consumed: boolean } | null;
   /** The idea the student stated in the opening, before any skill ("cuz you add 3"), so PROBE asks about it instead of "what do you know". */
@@ -180,6 +182,7 @@ export function createPolicy(now: number): TutorPolicy {
     boardAsk: null,
     lastAsked: null,
     lastSpokenQuestion: null,
+    lastTutorNumbers: null,
     autoChecked: null,
     openingReason: null,
     openingQuestion: null,
@@ -689,6 +692,7 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
     const tail = q.split(/(?<=[.!])\s+/).pop() ?? q;
     p.lastSpokenQuestion = tail.slice(0, 200);
   }
+  p.lastTutorNumbers = numbersIn(spokenToDigits(text));
   p.unmarkedReference = marked ? null : boardReference(text);
   const asked = permissionQuestion(text);
   if (asked) p.askedPermission = asked;

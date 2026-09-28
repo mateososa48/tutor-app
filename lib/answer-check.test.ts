@@ -349,3 +349,11 @@ test("a tight fraction is one number: a half divided by a sixth is 3", () => {
   assert.equal(checkAnswer("6/2/3", "1").verdict, "correct", "a tight chain stays left to right");
   assert.equal(checkAnswer("12/2*5", "30").verdict, "correct");
 });
+
+test("minus a negative is subtraction of a negative, spoken or typed", () => {
+  assert.equal(spokenToDigits("six minus negative two"), "6 - -2");
+  assert.equal(checkAnswer("six minus negative two", "8").verdict, "correct");
+  assert.equal(checkAnswer("what would six minus negative two equal?", "8").verdict, "correct");
+  assert.equal(checkAnswer("negative seven plus negative five", "-12").verdict, "correct");
+  assert.equal(checkAnswer("negative seven minus four", "-11").verdict, "correct");
+});
