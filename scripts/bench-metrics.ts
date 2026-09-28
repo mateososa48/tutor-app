@@ -48,6 +48,7 @@ export type TurnRecord = {
   planModel?: string | null;
   /** --voice with --plan: whether the plan started when the student stopped was used. */
   planEarly?: string;
+  heardAt?: number[];
   /** The auto-check note the code sent with this turn's student line, if any. */
   autoCheck?: string | null;
   /** The full [Board: …] list after the turn, and the short one the tutor reads. */

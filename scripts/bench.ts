@@ -236,6 +236,9 @@ function wav(chunks: string[], rate = 24_000): Buffer {
 type HoldLike = { offer(id: string, name: string, result: ToolCallResult, spoken: boolean): boolean; onAudio(): void; onTurnComplete(hadAudio: boolean): void; onNewInput(): void; drop(id: string): void; dispose(): void };
 
 type LiveTurn = {
+  speechEndAt?: number;
+  /** --voice: when each fragment of the student's transcript arrived, ms after their speech ended (negative: while speaking). */
+  heardAt?: number[];
   said: string;
   /** The transcription as 3.8 sent it, markup and all (said is what the student reads). */
   raw: string;
@@ -402,6 +405,7 @@ class LiveTutor {
     this.nudges = 0;
     this.turnStart = Date.now();
     await new Promise<void>((resolve) => { this.voicePcm = pcm; this.voiceAt = 0; this.voiceDone = resolve; });
+    this.turn.speechEndAt = Date.now();
     this.turnStart = Date.now();
     onSpoken?.();
     this.armUnanswered(8_000);
@@ -532,6 +536,7 @@ class LiveTutor {
     }
     if (sc.inputTranscription?.text) {
       this.turn.heard += sc.inputTranscription.text;
+      (this.turn.heardAt ??= []).push(Date.now());
       this.onHeard?.();
     }
     if (sc.outputTranscription?.text && this.gate?.muted) this.turn.muted += sc.outputTranscription.text;
@@ -851,7 +856,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     return order;
   };
   // The app's speculative start (lib/gemini-live speculate): the planner starts
-  // 350 ms after the last fragment of the student's speech, before any tool call.
+  // as the student's transcript arrives, before any tool call.
   let spec: { text: string; verdict: string | null; order: Promise<string | null> } | null = null;
   let planEarly: string | null = null;
   let specTimer: ReturnType<typeof setTimeout> | null = null;
@@ -962,7 +967,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   live.onHeard = () => {
     if (!voicePlan) return;
     if (specTimer) clearTimeout(specTimer);
-    specTimer = setTimeout(() => { specTimer = null; speculate(); }, 350);
+    specTimer = setTimeout(() => { specTimer = null; speculate(); }, 0);
   };
   const events = await import("../lib/live-events");
   if (typeof events.SpeechTextCleaner === "function") live.speech = new events.SpeechTextCleaner();
@@ -1017,6 +1022,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       n: i + 1,
       student: studentText,
       ...(opts.voice && t.heard.trim() ? { heard: t.heard.replace(/\s+/g, " ").trim() } : {}),
+      ...(t.heardAt?.length && t.speechEndAt ? { heardAt: t.heardAt.map((x) => x - t.speechEndAt!) } : {}),
       tutor: said,
       ...(rawSaid !== said ? { rawTutor: rawSaid } : {}),
       ...(t.mutedMs > 0 ? { mutedMs: t.mutedMs, mutedText: t.muted.replace(/\s+/g, " ").trim() } : {}),

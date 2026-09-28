@@ -241,7 +241,10 @@ export class GeminiLiveSession {
   // in, before the tutor calls next_move or check_answer (Sept 28 2026: the
   // tutor took 1.3-2.3 s to make that call and only then did planning start,
   // so a planned reply's first word came 5.5 s after the student stopped).
-  private static readonly SPECULATE_MS = 350;
+  // Gemini sends the student's transcript in about one piece 1.0-1.3 s after
+  // they stop, and the tutor's tool call follows 0-0.8 s later (measured in the
+  // spoken bench, Sept 28 2026), so any wait here only loses that gap.
+  private static readonly SPECULATE_MS = 0;
   private speculateTimer: ReturnType<typeof setTimeout> | null = null;
   /** The line the planner was started on early, the verdict it was given, and its order. */
   private speculated: { text: string; verdict: string | null; order: Promise<string | null> } | null = null;
