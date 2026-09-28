@@ -396,6 +396,8 @@ export type PromptOptions = {
   learnerBrief?: string;
   /** This session's own instructions (the intake), placed just before the closing reminder. */
   session?: string;
+  /** The session declares next_move (the planner on the spoken path): the Live prompt tells the tutor to call it first. */
+  nextMove?: boolean;
 };
 
 export function buildBackendInstructions(

@@ -8,6 +8,7 @@
 // The lesson's live orders come from tool results ([Tutor state], the
 // auto-check, the dispatcher's "Next:" sentences), not from here.
 import { desmosConfigured } from "./desmos-config";
+import { NEXT_MOVE_RULE } from "./tutor-planner";
 import {
   BOUNDARIES_SECTION,
   learnerEvidenceSection,
@@ -85,13 +86,15 @@ export function buildLiveInstructions(profile: StudentProfile | null, notes: str
   return [
     personaSection(profile, "gemini"),
     TALK_SECTION,
-    TURN_SECTION,
+    // 3.8 follows its examples more than its rules: with next_move declared,
+    // the rule leads the turn section and every example turn opens with it.
+    options.nextMove ? TURN_SECTION.replace("# How a turn goes\n", `# How a turn goes\n0. ${NEXT_MOVE_RULE}\n`) : TURN_SECTION,
     LESSON_SECTION,
     drawsSection(desmos),
     `${BOUNDARIES_SECTION}\n${FILES_LINE}`,
     studentSection(profile, notes),
     learnerEvidenceSection(options.learnerBrief ?? ""),
-    examplesSection(desmos),
+    options.nextMove ? examplesSection(desmos).replace(/^Return: /gm, "Return: next_move() · ") : examplesSection(desmos),
     options.session?.trim() ?? "",
     LIVE_CLOSE,
   ].filter(Boolean).join("\n\n");

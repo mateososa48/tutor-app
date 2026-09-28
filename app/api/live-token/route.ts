@@ -52,8 +52,11 @@ export async function POST(req: NextRequest) {
   // What the student answered before the session opened (lib/session-intake).
   let intake: SessionIntake | null = null;
   let fileCount = 0;
+  // The session declares next_move (the planner on the spoken path).
+  let nextMove = false;
   try {
-    const body = (await req.json()) as { configOnly?: unknown; intake?: unknown; fileCount?: unknown };
+    const body = (await req.json()) as { configOnly?: unknown; intake?: unknown; fileCount?: unknown; nextMove?: unknown };
+    nextMove = body?.nextMove === true;
     configOnly = body?.configOnly === true;
     intake = readIntake(body?.intake);
     fileCount = typeof body?.fileCount === "number" ? Math.max(0, Math.min(20, Math.floor(body.fileCount))) : 0;
@@ -87,6 +90,7 @@ export async function POST(req: NextRequest) {
   const instructions = buildLiveInstructions(profile, notes, {
     learnerBrief: learning.brief,
     session: intake ? intakeInstructions(intake, fileCount) : undefined,
+    nextMove,
   });
   const config = {
     instructions,

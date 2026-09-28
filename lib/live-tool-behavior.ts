@@ -28,7 +28,7 @@ export function liveToolMode(model: string): LiveToolMode {
 }
 
 /** Tools whose result the tutor must hear before it speaks, even with async tools on. */
-export const BLOCKING_TOOLS: ReadonlySet<string> = new Set(["check_answer", "look_at_board", "look_at_worksheet"]);
+export const BLOCKING_TOOLS: ReadonlySet<string> = new Set(["check_answer", "look_at_board", "look_at_worksheet", "next_move"]);
 
 export function withToolBehavior<T extends { name?: string }>(declarations: T[], model: string, asyncTools = false): Array<T & { behavior?: "BLOCKING" | "NON_BLOCKING" }> {
   if (liveToolMode(model) !== "scheduled") return declarations;

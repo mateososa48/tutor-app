@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { NEXT_MOVE_DECLARATION } from "./tutor-planner";
 import { BLOCKING_TOOLS, ReplyGate, ResponseHold, liveToolMode, resolveAsyncTools, resolveLiveVad, toolScheduling, withToolBehavior, verdictContradicts, finishReplyNote} from "./live-tool-behavior";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { TUTOR_TOOL_DECLARATIONS } from "./tutor-tools";
@@ -26,7 +27,8 @@ test("with async tools on, 3.8 waits only for the tools whose result decides the
     assert.equal(d.behavior, BLOCKING_TOOLS.has(d.name) ? "BLOCKING" : "NON_BLOCKING", d.name);
   }
   const names = new Set(ALL.map((d) => d.name));
-  for (const name of BLOCKING_TOOLS) assert.ok(names.has(name), `${name} is declared`);
+  // next_move is declared only in sessions with the planner on (lib/tutor-planner).
+  for (const name of BLOCKING_TOOLS) assert.ok(names.has(name) || name === NEXT_MOVE_DECLARATION.name, `${name} is declared`);
 });
 
 test("3.1 and the thinking model get their declarations untouched", () => {

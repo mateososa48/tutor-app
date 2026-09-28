@@ -51,3 +51,12 @@ test("the Live prompt takes the session block and routes graphs by Desmos", () =
   assert.doesNotMatch(noDesmos, /draw_desmos/);
   assert.match(noDesmos, /add_function_graph/);
 });
+
+test("a session with the planner on the spoken path tells the tutor to call next_move first", () => {
+  const on = buildLiveInstructions(null, [], { desmos: true, nextMove: true });
+  const off = buildLiveInstructions(null, [], { desmos: true });
+  assert.match(on, /# How a turn goes\n0\. Each time the student says something, call next_move before any words/);
+  assert.equal((on.match(/^Return: next_move\(\) · /gm) ?? []).length, (off.match(/^Return: /gm) ?? []).length, "every example turn opens with next_move");
+  assert.doesNotMatch(off, /next_move/);
+  assert.ok(on.length < 9_300, `prompt ${on.length}`);
+});

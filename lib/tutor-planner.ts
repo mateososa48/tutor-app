@@ -116,3 +116,18 @@ export function plannerNote(reply: string | null | undefined, verdict: string | 
   const body = `Say: "${order.say}"${order.board ? ` After speaking: ${order.board}` : ""}`.replace(/[[\]]/g, "");
   return `[Next move, not from the student: ${body}]`;
 }
+
+/**
+ * The spoken path's way to the planner (Sept 27 2026): 3.8 waits for a
+ * blocking tool's result before it speaks, so a tool it calls first, before any
+ * words, can carry the planner's order for the line it just heard. Declared
+ * only in sessions with the planner on; the typed path plans before the line.
+ */
+export const NEXT_MOVE_DECLARATION = {
+  name: "next_move",
+  description: "Call this first, before you say anything to what the student just said: it returns the move to make and the words for it. Say them in your own voice, then make its board move.",
+  parameters: { type: "object", properties: {}, required: [] as string[] },
+};
+
+/** The prompt's line for sessions that declare next_move. */
+export const NEXT_MOVE_RULE = "Each time the student says something, call next_move before any words, then follow what it returns: say it in your own voice, then its board move. If it returns nothing, reply yourself.";

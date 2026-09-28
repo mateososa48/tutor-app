@@ -9,6 +9,7 @@ import { TutorRuntime } from "./tutor-runtime";
 import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, finishReplyNote, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
 import { givesTask } from "./tutor-policy";
 import type { CoachTurn } from "./tutor-coach";
+import { NEXT_MOVE_DECLARATION } from "./tutor-planner";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
@@ -229,6 +230,9 @@ export class GeminiLiveSession {
   private readonly coach: { topic: () => string; board: () => string } | undefined;
   /** The planner on the student's line (lib/tutor-planner, /api/plan), when the session asks for it (?plan=1). */
   private readonly planner: { topic: () => string; board: () => string; grade: () => string } | undefined;
+  /** The student line (inputSeq) the planner already gave an order for, and that order: planned once per line. */
+  private plannedFor = -1;
+  private plannedOrder: string | null = null;
   /** Typed lines wait for the planner in order, so a quick second line never overtakes the first. */
   private textChain: Promise<void> = Promise.resolve();
   // The route gives up at 3.2 s; this covers the trip.
@@ -427,7 +431,7 @@ export class GeminiLiveSession {
         systemInstruction: {
           parts: [{ text: this.systemInstruction }],
         },
-        tools: [{ functionDeclarations: withToolBehavior(liveToolDeclarations(), this.model, this.asyncTools) }],
+        tools: [{ functionDeclarations: withToolBehavior([...liveToolDeclarations(), ...(this.planner ? [NEXT_MOVE_DECLARATION as ToolDeclaration] : [])], this.model, this.asyncTools) }],
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
@@ -469,9 +473,12 @@ export class GeminiLiveSession {
     // ?plan=1: the line waits (at most PLANNER_MS) for the planner's one order,
     // which takes the turn note's place (the note is one of its inputs).
     const open = this.ws?.readyState === WebSocket.OPEN;
+    const seq = this.inputSeq;
     this.textChain = this.textChain
       .then(() => this.askPlanner(text, note, turnNote))
       .then((order) => {
+        this.plannedFor = seq;
+        this.plannedOrder = order;
         if (this.manualDisconnect) return;
         const context = [note, order ?? turnNote].filter(Boolean).join("\n");
         if (context) this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: context }] }], turnComplete: false } });
@@ -479,6 +486,27 @@ export class GeminiLiveSession {
       })
       .catch(() => undefined);
     return open;
+  }
+
+  /**
+   * next_move: the planner's order for the line just heard (the spoken path; a
+   * typed line was planned before it went out, and gets that order back).
+   * The checker's note on the line, if it was an answer, goes to the planner
+   * and back to the tutor with the order.
+   */
+  private async nextMove(): Promise<ToolCallResult> {
+    const seq = this.inputSeq;
+    // Nothing new to answer: before the student has said anything (it was
+    // called after the greeting, the fallback said "reply yourself", and the
+    // greeting was said twice), or after the tutor already replied this turn.
+    if (!this.lastStudentLine.trim() || this.turnHadAudio) return { success: true, message: "Nothing new from the student: say nothing more and wait for them." };
+    const auto = this.tutorRuntime.policy.autoChecked;
+    const verdict = auto && !auto.consumed && Date.now() - auto.at < 20_000 ? auto.note : null;
+    const order = this.plannedFor === seq ? this.plannedOrder : await this.askPlanner(this.lastStudentLine, verdict, null);
+    this.plannedFor = seq;
+    this.plannedOrder = order;
+    const message = [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n");
+    return { success: true, message };
   }
 
   /** The planner's order for the tutor's reply to this line (/api/plan), or null when none came in time. */
@@ -582,6 +610,9 @@ export class GeminiLiveSession {
    * tutor starts on the problem rather than asking what to work on.
    */
   sendOpening(text: string, files: UploadedFile[]): boolean {
+    // The intake message is the student's first line: next_move plans a reply to it.
+    this.lastStudentLine = text;
+    this.newStudentInput("text");
     const parts = this.buildFileParts(files);
     parts.push({ text: openingEvent(text, files.length) });
     return this.sendUserTurn(parts, "opening");
@@ -1033,7 +1064,7 @@ export class GeminiLiveSession {
     let result: ToolCallResult;
     try {
       this.flushStudentUtterance();
-      const tutorTool = this.tutorRuntime.runTool(name, args, Date.now(), id);
+      const tutorTool = name === "next_move" ? await this.nextMove() : this.tutorRuntime.runTool(name, args, Date.now(), id);
       if (tutorTool) {
         // App-owned: check_answer, answered with the [Tutor state] line.
         result = tutorTool;
@@ -1042,7 +1073,7 @@ export class GeminiLiveSession {
         // what it said (ReplyGate.onCheckAfterReply).
         // ?plan=1, a spoken answer: the tutor waits for this verdict before it
         // speaks, so the planner's order for the reply rides in with it.
-        if (name === "check_answer" && this.planner && !this.turnHadAudio && result.success) {
+        if (name === "check_answer" && this.planner && !this.turnHadAudio && result.success && this.plannedFor !== this.inputSeq) {
           const order = await this.askPlanner(this.lastStudentLine, result.message ?? null, null);
           if (order) result = { ...result, message: `${result.message ?? ""}\n${order}` };
         }

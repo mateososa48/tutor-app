@@ -123,7 +123,7 @@ export class GeminiTutorSession {
     const res = await fetch("/api/live-token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ configOnly: true, intake: active?.intake, fileCount: active?.fileCount ?? opts.files.length }),
+      body: JSON.stringify({ configOnly: true, intake: active?.intake, fileCount: active?.fileCount ?? opts.files.length, nextMove: Boolean(this.options.planner) }),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
