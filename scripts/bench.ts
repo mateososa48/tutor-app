@@ -81,6 +81,7 @@ import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
 import { readUsage, type TurnUsage } from "../lib/live-turn-metrics";
+import { spokenMath } from "./bench-speech";
 
 // .env.local first: desmosConfigured() and the tool declarations read it at import.
 for (const line of fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8").split("\n")) {
@@ -208,7 +209,8 @@ async function synth(text: string, dir: string): Promise<Buffer> {
   const { execFileSync } = await import("node:child_process");
   const base = path.join(dir, `speech-${speechCache.size}`);
   // Through a file: a line that starts with "-" ("-5 times -5 is 25?") was read as an option.
-  fs.writeFileSync(`${base}.txt`, text.replace(/[<>]/g, " "));
+  // In words: `say` reads "−" and "-" between terms as nothing (spokenMath).
+  fs.writeFileSync(`${base}.txt`, spokenMath(text).replace(/[<>]/g, " "));
   execFileSync("say", ["-v", arg("kidvoice", "Samantha"), "-r", arg("kidrate", "180"), "-o", `${base}.aiff`, "-f", `${base}.txt`]);
   fs.rmSync(`${base}.txt`, { force: true });
   execFileSync("afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", `${base}.aiff`, `${base}.wav`]);
