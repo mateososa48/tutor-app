@@ -37,7 +37,8 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!allowed(session.user.id, Date.now())) return NextResponse.json({ note: null, error: "rate_limited" }, { status: 429 });
-  const apiKey = process.env.GEMINI_API_KEY;
+  // Production may carry only the NEXT_PUBLIC_ key, as /api/live-token allows.
+  const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
   if (!apiKey) return NextResponse.json({ note: null, error: "misconfigured" }, { status: 500 });
 
   let body: Record<string, unknown>;
