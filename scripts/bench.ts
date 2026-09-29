@@ -207,7 +207,10 @@ async function synth(text: string, dir: string): Promise<Buffer> {
   if (hit) return hit;
   const { execFileSync } = await import("node:child_process");
   const base = path.join(dir, `speech-${speechCache.size}`);
-  execFileSync("say", ["-v", arg("kidvoice", "Samantha"), "-r", arg("kidrate", "180"), "-o", `${base}.aiff`, text.replace(/[<>]/g, " ")]);
+  // Through a file: a line that starts with "-" ("-5 times -5 is 25?") was read as an option.
+  fs.writeFileSync(`${base}.txt`, text.replace(/[<>]/g, " "));
+  execFileSync("say", ["-v", arg("kidvoice", "Samantha"), "-r", arg("kidrate", "180"), "-o", `${base}.aiff`, "-f", `${base}.txt`]);
+  fs.rmSync(`${base}.txt`, { force: true });
   execFileSync("afconvert", ["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", `${base}.aiff`, `${base}.wav`]);
   const file = fs.readFileSync(`${base}.wav`);
   // Find the data chunk (afconvert may add a padding chunk before it).
@@ -674,11 +677,16 @@ export async function callModel(c: ModelCall): Promise<string> {
   }
   const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: c.text }];
   for (const im of c.images ?? []) parts.push({ inlineData: { mimeType: im.mimeType, data: im.data } });
-  const res = await withRetry(() => ai.models.generateContent({
-    model: c.model,
-    contents: [{ role: "user", parts }],
-    config: { systemInstruction: c.system, temperature: c.temperature ?? 0.7, maxOutputTokens: c.maxTokens ?? 1024, ...(c.json ? { responseMimeType: "application/json" } : {}) },
-  }));
+  // A call that never returns froze two runs for over an hour (Sept 28 2026):
+  // each try gives up after 60 s and counts as an overload, so it is retried.
+  const res = await withRetry(() => Promise.race([
+    ai.models.generateContent({
+      model: c.model,
+      contents: [{ role: "user", parts }],
+      config: { systemInstruction: c.system, temperature: c.temperature ?? 0.7, maxOutputTokens: c.maxTokens ?? 1024, ...(c.json ? { responseMimeType: "application/json" } : {}) },
+    }),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("503 UNAVAILABLE: no answer in 60 s")), 60_000)),
+  ]));
   modelUsage.prompt += res.usageMetadata?.promptTokenCount ?? 0;
   modelUsage.output += res.usageMetadata?.candidatesTokenCount ?? 0;
   return (res.candidates?.[0]?.content?.parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? "").join("");
