@@ -23,7 +23,7 @@ const OUT_DIR = "public/landing";
 const DPR = 2;
 
 // `content` shots are trimmed to the drawing's pixels with some air around it;
-// `viewport` shots are the whole board as the hero frame shows it. `count`
+// `viewport` shots frame the whole board; `live` ones leave the camera as it is. `count`
 // stops a scene after that many calls.
 const SCENES = [
   { key: "steps", frame: "content", viewport: { width: 1200, height: 760 }, pad: 28 },
@@ -44,7 +44,12 @@ const SCENES = [
   { key: "area", frame: "content", viewport: { width: 1200, height: 760 }, pad: 28, settle: 7500 },
   { key: "solved", frame: "content", viewport: { width: 1200, height: 760 }, pad: 28, settle: 7500 },
   { key: "ratio", frame: "content", viewport: { width: 1200, height: 760 }, pad: 28, settle: 7500 },
-  { key: "hero", file: "session-board", frame: "viewport", viewport: { width: 1068, height: 640 }, count: 5 },
+  // Sept 28: the hero. `live` photographs the board exactly as it sits, camera
+  // untouched, at the hero stage's own size (1052 x 640 from 1280px up), so the
+  // opening-board picture lines up with the live board it fades into. The
+  // finished board is what phones see instead of the live demo.
+  { key: "hero", file: "hero-final", frame: "live", viewport: { width: 1052, height: 640 }, settle: 7500 },
+  { key: "heroSeed", file: "hero-opening", frame: "live", viewport: { width: 1052, height: 640 }, settle: 7500 },
 ];
 
 // Crop a PNG to its non-white pixels, in the browser (no image library needed).
@@ -170,6 +175,10 @@ async function shoot(browser, scene) {
     width = trimmed.width;
     height = trimmed.height;
     rect = trimmed.rect;
+  } else if (scene.frame === "live") {
+    // As the board sits: no camera move, no badge (the page draws its own).
+    await page.addStyleTag({ content: ".tl-watermark_SEE-LICENSE{display:none!important}" });
+    await page.screenshot({ path: out });
   } else {
     // Frame the whole drawing, as the live board does once it settles.
     await page.evaluate(async () => {

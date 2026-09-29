@@ -42,7 +42,7 @@ export function BoardShot({
   priority?: boolean;
   dark?: boolean;
 }) {
-  const wide = shot.src.includes("session-board");
+  const wide = shot.src.includes("hero-final");
   const z = zoom ?? (wide ? 1.7 : 1);
   const pos = position ?? (wide ? "0% 12%" : "30% 30%");
   return (

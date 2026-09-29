@@ -1,7 +1,15 @@
-// The lesson the landing page replays: one algebra problem, the way a session
-// actually goes. Each beat is timed from the start of the loop and can carry a
-// student line, something the tutor says, board moves, or all three. The board
-// moves are real tool calls, dispatched through the same code the tutor uses.
+// The lesson the landing hero replays (rebuilt Sept 28 2026): one fractions
+// question, the way a session actually goes, with the student's mistake in it.
+// People who saw the old hero thought Chalk was a chatbot: it showed only the
+// tutor's words, in a dark box. Now both people talk: the student's words come
+// out of their tile and the tutor's out of the pet, word by word, as spoken,
+// and every idea lands on the board as a picture.
+//
+// The demo opens mid-lesson on `LESSON_SEED` (drawn at once, no writing), so the
+// frame is never blank. Each beat is timed from the start of the loop. Board
+// moves are real tool calls, dispatched through the same code the tutor uses;
+// they refer to earlier drawings as "@n" (see `resolveRefs`).
+// "How it works" already plays 2/3 against 3/4, so the hero asks about 3/5.
 
 import type { DockActivity } from "@/components/session/VoiceDock";
 
@@ -9,88 +17,97 @@ export type BoardCall = { name: string; args: Record<string, unknown> };
 
 export type LessonBeat = {
   at: number;
-  /** What the student said (goes to the transcript). */
+  /** What the student says, out loud (their bubble, then the transcript). */
   student?: string;
-  /** What the tutor says (caption + transcript, spoken for `hold` ms). */
+  /** What the tutor says (the pet's bubble, then the transcript). */
   say?: string;
   /** Board moves, in order. */
   board?: BoardCall[];
   /** Dock badge after this beat, until the next one. */
   activity?: DockActivity;
+  /** A checked right answer: the pet hops. */
+  celebrate?: boolean;
 };
 
-export const LESSON_TITLE = "Solving 2x + 3 = 11";
-export const LESSON_LOOP_MS = 42000;
+/**
+ * The hero lesson names board items by the order they were drawn in this loop
+ * ("@2" is the second drawing), because the board keeps counting item ids
+ * across a clear: the second loop's bars are not b2 and b3. `idOf` turns the
+ * nth drawing into its real id.
+ */
+export function resolveRefs(call: BoardCall, idOf: (n: number) => string | undefined): BoardCall {
+  const args: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(call.args)) {
+    args[k] = typeof v === "string" ? v.replace(/@(\d+)/g, (m, n) => idOf(Number(n)) ?? m) : v;
+  }
+  return { name: call.name, args };
+}
+
+export const LESSON_TITLE = "Which is bigger, 3/5 or 2/3?";
+export const LESSON_STUDENT = "Student";
+/** When the finished board fades and the lesson starts again. */
+export const LESSON_LOOP_MS = 31000;
+
+/** On the board before the first beat: the question and both bars. */
+export const LESSON_SEED: BoardCall[] = [
+  { name: "start_new_problem", args: { title: LESSON_TITLE } },
+  { name: "draw_fraction", args: { fraction: "3/5", model: "bar" } },
+  { name: "draw_fraction", args: { fraction: "2/3", model: "bar", place: "below @2" } },
+];
+
+const ATTEMPT = "3/5, cause 3 is more than 2?";
 
 export const LESSON: LessonBeat[] = [
-  { at: 0, student: "I'm stuck on 2x plus 3 equals 11.", activity: "listening" },
-  { at: 1400, activity: "thinking" },
+  { at: 0, student: "3/5? cause 3 is more than 2", activity: "listening" },
+  { at: 2400, activity: "writing", board: [{ name: "add_student_attempt", args: { text: ATTEMPT, place: "below @3" } }] },
   {
-    at: 2300,
-    say: "Let me put that on the board.",
-    activity: "writing",
-    board: [
-      { name: "start_new_problem", args: { title: LESSON_TITLE } },
-      { name: "draw_equation_step", args: { latex: "2x + 3 = 11" } },
-    ],
-  },
-  {
-    at: 5200,
-    say: "Two x plus three is eleven. What would undo that plus three?",
+    at: 3600,
+    say: "Hmm. Look at the two bars. Which one has more shaded?",
     activity: "speaking",
-    board: [{ name: "draw_balance", args: { left: "x | x | 3", right: "11", label: "both sides weigh the same" } }],
+    board: [{ name: "point_at", args: { target: "@3" } }],
   },
-  { at: 9600, activity: "listening" },
-  { at: 10600, student: "subtract 3?", activity: "thinking" },
+  { at: 7400, activity: "listening" },
+  { at: 8200, student: "wait... the 2/3 one?" },
   {
-    at: 11600,
+    at: 10000,
+    say: "Yes. Let's prove it. Cut both into fifteenths.",
     activity: "writing",
     board: [
-      { name: "add_student_attempt", args: { text: "subtract 3 from both sides?" } },
-      { name: "draw_equation_step", args: { latex: "2x = 8", annotation: "subtract 3 from both sides" } },
-    ],
-  },
-  { at: 14800, say: "Exactly. Both sides, so it stays balanced. Now two x is eight. What is x?", activity: "speaking" },
-  { at: 19200, activity: "listening" },
-  { at: 20200, student: "16?", activity: "thinking" },
-  {
-    at: 21200,
-    activity: "writing",
-    board: [
-      { name: "add_student_attempt", args: { text: "x = 16?" } },
-      { name: "draw_equation_step", args: { latex: "x = 16" } },
-      { name: "cross_out_step", args: { step_label: "x = 16" } },
-    ],
-  },
-  { at: 24200, say: "Close. Two times x is eight. Are we multiplying by two, or dividing?", activity: "speaking" },
-  { at: 28400, activity: "listening" },
-  { at: 29400, student: "dividing. so x is 4", activity: "thinking" },
-  {
-    at: 30400,
-    activity: "writing",
-    board: [
-      { name: "draw_equation_step", args: { latex: "x = 4", annotation: "divide both sides by 2" } },
-      { name: "circle_item", args: { target: "x = 4", keep: true } },
+      { name: "cross_out_step", args: { step_label: ATTEMPT } },
+      { name: "draw_fraction", args: { fraction: "3/5", model: "bar", common_denominator: 15, place: "beside @2" } },
+      { name: "draw_fraction", args: { fraction: "2/3", model: "bar", common_denominator: 15, place: "below @5" } },
     ],
   },
   {
-    at: 34400,
-    say: "That's it. Check it: two times four is eight, plus three is eleven. Try the next one yourself.",
+    at: 16000,
+    say: "Nine fifteenths, ten fifteenths. So which is bigger?",
     activity: "speaking",
+    board: [{ name: "highlight", args: { target: "@6", text: "10/15" } }],
+  },
+  { at: 19400, activity: "listening" },
+  { at: 20200, student: "2/3! ten is more than nine" },
+  {
+    at: 22400,
+    activity: "writing",
+    celebrate: true,
     board: [
-      { name: "start_board_section", args: { title: "Your turn" } },
-      { name: "draw_equation_step", args: { latex: "3x - 5 = 7" } },
+      { name: "draw_equation_step", args: { latex: "\\frac{2}{3} > \\frac{3}{5}", annotation: "10 fifteenths beat 9", place: "below @6" } },
+      { name: "circle_item", args: { target: "last", keep: true } },
     ],
   },
-  { at: 40000, activity: "listening" },
+  { at: 23600, say: "That's it. Same size bar, more of it shaded.", activity: "speaking" },
+  { at: 27200, activity: "listening" },
 ];
 
 /** Every board move in the lesson, in order, for the dev replay and screenshots. */
-export const LESSON_BOARD: BoardCall[] = LESSON.flatMap((b) => b.board ?? []);
+export const LESSON_BOARD: BoardCall[] = [...LESSON_SEED, ...LESSON.flatMap((b) => b.board ?? [])].map((call) =>
+  resolveRefs(call, (n) => `b${n}`),
+);
 
 /** The scenes the bento and how-it-works tiles photograph, each a real board. */
 export const SCENES: Record<string, BoardCall[]> = {
   hero: LESSON_BOARD,
+  heroSeed: LESSON_SEED.map((call) => resolveRefs(call, (n) => `b${n}`)),
   steps: [
     { name: "start_new_problem", args: { title: "Solve 3(x − 2) = 12" } },
     { name: "draw_equation_step", args: { latex: "3(x - 2) = 12" } },

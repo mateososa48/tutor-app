@@ -28,7 +28,7 @@ function Page({ s, i }: { s: MockSession; i: number }) {
       className="sticky mb-6 grid rounded-[20px] bg-white p-2 shadow-[0_0_0_1px_rgba(18,18,21,0.07),0_1px_2px_rgba(18,18,21,0.06),0_16px_40px_-14px_rgba(18,18,21,0.28)] md:grid-cols-[1.1fr_1fr]"
       style={{ top: 12 + i * 10 }}
     >
-      <Thumb s={s} sizes="(max-width: 768px) 100vw, 600px" zoom={s.shot?.src.includes("session-board") ? 1.3 : 1} position={s.shot?.src.includes("session-board") ? "0% 22%" : "50% 50%"} className="aspect-[4/3] rounded-[12px]" />
+      <Thumb s={s} sizes="(max-width: 768px) 100vw, 600px" zoom={s.shot?.src.includes("hero-final") ? 1.3 : 1} position={s.shot?.src.includes("session-board") ? "0% 22%" : "50% 50%"} className="aspect-[4/3] rounded-[12px]" />
       <div className="flex flex-col px-4 pt-5 pb-3 md:px-10 md:py-10">
         <p className="m-0 text-[13px] text-(--lp-ink-3) tabular-nums">
           {paused ? `Paused today at ${s.time}, ${s.minutes} min in` : `${s.day} at ${s.time}, ${s.minutes} min`}

@@ -249,6 +249,11 @@ function onPage(r: Rect, frame: Rect): boolean {
   return cx >= frame.x - PAGE_GAP / 2 && cx <= frame.x + frame.w + PAGE_GAP / 2;
 }
 
+function gcd(a: number, b: number): number {
+  while (b) [a, b] = [b, a % b];
+  return a;
+}
+
 function prefersReducedMotion(): boolean {
   return typeof window !== "undefined" && Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
 }
@@ -361,6 +366,8 @@ export interface WhiteboardHandle {
     fn: () => T,
   ): T;
   clearWhiteboard(): void;
+  /** Draw without the writing animation (true) or with it again (false). */
+  setInstant?(on: boolean): void;
   getSnapshot(): WhiteboardSnapshot | null;
   loadSnapshot(snap: WhiteboardSnapshot): void;
   /** The board in words; `compact` is the short list tool results carry (look_at_board keeps the full one). */
@@ -728,12 +735,27 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const jobMetaRef = useRef<BoardArtifactMeta | null>(null);
   // Which marker the next diagram picks up; reset when the board is cleared.
   const markerRef = useRef(0);
+  // setInstant(true): everything drawn appears finished, with no writing, as
+  // under reduced motion (the landing demo opens on a board already drawn).
+  const instantRef = useRef(false);
   const takePens = useCallback((n: number): TldrawColor[] => {
     const count = Math.max(1, n);
     const base = markerRef.current;
     markerRef.current += count;
     return Array.from({ length: count }, (_, i) => MARKERS[(base + i) % MARKERS.length]);
   }, []);
+  // A fraction keeps its pen for the whole problem, by value: 2/3 re-cut into
+  // twelfths (8/12) is drawn in 2/3's colour, so colour means "the same amount".
+  const fractionPenRef = useRef(new Map<string, TldrawColor>());
+  const fractionPen = useCallback((n: number, d: number): TldrawColor => {
+    const g = gcd(Math.abs(n), Math.abs(d)) || 1;
+    const key = `${n / g}/${d / g}`;
+    const known = fractionPenRef.current.get(key);
+    if (known) return known;
+    const pen = takePens(1)[0];
+    fractionPenRef.current.set(key, pen);
+    return pen;
+  }, [takePens]);
   // Post-batch camera-focus debounce for agent flows. The per-handle focus
   // calls inside individual draw methods stay (they handle the single-action
   // case); this debounce coalesces multi-action batches so the camera doesn't
@@ -1338,7 +1360,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
   // Hide everything a tool call just created and queue it to be written.
   const revealItem = useCallback((editor: Editor, item: BoardItem, restAt: ItemBounds | null) => {
-    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const reduce = instantRef.current || (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
     if (reduce) return;
     const inputs: RevealInput[] = [];
     const hide: Array<{ id: TLShapeId; type: string }> = [];
@@ -1730,7 +1752,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     strokes: HighlightStroke[],
     meta: BoardArtifactMeta | Record<string, never>,
   ) => {
-    const reduce = prefersReducedMotion();
+    const reduce = prefersReducedMotion() || instantRef.current;
     const next = (k: number) => {
       const stroke = strokes[k];
       const host = itemsRef.current.find((i) => i.id === itemId);
@@ -2733,7 +2755,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const x = narrow ? usable.x : usable.x + usable.w - w;
       const y = narrow ? usable.y + HEADING_H + 16 : usable.y;
       const id = createShapeId();
-      const fade = animate && !prefersReducedMotion();
+      const fade = animate && !prefersReducedMotion() && !instantRef.current;
       editor.createShape({ id, type: "plan", x, y, opacity: fade ? 0 : 1, props: { w, h, data: JSON.stringify(plan) }, meta: { plan: true } } as unknown as Parameters<Editor["createShape"]>[0]);
       if (fade) editor.animateShape({ id, type: "plan", opacity: 1 } as unknown as Parameters<Editor["animateShape"]>[0], { animation: { duration: 450 } });
       planShapeRef.current = id;
@@ -2778,6 +2800,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         if (editor) refreshPlanBox(editor);
       },
 
+    setInstant(on: boolean) {
+      instantRef.current = on;
+    },
     clearWhiteboard() {
       const editor = editorRef.current;
       if (!editor) return;
@@ -2790,6 +2815,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       rightY.current = START_Y;
       mathOrderRef.current = [];
       markerRef.current = 0;
+      fractionPenRef.current.clear();
       semanticBoardRef.current = createEmptySemanticBoard();
       itemsRef.current = [];
       pageFrameRef.current = null;
@@ -2822,6 +2848,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       rightY.current = START_Y;
       mathOrderRef.current = [];
       markerRef.current = 0;
+      fractionPenRef.current.clear();
       semanticBoardRef.current = createEmptySemanticBoard(title);
       itemsRef.current = [];
       pageFrameRef.current = null;
@@ -3438,7 +3465,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const x0 = colX(col);
       const y0 = colY(col).current;
       const labelIds: string[] = [];
-      const pens = takePens(opts.fractions.length);
+      const pens = opts.fractions.map((f) => fractionPen(f.n, f.d));
       let cursor = x0;
       let right = x0;
 

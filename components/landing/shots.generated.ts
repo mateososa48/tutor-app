@@ -7,7 +7,7 @@ export const SHOTS = {
   figure: { src: "/landing/figure.png", width: 614, height: 673 },
   icons: { src: "/landing/icons.png", width: 1052, height: 475 },
   fraction: { src: "/landing/fraction.png", width: 963, height: 525 },
-  hero: { src: "/landing/session-board.png", width: 2136, height: 1280 },
+  hero: { src: "/landing/hero-final.png", width: 2104, height: 1280 },
   compare: { src: "/landing/compare.png", width: 1799, height: 846, frames: ["/landing/compare-2.png", "/landing/compare-4.png", "/landing/compare-6.png", "/landing/compare-9.png"] },
   negatives: { src: "/landing/negatives.png", width: 1160, height: 367 },
   slope: { src: "/landing/slope.png", width: 952, height: 826 },
@@ -15,4 +15,5 @@ export const SHOTS = {
   area: { src: "/landing/area.png", width: 700, height: 451 },
   solved: { src: "/landing/solved.png", width: 740, height: 594 },
   ratio: { src: "/landing/ratio.png", width: 1109, height: 371 },
+  heroSeed: { src: "/landing/hero-opening.png", width: 2104, height: 1280 },
 } as const;
