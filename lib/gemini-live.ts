@@ -709,20 +709,19 @@ export class GeminiLiveSession {
   }
 
   /**
-   * The server heard the student start (or stop) talking. The first signal of
-   * a new line comes while they are still speaking, before the model can be
-   * generating a reply to it, which is the one safe moment for the note for
-   * the tutor's next turn (the benchmark sends it just before the student's
-   * audio, and never lost a reply to it). Not while the tutor may still be
-   * generating: any clientContent message interrupts a generation.
+   * The server heard the student start (or stop) talking. The note for the
+   * tutor's next turn is NOT sent here as a message, though this is before any
+   * reply: in the spoken benchmark a note sent just before the student's audio
+   * was followed by a 20 s+ silence on 5 of 25 turns, against 1 of 51 turns
+   * with no note (abC, Sept 28 2026). On the spoken path it goes to the
+   * planner as its reminders, or rides on the turn's first tool result
+   * (lateTurnNote), and never as a clientContent message.
    */
-  private noteSpeechStart(now: number) {
+  private noteSpeechStart() {
     if (!this.pendingTurnNote || this.studentUtterance.trim()) return;
-    if (this.pendingTools > 0 || now - this.lastModelAudioAt < 1_000) return;
-    const note = this.pendingTurnNote;
+    this.lateTurnNote = this.pendingTurnNote;
     this.pendingTurnNote = null;
-    this.debug("pacing", "turn_note", { note, at: "speech_start" });
-    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: note }] }], turnComplete: false } });
+    this.debug("pacing", "turn_note", { note: this.lateTurnNote, via: "planner_or_tool_result" });
   }
 
   /** The late turn note, used once (by the planner, or on a tool result). */
@@ -733,17 +732,13 @@ export class GeminiLiveSession {
   }
 
   private noteStudentTranscript(text: string) {
-    // Too late to send the note as a message: 3.8 transcribes a line in one
+    // Never as a message on the spoken path: 3.8 transcribes a line in one
     // piece once the student has stopped, the moment the tutor starts its
     // reply, and a clientContent message then cut the reply off and left the
     // model waiting for the rest of a turn nobody finished (a 15 s silence in
     // a spoken session, Sept 29 2026). It goes to the planner or the turn's
-    // first tool result instead.
-    if (this.pendingTurnNote && !this.studentUtterance.trim()) {
-      this.lateTurnNote = this.pendingTurnNote;
-      this.pendingTurnNote = null;
-      this.debug("pacing", "turn_note_late", { note: this.lateTurnNote });
-    }
+    // first tool result (see noteSpeechStart).
+    this.noteSpeechStart();
     this.clearTurnTimer();
     const now = Date.now();
     // A fragment that finishes the line the tutor is already answering (input
@@ -962,7 +957,7 @@ export class GeminiLiveSession {
         ...(this.loggedActivityShape ? {} : { raw: JSON.stringify(activity).slice(0, 200) }),
       });
       this.loggedActivityShape = true;
-      this.noteSpeechStart(now);
+      this.noteSpeechStart();
     }
 
 

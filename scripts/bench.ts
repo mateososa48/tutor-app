@@ -40,6 +40,10 @@
 //   --plan a,b         the planner (lib/tutor-planner): after the student's line, model a
 //                      (then b) gives the tutor one order for this reply, in place of the
 //                      turn note and the coach; typed path only; --plantime ms (3000)
+//   --voicenote message|tool  with --voice: the note between turns as a message just
+//                      before the student's audio ("message", the app until Sept 30
+//                      2026) or read by the planner / carried on the first tool result
+//                      ("tool", the app since)
 //   --textkey NAME     the student model's key from .env.local (e.g. GEMINI_API_KEY_2);
 //                      the Live tutor stays on GEMINI_API_KEY
 //   --kidvoice name    the macOS voice for --voice (default Samantha; --kidrate 180 words a minute)
@@ -193,6 +197,7 @@ const ESCALATE_MS = 10_000; // one escalation after an unanswered nudge
 const SILENT_TURN_MS = 2_500; // a silent turnComplete waits this long for the sound
 const IDLE_REPLY_MS = 5_000; // a WHEN_IDLE result makes the model speak again after its turnComplete: wait this long for that
 const REALTIME_TEXT = arg("textvia", "") === "realtime";
+const VOICE_NOTE = arg("voicenote", "tool") === "message" ? "message" : "tool";
 const ESCALATE_EVENT = "Session event: still nothing said since the student's last line. They are waiting. Say one sentence now and ask them one thing.";
 const TURN_CAP_MS = 75_000;
 /** --save-audio: write each turn's speech as <case>-t<N>.wav, to hear what was actually said. */
@@ -842,6 +847,8 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   // The spoken path's planner, as lib/gemini-live runs it: one plan per student
   // line (lineSeq), asked by next_move or by a check_answer made before any words.
   let lineSeq = 0;
+  // --voicenote tool: the between-turns note, for the planner or the first tool result.
+  let voiceNote: string | null = null;
   let plannedFor = -1;
   let plannedOrder: string | null = null;
   const planFor = (line: string, verdict: string | null): Promise<string | null> => {
@@ -854,8 +861,9 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       verdict,
       board: turns.at(-1)?.boardCompact ?? "",
       state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
-      reminders: null,
+      reminders: voiceNote,
     }), verdict).then((r) => {
+      if (r?.note) voiceNote = null;
       pendingPlanMs = (pendingPlanMs ?? 0) + (Date.now() - t0);
       pendingPlanModel = r?.model ?? pendingPlanModel;
       return r?.note ?? null;
@@ -898,6 +906,13 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   };
 
   const onTool = async (name: string, args: Record<string, unknown>, callId: string): Promise<ToolCallResult> => {
+    const r = await onToolInner(name, args, callId);
+    if (!r.success || !voiceNote) return r;
+    const note = voiceNote;
+    voiceNote = null;
+    return { ...r, message: `${r.message ?? ""}\n${note}` };
+  };
+  const onToolInner = async (name: string, args: Record<string, unknown>, callId: string): Promise<ToolCallResult> => {
     flushVoice();
     await markChain;
     const now = Date.now();
@@ -1097,7 +1112,9 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       spec = null;
       planEarly = null;
       const pcm = await synth(studentText, opts.out);
-      if (pendingNote) live.sendNote(pendingNote);
+      voiceNote = null;
+      if (pendingNote && VOICE_NOTE === "tool") voiceNote = pendingNote;
+      else if (pendingNote) live.sendNote(pendingNote);
       voiceUtterance = studentText;
       pending = live.voiceTurn(pcm, () => {
         void markChain.then(() => live.noteAppTools(pendingApp.splice(0)));
