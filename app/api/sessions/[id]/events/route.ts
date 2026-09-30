@@ -1,8 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db/client";
-import { tutorSessions } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { auth } from "@/lib/auth";
+import { requireSession } from "@/lib/access";
 import { appendSessionEvents } from "@/lib/db/session-events";
 import { EVENT_ACTORS, RECORDED_EVENT_KINDS } from "@/lib/session-recording";
 
@@ -31,16 +28,9 @@ function readEvent(raw: unknown): Incoming | null {
 // POST /api/sessions/[id]/events — append one event, or a batch: { events: [...] }
 // (the session recorder sends batches; see lib/session-recorder.ts).
 export async function POST(req: NextRequest, ctx: RouteCtx) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await ctx.params;
-
-  const rows = await db.select({ userId: tutorSessions.userId }).from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
-  if (rows.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-  if (rows[0].userId !== session.user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const gate = await requireSession(id, "write");
+  if ("response" in gate) return gate.response;
 
   const body: unknown = await req.json().catch(() => null);
   const isBatch = Boolean(body && typeof body === "object" && Array.isArray((body as { events?: unknown }).events));

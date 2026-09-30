@@ -2,26 +2,23 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { tutorSessions, sessionEvents } from "@/lib/db/schema";
 import { eq, asc, sql } from "drizzle-orm";
-import { auth } from "@/lib/auth";
+import { requireSession } from "@/lib/access";
+import { reprojectSkills, skillsInSession } from "@/lib/db/learning";
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
-// DELETE /api/sessions/[id] — permanently remove a session and its events
+// DELETE /api/sessions/[id] — permanently remove a session and everything
+// recorded in it (events, pictures and attempts cascade), then recompute the
+// skills its attempts counted toward, so deleted work stops showing as
+// progress.
 export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await ctx.params;
+  const gate = await requireSession(id, "own");
+  if ("response" in gate) return gate.response;
 
-  const rows = await db.select({ userId: tutorSessions.userId }).from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
-  if (rows.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-  if (rows[0].userId !== session.user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-  // sessionEvents cascades on delete, but be explicit for clarity
-  await db.delete(sessionEvents).where(eq(sessionEvents.sessionId, id));
+  const skills = await skillsInSession(id);
   await db.delete(tutorSessions).where(eq(tutorSessions.id, id));
+  await reprojectSkills(gate.row.userId, skills);
 
   return NextResponse.json({ ok: true });
 }
@@ -29,33 +26,28 @@ export async function DELETE(_req: NextRequest, ctx: RouteCtx) {
 const STALE_MS = 60_000;
 const SESSION_STATUSES = new Set(["active", "paused", "ended"]);
 
-// GET /api/sessions/[id] — session + events
+/**
+ * A session still marked active whose heartbeat stopped a minute ago was left
+ * without an end (a closed tab, a crash): the student reopening it finds it
+ * paused. Only the student's own read does this; anyone else reading a
+ * session (a parent, later) must never change it.
+ */
+async function settleStale<T extends { status: string; lastActiveAt: number; pausedAt: number | null }>(id: string, row: T): Promise<T> {
+  if (row.status !== "active" || Date.now() - row.lastActiveAt <= STALE_MS) return row;
+  const now = Date.now();
+  await db.update(tutorSessions).set({ status: "paused", pausedAt: now }).where(eq(tutorSessions.id, id));
+  return { ...row, status: "paused", pausedAt: now };
+}
+
+// GET /api/sessions/[id] — session + events, for the student it belongs to.
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await ctx.params;
+  const gate = await requireSession(id, "own");
+  if ("response" in gate) return gate.response;
 
-  const rows = await db.select().from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
-  if (rows.length === 0) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
-  }
-  if (rows[0].userId !== session.user.id) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  let tutorSession = rows[0];
-
-  // Lazy stale-detect: if active but heartbeat is old, mark paused
-  if (tutorSession.status === "active" && Date.now() - tutorSession.lastActiveAt > STALE_MS) {
-    const now = Date.now();
-    await db
-      .update(tutorSessions)
-      .set({ status: "paused", pausedAt: now })
-      .where(eq(tutorSessions.id, id));
-    tutorSession = { ...tutorSession, status: "paused", pausedAt: now };
-  }
+  const [row] = await db.select().from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
+  if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const tutorSession = await settleStale(id, row);
 
   const events = await db
     .select()
@@ -66,18 +58,13 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
   return NextResponse.json({ session: tutorSession, events });
 }
 
-// PATCH /api/sessions/[id] — partial update of status/title/endedAt/durationSec
+// PATCH /api/sessions/[id] — partial update of status/title/endedAt/durationSec.
+// A running session's own page sends these, so it may finish even after the
+// device switched to another profile ("write").
 export async function PATCH(req: NextRequest, ctx: RouteCtx) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await ctx.params;
-
-  const rows = await db.select({ userId: tutorSessions.userId }).from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
-  if (rows.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-  if (rows[0].userId !== session.user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const gate = await requireSession(id, "write");
+  if ("response" in gate) return gate.response;
 
   const body = await req.json();
 

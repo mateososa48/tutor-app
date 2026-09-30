@@ -231,6 +231,26 @@ async function reprojectSkill(userId: string, skillKey: string): Promise<void> {
   });
 }
 
+/**
+ * The skills a session's attempts count toward, read before the session is
+ * deleted (its attempts go with it through the cascade).
+ */
+export async function skillsInSession(sessionId: string): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ skillKey: learningAttempts.skillKey })
+    .from(learningAttempts)
+    .where(eq(learningAttempts.sessionId, sessionId));
+  return rows.map((row) => row.skillKey).filter((key): key is string => !!key);
+}
+
+/**
+ * Recomputes a learner's state for these skills from the attempts left, so a
+ * deleted session stops counting toward "still shaky" or "retained".
+ */
+export async function reprojectSkills(userId: string, skillKeys: readonly string[]): Promise<void> {
+  await Promise.all([...new Set(skillKeys)].map((skillKey) => reprojectSkill(userId, skillKey)));
+}
+
 export async function storeLearningEvents(userId: string, sessionId: string, events: readonly PreparedLearningEvent[]): Promise<number> {
   const affectedSkills = new Set<string>();
   let stored = 0;

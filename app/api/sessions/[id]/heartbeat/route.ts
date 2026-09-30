@@ -2,18 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { tutorSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { auth } from "@/lib/auth";
+import { requireSession } from "@/lib/access";
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
-// POST /api/sessions/[id]/heartbeat — bumps lastActiveAt
+// POST /api/sessions/[id]/heartbeat — bumps lastActiveAt. Until Sept 30 it
+// checked only that someone was signed in, so any account could keep any
+// session "active" or rewrite its length.
 export async function POST(req: NextRequest, ctx: RouteCtx) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await ctx.params;
+  const gate = await requireSession(id, "write");
+  if ("response" in gate) return gate.response;
+
   let durationSec: number | undefined;
   try {
     const body = await req.json();

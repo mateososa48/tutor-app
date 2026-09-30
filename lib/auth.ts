@@ -59,6 +59,20 @@ if (process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET) {
   providers.unshift(Google);
 }
 
+async function readOnboarded(userId: string): Promise<boolean> {
+  try {
+    const [profile] = await db
+      .select({ onboardedAt: userProfiles.onboardedAt })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, userId))
+      .limit(1);
+    return !!profile?.onboardedAt;
+  } catch (err) {
+    console.error("[auth] jwt callback userProfiles query failed:", err);
+    return false;
+  }
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: DrizzleAdapter(db, {
     usersTable: users,
@@ -73,24 +87,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     error: "/signin",
   },
   callbacks: {
-    async jwt({ token, user, trigger, session }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.id = user.id!;
-        try {
-          const [profile] = await db
-            .select({ onboardedAt: userProfiles.onboardedAt })
-            .from(userProfiles)
-            .where(eq(userProfiles.userId, user.id!))
-            .limit(1);
-          token.onboarded = !!profile?.onboardedAt;
-        } catch (err) {
-          console.error("[auth] jwt callback userProfiles query failed:", err);
-          token.onboarded = false;
-        }
+        token.onboarded = await readOnboarded(user.id!);
       }
-      // Accept onboarded flag directly from update() to avoid a DB round-trip
-      if (trigger === "update" && typeof (session as { onboarded?: boolean })?.onboarded === "boolean") {
-        token.onboarded = (session as { onboarded: boolean }).onboarded;
+      // A client's update() payload is whatever the browser sends, so the flag
+      // is read back from the database rather than copied: until Sept 30 any
+      // browser could mark itself onboarded by posting { onboarded: true }.
+      // The onboarding page saves the profile before it calls update().
+      if (trigger === "update" && token.id) {
+        token.onboarded = await readOnboarded(token.id);
       }
       return token;
     },

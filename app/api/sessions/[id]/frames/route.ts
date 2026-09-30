@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { sessionFrames, tutorSessions } from "@/lib/db/schema";
-import { auth } from "@/lib/auth";
+import { sessionFrames } from "@/lib/db/schema";
+import { requireSession } from "@/lib/access";
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -16,13 +16,9 @@ function whole(value: unknown, max: number): number {
 // POST /api/sessions/[id]/frames — store a board picture for the admin replay.
 // The same picture (same hash) in one session is stored once.
 export async function POST(req: NextRequest, ctx: RouteCtx) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { id } = await ctx.params;
-  const rows = await db.select({ userId: tutorSessions.userId }).from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
-  if (rows.length === 0) return NextResponse.json({ error: "not found" }, { status: 404 });
-  if (rows[0].userId !== session.user.id) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const gate = await requireSession(id, "write");
+  if ("response" in gate) return gate.response;
 
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   const data = typeof body?.data === "string" ? body.data : "";
@@ -70,14 +66,9 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
 // shows one board per problem (the ids come from /boards). 404 when there is
 // no such picture, so the page shows a placeholder.
 export async function GET(req: NextRequest, ctx: RouteCtx) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { id } = await ctx.params;
-  const rows = await db.select({ userId: tutorSessions.userId }).from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
-  if (rows.length === 0 || rows[0].userId !== session.user.id) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
-  }
+  const gate = await requireSession(id, "own", { hide: true });
+  if ("response" in gate) return gate.response;
 
   // The frame id is scoped to the session, so one student can never name
   // another's picture.

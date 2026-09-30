@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, lte, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { tutorSessions } from "@/lib/db/schema";
-import { auth } from "@/lib/auth";
+import { requireSession } from "@/lib/access";
 import {
   failSummary,
   MAX_TRIES,
@@ -26,12 +26,11 @@ type RouteCtx = { params: Promise<{ id: string }> };
 /** Long enough for one model call on a long session, inside Vercel's ceiling. */
 export const maxDuration = 120;
 
+/** The session's owner when the signed-in student may read it, else null. */
 async function owns(id: string): Promise<{ ok: boolean; userId?: string }> {
-  const session = await auth();
-  if (!session?.user?.id) return { ok: false };
-  const [row] = await db.select({ userId: tutorSessions.userId }).from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
-  if (!row) return { ok: false };
-  return { ok: row.userId === session.user.id, userId: session.user.id };
+  const gate = await requireSession(id, "own", { hide: true });
+  if ("response" in gate) return { ok: false };
+  return { ok: true, userId: gate.row.userId };
 }
 
 function internal(req: NextRequest): boolean {

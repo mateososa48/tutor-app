@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { sessionEvents, sessionFrames, tutorSessions } from "@/lib/db/schema";
-import { auth } from "@/lib/auth";
+import { sessionEvents, sessionFrames } from "@/lib/db/schema";
+import { requireSession } from "@/lib/access";
 import { problemBoards } from "@/lib/session-boards";
 import type { TimelineEvent } from "@/lib/session-recording";
 
@@ -13,12 +13,10 @@ type RouteCtx = { params: Promise<{ id: string }> };
 // /api/sessions/[id]/frames?frame=<id>; the pictures themselves stay out of
 // this response, since a session can hold forty of them.
 export async function GET(_req: NextRequest, ctx: RouteCtx) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
   const { id } = await ctx.params;
-  const [row] = await db.select({ userId: tutorSessions.userId, title: tutorSessions.title }).from(tutorSessions).where(eq(tutorSessions.id, id)).limit(1);
-  if (!row || row.userId !== session.user.id) return NextResponse.json({ error: "not found" }, { status: 404 });
+  const gate = await requireSession(id, "own", { hide: true });
+  if ("response" in gate) return gate.response;
+  const { row } = gate;
 
   const [calls, frames] = await Promise.all([
     db
