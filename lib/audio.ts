@@ -44,6 +44,21 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 
 // Captures mic audio and calls onChunk with base64 PCM and the rate it ran at
 // (the requested one unless the browser rounded it)
+/**
+ * What is wrong with a mic that is on, from one level() window, or null.
+ * Only the unambiguous cases: a quiet student still has room noise (a real
+ * mic never reads exactly zero), so silence alone is not a problem.
+ */
+export function micProblem(level: { chunks: number; peak: number; context: string; track: string }, flatWindows = 1): string | null {
+  if (level.track === "none" || level.track.startsWith("ended")) return "Your mic stopped. Check it, then reload";
+  if (level.context !== "running") return "Click anywhere to turn on your mic";
+  if (level.track.includes("muted")) return "Your mic is muted on this computer";
+  // Nothing at all, or exact digital zero for three windows in a row (noise
+  // suppression may flatten a silent room for a moment, never for 15 s).
+  if (level.chunks === 0 || (level.peak === 0 && flatWindows >= 3)) return "Can't hear your mic. Check it, or type";
+  return null;
+}
+
 export class AudioCapture {
   private audioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;

@@ -51,6 +51,8 @@ export type LiveTutorCallbacks = {
   /** The analyser on the tutor's audio, so the UI can draw a live waveform. Null when detached. */
   onAudioAnalyser?: (analyser: AnalyserNode | null) => void;
   onActivity: (activity: TutorActivity) => void;
+  /** The microphone is on but sends nothing (a suspended audio context, a dead or muted device); null once it does again. */
+  onMicProblem?: (problem: string | null) => void;
   onDebugEvent?: (event: LiveDebugEvent) => void;
 };
 

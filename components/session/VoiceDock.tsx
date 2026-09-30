@@ -35,6 +35,8 @@ type Props = {
   onAddFiles: (files: UploadedFile[]) => void;
   onRemoveFile: (id: string) => void;
   fileNotice?: string;
+  /** The microphone is on but sends nothing: shown in the badge (lib/audio micProblem). */
+  micProblem?: string | null;
   /** How fast the tutor talks. The speed button shows only when both are given. */
   speed?: TutorSpeedId;
   onSpeedChange?: (speed: TutorSpeedId) => void;
@@ -74,16 +76,17 @@ function useWindowHeight() {
 
 // The status badge in the dock's corner. The landing page shows the same one
 // on its tiles.
-export function DockBadge({ activity, className }: { activity: DockActivity; className?: string }) {
-  const badge = BADGE[activity];
+export function DockBadge({ activity, problem, className }: { activity: DockActivity; problem?: string | null; className?: string }) {
+  // A mic that sends nothing outranks everything but the tutor talking.
+  const badge = problem && activity !== "speaking" && activity !== "connecting" ? { status: "warning" as const, label: problem, icon: <MicOff className="size-3" /> } : BADGE[activity];
   return (
     <AnimatedBadge
       size="sm"
       status={badge.status}
       icon={badge.icon}
       showIcon={badge.status !== "neutral"}
-      contentKey={activity}
-      className={cn("border-(--lp-line) bg-white/85 text-(--lp-ink-2) backdrop-blur-sm data-[status=info]:text-(--lp-sky-deep)", className)}
+      contentKey={badge.label}
+      className={cn(badge.status === "warning" ? "border-amber-600/35 bg-amber-50/95 text-amber-800 backdrop-blur-sm" : "border-(--lp-line) bg-white/85 text-(--lp-ink-2) backdrop-blur-sm data-[status=info]:text-(--lp-sky-deep)", className)}
     >
       {badge.label}
     </AnimatedBadge>
@@ -103,6 +106,7 @@ export function VoiceDock({
   onAddFiles,
   onRemoveFile,
   fileNotice,
+  micProblem,
   speed,
   onSpeedChange,
   frameHeight,
@@ -188,7 +192,7 @@ export function VoiceDock({
           <VoiceWave analyser={analyser} speaking={activity === "speaking"} />
         </div>
         <div className="absolute top-3 left-3">
-          <DockBadge activity={activity} />
+          <DockBadge activity={activity} problem={micProblem} />
         </div>
 
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-end px-3" style={{ height: CONTROLS_H }}>

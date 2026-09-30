@@ -160,6 +160,7 @@ function SessionDetailPage({ id }: { id: string }) {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
   const [fileNotice, setFileNotice] = useState("");
+  const [micProblem, setMicProblem] = useState<string | null>(null);
   const [subtitleText, setSubtitleText] = useState("");
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   // Sessions start with the transcript closed (Mateo, Sept 22 2026): the board and the pet come first.
@@ -1109,6 +1110,7 @@ function SessionDetailPage({ id }: { id: string }) {
       onAudioAnalyser: (node) => {
         setAnalyser(node);
       },
+      onMicProblem: (problem) => setMicProblem(problem),
       onActivity: (activity) => {
         setTutorActivity(activity);
         recorderRef.current?.record("tutor.activity", "tutor", { activity });
@@ -1562,6 +1564,7 @@ function SessionDetailPage({ id }: { id: string }) {
           onAddFiles={handleAddFiles}
           onRemoveFile={handleRemoveFile}
           fileNotice={fileNotice}
+          micProblem={micProblem}
           speed={provider === "gemini" ? tutorSpeed : undefined}
           onSpeedChange={setTutorSpeed}
           presence={

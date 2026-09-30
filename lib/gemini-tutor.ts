@@ -1,7 +1,7 @@
 import type { LiveVadConfig } from "./live-tool-behavior";
 import { DEFAULT_LIVE_MODEL, GeminiLiveSession } from "./gemini-live";
 import { joinTranscript } from "./live-events";
-import { AudioCapture, AudioPlayer, quietFrame } from "./audio";
+import { AudioCapture, AudioPlayer, micProblem, quietFrame } from "./audio";
 import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
 import type { UploadedFile } from "./file-processor";
 import { clearActiveIntake, getActiveIntake, intakeOpeningMessage } from "./session-intake";
@@ -52,6 +52,7 @@ export class GeminiTutorSession {
   private session: GeminiLiveSession | null = null;
   private capture: AudioCapture | null = null;
   private micMeter: ReturnType<typeof setInterval> | null = null;
+  private micProblem: string | null = null;
   private player: AudioPlayer | null = null;
   private meter: ReturnType<typeof setInterval> | null = null;
   private speaking = false;
@@ -235,12 +236,27 @@ export class GeminiTutorSession {
       await capture.start(opts.micStream);
       const first = capture.level();
       this.debug("audio", "mic_started", { device: capture.deviceLabel().slice(0, 60), context: first.context, track: first.track });
-      // What the mic actually sent, every 15 s: the only way to tell "the
-      // student said nothing" from "their voice never left the browser".
+      // What the mic actually sent: the only way to tell "the student said
+      // nothing" from "their voice never left the browser". Checked every 5 s
+      // (a dead mic is shown to the student), logged every 15 s.
+      let acc = { chunks: 0, peak: 0, rms: 0, windows: 0 };
+      let flat = 0;
       this.micMeter = setInterval(() => {
         const level = this.capture?.level();
-        if (level) this.debug("audio", "mic_level", { ...level, muted: this.muted });
-      }, 15_000);
+        if (!level) return;
+        flat = level.peak === 0 ? flat + 1 : 0;
+        const problem = this.muted ? null : micProblem(level, flat);
+        if (problem !== this.micProblem) {
+          this.micProblem = problem;
+          this.debug("audio", problem ? "mic_problem" : "mic_ok", { ...level, problem });
+          this.callbacks.onMicProblem?.(problem);
+        }
+        acc = { chunks: acc.chunks + level.chunks, peak: Math.max(acc.peak, level.peak), rms: Math.max(acc.rms, level.rms), windows: acc.windows + 1 };
+        if (acc.windows === 3) {
+          this.debug("audio", "mic_level", { chunks: acc.chunks, peak: acc.peak, rms: acc.rms, context: level.context, track: level.track, muted: this.muted });
+          acc = { chunks: 0, peak: 0, rms: 0, windows: 0 };
+        }
+      }, 5_000);
     }
 
     // The player knows whether audio is still scheduled; that is the
