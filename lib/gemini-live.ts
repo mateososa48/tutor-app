@@ -304,6 +304,12 @@ export class GeminiLiveSession {
   // the student is waiting. Nothing when audio has already come.
   private nudgeNow(kind: "text" | "voice", afterMs: number) {
     if (this.manualDisconnect || this.turnHadAudio || !this.awaitingReply || this.nudgesThisTurn >= 3) return;
+    // Mid-reconnect: a nudge sent now is lost and would still count. The
+    // resumed session asks for the reply itself (setupComplete), so wait.
+    if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) {
+      this.armUnanswered(kind, 1_000);
+      return;
+    }
     this.nudgesThisTurn += 1;
     this.debug("turn", this.nudgesThisTurn === 1 ? "nudge_unanswered" : this.nudgesThisTurn === 2 ? "nudge_escalated" : "nudge_repeated", { kind, afterMs });
     // The third time, their own words again (Sept 26 2026: 3.8 sat through two
@@ -320,6 +326,21 @@ export class GeminiLiveSession {
       "event",
     );
     if (this.nudgesThisTurn < 3) this.armUnanswered(kind, GeminiLiveSession.ESCALATE_MS);
+  }
+
+  /**
+   * Google closed the socket (1011 "service unavailable", 1000 "operation
+   * cancelled": both seen mid-lesson on Sept 30 2026) after the student spoke
+   * and before the tutor answered. The resumed session does not know a reply
+   * is owed, and sat silent until the nudge, so it is asked at once with the
+   * student's own words.
+   */
+  private askAfterResume() {
+    const line = (this.studentUtterance.trim() || this.lastStudentLine).trim().slice(0, 300);
+    if (!this.awaitingReply || this.turnHadAudio || !line) return;
+    this.debug("connection", "resume_reply_owed", { line: line.slice(0, 80) });
+    this.sendUserTurn([{ text: `The connection dropped before you answered. The student said: "${line}". Answer them now, out loud, in a sentence or two.` }], "event");
+    this.armUnanswered(this.lastInputKind, GeminiLiveSession.ESCALATE_MS);
   }
 
   private clearUnanswered() {
@@ -976,6 +997,8 @@ export class GeminiLiveSession {
       if (!this.hasReportedConnected) {
         this.hasReportedConnected = true;
         this.callbacks.onConnected();
+      } else {
+        this.askAfterResume();
       }
       return;
     }
