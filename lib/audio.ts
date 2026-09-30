@@ -51,10 +51,40 @@ export class AudioCapture {
   private processor: ScriptProcessorNode | null = null;
   private onChunk: (base64: string, rate: number) => void;
   private sampleRate: number;
+  // What reached the processor since the last level() read: a mic that sends
+  // nothing, or only silence, was invisible in the recordings (Sept 29 2026:
+  // a whole session with the mic on and no speech ever detected).
+  private chunks = 0;
+  private peak = 0;
+  private sumSquares = 0;
+  private samples = 0;
+  private unlock: (() => void) | null = null;
 
   constructor(onChunk: (base64: string, rate: number) => void, sampleRate = 16000) {
     this.onChunk = onChunk;
     this.sampleRate = sampleRate;
+  }
+
+  /** The mic since the last call: chunks sent, peak and RMS (0..1), and the context and track state. */
+  level() {
+    const track = this.stream?.getAudioTracks()[0];
+    const out = {
+      chunks: this.chunks,
+      peak: Math.round(this.peak * 1000) / 1000,
+      rms: this.samples ? Math.round(Math.sqrt(this.sumSquares / this.samples) * 1000) / 1000 : 0,
+      context: this.audioContext?.state ?? "closed",
+      track: track ? `${track.readyState}${track.muted ? " muted" : ""}${track.enabled ? "" : " disabled"}` : "none",
+    };
+    this.chunks = 0;
+    this.peak = 0;
+    this.sumSquares = 0;
+    this.samples = 0;
+    return out;
+  }
+
+  /** The microphone's name, when the browser gives one. */
+  deviceLabel(): string {
+    return this.stream?.getAudioTracks()[0]?.label ?? "";
   }
 
   async start(existingStream?: MediaStream) {
@@ -78,6 +108,14 @@ export class AudioCapture {
 
     this.processor.onaudioprocess = (e) => {
       const float32 = e.inputBuffer.getChannelData(0);
+      this.chunks += 1;
+      for (let i = 0; i < float32.length; i++) {
+        const v = float32[i];
+        const a = v < 0 ? -v : v;
+        if (a > this.peak) this.peak = a;
+        this.sumSquares += v * v;
+      }
+      this.samples += float32.length;
       const pcm = float32ToPCM16(float32);
       const base64 = arrayBufferToBase64(pcm.buffer as ArrayBuffer);
       this.onChunk(base64, rate);
@@ -86,9 +124,34 @@ export class AudioCapture {
     source.connect(this.processor);
     // ScriptProcessorNode must be connected to destination to fire
     this.processor.connect(this.audioContext.destination);
+    // This context is made after the session's network round trips, so it can
+    // start suspended (no user gesture in reach), and a suspended context never
+    // calls onaudioprocess: not one chunk of the student's voice goes out.
+    // Resume it now, and again on their next click or key if the browser said no.
+    if (this.audioContext.state !== "running") {
+      await this.audioContext.resume().catch(() => undefined);
+    }
+    if (this.audioContext.state !== "running" && typeof window !== "undefined") {
+      const ctx = this.audioContext;
+      const unlock = () => {
+        void ctx.resume().catch(() => undefined);
+        if (ctx.state === "running") this.removeUnlock();
+      };
+      this.unlock = unlock;
+      window.addEventListener("pointerdown", unlock, true);
+      window.addEventListener("keydown", unlock, true);
+    }
+  }
+
+  private removeUnlock() {
+    if (!this.unlock || typeof window === "undefined") return;
+    window.removeEventListener("pointerdown", this.unlock, true);
+    window.removeEventListener("keydown", this.unlock, true);
+    this.unlock = null;
   }
 
   stop() {
+    this.removeUnlock();
     this.processor?.disconnect();
     this.stream?.getTracks().forEach((t) => t.stop());
     this.audioContext?.close();

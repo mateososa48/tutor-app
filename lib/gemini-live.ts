@@ -203,6 +203,13 @@ export class GeminiLiveSession {
   private turnHadAudio = false;
   /** The note for the tutor's next turn (TutorRuntime.turnNote), sent before the student's next line. */
   private pendingTurnNote: string | null = null;
+  /**
+   * The turn note, when the student's line came in before it could be sent
+   * (no speech-start signal): it goes to the planner, or rides on the turn's
+   * first tool result, never as a message (Sept 29 2026, see noteSpeechStart).
+   */
+  private lateTurnNote: string | null = null;
+  private loggedActivityShape = false;
   /** The tutor's words without the markup 3.8 sometimes transcribes ("$f(x)$", "<!-- … -->"). */
   private readonly speechText = new SpeechTextCleaner();
   /** One spoken reply per student line: a second reply is not played (ReplyGate, Sept 26 2026). */
@@ -520,7 +527,7 @@ export class GeminiLiveSession {
     if (!this.planner || !line || this.turnHadAudio || (this.speculated && sameLine(this.speculated.text, line))) return;
     if (!this.coachHistory.some((t) => t.student.trim())) return;
     const verdict = previewCheck(this.tutorRuntime.policy, line);
-    this.speculated = { text: line, verdict, order: this.askPlanner(line, verdict, null) };
+    this.speculated = { text: line, verdict, order: this.askPlanner(line, verdict, this.lateTurnNote) };
     this.debug("pacing", "planner_speculated", { line: line.slice(0, 80), verdict: Boolean(verdict) });
   }
 
@@ -553,7 +560,7 @@ export class GeminiLiveSession {
     const auto = this.tutorRuntime.policy.autoChecked;
     const verdict = auto && !auto.consumed && Date.now() - auto.at < 20_000 ? auto.note : null;
     const early = this.plannedFor === seq ? null : this.takeSpeculated(this.lastStudentLine);
-    const order = this.plannedFor === seq ? this.plannedOrder : early ? await early.order : await this.askPlanner(this.lastStudentLine, verdict, null);
+    const order = this.plannedFor === seq ? this.plannedOrder : early ? await early.order : await this.askPlanner(this.lastStudentLine, verdict, this.lateTurnNote);
     this.plannedFor = seq;
     this.plannedOrder = order;
     const message = [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n");
@@ -584,6 +591,8 @@ export class GeminiLiveSession {
       });
       const j = r.ok ? ((await r.json()) as { note?: string | null; model?: string }) : null;
       const note = j?.note ?? null;
+      // The planner read the late turn note: its order stands in for it.
+      if (note && reminders && reminders === this.lateTurnNote) this.lateTurnNote = null;
       this.debug("pacing", "planner", { note, model: j?.model, ms: Date.now() - started });
       return note;
     } catch {
@@ -699,14 +708,41 @@ export class GeminiLiveSession {
     }
   }
 
+  /**
+   * The server heard the student start (or stop) talking. The first signal of
+   * a new line comes while they are still speaking, before the model can be
+   * generating a reply to it, which is the one safe moment for the note for
+   * the tutor's next turn (the benchmark sends it just before the student's
+   * audio, and never lost a reply to it). Not while the tutor may still be
+   * generating: any clientContent message interrupts a generation.
+   */
+  private noteSpeechStart(now: number) {
+    if (!this.pendingTurnNote || this.studentUtterance.trim()) return;
+    if (this.pendingTools > 0 || now - this.lastModelAudioAt < 1_000) return;
+    const note = this.pendingTurnNote;
+    this.pendingTurnNote = null;
+    this.debug("pacing", "turn_note", { note, at: "speech_start" });
+    this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: note }] }], turnComplete: false } });
+  }
+
+  /** The late turn note, used once (by the planner, or on a tool result). */
+  private takeLateNote(): string | null {
+    const note = this.lateTurnNote;
+    this.lateTurnNote = null;
+    return note;
+  }
+
   private noteStudentTranscript(text: string) {
-    // The student started talking: the tutor is not generating, so the note for
-    // its next turn can go in now without cutting anything off.
+    // Too late to send the note as a message: 3.8 transcribes a line in one
+    // piece once the student has stopped, the moment the tutor starts its
+    // reply, and a clientContent message then cut the reply off and left the
+    // model waiting for the rest of a turn nobody finished (a 15 s silence in
+    // a spoken session, Sept 29 2026). It goes to the planner or the turn's
+    // first tool result instead.
     if (this.pendingTurnNote && !this.studentUtterance.trim()) {
-      const note = this.pendingTurnNote;
+      this.lateTurnNote = this.pendingTurnNote;
       this.pendingTurnNote = null;
-      this.debug("pacing", "turn_note", { note });
-      this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: note }] }], turnComplete: false } });
+      this.debug("pacing", "turn_note_late", { note: this.lateTurnNote });
     }
     this.clearTurnTimer();
     const now = Date.now();
@@ -771,6 +807,8 @@ export class GeminiLiveSession {
   // (the old downshift injection made the tutor speak again after the fact).
   private finishTutorTurn() {
     this.clearTurnTimer();
+    // A late note nothing used belonged to the line just answered.
+    this.lateTurnNote = null;
     const tutorText = this.tutorTurnText.trim();
     this.tutorTurnText = "";
     if (!tutorText) return;
@@ -921,7 +959,10 @@ export class GeminiLiveSession {
       this.debug("turn", "voice_activity", {
         type: String(activity.voiceActivityType ?? activity.vadSignalType ?? "unknown"),
         ...(typeof activity.audioOffset === "string" ? { audioOffset: activity.audioOffset } : {}),
+        ...(this.loggedActivityShape ? {} : { raw: JSON.stringify(activity).slice(0, 200) }),
       });
+      this.loggedActivityShape = true;
+      this.noteSpeechStart(now);
     }
 
 
@@ -1130,7 +1171,7 @@ export class GeminiLiveSession {
           // The early plan stands when it saw a verdict, or when this check has none to add.
           const early = this.takeSpeculated(this.lastStudentLine);
           const usable = early && (early.verdict || /^Verdict: cannot_check/.test(result.message ?? ""));
-          const order = usable ? await early.order : await this.askPlanner(this.lastStudentLine, result.message ?? null, null);
+          const order = usable ? await early.order : await this.askPlanner(this.lastStudentLine, result.message ?? null, this.lateTurnNote);
           // A next_move later in this turn gets the same order, not a second plan.
           this.plannedFor = seq;
           this.plannedOrder = order;
@@ -1199,6 +1240,11 @@ export class GeminiLiveSession {
       // Cancelled while it ran: the model is no longer waiting for it.
       this.debug("tool", "tool_response_dropped_cancelled", { id, name });
       return;
+    }
+    // The turn note that came too late to send as a message rides here.
+    if (result.success && this.lateTurnNote) {
+      const late = this.takeLateNote();
+      result = { ...result, message: `${result.message ?? ""}\n${late}` };
     }
     const replyGaveTask = givesTask(this.replyText);
     const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio, lastOfBatch, replyGaveTask);

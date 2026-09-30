@@ -51,6 +51,7 @@ function describeStartFailure(status: number, detail: string): string {
 export class GeminiTutorSession {
   private session: GeminiLiveSession | null = null;
   private capture: AudioCapture | null = null;
+  private micMeter: ReturnType<typeof setInterval> | null = null;
   private player: AudioPlayer | null = null;
   private meter: ReturnType<typeof setInterval> | null = null;
   private speaking = false;
@@ -232,6 +233,14 @@ export class GeminiTutorSession {
       }, 16000);
       this.capture = capture;
       await capture.start(opts.micStream);
+      const first = capture.level();
+      this.debug("audio", "mic_started", { device: capture.deviceLabel().slice(0, 60), context: first.context, track: first.track });
+      // What the mic actually sent, every 15 s: the only way to tell "the
+      // student said nothing" from "their voice never left the browser".
+      this.micMeter = setInterval(() => {
+        const level = this.capture?.level();
+        if (level) this.debug("audio", "mic_level", { ...level, muted: this.muted });
+      }, 15_000);
     }
 
     // The player knows whether audio is still scheduled; that is the
@@ -268,6 +277,8 @@ export class GeminiTutorSession {
     this.cutTimer = null;
     if (this.meter) clearInterval(this.meter);
     this.meter = null;
+    if (this.micMeter) clearInterval(this.micMeter);
+    this.micMeter = null;
     this.capture?.stop();
     this.capture = null;
     this.session?.disconnect();
