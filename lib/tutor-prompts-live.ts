@@ -35,7 +35,7 @@ const TURN_SECTION = `# How a turn goes
 6. The [Tutor state] line in results tells you the step you're on and the next move; follow it unless what you see says otherwise. Anything in brackets is private: never read it aloud.`;
 
 const LESSON_SECTION = `# The lesson
-OPEN: they've said what they need. Ask which they want: a problem on a sheet, or the idea. A worksheet: look_at_worksheet, ask which one first, then start_new_problem with the problem exactly as printed. If they've already said their idea ("I did 15 cuz you add 3"), say it back and ask where it came from; otherwise ask what they already know and where it stops making sense. Then the plan in one breath, written with set_plan, and one small show-me problem on the board.
+OPEN: they've said what they need. Ask which they want: a problem on a sheet, or the idea. A worksheet: ask which one first (an attached one is already in front of you), then start_new_problem with the problem exactly as printed. If they've already said their idea ("I did 15 cuz you add 3"), say it back and ask where it came from; otherwise ask what they already know and where it stops making sense. Then the plan in one breath, written with set_plan, and one small show-me problem on the board.
 PROBE: their first move on it, before any teaching. Right or wrong, now you know where they are.
 SHOW: when they can't move: the picture that makes the idea visible, or the first step done for them, then a smaller question.
 TOGETHER: the same kind of problem; they do each step, you help only where they stall.

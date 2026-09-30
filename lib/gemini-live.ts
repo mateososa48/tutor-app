@@ -131,7 +131,7 @@ export function openingEvent(studentText: string, fileCount: number): string {
   return (
     `${studentText}\n\n` +
     "(The session just started. OPEN: a few words back, then ask which they want: a problem on a sheet, or the whole idea." +
-    (fileCount > 0 ? " The attached files are their work; read them first.)" : ")")
+    (fileCount > 0 ? " Their work is attached above and you can see it: speak first, no look_at_worksheet for it.)" : ")")
   );
 }
 
@@ -209,6 +209,18 @@ export class GeminiLiveSession {
    * first tool result, never as a message (Sept 29 2026, see noteSpeechStart).
    */
   private lateTurnNote: string | null = null;
+  /**
+   * The model is composing a reply: a user turn was sent, or the server has
+   * sent content or a call since, and no turnComplete yet. Any clientContent
+   * message then cuts the reply off (Sept 30 2026: a typed "hello" and a nudge
+   * sent while 3.8 was still composing its first reply stopped it two seconds
+   * into "I see your worksheet…", and the reply filter muted the answers).
+   */
+  private modelBusy = false;
+  private lastServerAt = 0;
+  /** Typed lines held while the model is busy, sent when it is done. */
+  private heldText: string[] = [];
+  private heldTimer: ReturnType<typeof setTimeout> | null = null;
   private loggedActivityShape = false;
   /** The tutor's words without the markup 3.8 sometimes transcribes ("$f(x)$", "<!-- … -->"). */
   private readonly speechText = new SpeechTextCleaner();
@@ -235,6 +247,12 @@ export class GeminiLiveSession {
   // A blocking tool holds the model until it answers; nothing may hold it
   // longer. An async tool runs while the tutor talks and may take a little more.
   private static readonly TOOL_TIMEOUT_MS = 3_000;
+  // How long a composing model may go without sending anything before a held
+  // line or a nudge goes in anyway. A trade: on a slow day 3.8 took 15 s after
+  // one tool result and then spoke (Sept 30 2026), but it also stalls for good
+  // after a blocking result (next_move, then 15 s of nothing until the nudge,
+  // the same afternoon), so waiting longer than the old 6 s nudge costs more.
+  private static readonly BUSY_STALL_MS = 8_000;
   private static readonly ASYNC_TOOL_TIMEOUT_MS = 6_000;
   private readonly vad: LiveVadConfig | undefined;
 
@@ -304,6 +322,11 @@ export class GeminiLiveSession {
   // the student is waiting. Nothing when audio has already come.
   private nudgeNow(kind: "text" | "voice", afterMs: number) {
     if (this.manualDisconnect || this.turnHadAudio || !this.awaitingReply || this.nudgesThisTurn >= 3) return;
+    // Mid-reply: a nudge is a clientContent message and would cut it off.
+    if (this.modelBusy && Date.now() - this.lastServerAt < GeminiLiveSession.BUSY_STALL_MS) {
+      this.armUnanswered(kind, 1_500);
+      return;
+    }
     // Mid-reconnect: a nudge sent now is lost and would still count. The
     // resumed session asks for the reply itself (setupComplete), so wait.
     if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) {
@@ -496,6 +519,34 @@ export class GeminiLiveSession {
   }
 
   sendText(text: string): boolean {
+    // Mid-reply: hold the line until the reply is done (see modelBusy), but
+    // never longer than a stalled model deserves.
+    if (this.modelBusy && this.ready && this.ws?.readyState === WebSocket.OPEN && Date.now() - this.lastServerAt < GeminiLiveSession.BUSY_STALL_MS) {
+      this.heldText.push(text);
+      this.debug("pacing", "text_held", { text: text.slice(0, 80) });
+      this.scheduleHeldFlush(1_000);
+      return true;
+    }
+    return this.deliverText(text);
+  }
+
+  /** Send held typed lines once the model is no longer composing (or has stalled). */
+  private scheduleHeldFlush(afterMs: number) {
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = setTimeout(() => {
+      this.heldTimer = null;
+      if (!this.heldText.length || this.manualDisconnect) return;
+      const stalled = Date.now() - this.lastServerAt >= GeminiLiveSession.BUSY_STALL_MS;
+      if (this.modelBusy && !stalled) return this.scheduleHeldFlush(1_000);
+      if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) return this.scheduleHeldFlush(1_000);
+      const text = this.heldText.join("\n");
+      this.heldText = [];
+      this.debug("pacing", "text_released", { text: text.slice(0, 80), stalled });
+      this.deliverText(text);
+    }, afterMs);
+  }
+
+  private deliverText(text: string): boolean {
     this.lastStudentLine = text;
     this.tutorRuntime.noteStudentUtterance(text);
     this.newStudentInput("text");
@@ -714,6 +765,8 @@ export class GeminiLiveSession {
 
   private sendUserTurn(parts: GeminiContentPart[], trigger: Exclude<TurnTrigger, "voice" | "unknown">): boolean {
     this.turns.noteInput(trigger, Date.now());
+    this.modelBusy = true;
+    this.lastServerAt = Date.now();
     return this.send({
       clientContent: {
         turns: [{ role: "user", parts }],
@@ -926,6 +979,8 @@ export class GeminiLiveSession {
   }
 
   private sendToolResponse(id: string, name: string, result: ToolCallResult, scheduling?: ToolScheduling) {
+    // A composing model resumes from here: its quiet is counted from now.
+    if (this.modelBusy) this.lastServerAt = Date.now();
     const delivered = this.send({
       toolResponse: {
         functionResponses: [
@@ -994,6 +1049,7 @@ export class GeminiLiveSession {
       this.debug("connection", this.hasReportedConnected ? "setup_complete_resumed" : "setup_complete", {
         hasResumeHandle: Boolean(this.sessionHandle),
       });
+      this.modelBusy = false;
       if (!this.hasReportedConnected) {
         this.hasReportedConnected = true;
         this.callbacks.onConnected();
@@ -1044,6 +1100,10 @@ export class GeminiLiveSession {
     // Audio + transcripts from the model
     const serverContent = msg.serverContent as Record<string, unknown> | undefined;
     if (serverContent) {
+      if (serverContent.modelTurn || serverContent.outputTranscription) {
+        this.modelBusy = true;
+        this.lastServerAt = now;
+      }
       // Audio chunks
       const modelTurn = serverContent.modelTurn as Record<string, unknown> | undefined;
       const parts = (modelTurn?.parts as Array<Record<string, unknown>> | undefined) ?? [];
@@ -1105,6 +1165,10 @@ export class GeminiLiveSession {
         });
       }
       if (serverContent.turnComplete === true) {
+        this.modelBusy = false;
+        // 3.8 can send turnComplete before its audio: a held line waits a
+        // moment for sound that is still coming (SILENT_TURN_MS).
+        if (this.heldText.length) this.scheduleHeldFlush(this.turnHadAudio ? 400 : GeminiLiveSession.SILENT_TURN_MS);
         this.debug("turn", "turn_complete", { tutorChars: this.replyText.trim().length, pendingTools: this.pendingTools, ...(serverContent.turnCompleteReason ? { reason: serverContent.turnCompleteReason } : {}) });
         if (this.turns.finish("turn_complete", now)) this.scheduleTurnFlush();
         this.gate.onTurnComplete(this.turnHadAudio, this.replyText, givesTask);
@@ -1131,6 +1195,8 @@ export class GeminiLiveSession {
     // Tool calls, in order, on their own queue.
     const toolCall = msg.toolCall as Record<string, unknown> | undefined;
     if (toolCall) {
+      this.modelBusy = true;
+      this.lastServerAt = now;
       const calls = marksLast((toolCall.functionCalls as Array<Record<string, unknown>> | undefined) ?? [], (c) => String(c.name ?? ""));
       for (const [index, call] of calls.entries()) {
         const lastOfBatch = index === calls.length - 1;
@@ -1337,6 +1403,8 @@ export class GeminiLiveSession {
       this.reconnectTimer = null;
     }
     this.clearTurnTimer();
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = null;
     if (this.speculateTimer) clearTimeout(this.speculateTimer);
     this.speculateTimer = null;
     this.speculated = null;

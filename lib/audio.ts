@@ -46,16 +46,16 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 // (the requested one unless the browser rounded it)
 /**
  * What is wrong with a mic that is on, from one level() window, or null.
- * Only the unambiguous cases: a quiet student still has room noise (a real
- * mic never reads exactly zero), so silence alone is not a problem.
+ * Only the unambiguous cases: silence, even exact digital zero, is not one.
  */
-export function micProblem(level: { chunks: number; peak: number; context: string; track: string }, flatWindows = 1): string | null {
+export function micProblem(level: { chunks: number; peak?: number; context: string; track: string }): string | null {
   if (level.track === "none" || level.track.startsWith("ended")) return "Your mic stopped. Check it, then reload";
   if (level.context !== "running") return "Click anywhere to turn on your mic";
   if (level.track.includes("muted")) return "Your mic is muted on this computer";
-  // Nothing at all, or exact digital zero for three windows in a row (noise
-  // suppression may flatten a silent room for a moment, never for 15 s).
-  if (level.chunks === 0 || (level.peak === 0 && flatWindows >= 3)) return "Can't hear your mic. Check it, or type";
+  // Nothing at all. Exact digital zero is NOT a problem: Chrome's noise
+  // suppression flattens a quiet room to zeros for as long as it stays quiet
+  // (seen Sept 30 2026 on a faint-noise test mic), so a working mic reads 0.
+  if (level.chunks === 0) return "Can't hear your mic. Check it, or type";
   return null;
 }
 
@@ -64,7 +64,7 @@ export class AudioCapture {
   private stream: MediaStream | null = null;
   // ScriptProcessorNode is deprecated but works for prototypes across all browsers
   private processor: ScriptProcessorNode | null = null;
-  private onChunk: (base64: string, rate: number) => void;
+  private onChunk: (base64: string, rate: number, silent: boolean) => void;
   private sampleRate: number;
   // What reached the processor since the last level() read: a mic that sends
   // nothing, or only silence, was invisible in the recordings (Sept 29 2026:
@@ -75,7 +75,7 @@ export class AudioCapture {
   private samples = 0;
   private unlock: (() => void) | null = null;
 
-  constructor(onChunk: (base64: string, rate: number) => void, sampleRate = 16000) {
+  constructor(onChunk: (base64: string, rate: number, silent: boolean) => void, sampleRate = 16000) {
     this.onChunk = onChunk;
     this.sampleRate = sampleRate;
   }
@@ -124,16 +124,18 @@ export class AudioCapture {
     this.processor.onaudioprocess = (e) => {
       const float32 = e.inputBuffer.getChannelData(0);
       this.chunks += 1;
+      let chunkPeak = 0;
       for (let i = 0; i < float32.length; i++) {
         const v = float32[i];
         const a = v < 0 ? -v : v;
-        if (a > this.peak) this.peak = a;
+        if (a > chunkPeak) chunkPeak = a;
         this.sumSquares += v * v;
       }
+      if (chunkPeak > this.peak) this.peak = chunkPeak;
       this.samples += float32.length;
       const pcm = float32ToPCM16(float32);
       const base64 = arrayBufferToBase64(pcm.buffer as ArrayBuffer);
-      this.onChunk(base64, rate);
+      this.onChunk(base64, rate, chunkPeak === 0);
     };
 
     source.connect(this.processor);

@@ -225,7 +225,9 @@ export function SessionReplay({ session, events, frames }: { session: AdminSessi
     return () => window.removeEventListener("keydown", onKey);
   }, [duration]);
 
-  const frameIndex = lastIndexAtOrBefore(frames, t);
+  // A worksheet uploaded before the session is recorded a moment after 0:00:
+  // show it from the start rather than "the first picture comes later".
+  const frameIndex = Math.max(lastIndexAtOrBefore(frames, t), frames.length && frames[0].offsetMs <= 5_000 ? 0 : -1);
   const frame = frameIndex >= 0 ? frames[frameIndex] : null;
 
   const visible = useMemo(() => {
@@ -343,7 +345,7 @@ export function SessionReplay({ session, events, frames }: { session: AdminSessi
       <main className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
         <div className="mx-auto grid w-full max-w-[1560px] gap-5 px-4 py-4 sm:px-5 sm:py-5 lg:h-full lg:grid-cols-[minmax(0,1fr)_minmax(380px,460px)]">
           <section aria-label="Replay" className="flex min-w-0 flex-col gap-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1">
-            {/* The whole session in eight counts. Reply time and interruptions live in the scorecard, which says whether each was measured. */}
+            {/* The whole session in twelve counts. Reply time and interruptions live in the scorecard, which says whether each was measured. */}
             <dl className="grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-[14px] border border-(--lp-line) bg-(--lp-line) sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
               <Stat label="Length" value={longDuration(analysis.durationMs)} />
               <Stat label="Lines, student / tutor" value={`${analysis.studentTurns} / ${analysis.tutorTurns}`} />
@@ -352,7 +354,11 @@ export function SessionReplay({ session, events, frames }: { session: AdminSessi
               <Stat label="Errors" value={analysis.errors} tone={analysis.errors ? "error" : undefined} />
               <Stat label="Reconnects" value={analysis.reconnects} tone={analysis.reconnects ? "warn" : undefined} />
               <Stat label="Longest silence" value={secondsText(analysis.longestSilenceMs || null)} tone={analysis.longestSilenceMs >= 20_000 ? "warn" : undefined} />
-              <Stat label="Board pictures" value={frames.length} />
+              <Stat label="Pictures" value={frames.length} />
+              <Stat label="First word" value={secondsText(analysis.firstWordMs)} tone={analysis.firstWordMs !== null && analysis.firstWordMs >= 8_000 ? "warn" : undefined} />
+              <Stat label="Cut off" value={analysis.cutOffs} tone={analysis.cutOffs ? "warn" : undefined} />
+              <Stat label="Muted replies" value={analysis.mutedReplies} tone={analysis.mutedReplies ? "warn" : undefined} />
+              <Stat label="Mic problems" value={analysis.micProblems} tone={analysis.micProblems ? "warn" : undefined} />
             </dl>
 
             <figure className="shrink-0 overflow-hidden rounded-[14px] border border-(--lp-line) bg-white">
@@ -362,7 +368,7 @@ export function SessionReplay({ session, events, frames }: { session: AdminSessi
                   <img key={frame.id} src={`/api/admin/frames/${frame.id}`} alt={`The board at ${formatClock(frame.offsetMs)}`} className="absolute inset-0 size-full object-contain" />
                 ) : (
                   <div className="absolute inset-0 grid place-items-center px-8 text-center text-[13.5px] leading-relaxed text-(--lp-ink-2)">
-                    {frames.length === 0 ? "No board pictures in this session. Sessions recorded from Sept 15 2026 on have them." : "The first board picture comes later. Press play or pick a moment."}
+                    {frames.length === 0 ? "No pictures in this session: nothing was drawn or uploaded." : "The first board picture comes later. Press play or pick a moment."}
                   </div>
                 )}
               </div>

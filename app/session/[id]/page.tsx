@@ -657,23 +657,28 @@ function SessionDetailPage({ id }: { id: string }) {
     scheduleBoardFrame(900);
   }, [scheduleBoardFrame]);
 
-  // PDFs become page pictures before any tutor sees them, and every upload
-  // goes into the recording, so the review shows the worksheet too.
+  // Every upload goes into the recording, so the review shows the worksheet
+  // too (the recorder stores a picture once per session, by hash).
+  const recordUpload = useCallback((f: UploadedFile) => {
+    if (f.mimeType === "application/pdf") {
+      (f.pages ?? []).forEach((page, i) => {
+        void recorderRef.current?.recordFrame({ url: `data:${page.mimeType};base64,${page.base64}`, width: page.width, height: page.height }, `upload: ${f.label}, page ${i + 1}`, false);
+      });
+    } else if (f.mimeType === "image/jpeg" || f.mimeType === "image/png") {
+      void recorderRef.current?.recordFrame({ url: `data:${f.mimeType};base64,${f.base64}`, width: 0, height: 0 }, `upload: ${f.label}`, false);
+    }
+  }, []);
+
+  // PDFs become page pictures before any tutor sees them.
   const prepareFiles = useCallback(async (list: UploadedFile[]): Promise<UploadedFile[]> => {
     const ready = await withPdfPages(list);
     for (const f of ready) {
       const before = list.find((x) => x.id === f.id);
-      if (f.mimeType === "application/pdf") {
-        if (before?.pages) continue;
-        (f.pages ?? []).forEach((page, i) => {
-          void recorderRef.current?.recordFrame({ url: `data:${page.mimeType};base64,${page.base64}`, width: page.width, height: page.height }, `upload: ${f.label}, page ${i + 1}`, false);
-        });
-      } else if (f.mimeType === "image/jpeg" || f.mimeType === "image/png") {
-        void recorderRef.current?.recordFrame({ url: `data:${f.mimeType};base64,${f.base64}`, width: 0, height: 0 }, `upload: ${f.label}`, false);
-      }
+      if (f.mimeType === "application/pdf" && before?.pages) continue;
+      recordUpload(f);
     }
     return ready;
-  }, []);
+  }, [recordUpload]);
 
   // While queued writing is still appearing, the badge says so.
   const handleBoardWriting = useCallback((busy: boolean) => {
@@ -1142,6 +1147,9 @@ function SessionDetailPage({ id }: { id: string }) {
         filesRef.current = ready;
         setFiles(ready);
       }
+      // What they brought from the intake: never recorded before Sept 30
+      // 2026, so a replay could not show the worksheet a session began on.
+      for (const f of filesRef.current) recordUpload(f);
       await live.start({
         mode: isResumeRef.current ? "resume" : "new",
         micStream,
@@ -1160,7 +1168,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordDebug, liveModel, asyncTools, liveVad, coachOn, planOn, tutorRuntime]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordUpload, recordDebug, liveModel, asyncTools, liveVad, coachOn, planOn, tutorRuntime]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);

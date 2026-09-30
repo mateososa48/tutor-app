@@ -14,10 +14,8 @@ test("a suspended context or no chunks means nothing reaches the tutor", () => {
   assert.match(micProblem({ ...ok, chunks: 0 }) ?? "", /Can't hear your mic/);
 });
 
-test("exact zero is a problem only after three windows in a row", () => {
-  assert.equal(micProblem({ ...ok, peak: 0 }, 1), null);
-  assert.equal(micProblem({ ...ok, peak: 0 }, 2), null);
-  assert.match(micProblem({ ...ok, peak: 0 }, 3) ?? "", /Can't hear your mic/);
+test("exact digital zero is never a problem: noise suppression flattens a quiet room", () => {
+  assert.equal(micProblem({ ...ok, peak: 0 }), null);
 });
 
 test("a muted or ended track says so", () => {

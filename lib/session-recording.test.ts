@@ -242,3 +242,34 @@ test("with turn summaries, a slow first audio is an issue and the reply time is 
   assert.match(md, /- First audio, p50 \/ p90: 8\.5 s \/ 8\.5 s \(over 1 reply\)/);
   assert.doesNotMatch(md, /Reply time:|Interruptions:/, "one latency and one interruption count, in the scorecard");
 });
+
+test("what the student did not hear is counted and flagged: a slow start, a cut-off reply, a muted reply, a dead mic", () => {
+  // Sept 30 2026: the replay showed "I see your worksheet on equations and linear graphs…" whole,
+  // though the student heard two seconds of it, and never showed the two replies the filter muted.
+  const events = [
+    ev(4000, "session.started", "system", { model: "gemini-3.8-live" }),
+    ev(32000, "tutor.speaking", "tutor", { speaking: true }),
+    said(32000, "tutor", "I see your worksheet on equations and linear graphs. Which problem should we start with today?"),
+    debug(34400, "turn", "interrupted"),
+    debug(34400, "turn", "tutor_cut_off", { heard: "I see your worksheet", said: "I see your worksheet on equations and linear graphs. Which problem should we start with today?", playedMs: 2400, totalMs: 6100 }),
+    debug(35100, "turn", "second_reply_dropped"),
+    debug(40000, "audio", "mic_problem", { problem: "Can't hear your mic. Check it, or type" }),
+  ];
+  const a = analyzeSession(events);
+  assert.equal(a.firstWordMs, 28000);
+  assert.equal(a.cutOffs, 1);
+  assert.equal(a.mutedReplies, 1);
+  assert.equal(a.micProblems, 1);
+  const labels = a.flags.map((f) => f.label).join("\n");
+  assert.match(labels, /Slow start: the first word came 28\.0 s/);
+  assert.match(labels, /the student heard “I see your worksheet”/);
+  const log = buildLog(events);
+  const cut = log.find((e) => e.title.startsWith("Cut off"));
+  assert.ok(cut && cut.issue && !cut.hidden);
+  assert.match(cut.title, /after 2\.4 of 6\.1 s/);
+  assert.ok(log.some((e) => e.title.startsWith("Reply muted") && e.issue));
+});
+
+test("a session that never spoke has no first word", () => {
+  assert.equal(analyzeSession([ev(1000, "session.started", "system")]).firstWordMs, null);
+});

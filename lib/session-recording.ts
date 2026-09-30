@@ -156,8 +156,18 @@ export type SessionAnalysis = {
   slowestReplyMs: number | null;
   replies: number;
   longestSilenceMs: number;
+  /** From the session connecting to the tutor's first sound; null when it never spoke. */
+  firstWordMs: number | null;
+  /** Replies cut off mid-sentence (tutor_cut_off, recorded from Sept 30 2026). */
+  cutOffs: number;
+  /** Replies the reply filter muted as a second reply to one line. */
+  mutedReplies: number;
+  /** Times the microphone was found sending nothing. */
+  micProblems: number;
   flags: SessionFlag[];
 };
+
+const SLOW_START_MS = 8000;
 
 const SLOW_REPLY_MS = 6000;
 const LONG_SILENCE_MS = 20_000;
@@ -301,7 +311,7 @@ export function analyzeSession(events: readonly TimelineEvent[], durationMs = 0)
   for (const t of failed) flags.push({ offsetMs: t.offsetMs, tone: "error", label: `${t.name} failed${t.error ? `: ${String(t.error).slice(0, 140)}` : ""}` });
 
   const interruptions = debug.filter((e) => message(e) === "interrupted");
-  for (const e of interruptions) flags.push({ offsetMs: e.offsetMs, tone: "warn", label: "Student interrupted the tutor" });
+  for (const e of interruptions) flags.push({ offsetMs: e.offsetMs, tone: "warn", label: "Tutor interrupted (by the student speaking, or a message the app sent mid-reply)" });
 
   const pageReconnects = debug.filter((e) => message(e) === "live_session_reconnecting");
   const reconnects = pageReconnects.length > 0 ? pageReconnects : debug.filter((e) => message(e) === "reconnect_scheduled");
@@ -335,6 +345,24 @@ export function analyzeSession(events: readonly TimelineEvent[], durationMs = 0)
     const gap = inner(e).gapMs;
     flags.push({ offsetMs: e.offsetMs, tone: "warn", label: `Voice ran dry for ${typeof gap === "number" ? Math.round(gap) : "?"} ms` });
   }
+
+  // The first word: from the session connecting to the tutor's first sound.
+  const started = sorted.find((e) => e.kind === "session.started");
+  const firstSound = sorted.find((e) => e.kind === "tutor.speaking" && e.payload.speaking === true && (!started || e.offsetMs >= started.offsetMs));
+  const firstWordMs = started && firstSound ? firstSound.offsetMs - started.offsetMs : null;
+  if (started && firstWordMs !== null && firstWordMs >= SLOW_START_MS) flags.push({ offsetMs: started.offsetMs, tone: "warn", label: `Slow start: the first word came ${(firstWordMs / 1000).toFixed(1)} s after the session connected` });
+
+  // What the student did not hear: a reply cut off (the transcript runs ahead
+  // of the audio, so the words below read whole), a reply muted by the filter.
+  const cut = debug.filter((e) => message(e) === "tutor_cut_off");
+  for (const e of cut) {
+    const d = inner(e);
+    flags.push({ offsetMs: e.offsetMs, tone: "warn", label: `Tutor cut off: the student heard ${d.heard ? `“${String(d.heard).slice(0, 80)}”` : "nothing"} of “${String(d.said ?? "").slice(0, 80)}”` });
+  }
+  const muted = debug.filter((e) => message(e) === "second_reply_dropped");
+  for (const e of muted) flags.push({ offsetMs: e.offsetMs, tone: "warn", label: "A reply was muted as a second reply to one line (the student heard none of it)" });
+  const mic = debug.filter((e) => message(e) === "mic_problem");
+  for (const e of mic) flags.push({ offsetMs: e.offsetMs, tone: "warn", label: `Mic problem: ${String(inner(e).problem ?? "no sound")}` });
 
   // Longest silence while connected (a pause and resume is not silence).
   const intervals = [
@@ -371,6 +399,10 @@ export function analyzeSession(events: readonly TimelineEvent[], durationMs = 0)
     slowestReplyMs: replies.length ? Math.max(...replies) : null,
     replies: replies.length,
     longestSilenceMs: longest,
+    firstWordMs,
+    cutOffs: cut.length,
+    mutedReplies: muted.length,
+    micProblems: mic.length,
     flags,
   };
 }
@@ -465,8 +497,19 @@ export function buildLog(events: readonly TimelineEvent[]): LogEntry[] {
         } else if (message === "tool_response_sent") {
           const success = data.success !== false;
           entries.push({ ...base, lane: "action", title: String(data.name ?? "tool"), detail: toolDetail(data.args, success, data.message, data.error, data.durationMs), tone: success ? "default" : "error", hidden: false, issue: !success });
+        } else if (message === "tutor_cut_off") {
+          const heard = String(data.heard ?? "");
+          const played = typeof data.playedMs === "number" ? (data.playedMs / 1000).toFixed(1) : "?";
+          const total = typeof data.totalMs === "number" ? (data.totalMs / 1000).toFixed(1) : "?";
+          entries.push({ ...base, lane: "tutor", title: `Cut off after ${played} of ${total} s: the student heard ${heard ? `“${heard}”` : "nothing"}`, detail: `It said: ${String(data.said ?? "")}`, tone: "warn", hidden: false, issue: true });
+        } else if (message === "second_reply_dropped") {
+          entries.push({ ...base, lane: "tutor", title: "Reply muted: taken for a second reply to one line, so the student heard none of it", tone: "warn", hidden: false, issue: true });
+        } else if (message === "text_held" || message === "text_released") {
+          entries.push({ ...base, lane: "system", title: message === "text_held" ? "Typed line held while the tutor composes" : `Typed line sent${data.stalled ? " (the tutor had gone quiet)" : ""}`, detail: String(data.text ?? ""), tone: "default", hidden: false, issue: false });
+        } else if (message === "mic_problem" || message === "mic_ok") {
+          entries.push({ ...base, lane: "system", title: message === "mic_problem" ? `Mic problem shown: ${String(data.problem ?? "")}` : "Mic sending sound again", detail: compactJson(data), tone: message === "mic_problem" ? "warn" : "default", hidden: false, issue: message === "mic_problem" });
         } else if (message === "interrupted") {
-          entries.push({ ...base, lane: "system", title: "Student interrupted the tutor", tone: "warn", hidden: false, issue: true });
+          entries.push({ ...base, lane: "system", title: "Tutor interrupted (by the student speaking, or a message the app sent mid-reply)", tone: "warn", hidden: false, issue: true });
         } else if (message === "turn_complete") {
           entries.push({ ...base, lane: "system", title: "Tutor finished its turn", tone: "default", hidden: true, issue: false });
         } else if (message === "tutor_state") {

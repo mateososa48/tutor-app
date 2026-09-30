@@ -174,7 +174,10 @@ export function intakeInstructions(intake: SessionIntake, fileCount: number): st
   const brief = topic ? topicBrief(topic) : "";
   if (brief) lines.push(`For after the opening: ${brief} The one you ask goes on the board with start_new_problem.`);
   if (fileCount > 0) {
-    lines.push(`They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work. Read ${fileCount === 1 ? "it" : "them"} before your first sentence and ask which problem first; look_at_worksheet, then start_new_problem with it exactly as printed.`);
+    // The pictures ride in their first message, so the tutor already sees
+    // them: a look_at_worksheet before the first word re-sent a 1.2 MB photo
+    // and cost a whole round trip (15 s of silence on Sept 30 2026).
+    lines.push(`They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work to their first message: you can see ${fileCount === 1 ? "it" : "them"} now, so answer first, with no tool before your first words: ask which problem. Then start_new_problem with it exactly as printed.`);
   }
   // The plan is sized to the time they said they have.
   const minutes = intake.minutes;

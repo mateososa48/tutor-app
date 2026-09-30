@@ -64,9 +64,12 @@ test("the time they have sizes the plan, and old intakes without it still work",
   assert.doesNotMatch(old, /minutes today/);
 });
 
-test("attachments are called out so the tutor reads them before speaking", () => {
-  assert.match(intakeInstructions(intake({ language: "de" }), 1), /one picture of the work\. Read it/);
-  assert.match(intakeInstructions(intake({ language: "de" }), 3), /3 pictures of the work\. Read them/);
+test("attachments are called out as already seen, with no tool before the first words", () => {
+  const one = intakeInstructions(intake({ language: "de" }), 1);
+  assert.match(one, /one picture of the work to their first message: you can see it now/);
+  assert.match(one, /no tool before your first words/);
+  assert.doesNotMatch(one, /look_at_worksheet/);
+  assert.match(intakeInstructions(intake({ language: "de" }), 3), /3 pictures of the work to their first message: you can see them now/);
 });
 
 test("an empty intake still carries the language", () => {

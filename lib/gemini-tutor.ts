@@ -204,10 +204,23 @@ export class GeminiTutorSession {
         },
         onError: (message) => this.callbacks.onError(message),
         onInterrupted: () => {
+          // What the student actually heard: the transcript runs ahead of the
+          // audio, so a reply cut off two seconds in reads as whole in the
+          // recording (Sept 30 2026). The unplayed audio is measured before
+          // the flush throws it away.
+          const unplayedMs = player.getPendingSourceMs();
           player.flush();
           // The bubble stops on the last words the student heard, with a dash,
           // then clears (or sooner, when the student's words arrive).
           const heard = this.shownCaption.trim();
+          if (this.turnText.trim() && unplayedMs > 250) {
+            this.debug("turn", "tutor_cut_off", {
+              heard,
+              said: this.turnText.trim().slice(0, 400),
+              playedMs: Math.round(Math.max(0, this.turnAudioMs - unplayedMs)),
+              totalMs: Math.round(this.turnAudioMs),
+            });
+          }
           this.resetTurn();
           this.showCaption(heard ? `${heard.replace(/[\s,;:.!?—-]+$/u, "")} —` : "");
           if (heard) {
@@ -228,9 +241,12 @@ export class GeminiTutorSession {
     this.session = session;
 
     if (opts.micStream) {
-      const capture = new AudioCapture((base64, rate) => {
+      const capture = new AudioCapture((base64, rate, silent) => {
         // Muted: the same length of a quiet room, never nothing (quietFrame).
-        session.sendAudio(this.muted ? quietFrame(Math.floor((base64.length * 3) / 8)) : base64, rate);
+        // A chunk of exact digital zero (noise suppression flattens a quiet
+        // room) gets the same: 3.8 needs trailing audio to end a turn, and
+        // pure zeros are not a room.
+        session.sendAudio(this.muted || silent ? quietFrame(Math.floor((base64.length * 3) / 8)) : base64, rate);
       }, 16000);
       this.capture = capture;
       await capture.start(opts.micStream);
@@ -240,12 +256,10 @@ export class GeminiTutorSession {
       // nothing" from "their voice never left the browser". Checked every 5 s
       // (a dead mic is shown to the student), logged every 15 s.
       let acc = { chunks: 0, peak: 0, rms: 0, windows: 0 };
-      let flat = 0;
       this.micMeter = setInterval(() => {
         const level = this.capture?.level();
         if (!level) return;
-        flat = level.peak === 0 ? flat + 1 : 0;
-        const problem = this.muted ? null : micProblem(level, flat);
+        const problem = this.muted ? null : micProblem(level);
         if (problem !== this.micProblem) {
           this.micProblem = problem;
           this.debug("audio", problem ? "mic_problem" : "mic_ok", { ...level, problem });
