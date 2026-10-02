@@ -128,10 +128,14 @@ export function openingEvent(studentText: string, fileCount: number): string {
   // "Internal error encountered"), and this one on 7 of 7, with the same
   // prompt, tools and microphone frames. It had answered the old one every
   // time the night before.
+  // A greeting first, by name (Mateo, Oct 1 2026: "make sure it greets the
+  // student and doesn't jump right in").
+  const greet = "(The session just started. Greet them first, by name, in a few warm words.";
   return (
     `${studentText}\n\n` +
-    "(The session just started. OPEN: a few words back, then ask which they want: a problem on a sheet, or the whole idea." +
-    (fileCount > 0 ? " Their work is attached above and you can see it: speak first, no look_at_worksheet for it.)" : ")")
+    (fileCount > 0
+      ? `${greet} Their work is attached above and you can see it: say what it's on, then ask which problem they want to start with. Speak first, no look_at_worksheet for it.)`
+      : `${greet} Then ask which they want: a problem on a sheet, or the whole idea.)`)
   );
 }
 

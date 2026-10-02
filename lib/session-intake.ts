@@ -177,7 +177,7 @@ export function intakeInstructions(intake: SessionIntake, fileCount: number): st
     // The pictures ride in their first message, so the tutor already sees
     // them: a look_at_worksheet before the first word re-sent a 1.2 MB photo
     // and cost a whole round trip (15 s of silence on Sept 30 2026).
-    lines.push(`They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work to their first message: you can see ${fileCount === 1 ? "it" : "them"} now, so answer first, with no tool before your first words: ask which problem. Then start_new_problem with it exactly as printed.`);
+    lines.push(`They attached ${fileCount === 1 ? "one picture" : `${fileCount} pictures`} of the work to their first message: you can see ${fileCount === 1 ? "it" : "them"} now, so speak first, with no tool before your first words: greet them, then ask which problem. Then start_new_problem with it exactly as printed.`);
   }
   // The plan is sized to the time they said they have.
   const minutes = intake.minutes;
