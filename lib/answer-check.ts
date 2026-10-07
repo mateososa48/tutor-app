@@ -53,6 +53,8 @@ export function prepareExpression(raw: string): Prepared {
   // Anything else like "3 4" is ambiguous; never guess.
   if (/\d\s+\d/.test(s)) return { ok: false, reason: "numbers separated by a space" };
   if (/[^0-9a-z.+\-*/^()\s,]/.test(s)) return { ok: false, reason: "symbols it can't read" };
+  // "2x cos(x^2)", "x sin x": a function name after a factor multiplies it.
+  s = s.replace(/([a-z0-9)])\s*(?=(?:sin|cos|tan|ln|log|sqrt|exp|abs)\s*\()/g, (m, c: string, off: number, all: string) => (/[a-z]/.test(c) && /[a-z]{2,}$/.test(all.slice(0, off + 1)) ? m : `${c}*`));
 
   const vars = new Set<string>();
   for (const word of s.match(/[a-z]+/g) ?? []) {
@@ -176,7 +178,7 @@ const DERIVATIVE = /^\s*(?:\\frac\{d\}\{d\s*([a-z])\}|d\s*\/\s*d\s*([a-z])|(?:fi
 
 /** A calculus expression's body: the trailing d-variable, "+ C", spacing commands and a leading "y =" gone. */
 function calcBody(raw: string): { text: string; plusC: boolean } {
-  let t = raw.replace(/\\[,;:!]|\\quad/g, " ").replace(/\\left|\\right/g, "").trim();
+  let t = raw.replace(/\\[,;:!]|\\quad/g, " ").replace(/\\left|\\right/g, "").replace(/\\(sin|cos|tan|ln|log|exp)\b/g, "$1").trim();
   t = t.replace(/^(?:[a-z]'?\s*\(\s*[a-z]\s*\)|d[a-z]|[a-z]|\\frac\{d[a-z]?\}\{d[a-z]\}|d[a-z]\s*\/\s*d[a-z])\s*=\s*/i, "");
   t = t.replace(/^(?:it'?s|its|it is|is|so|maybe|i got|=)\s+/i, "");
   t = t.replace(/\s*(?:\*\s*)?\bd\s*[a-z]\s*$/i, "").replace(/^\((.*)\)$/, "$1").trim();
@@ -235,6 +237,23 @@ function checkCalculus(problem: string, answer: string): AnswerCheck | null {
     return { verdict: "incorrect", message: `Incorrect: the derivative of ${said.text} is ${formatNumber(tidy(factor))} times the integrand, so it is off by that factor. (For you only; ask them to check it by differentiating.)` };
   }
   return unsure(`"${said.text}" is not an antiderivative of the integrand (at ${letter} = ${formatNumber(x)} its derivative is ${formatNumber(tidy(got))}, the integrand ${formatNumber(tidy(want))}). If it was their answer to the whole integral it is wrong; if it answers one step (choosing u, finding du), that is yours to judge.`);
+}
+
+/** The same value as an expression, at sample points; letters may differ (a student says "x squared plus 1" for u). */
+export function sameExpression(a: string, b: string): boolean {
+  const strip = (t: string) => t.replace(/\\[,;:!]/g, " ").replace(/\s*(?:\*\s*)?\bd\s*[a-z]\s*$/i, "").replace(/\s*\+\s*c\s*$/i, "").trim();
+  const A = prepareExpression(strip(a)), B = prepareExpression(strip(b));
+  if (!A.ok || !B.ok) return false;
+  const fa = createMathEvaluator(A.text), fb = createMathEvaluator(B.text);
+  if (!fa || !fb) return false;
+  let seen = 0;
+  for (const x of [2, 3, -1, 0.5, 5]) {
+    const u = fa(x), v = fb(x);
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    if (Math.abs(u - v) > 1e-6 * Math.max(1, Math.abs(u))) return false;
+    seen++;
+  }
+  return seen >= 3;
 }
 
 const ORDINAL_POWERS: Record<string, number> = { second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };

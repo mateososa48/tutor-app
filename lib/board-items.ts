@@ -2,6 +2,7 @@
 // gets a short id (b1, b2, …) the tutor can refer back to: point at it, ring
 // it, erase it. Pure helpers here; the registry itself lives in TldrawCore.
 
+import { latexToPlain } from "./latex-plain";
 export type BoardItem = {
   id: string;
   tool: string;
@@ -122,6 +123,15 @@ export function resolveItemTarget(items: BoardItem[], target: string): BoardItem
   const tm = normalizeForMatch(target);
   if (tm.length >= 2) {
     for (let i = items.length - 1; i >= 0; i--) if (normalizeForMatch(items[i].label).includes(tm)) return items[i];
+  }
+  // LaTeX commands too: "\frac{du}{dx} = 2x" is the line "du/dx = 2x", and
+  // "du = 2x \, dx" is "du = 2x dx"; a trailing "= ?" the line may not carry
+  // ("\int 2x(x^2+1)^3 dx = ?" for the problem line) is dropped (Oct 7 2026:
+  // 9 of 13 board-tool errors in a calculus session were LaTeX targets).
+  const plain = normalizeForMatch(latexToPlain(target));
+  for (const want of [plain, plain.replace(/=\?$/, "")]) {
+    if (want.length < 2) continue;
+    for (let i = items.length - 1; i >= 0; i--) if (normalizeForMatch(latexToPlain(items[i].label)).includes(want)) return items[i];
   }
   // "3 | 4" or "sides 3, 4": every token has to appear somewhere in the label.
   const tokens = t.split(/[\s|,;:]+/).filter(Boolean);

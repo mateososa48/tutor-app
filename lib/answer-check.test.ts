@@ -444,3 +444,9 @@ test("a spoken power is a power, not a fraction", () => {
   assert.equal(spokenToDigits("five to the fourth"), "5 ^4");
   assert.equal(spokenToDigits("two to the power of 3"), "2 ^3");
 });
+
+test("trig in calculus steps: LaTeX commands and a factor before a function", () => {
+  assert.equal(checkAnswer("\\int \\cos(u) \\,du", "\\sin(u)").verdict, "correct");
+  assert.equal(checkAnswer("\\frac{d}{dx} \\sin(x^2)", "2x cos(x^2)").verdict, "correct");
+  assert.equal(checkAnswer("\\frac{d}{dx} \\sin(x^2)", "cos(x^2)").verdict, "incorrect");
+});

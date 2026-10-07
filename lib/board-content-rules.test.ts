@@ -125,3 +125,12 @@ test("two equations with the same result are two lines; a bare value still match
   assert.equal(findDuplicate("add_student_attempt", fp("4 / 4 = 1"), items), null);
   assert.equal(findDuplicate("add_student_attempt", fp("1"), items), "b7");
 });
+
+test("an attempt that is the same expression written another way is a duplicate (Oct 7 2026)", () => {
+  const items = [
+    { id: "b1", tool: "start_new_problem", content: "start_new_problem:usub" },
+    { id: "b13", tool: "add_student_attempt", content: contentFingerprint("add_student_attempt", "\\frac{(x^2+1)^4}{4} + C") },
+  ];
+  assert.equal(findDuplicate("add_student_attempt", contentFingerprint("add_student_attempt", "((x^2+1)^4)/4 + C"), items), "b13");
+  assert.equal(findDuplicate("add_student_attempt", contentFingerprint("add_student_attempt", "(x^2+1)^4"), items), null);
+});

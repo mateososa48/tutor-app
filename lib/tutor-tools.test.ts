@@ -558,3 +558,23 @@ test("a step the tutor has just said aloud is not withheld, and a '= ?' line giv
   assert.equal(full.args.latex, "dv = 3x^2 \\, dx");
   assert.equal(full.replaces, "b9");
 });
+
+test("a question-shaped answer fills its '= ?' line (\"is it 2x?\")", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "U-substitution", problem: "\\int \\cos(x^2) \\cdot 2x \\, dx" });
+  withholdResult(p, "draw_equation_step", { latex: "du = 2x \\, dx" });
+  p.withheld[0].item = "b4";
+  noteStudentUtterance(p, "is it 2x?");
+  assert.deepEqual(filledSteps(p), [{ item: "b4", latex: "du = 2x \\, dx" }]);
+});
+
+test("the tutor's own '= ?' line gives way to its full line", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "U-substitution", problem: "\\int 2x(x^2+1)^3 \\, dx" });
+  const q = withholdResult(p, "draw_equation_step", { latex: "\\frac{du}{dx} = ?" });
+  assert.equal(q.args.latex, "\\frac{du}{dx} = ?");
+  p.withheld[0].item = "b5";
+  noteStudentUtterance(p, "is it 2x?");
+  assert.deepEqual(filledSteps(p), [], "no right side known, so the app can't fill it");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "\\frac{du}{dx} = 2x" }).replaces, "b5");
+});

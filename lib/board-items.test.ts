@@ -205,3 +205,14 @@ test("a target in the tutor's own LaTeX finds the plain label", () => {
   const items = [{ id: "b1", tool: "draw_equation_step", label: "(-3)² = 9", owner: "tutor", createdAt: 0, shapeIds: [], eqItemIds: [] }] as unknown as BoardItem[];
   assert.equal(resolveItemTarget(items, "(-3)^2 = 9")?.id, "b1");
 });
+
+test("a LaTeX target finds its plain line (Oct 7 2026, calculus)", () => {
+  const items = [
+    { id: "b3", tool: "draw_equation_step", label: "2x(x² + 1)³ dx" },
+    { id: "b6", tool: "draw_equation_step", label: "du/dx = 2x" },
+    { id: "b7", tool: "draw_equation_step", label: "du = 2x dx" },
+  ] as never;
+  assert.equal(resolveItemTarget(items, "\\frac{du}{dx} = 2x")?.id, "b6");
+  assert.equal(resolveItemTarget(items, "du = 2x \\, dx")?.id, "b7");
+  assert.equal(resolveItemTarget(items, "\\int 2x(x^2+1)^3 \\, dx = ?")?.id, "b3");
+});

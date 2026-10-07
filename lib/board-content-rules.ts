@@ -8,6 +8,7 @@
 // because the model ignores tool descriptions but reacts to tool errors.
 
 /** A literal "\n", or " | " between words, written as text means a new line. */
+import { sameExpression } from "./answer-check";
 export function boardLines(text: string): string {
   return text
     .replace(/\\n/g, "\n")
@@ -190,6 +191,12 @@ export function findDuplicate(tool: string, fingerprint: string, items: Fingerpr
     // same result are two lines (Sept 27 2026: "4 / 4 = 1" was taken for
     // "9 − 4(2)(1) = 1", so it was never written and the app ringed the
     // discriminant instead).
+    // The same expression written two ways: the app's typeset "\frac{(x^2+1)^4}{4} + C"
+    // and the model's "((x^2+1)^4)/4 + C" (Oct 7 2026: one final answer, four lines).
+    const attempts = scope.filter((i) => i.tool === tool && i.content).slice(-2).reverse();
+    const expr = (fp: string) => fp.slice(fp.indexOf(":") + 1).split("=").at(-1)!;
+    const twin = /[a-z]/.test(expr(fingerprint)) ? attempts.find((i) => sameExpression(expr(i.content!), expr(fingerprint))) : undefined;
+    if (twin) return twin.id;
     const n = claimedValue(fingerprint);
     if (!n) return null;
     const bare = (fp: string) => !fp.slice(fp.indexOf(":") + 1).includes("=");
