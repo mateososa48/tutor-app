@@ -69,7 +69,7 @@ test("never guesses: unreadable input can't be checked", () => {
   assert.equal(verdict("3 4 + 1", "35"), "cannot_check");
   assert.equal(verdict("2x + 3y = 11", "4"), "cannot_check");
   assert.equal(verdict("", "4"), "cannot_check");
-  assert.match(checkAnswer("x > 2", "3").message, /work it out yourself/i);
+  assert.match(checkAnswer("x > 2", "3").message, /judge it yourself and reply now/i);
 });
 
 test("helpers", () => {
@@ -260,7 +260,7 @@ test("f(a) where f(x) = … is read by substitution", () => {
 test("cannot_check is an order to resend in digits and symbols", () => {
   const r = checkAnswer("How many cookies from 5 cups?", "30");
   assert.equal(r.verdict, "cannot_check");
-  assert.match(r.message, /Call check_answer again with the problem in digits and symbols/);
+  assert.match(r.message, /Judge it yourself and reply now\. Call check_answer again only if it is arithmetic you can write in digits and symbols/);
 });
 
 // Sept 25 2026: 3.8 passed its own comparison as the problem ("0.5 > 0.35")
@@ -421,4 +421,26 @@ test("a number said in pairs can confirm an answer, never refute one", () => {
 test("a confused question about another number is not 'they are equal'", () => {
   assert.equal(checkAnswer("Which is bigger, 0.2 or 0.125?", "wait, is 0.2 the same as 200 cents? i'm confused.").verdict, "cannot_check");
   assert.equal(checkAnswer("Which is bigger, 0.5 or 0.50?", "they're the same").verdict, "correct");
+});
+
+test("calculus steps are checked: antiderivatives by their derivative, derivatives by the problem's (Oct 6 2026)", () => {
+  assert.equal(checkAnswer("\\int u^3 \\, du", "\\frac{u^4}{4}").verdict, "correct");
+  assert.match(checkAnswer("\\int u^3 \\, du", "\\frac{u^4}{4}").message, /left off the \+ C/);
+  assert.equal(checkAnswer("\\int u^3 \\, du", "u^4/4 + C").verdict, "correct");
+  assert.equal(checkAnswer("\\int u^3 \\, du", "u^4").verdict, "incorrect", "off by a factor of 4");
+  assert.equal(checkAnswer("\\int 2x(x^2 + 1)^3 \\, dx", "(x^2+1)^4/4 + C").verdict, "correct");
+  // "x^2" may answer "what is u?": not called wrong, and no order to call again.
+  const step = checkAnswer("\\int 2x(x^2 + 1)^3 \\, dx", "x^2");
+  assert.equal(step.verdict, "cannot_check");
+  assert.match(step.message, /don't call check_answer again/);
+  assert.equal(checkAnswer("\\int 2x(x^2 + 1)^3 \\, dx", "u^4/4").verdict, "cannot_check", "in u: substitute back first");
+  assert.equal(checkAnswer("\\frac{d}{dx}(x^2 + 1)", "2x dx").verdict, "correct");
+  assert.equal(checkAnswer("\\frac{d}{dx}(x^2 + 1)", "x").verdict, "incorrect");
+  assert.equal(checkAnswer("derivative of x cubed plus 5", "3x^2").verdict, "correct");
+  assert.equal(checkAnswer("integral of 3x squared", "x cubed").verdict, "correct");
+});
+
+test("a spoken power is a power, not a fraction", () => {
+  assert.equal(spokenToDigits("five to the fourth"), "5 ^4");
+  assert.equal(spokenToDigits("two to the power of 3"), "2 ^3");
 });

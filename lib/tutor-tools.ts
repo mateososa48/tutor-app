@@ -11,7 +11,8 @@
 
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer, checkBlankInPage, questionMath, spokenToDigits, withKnownRules, type CheckVerdict } from "./answer-check";
+import { checkAnswer, checkBlankInPage, prepareExpression, questionMath, spokenExpression, spokenToDigits, withKnownRules, type CheckVerdict } from "./answer-check";
+import { createMathEvaluator } from "./math-expression";
 import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import { latexToPlain } from "./latex-plain";
@@ -391,7 +392,81 @@ function withholdCaptions(policy: TutorPolicy, args: Record<string, unknown>): {
   return changed ? { args: out, note: `The caption says "?" where it had ${changed}: that is theirs to find. Ask for it.` } : { args, note: null };
 }
 
-export function withholdResult(policy: TutorPolicy, name: string, args: Record<string, unknown>): { args: Record<string, unknown>; note: string | null } {
+// A step line: a target on the left ("u", "du", "x", "f'(x)", "dy/dx"), the
+// step's result on the right. In a lesson the student says each step, so a
+// right side they have not said goes up as "= ?" (Oct 6 2026: "du = 2x dx" and
+// "du = 3x^2 dx" went up as the tutor asked "what is du?", twice in one session).
+const STEP_LINE = /^\s*(d?[a-z]|[a-z]'\s*\(\s*[a-z]\s*\)|\\frac\{d[a-z]?\}\{d[a-z]\}|d[a-z]\s*\/\s*d[a-z])\s*=\s*([^=?]+?)\s*$/i;
+
+/** The same value as an expression, at sample points; letters may differ (a student says "x squared plus 1" for u). */
+function sameExpression(a: string, b: string): boolean {
+  const strip = (t: string) => t.replace(/\\[,;:!]/g, " ").replace(/\s*(?:\*\s*)?\bd\s*[a-z]\s*$/i, "").replace(/\s*\+\s*c\s*$/i, "").trim();
+  const A = prepareExpression(strip(a)), B = prepareExpression(strip(b));
+  if (!A.ok || !B.ok) return false;
+  const fa = createMathEvaluator(A.text), fb = createMathEvaluator(B.text);
+  if (!fa || !fb) return false;
+  let seen = 0;
+  for (const x of [2, 3, -1, 0.5, 5]) {
+    const u = fa(x), v = fb(x);
+    if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
+    if (Math.abs(u - v) > 1e-6 * Math.max(1, Math.abs(u))) return false;
+    seen++;
+  }
+  return seen >= 3;
+}
+
+/** Does any sentence of `lines` say this value (whole, or after "is", "=", "equal to")? */
+function saysExpression(lines: string[], rhs: string): boolean {
+  for (const line of lines) {
+    for (const sentence of line.split(/(?<=[.?!;])\s+/)) {
+      const said = spokenExpression(sentence.replace(/[?!.;]+$/g, ""));
+      const pieces = [said, said.split("=").at(-1) ?? "", ...said.split(/\b(?:is|equals|equal to|be)\b/i).slice(1), said.replace(/^.*?\b(?:make|let|set)\s+[a-z]{1,2}\s*=?\s*/i, "")];
+      // "set u equal to x^2 + 1, what would…": a clause ends at a comma.
+      const tails = pieces.flatMap((t) => [t, t.split(",")[0]]);
+      if (tails.some((t) => t.trim() && sameExpression(t.trim().replace(/^(?:its|it's|so|maybe|i got|just)\s+/i, ""), rhs))) return true;
+    }
+  }
+  return false;
+}
+
+/** Did the student say this, in any of their lines since the problem opened? */
+export function studentSaid(policy: TutorPolicy, rhs: string): boolean {
+  return saysExpression(policy.saidLines, rhs);
+}
+
+const stepKey = (lhs: string) => lhs.replace(/\s+|\\/g, "").toLowerCase();
+
+function withholdStep(policy: TutorPolicy, latex: string): { latex: string; note: string } | null {
+  const m = STEP_LINE.exec(latex);
+  if (!m) return null;
+  const rhs = m[2].trim();
+  // "y = 2x + 1" is a function as given, not a step: a lone letter is a step's
+  // target only for a value (x = 6) or a substitution (u, v, w = …).
+  if (/^[a-z]$/i.test(m[1]) && !/^[uvw]$/i.test(m[1]) && /[a-z]/i.test(rhs.replace(/\\[a-z]+/gi, ""))) return null;
+  // Already asked, already theirs, said aloud by the tutor in this reply
+  // ("so if we set u equal to x squared plus one": nothing left to give away),
+  // or part of the problem as given.
+  if (/\?/.test(rhs) || studentSaid(policy, rhs) || saysExpression([policy.tutorSpeech], rhs)) return null;
+  if (policy.pageProblem && policy.pageProblem.replace(/\s+/g, "").includes(latex.replace(/\s+/g, ""))) return null;
+  // Only a line the board can read as math is withheld (a word label passes).
+  if (!prepareExpression(rhs.replace(/\\[,;:!]/g, " ").replace(/\s*\bd\s*[a-z]\s*$/i, "")).ok) return null;
+  const asked = `${m[1]} = ?`;
+  policy.lastAsked = asked;
+  const key = stepKey(m[1]);
+  if (!policy.withheld.some((w) => w.lhs === key)) policy.withheld.push({ lhs: key, latex, rhs, item: null });
+  return { latex: asked, note: `Wrote it as "${latexToPlain(asked)}": that step is theirs to say. Ask for it; don't say it.` };
+}
+
+export type ShapedCall = { args: Record<string, unknown>; note: string | null; withheld?: string; replaces?: string };
+
+/** The "= ?" lines the student has now said: their full lines go up in place of the "?" ones. */
+export function filledSteps(policy: TutorPolicy): Array<{ item: string; latex: string }> {
+  const done = policy.withheld.filter((w) => w.item && studentSaid(policy, w.rhs));
+  policy.withheld = policy.withheld.filter((w) => !done.includes(w));
+  return done.map((w) => ({ item: w.item!, latex: w.latex }));
+}
+
+export function withholdResult(policy: TutorPolicy, name: string, args: Record<string, unknown>): ShapedCall {
   if (policy.boardHelp >= 5) return { args, note: null };
   if (name !== "draw_equation_step" && name !== "add_student_attempt" && name !== "start_new_problem" && name !== "set_plan") {
     const captions = withholdCaptions(policy, args);
@@ -399,6 +474,18 @@ export function withholdResult(policy: TutorPolicy, name: string, args: Record<s
   }
   if (name !== "draw_equation_step" || typeof args.latex !== "string") return { args, note: null };
   const latex = args.latex.trim();
+  // A shown step (H4) or worked example (H5) keeps its results.
+  if (policy.boardHelp < 4) {
+    const step = withholdStep(policy, latex);
+    if (step) return { args: { ...args, latex: step.latex }, note: step.note, withheld: stepKey(STEP_LINE.exec(latex)![1]) };
+  }
+  // The full line, once it may be shown, takes the place of its "= ?" line.
+  const full = STEP_LINE.exec(latex);
+  const open = full ? policy.withheld.find((w) => w.lhs === stepKey(full[1])) : undefined;
+  if (open) {
+    policy.withheld = policy.withheld.filter((w) => w !== open);
+    if (open.item) return { args, note: null, replaces: open.item };
+  }
   const m = RESULT_TAIL.exec(latex);
   if (!m) return { args, note: null };
   const before = m[1].slice(0, -1);

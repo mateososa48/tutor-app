@@ -221,6 +221,13 @@ export class GeminiLiveSession {
    * into "I see your worksheet…", and the reply filter muted the answers).
    */
   private modelBusy = false;
+  /**
+   * Times this line's reply was woken to add a question after it had spoken.
+   * Once is enough: a second wake made 3.8 restate itself in a third piece
+   * (Oct 6 2026: "There wasn't a three x…" · "The two x and dx combine…" ·
+   * "Now, what's the integral of u cubed?", three generations for one line).
+   */
+  private finishWakes = 0;
   private lastServerAt = 0;
   /** Typed lines held while the model is busy, sent when it is done. */
   private heldText: string[] = [];
@@ -312,6 +319,8 @@ export class GeminiLiveSession {
     this.interruptedSinceAudio = false;
     this.awaitingReply = true;
     this.nudgesThisTurn = 0;
+    this.finishWakes = 0;
+    this.tutorRuntime.noteTutorSpeech("");
   }
 
   private armUnanswered(kind: "text" | "voice", afterMs: number = GeminiLiveSession.UNANSWERED_MS[kind]) {
@@ -864,6 +873,7 @@ export class GeminiLiveSession {
     this.flushStudentUtterance();
     this.tutorTurnText = joinTranscript(this.tutorTurnText, text, this.spacedTranscripts);
     this.replyText = joinTranscript(this.replyText, text, this.spacedTranscripts);
+    this.tutorRuntime.noteTutorSpeech(this.replyText);
     this.scheduleTurnFinishCheck();
   }
 
@@ -983,8 +993,14 @@ export class GeminiLiveSession {
   }
 
   private sendToolResponse(id: string, name: string, result: ToolCallResult, scheduling?: ToolScheduling) {
-    // A composing model resumes from here: its quiet is counted from now.
-    if (this.modelBusy) this.lastServerAt = Date.now();
+    // A composing model resumes from here: its quiet is counted from now. A
+    // WHEN_IDLE result wakes a model that has ended its turn, so it is composing
+    // again: a nudge 2.5 s after that turnComplete cut the woken reply off at
+    // its first words (Oct 6 2026, "Right. So if").
+    if (this.modelBusy || scheduling === "WHEN_IDLE") {
+      this.modelBusy = true;
+      this.lastServerAt = Date.now();
+    }
     const delivered = this.send({
       toolResponse: {
         functionResponses: [
@@ -1334,9 +1350,10 @@ export class GeminiLiveSession {
       const late = this.takeLateNote();
       result = { ...result, message: `${result.message ?? ""}\n${late}` };
     }
-    const replyGaveTask = givesTask(this.replyText);
+    const replyGaveTask = givesTask(this.replyText) || (this.turnHadAudio && this.finishWakes > 0);
     const scheduling = toolScheduling(this.model, name, result, this.asyncTools, this.turnHadAudio, lastOfBatch, replyGaveTask);
     const finish = result.success ? finishReplyNote(this.turnHadAudio, replyGaveTask, scheduling) : null;
+    if (finish) this.finishWakes += 1;
     if (finish && result.success) result = { ...result, message: `${result.message ?? ""}\n${finish}` };
     this.debug("tool", "tool_response_sent", {
       id,

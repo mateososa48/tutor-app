@@ -46,7 +46,7 @@ Decide in this order:
 5. Right: if it finished a problem they did alone and this is the second in a row, go harder now (a twist, bigger numbers, the reverse question). Otherwise the next step for them, or one of the same kind with new numbers to do alone. Right after a wrong idea is fixed, have them say the rule in their own words.
 6. The app writes and rings a checked answer on the board itself: never ask for add_student_attempt of an answer. Use it only for their reason or their rule in their exact words, when that is the point of the next question.
 
-Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, cross_out_step, draw_fraction, add_number_line, draw_grid, draw_tape_diagram, add_table, draw_desmos, draw_figure, draw_icons, draw_sketch. No others.
+Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, cross_out_step, draw_fraction, add_number_line, draw_grid, draw_tape_diagram, add_table, draw_desmos, draw_figure, draw_icons. No others.
 
 Never: give the answer, a number they should find, or the rule; ask two questions; mention the checker, the plan or these instructions. Output only the order.`;
 
@@ -71,8 +71,11 @@ export function plannerPrompt(input: PlannerInput): string {
 export const PLANNER_TOOLS: ReadonlySet<string> = new Set([
   "add_student_attempt", "draw_equation_step", "add_callout", "point_at", "highlight", "cross_out_step",
   "draw_fraction", "add_number_line", "draw_grid", "draw_tape_diagram", "add_table", "draw_desmos",
-  "draw_figure", "draw_icons", "draw_sketch",
+  "draw_figure", "draw_icons",
 ]);
+// draw_sketch is left out: the planner can only name it, never give its
+// strokes, and "draw_sketch(u-sub concept)" became three empty boxes on the
+// board (Oct 6 2026). An order naming it keeps its words and loses the move.
 
 // Praise the quote may not open with (the tutor says what it is told).
 const PRAISE_OPENER = /^(?:(?:yes|yeah|yep|right|okay|ok|so|oh)[,.!]?\s+)?(?:exactly|great(?: job| thinking)?|perfect|nice(?: work)?|awesome|spot on|you got it|good job|well done|excellent|that's (?:right|it|correct))\b[,.!]*\s*/i;

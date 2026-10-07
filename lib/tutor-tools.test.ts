@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { LEGACY_TUTOR_TOOL_DECLARATIONS, TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLARATIONS, TUTOR_TOOL_NAMES, attemptFromVerdict, runTutorTool, autoCheck, takeAutoCheckNote, answerLine, applyVerdictMarks, withholdResult } from "./tutor-tools";
+import { LEGACY_TUTOR_TOOL_DECLARATIONS, TUTOR_FUNCTION_TOOLS, TUTOR_TOOL_DECLARATIONS, TUTOR_TOOL_NAMES, attemptFromVerdict, runTutorTool, autoCheck, takeAutoCheckNote, answerLine, applyVerdictMarks, withholdResult, filledSteps } from "./tutor-tools";
 import { SESSION_TOOL_NAMES } from "./session-tools";
 import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
 import { buildBackendInstructions, buildGeminiInstructions } from "./tutor-prompts";
@@ -506,4 +506,55 @@ test("the question is checked before the student's own first step", () => {
   const line = "so 3 times 4 is 12, so h(4) is 12?";
   noteStudentUtterance(p, line, 1000);
   assert.match(autoCheck(p, line, 1000) ?? "", /→ incorrect/);
+});
+
+test("a step line keeps its result only once the student has said it (Oct 6 2026, u-substitution)", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "U-substitution", problem: "\\int 2x(x^2 + 1)^3 \\, dx" });
+  // The tutor asked "what is du?" and wrote the answer: it goes up as a question.
+  const du = withholdResult(p, "draw_equation_step", { latex: "du = 2x \\, dx" });
+  assert.equal(du.args.latex, "du = ?");
+  assert.match(du.note ?? "", /theirs to say/);
+  // They said u, in words: the line stays.
+  noteStudentUtterance(p, "x squared plus 1");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "u = x^2 + 1" }).args.latex, "u = x^2 + 1");
+  noteStudentUtterance(p, "its 2x");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "du = 2x \\, dx" }).args.latex, "du = 2x \\, dx");
+  // A typed answer with a power: "so do i make u = x^3 + 5?"
+  noteStudentUtterance(p, "so do i make u = x^3 + 5?");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "u = x^3 + 5" }).args.latex, "u = x^3 + 5");
+  // The problem itself and a worked example are never touched.
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "\\int 2x(x^2 + 1)^3 \\, dx" }).args.latex, "\\int 2x(x^2 + 1)^3 \\, dx");
+  p.boardHelp = 5;
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "du = 3x^2 \\, dx" }).args.latex, "du = 3x^2 \\, dx");
+});
+
+test("x = 6 waits for them to say 6", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Solve", problem: "3x + 7 = 25" });
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "x = 6" }).args.latex, "x = ?");
+  noteStudentUtterance(p, "six");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "x = 6" }).args.latex, "x = 6");
+});
+
+test("a step the tutor has just said aloud is not withheld, and a '= ?' line gives way to its full line", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "U-substitution", problem: "\\int 2x(x^2 + 1)^3 \\, dx" });
+  p.tutorSpeech = "So, if we set u equal to x squared plus one, what would the derivative of u be?";
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "u = x^2 + 1" }).args.latex, "u = x^2 + 1");
+  p.tutorSpeech = "What is du?";
+  const asked = withholdResult(p, "draw_equation_step", { latex: "du = 2x \\, dx" });
+  assert.equal(asked.args.latex, "du = ?");
+  p.withheld[0].item = "b6";
+  // The student says it: the full line replaces the "?" one.
+  noteStudentUtterance(p, "2x dx");
+  assert.deepEqual(filledSteps(p), [{ item: "b6", latex: "du = 2x \\, dx" }]);
+  // Or the tutor writes the full line later, once it may: it replaces the "?" line.
+  p.tutorSpeech = "What is dv?";
+  withholdResult(p, "draw_equation_step", { latex: "dv = 3x^2 \\, dx" });
+  p.withheld[0].item = "b9";
+  p.tutorSpeech = "So dv is three x squared dx.";
+  const full = withholdResult(p, "draw_equation_step", { latex: "dv = 3x^2 \\, dx" });
+  assert.equal(full.args.latex, "dv = 3x^2 \\, dx");
+  assert.equal(full.replaces, "b9");
 });

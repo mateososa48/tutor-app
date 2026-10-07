@@ -224,6 +224,42 @@ export const CASES: BenchCase[] = [
 // "altitude" error in NAEP items), "division makes smaller" for fractions
 // (Fischbein et al. 1985; Tirosh 2000), and logs treated as linear (the
 // "log of a sum" error, Kenney 2005).
+// ── From real sessions (Oct 6 2026) ─────────────────────────────────────────
+// Cases built on a session a real student had, so a fix for what went wrong
+// there is measured here. Tuned on, unlike the held-out four. Calculus:
+// u-substitution as a rule about parentheses rather than the chain rule
+// undone; the inside's derivative "disappearing" (Orton 1983; Thompson 1994:
+// students treat du as notation, not as the derivative that absorbs the 2x).
+export const REAL: BenchCase[] = [
+  {
+    id: "usub",
+    name: "Mateo",
+    grade: "12th grade",
+    age: 17,
+    topic: "help me with u sub",
+    minutes: 20,
+    brief:
+      "You are Mateo, 17, in AP Calculus. You type short and lowercase (\"ok\", \"maybe x^2?\", \"its 2x\"). You know the chain rule for derivatives if asked directly, but you think u-substitution means \"pick whatever is in the parentheses\" and you don't see where du comes from. You choose u = x^2 first (forgetting the + 1) when the inside is x^2 + 1. When the 2x and dx get replaced by du, you ask \"wait where did the 2x go?\" because to you it just vanished. You can integrate u^3 (u^4/4) but you forget the + C and you forget to put x back.",
+    anchors: [
+      "Say you want the idea first (\"lets start with the idea\").",
+      "When asked what u should be, say \"maybe x^2?\" before you include the + 1.",
+      "Once the integral is rewritten in u, ask \"wait where did the 2x go?\" unless the tutor showed why first.",
+      "When you integrate u^3, answer \"u^4/4\" with no + C and still in u.",
+    ],
+    convincedBy:
+      "Seeing that du = 2x dx is the derivative of the inside times dx, written on the board, so the 2x dx in the integral IS du (the tutor points at the 2x dx and the du together). Being told \"they cancel\" or \"they combine\" does not convince you; seeing the two lines match does.",
+    outcome:
+      "Mateo picks u = x^2 + 1 himself, finds du = 2x dx himself, says in his words why the 2x dx becomes du, and ends with (x^2 + 1)^4/4 + C, putting x back and adding + C after a nudge.",
+    checks: [
+      "Did the tutor have Mateo find du himself rather than writing du = 2x dx before he said it?",
+      "When Mateo asked where the 2x went, did the tutor show it on the board (the 2x dx next to du) rather than just say it?",
+      "Did the tutor catch the missing + C and the answer left in u?",
+      "Did every step line on the board come from something Mateo said, or get written as a question (\"= ?\") first?",
+    ],
+    turns: 14,
+  },
+];
+
 export const HELDOUT: BenchCase[] = [
   {
     id: "slope",
@@ -374,7 +410,7 @@ const WORKSHEET_HTML = `<!doctype html>
 for (const c of CASES) if (c.worksheet) c.worksheet.html = WORKSHEET_HTML;
 
 export function caseById(id: string): BenchCase | undefined {
-  return CASES.find((c) => c.id === id) ?? HELDOUT.find((c) => c.id === id);
+  return CASES.find((c) => c.id === id) ?? HELDOUT.find((c) => c.id === id) ?? REAL.find((c) => c.id === id);
 }
 
 export function intakeFor(c: BenchCase): SessionIntake {

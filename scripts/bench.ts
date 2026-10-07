@@ -21,7 +21,7 @@
 //
 // Flags:
 //   --cases a,b        which students (default: every one in the set)
-//   --set main|heldout|all  the six the redesign reads (default), the four held
+//   --set main|heldout|real|all  the six the redesign reads (default), the four held
 //                      out for gates (slope, triangle, divide, logs), or all ten
 //   --save-audio       write each turn's speech as <case>-t<N>.wav
 //   --hold             hold early async results until the first sound (ResponseHold; tried and rejected)
@@ -77,7 +77,7 @@ import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
-import { CASES, HELDOUT, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+import { CASES, HELDOUT, REAL, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { hedged } from "../lib/hedge";
 import { NEXT_MOVE_DECLARATION, PLANNER_SYSTEM, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
@@ -963,9 +963,12 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
         m.policy.notePlanAdvanced(runtime.policy);
         await page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
       }
-      const shaped = runtime.shapeBoardCall(name, args);
+      const shaped = runtime.shapeBoardCall(name, args) as { args: Record<string, unknown>; note: string | null; withheld?: string; replaces?: string };
       args = shaped.args;
+      if (shaped.replaces) await page.evaluate((t) => (window as BoardWindow).__chalkDispatch?.("erase_items", { targets: t }), shaped.replaces);
       result = await page.evaluate(({ name, args, callId }) => (window as BoardWindow).__chalkDispatch?.(name, args, callId) ?? { success: false, error: "no dispatcher on the page" }, { name, args, callId });
+      const item = result.success ? /\(item (b\d+)\)|as (b\d+)\b/.exec(result.message ?? "") : null;
+      if (shaped.withheld && item && typeof (runtime as { noteWithheldItem?: unknown }).noteWithheldItem === "function") runtime.noteWithheldItem(shaped.withheld, item[1] ?? item[2]);
       if (result.success && shaped.note) result = { success: true, message: `${result.message ?? "Done"} ${shaped.note}` };
       if (result.success) {
         scheduleFrame(900);
@@ -1269,9 +1272,9 @@ async function main() {
   const out = path.resolve(arg("out", path.join("bench", "runs", label)));
   const base = arg("base", "http://localhost:3300");
   const only = arg("cases", "").split(",").map((s) => s.trim()).filter(Boolean);
-  // --set main (default: the six the redesign reads), heldout (four it never reads), or all.
+  // --set main (default: the six the redesign reads), heldout (four it never reads), real (cases from real sessions), or all.
   const set = arg("set", "main");
-  const pool = set === "heldout" ? HELDOUT : set === "all" ? [...CASES, ...HELDOUT] : CASES;
+  const pool = set === "heldout" ? HELDOUT : set === "real" ? REAL : set === "all" ? [...CASES, ...HELDOUT, ...REAL] : CASES;
   const cases = pool.filter((c) => only.length === 0 || only.includes(c.id));
   if (cases.length === 0) throw new Error(`No case matches ${only.join(",")}. Options: ${pool.map((c) => c.id).join(", ")}`);
   const turnsArg = Number(arg("turns", "0"));

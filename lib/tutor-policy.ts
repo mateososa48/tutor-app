@@ -131,6 +131,12 @@ export type TutorPolicy = {
   lastWrongProblem: string | null;
   /** Numbers the student has said since the problem opened, and the page's own: a line may show these as results. */
   saidNumbers: string[];
+  /** The student's own lines since the problem opened, newest last: a step line may show what they said. */
+  saidLines: string[];
+  /** What the tutor has said so far in its current reply (a step it says aloud is no longer withheld). */
+  tutorSpeech: string;
+  /** Step lines written as "= ?" on this page: the full line, its right side, and the board item once known. */
+  withheld: Array<{ lhs: string; latex: string; rhs: string; item: string | null }>;
   /** They asked to try one on their own ("can i try one"): the next problem is theirs, until they answer one. */
   wantsAlone: boolean;
   /** A plan is on the board; and whether the turn note already asked for one, or for their problem, on this page. */
@@ -207,6 +213,9 @@ export function createPolicy(now: number): TutorPolicy {
     markedLines: [],
     lastWrongProblem: null,
     saidNumbers: [],
+    saidLines: [],
+    tutorSpeech: "",
+    withheld: [],
     wantsAlone: false,
     planSet: false,
     planNudged: false,
@@ -325,6 +334,7 @@ export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.no
   p.studentTurns += 1;
   p.lastUtterance = t;
   for (const n of numbersIn(t)) if (!p.saidNumbers.includes(n)) p.saidNumbers.push(n);
+  p.saidLines = [...p.saidLines, t].slice(-6);
   // The value this line ends on: its one number, or its worked answer's last.
   const values = numbersIn(spokenToDigits(t));
   p.lastStudentValue = values.length === 1 ? values[0] : finalValue(t);
@@ -777,6 +787,8 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     // The page's numbers and the line that opened it are given, not results.
     p.saidNumbers = numbersIn(`${raw} ${typeof args?.ask === "string" ? args.ask : ""} ${p.lastUtterance ?? ""}`);
     p.boardNumbers = numbersIn(`${raw} ${typeof args?.ask === "string" ? args.ask : ""}`);
+    p.saidLines = p.lastUtterance ? [p.lastUtterance] : [];
+    p.withheld = [];
     p.pageSkill = null;
     p.boardHelp = 0;
     return;
@@ -1073,7 +1085,11 @@ export function spokenBoardMoves(p: TutorPolicy, text: string): BoardMove[] {
   if (question) {
     const nums = numbersIn(words(question));
     const plain = spokenToDigits(words(question), { the: true }).replace(/◊/g, "one").replace(/^(?:so|now|okay|ok|alright|great|right|yes|then),?\s+/i, "").trim();
-    if (!onBoard(nums) && plain.length <= 120) {
+    // Spoken algebra or calculus can't be written back from words ("three x
+    // squared times x cubed plus five to the fourth d x" went up as a mangled
+    // tag, Oct 6 2026): only arithmetic questions become callouts.
+    const symbolic = /\b(?:integral|integrate|derivative|squared|cubed|power|d\s?[a-z])\b|\^|\b[a-z]\b\s*(?:\^|times|plus|minus|over)|(?:times|plus|minus|over)\s+[a-z]\b/i.test(plain.replace(/\b(?:a|i)\b/gi, ""));
+    if (!symbolic && !onBoard(nums) && plain.length <= 120) {
       moves.push({ name: "add_callout", args: { text: plain.charAt(0).toUpperCase() + plain.slice(1) } });
       p.lastAsked = plain;
       for (const n of nums) if (!p.boardNumbers.includes(n)) p.boardNumbers.push(n);

@@ -155,8 +155,106 @@ function decimalsIn(s: string): number | null {
 
 function cannot(message: string): AnswerCheck {
   // An order, not an apology (Sept 25 2026: 3.8 acts on short fix-it orders and
-  // ignores prose): resend in digits and symbols, or check it yourself.
-  return { verdict: "cannot_check", message: `Can't check this automatically: ${message} Call check_answer again with the problem in digits and symbols (problem="12/2*5", problem="2(3)+1", problem="15% of 100"), or work it out yourself before you respond.` };
+  // ignores prose). "Reply now" comes first: an order to call again, alone, left
+  // 3.8 silent for 6-20 s after each calculus step it could not resend in
+  // plain digits (Oct 6 2026, a u-substitution session).
+  return { verdict: "cannot_check", message: `Can't check this automatically: ${message} Judge it yourself and reply now. Call check_answer again only if it is arithmetic you can write in digits and symbols (problem="12/2*5", problem="2(3)+1", problem="15% of 100").` };
+}
+
+/** Not checkable, with no resend: judge it and reply (calculus steps the checker can't place). */
+function unsure(message: string): AnswerCheck {
+  return { verdict: "cannot_check", message: `${message} Judge it yourself and reply now; don't call check_answer again for it.` };
+}
+
+// ── Calculus (Oct 6 2026) ────────────────────────────────────────────────────
+// An AP student's u-substitution session got cannot_check on every step
+// ("\int u^3 \, du", "\frac{d}{dx}(x^2 + 1)"). Both are checked numerically:
+// an antiderivative by differentiating the student's answer, a derivative by
+// differentiating the problem's function, compared at sample points.
+const INTEGRAL = /^\s*(?:\\int|∫|(?:find\s+)?(?:the\s+)?(?:integral|antiderivative)\s+of|integrate)\s*(.+?)\s*$/i;
+const DERIVATIVE = /^\s*(?:\\frac\{d\}\{d\s*([a-z])\}|d\s*\/\s*d\s*([a-z])|(?:find\s+)?(?:the\s+)?derivative\s+of)\s*(.+?)\s*$/i;
+
+/** A calculus expression's body: the trailing d-variable, "+ C", spacing commands and a leading "y =" gone. */
+function calcBody(raw: string): { text: string; plusC: boolean } {
+  let t = raw.replace(/\\[,;:!]|\\quad/g, " ").replace(/\\left|\\right/g, "").trim();
+  t = t.replace(/^(?:[a-z]'?\s*\(\s*[a-z]\s*\)|d[a-z]|[a-z]|\\frac\{d[a-z]?\}\{d[a-z]\}|d[a-z]\s*\/\s*d[a-z])\s*=\s*/i, "");
+  t = t.replace(/^(?:it'?s|its|it is|is|so|maybe|i got|=)\s+/i, "");
+  t = t.replace(/\s*(?:\*\s*)?\bd\s*[a-z]\s*$/i, "").replace(/^\((.*)\)$/, "$1").trim();
+  const plusC = /\+\s*c\s*$/i.test(t);
+  t = t.replace(/\s*\+\s*c\s*$/i, "").trim();
+  return { text: spokenExpression(t), plusC };
+}
+
+function slope(f: (x: number) => number, x: number): number {
+  const h = 1e-4 * Math.max(1, Math.abs(x));
+  return (f(x + h) - f(x - h)) / (2 * h);
+}
+
+function close(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 1e-4 * Math.max(1, Math.abs(a), Math.abs(b));
+}
+
+function checkCalculus(problem: string, answer: string): AnswerCheck | null {
+  const integral = INTEGRAL.exec(problem);
+  const derivative = integral ? null : DERIVATIVE.exec(problem);
+  if (!integral && !derivative) return null;
+  const body = calcBody(integral ? integral[1] : derivative![3]);
+  const P = prepareExpression(body.text);
+  if (!P.ok) return unsure(`"${problem}" has ${P.reason}.`);
+  const said = calcBody(answer);
+  const A = prepareExpression(said.text);
+  if (!A.ok) return unsure(`the student's answer "${answer}" has ${A.reason}.`);
+  if (P.variable && A.variable && P.variable !== A.variable) {
+    return unsure(`Their answer is in ${A.variable} and the problem is in ${P.variable}: substitute back to compare.`);
+  }
+  const f = createMathEvaluator(P.text), g = createMathEvaluator(A.text);
+  if (!f || !g) return unsure(`couldn't read "${f ? answer : problem}".`);
+  const letter = P.variable ?? A.variable ?? "x";
+  const pairs: Array<[number, number, number]> = [];
+  for (const x of SAMPLE_POINTS) {
+    const want = integral ? f(x) : slope(f, x);
+    const got = integral ? slope(g, x) : g(x);
+    if (Number.isFinite(want) && Number.isFinite(got)) pairs.push([x, want, got]);
+  }
+  if (pairs.length < 3) return unsure(`couldn't compare "${answer}" with "${problem}".`);
+  const wrong = pairs.find(([, w, h]) => !close(w, h));
+  if (!wrong) {
+    if (integral) return { verdict: "correct", message: `Correct: the derivative of ${said.text} is the integrand, so it is an antiderivative.${said.plusC ? "" : " They left off the + C: ask what else could be added."}` };
+    return { verdict: "correct", message: `Correct: ${said.text} is the derivative.` };
+  }
+  const [x, want, got] = wrong;
+  if (derivative) {
+    return { verdict: "incorrect", message: `Incorrect: at ${letter} = ${formatNumber(x)} the derivative is ${formatNumber(tidy(want))}, but ${said.text} gives ${formatNumber(tidy(got))}. (For you only; don't say the answer. Ask how they got it.)` };
+  }
+  // An antiderivative off by a constant factor is a real attempt at the whole
+  // integral (forgot to divide by the new power): wrong. Any other mismatch may
+  // answer one step instead (u, du), which this can't tell.
+  const ratios = pairs.filter(([, w]) => Math.abs(w) > 1e-9).map(([, w, h]) => h / w);
+  const factor = ratios.length >= 3 && ratios.every((r) => close(r, ratios[0])) ? ratios[0] : null;
+  if (factor !== null && !close(factor, 0)) {
+    return { verdict: "incorrect", message: `Incorrect: the derivative of ${said.text} is ${formatNumber(tidy(factor))} times the integrand, so it is off by that factor. (For you only; ask them to check it by differentiating.)` };
+  }
+  return unsure(`"${said.text}" is not an antiderivative of the integrand (at ${letter} = ${formatNumber(x)} its derivative is ${formatNumber(tidy(got))}, the integrand ${formatNumber(tidy(want))}). If it was their answer to the whole integral it is wrong; if it answers one step (choosing u, finding du), that is yours to judge.`);
+}
+
+const ORDINAL_POWERS: Record<string, number> = { second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
+
+/**
+ * Spoken or typed math as an expression: "x squared plus 1" → "x^2 + 1",
+ * "five to the fourth" → "5^4", "u to the fourth over four" → "u^4 / 4".
+ * Number words go through spokenToDigits first.
+ */
+export function spokenExpression(text: string): string {
+  return spokenToDigits(text)
+    .replace(/\bsquared\b/gi, "^2")
+    .replace(/\bcubed\b/gi, "^3")
+    .replace(/\s*\^\s*/g, "^")
+    .replace(/\bplus\b/gi, "+")
+    .replace(/\bminus\b/gi, "-")
+    .replace(/\b(?:times|multiplied by)\b/gi, "*")
+    .replace(/\b(?:over|divided by)\b/gi, "/")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 // "f(3) where f(x) = 2x + 1", "f(x) = 2x + 1, f(3)", "g(-2) if g(x) = x^2 + 3":
@@ -392,6 +490,8 @@ function checkAnswerAsWritten(problem: string, studentAnswer: string): AnswerChe
   const diagnostic = checkHowMany(asked, heard) ?? checkComparison(asked, heard);
   if (diagnostic) return diagnostic;
   if (PICTURE_WORDS.test(asked)) return cannot(`"${asked}" is about a picture; look at the board.`);
+  const calculus = checkCalculus(asked, heard);
+  if (calculus) return calculus;
   const read = readProblem(verbTask(asked) ?? inlineFunctions(spokenToDigits(asked)) ?? asked);
   if (typeof read !== "string") return read;
   const prob = read;
@@ -624,6 +724,10 @@ type Cardinal = { value: number; end: number };
  * only an answer means ("which is bigger?" "the third").
  */
 export function spokenToDigits(text: string, opts: { the?: boolean } = {}): string {
+  // "five to the fourth" is a power, not 5 and 1/4 (Oct 6 2026: the app wrote
+  // the tutor's spoken integral up as "x cubed plus 5 to 1/4 d x").
+  text = text.replace(/\bto the (second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|(\d+)(?:st|nd|rd|th))(?:\s+power)?\b/gi, (_m, w: string, d?: string) => `^${d ?? ORDINAL_POWERS[w.toLowerCase()]}`);
+  text = text.replace(/\bto the power of\s+/gi, "^");
   // "six minus negative two" is 6 - (-2): a "minus" or "plus" in front of a
   // signed number is the operation, never a second sign (Sept 27 2026: it read
   // "6 -2" = 4, which would have called Sofia's right 8 wrong).

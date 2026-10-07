@@ -9,6 +9,8 @@ import {
   autoCheck,
   takeAutoCheckNote,
   withholdResult,
+  filledSteps,
+  type ShapedCall,
 } from "./tutor-tools";
 import {
   boardResultExtras,
@@ -124,6 +126,9 @@ export class TutorRuntime {
 
   noteStudentUtterance(text: string, now = Date.now()): void {
     noteStudentUtterance(this.policy, text, now);
+    // A "= ?" step they have now said goes up whole, in its place.
+    const filled = this.onBoardMoves ? filledSteps(this.policy) : [];
+    if (filled.length) this.onBoardMoves!(filled.flatMap((f) => [{ name: "erase_items", args: { targets: f.item } }, { name: "draw_equation_step", args: { latex: f.latex } }]));
     // An answer the board can check is checked here, before the model speaks.
     const note = autoCheck(this.policy, text, now);
     if (!note) return;
@@ -188,8 +193,19 @@ export class TutorRuntime {
   }
 
   /** A board call as it should go up: a result the student has not said becomes "= ?" (with the note to add to its result). */
-  shapeBoardCall(name: string, args: Record<string, unknown>): { args: Record<string, unknown>; note: string | null } {
+  shapeBoardCall(name: string, args: Record<string, unknown>): ShapedCall {
     return withholdResult(this.policy, name, args);
+  }
+
+  /** The board item a withheld "= ?" step line became, so its full line can replace it later. */
+  noteWithheldItem(key: string, item: string): void {
+    const w = this.policy.withheld.find((x) => x.lhs === key);
+    if (w) w.item = item;
+  }
+
+  /** What the tutor has said so far in this reply ("" when the student speaks again). */
+  noteTutorSpeech(text: string): void {
+    this.policy.tutorSpeech = text;
   }
 
   noteBoardWrite(name?: string, args?: Record<string, unknown>): void {
