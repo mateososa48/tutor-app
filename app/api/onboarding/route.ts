@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
 import { auth } from "@/lib/auth";
@@ -63,7 +63,10 @@ export async function PUT(req: NextRequest) {
         extraContext: extraContext ?? null,
         voiceName: voiceName ?? "marin",
         ...(record ? { onboarding: record } : {}),
-        // preserve original onboardedAt — don't overwrite on profile edits
+        // Keep the original onboardedAt on profile edits, but set it when a
+        // row made before onboarding finished gets its record: the session
+        // token now reads this column instead of trusting the browser.
+        ...(record ? { onboardedAt: sql`coalesce(${userProfiles.onboardedAt}, ${now})` } : {}),
         updatedAt: now,
       },
     });
