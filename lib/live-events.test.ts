@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BackendTurnTracker, TranscriptAssembler, hasBoundarySpace, joinTranscript , SpeechTextCleaner } from "./live-events";
+import { BackendTurnTracker, NO_SPEECH, TranscriptAssembler, hasBoundarySpace, joinTranscript , SpeechTextCleaner } from "./live-events";
 import type { TutorActivity } from "./live-types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -174,4 +174,14 @@ test("speech cleaner drops list bullets, which 3.8 sometimes sends as a whole tu
   const c = new SpeechTextCleaner();
   assert.equal(c.clean("•").trim(), "");
   assert.equal(c.clean("• Add the tops"), " Add the tops");
+});
+
+test("speech cleaner drops 3.8's no-speech marker, and a new turn ends an open comment", () => {
+  const c = new SpeechTextCleaner();
+  assert.equal(c.clean("<no speech>{pause}").trim(), "");
+  assert.ok(NO_SPEECH.test("<no speech>{pause}"));
+  assert.ok(!NO_SPEECH.test("No, speech is fine"));
+  assert.equal(c.clean("Okay.<!-- never closed"), "Okay.");
+  c.reset();
+  assert.equal(c.clean("Next turn."), "Next turn.");
 });

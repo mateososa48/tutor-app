@@ -285,8 +285,16 @@ export class BackendTurnTracker {
  * dashes and HTML comments ("<!-- silence -->"). Streaming-safe: a comment
  * can span fragments, so the cleaner keeps whether it is inside one.
  */
+/** 3.8's output transcript for a turn it chose not to speak (Oct 8 2026: "<no speech>{pause}", with no turnComplete for 14 s). */
+export const NO_SPEECH = /<no speech>|\{pause\}/i;
+
 export class SpeechTextCleaner {
   private inComment = false;
+
+  /** A new tutor turn: an HTML comment never closed in the last one does not swallow this one. */
+  reset() {
+    this.inComment = false;
+  }
 
   clean(fragment: string): string {
     let out = "";
@@ -307,6 +315,6 @@ export class SpeechTextCleaner {
     }
     // "•" arrived as a whole tutor turn in a spoken session (Sept 26 2026):
     // list bullets are markup, never words.
-    return out.replace(/\$/g, "").replace(/-{3,}/g, " ").replace(/\*\*/g, "").replace(/[•◦▪]/g, "");
+    return out.replace(/<no speech>|\{pause\}/gi, "").replace(/\$/g, "").replace(/-{3,}/g, " ").replace(/\*\*/g, "").replace(/[•◦▪]/g, "");
   }
 }

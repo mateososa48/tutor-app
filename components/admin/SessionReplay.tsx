@@ -354,7 +354,11 @@ export function SessionReplay({ session, events, frames }: { session: AdminSessi
               <Stat label="Errors" value={analysis.errors} tone={analysis.errors ? "error" : undefined} />
               <Stat label="Reconnects" value={analysis.reconnects} tone={analysis.reconnects ? "warn" : undefined} />
               <Stat label="Longest silence" value={secondsText(analysis.longestSilenceMs || null)} tone={analysis.longestSilenceMs >= 20_000 ? "warn" : undefined} />
-              <Stat label="Pictures" value={frames.length} />
+              <Stat
+                label="Student waited, median / longest"
+                value={analysis.medianWaitMs === null ? "—" : `${secondsText(analysis.medianWaitMs)} / ${secondsText(analysis.longestWaitMs)}`}
+                tone={analysis.longestWaitMs !== null && analysis.longestWaitMs >= 10_000 ? "warn" : undefined}
+              />
               <Stat label="First word" value={secondsText(analysis.firstWordMs)} tone={analysis.firstWordMs !== null && analysis.firstWordMs >= 8_000 ? "warn" : undefined} />
               <Stat label="Cut off" value={analysis.cutOffs} tone={analysis.cutOffs ? "warn" : undefined} />
               <Stat label="Muted replies" value={analysis.mutedReplies} tone={analysis.mutedReplies ? "warn" : undefined} />

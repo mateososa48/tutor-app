@@ -595,7 +595,8 @@ export function formatTutorState(p: TutorPolicy, now: number): string {
   if (p.currentSkill) {
     const help = suggestHelp(p);
     if (help) parts.push(`suggested help H${help.level} (${help.why})`);
-    const onSkill = p.attempts.filter((a) => a.skill === p.currentSkill && !a.step);
+    // Answers the checker could not read count neither way, here too.
+    const onSkill = p.attempts.filter((a) => a.skill === p.currentSkill && !a.step && a.result !== "unchecked");
     const right = onSkill.filter((a) => a.result === "correct").length;
     const last = p.attempts.at(-1);
     const misses = p.missesInRow > 0 && last ? `, ${p.missesInRow} ${p.missesInRow === 1 ? "miss" : "misses"} in a row (last: ${last.result})` : "";
@@ -793,8 +794,17 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.boardHelp = 0;
     return;
   }
+  // No page yet, and the first typeset line is math: that line is the problem
+  // (Oct 8 2026: the model never called start_new_problem, so the lesson state
+  // sat on one order for the whole session). Pictures drawn before it were
+  // about the idea, not help on this problem.
+  if (!p.pageProblem && name === "draw_equation_step" && typeof args?.latex === "string" && !/\?/.test(args.latex) && /\d|\\(?:int|frac|sqrt)|[a-z]\s*[\^(=]/i.test(args.latex)) {
+    p.pageProblem = args.latex.trim().slice(0, 200);
+    p.boardHelp = 0;
+    return;
+  }
   if (name === "write_example" || name === "add_worked_example_box") p.boardHelp = Math.max(p.boardHelp, 5);
-  else if (name && PICTURE_TOOLS.has(name)) p.boardHelp = Math.max(p.boardHelp, name === "draw_fraction" && args?.common_denominator !== undefined ? 4 : 3);
+  else if (name && PICTURE_TOOLS.has(name) && p.pageProblem) p.boardHelp = Math.max(p.boardHelp, name === "draw_fraction" && args?.common_denominator !== undefined ? 4 : 3);
 }
 
 /** A highlight, ring or point: pointing at the spot is H2 help. */

@@ -518,3 +518,22 @@ test("'that' in a spoken step is the student's last answer, when the tutor said 
   noteTutorTurn(p, "The loss is 300. Subtract that from 1000.", false);
   assert.equal(p.lastSpokenQuestion, "Subtract that from 1000.");
 });
+
+test("with no page open, the first typeset problem line opens it, and pictures before it are not help", () => {
+  const p = createPolicy(T0);
+  noteBoardWrite(p, "draw_sketch", { strokes: "0,0 10,10" });
+  assert.equal(p.boardHelp, 0, "a picture about the idea, before any problem");
+  noteBoardWrite(p, "draw_equation_step", { latex: "\\int 2x(x^2+1)^3\\,dx" });
+  assert.equal(p.pageProblem, "\\int 2x(x^2+1)^3\\,dx");
+  noteBoardWrite(p, "draw_equation_step", { latex: "u = x^2 + 1" });
+  assert.equal(p.pageProblem, "\\int 2x(x^2+1)^3\\,dx", "only the first line names the page");
+  noteBoardWrite(p, "draw_fraction", { fraction: "1/2" });
+  assert.equal(p.boardHelp, 3);
+});
+
+test("answers the checker could not read are not counted in the score", () => {
+  const p = createPolicy(T0);
+  recordAttempt(p, { skill: "adding fractions", result: "correct", help: 1 }, T0);
+  recordAttempt(p, { skill: "adding fractions", result: "unchecked", help: 1 }, T0 + 1000);
+  assert.match(formatTutorState(p, T0 + 2000), /1 of 1 right/);
+});

@@ -205,6 +205,8 @@ function SessionDetailPage({ id }: { id: string }) {
   const intentionalDisconnectRef = useRef(false);
   const disconnectToErrorRef = useRef(false);
   const startInFlightRef = useRef(false);
+  /** A dropped connection is being restored; typed lines wait in the live client. */
+  const reconnectingRef = useRef(false);
   const endInFlightRef = useRef(false);
   const resumeInFlightRef = useRef(false);
   const pauseInFlightRef = useRef(false);
@@ -1032,6 +1034,7 @@ function SessionDetailPage({ id }: { id: string }) {
       onToolCall: handleToolCall,
       onToolCancelled: handleToolCancelled,
       onConnected: ({ resumed, expiresAt }) => {
+        reconnectingRef.current = false;
         startInFlightRef.current = false;
         liveStateRef.current = "active";
         setLiveState("active");
@@ -1066,6 +1069,7 @@ function SessionDetailPage({ id }: { id: string }) {
         }, 30_000);
       },
       onReconnecting: (attempt) => {
+        reconnectingRef.current = true;
         recordDebug("connection", "live_session_reconnecting", { attempt });
         clearSubtitle();
         setIsTutorSpeaking(false);
@@ -1074,6 +1078,7 @@ function SessionDetailPage({ id }: { id: string }) {
         setLiveState("connecting");
       },
       onDisconnected: (reason) => {
+        reconnectingRef.current = false;
         recordDebug("connection", "live_session_disconnected", {
           intentional: intentionalDisconnectRef.current,
           reason,
@@ -1095,6 +1100,7 @@ function SessionDetailPage({ id }: { id: string }) {
         setLiveState("error");
       },
       onError: (msg) => {
+        reconnectingRef.current = false;
         recordDebug("error", "live_session_error", { message: msg });
         void recorderRef.current?.flush();
         void learningRecorderRef.current?.flush();
@@ -1222,7 +1228,9 @@ function SessionDetailPage({ id }: { id: string }) {
   }, [recordDebug]);
 
   const handleSendText = useCallback((text: string) => {
-    if (liveStateRef.current !== "active" || !sessionRef.current) {
+    // While a dropped connection is restored the live client keeps the line
+    // and sends it once it is back.
+    if ((liveStateRef.current !== "active" && !reconnectingRef.current) || !sessionRef.current) {
       recordDebug("text", "send_skipped", { reason: "session_not_active", text });
       return;
     }
@@ -1558,7 +1566,9 @@ function SessionDetailPage({ id }: { id: string }) {
           <ErrorNotice
             message={errorMessage}
             onRetry={() => {
-              isResumeRef.current = false;
+              // A lesson already under way picks up where it stopped (board and
+              // transcript kept); only a session that never started begins again.
+              isResumeRef.current = transcriptRef.current.some((e) => !e.id.startsWith("intake_"));
               void startSession();
             }}
           />

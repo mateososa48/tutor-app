@@ -37,8 +37,10 @@ export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!allowed(session.user.id, Date.now())) return NextResponse.json({ note: null, error: "rate_limited" }, { status: 429 });
-  // Production may carry only the NEXT_PUBLIC_ key, as /api/live-token allows.
-  const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+  // Its own key when there is one, so the planner never shares the Live
+  // session's rate limit (the bench lost half its orders to that, Sept 27
+  // 2026). Production may carry only the NEXT_PUBLIC_ key, as /api/live-token allows.
+  const apiKey = process.env.PLANNER_GEMINI_API_KEY || process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
   if (!apiKey) return NextResponse.json({ note: null, error: "misconfigured" }, { status: 500 });
 
   let body: Record<string, unknown>;
@@ -66,6 +68,8 @@ export async function POST(req: NextRequest) {
 
   const started = Date.now();
   const verdict = text(body.verdict, 400) || null;
+  // Why a model gave nothing (429 quota, 503 overload…), for the recording.
+  const failures: string[] = [];
   const won = await hedged(
     MODELS,
     async (model, signal) => {
@@ -79,12 +83,15 @@ export async function POST(req: NextRequest) {
         }),
         signal,
       });
-      if (!r.ok) return null;
+      if (!r.ok) {
+        failures.push(`${model} ${r.status}`);
+        return null;
+      }
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
       return plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
     },
     { hedgeMs: HEDGE_MS, deadlineMs: DEADLINE_MS },
   );
-  if (won) return NextResponse.json({ note: won.value, model: won.model, ms: Date.now() - started });
-  return NextResponse.json({ note: null, ms: Date.now() - started });
+  if (won) return NextResponse.json({ note: won.value, model: won.model, ms: Date.now() - started, ...(failures.length ? { failures } : {}) });
+  return NextResponse.json({ note: null, ms: Date.now() - started, failures });
 }

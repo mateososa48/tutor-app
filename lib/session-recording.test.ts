@@ -10,6 +10,7 @@ import {
   lastIndexAtOrBefore,
   breakIntervals,
   mergeUtterances,
+  studentWaits,
   speakingIntervals,
   studentInputs,
   voiceReplyTimes,
@@ -272,4 +273,14 @@ test("what the student did not hear is counted and flagged: a slow start, a cut-
 
 test("a session that never spoke has no first word", () => {
   assert.equal(analyzeSession([ev(1000, "session.started", "system")]).firstWordMs, null);
+});
+
+test("a student's wait runs from the end of their line to the tutor's next sound", () => {
+  const u = (role: "student" | "tutor", startMs: number, endMs: number) => ({ role, text: "x", startMs, endMs });
+  const waits = studentWaits(
+    [u("student", 0, 1000), u("tutor", 3000, 5000), u("student", 6000, 6500), u("student", 9000, 9200), u("tutor", 21_200, 22_000)],
+    [{ startMs: 3000, endMs: 5000 }, { startMs: 21_200, endMs: 22_000 }],
+  );
+  // The second line was never answered before the third: no wait for it.
+  assert.deepEqual(waits, [{ atMs: 1000, waitMs: 2000 }, { atMs: 9200, waitMs: 12_000 }]);
 });

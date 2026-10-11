@@ -578,3 +578,11 @@ test("the tutor's own '= ?' line gives way to its full line", () => {
   assert.deepEqual(filledSteps(p), [], "no right side known, so the app can't fill it");
   assert.equal(withholdResult(p, "draw_equation_step", { latex: "\\frac{du}{dx} = 2x" }).replaces, "b5");
 });
+
+test("check_answer refuses an answer sent as its own problem, and records nothing", () => {
+  const p = createPolicy(0);
+  const r = runTutorTool("check_answer", { problem: "x^2 + 1", student_answer: "x^2+1" }, p, 0);
+  assert.ok(r?.success);
+  assert.match(r && r.success ? r.message ?? "" : "", /cannot_check/);
+  assert.equal(p.attempts.length, 0);
+});

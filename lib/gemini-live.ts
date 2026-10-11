@@ -3,7 +3,7 @@ import type { UploadedFile } from "./file-processor";
 import { TUTOR_TOOL_DECLARATIONS, previewCheck } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
 import { marksLast, toolRole } from "./board-items";
-import { SpeechTextCleaner, hasBoundarySpace, joinTranscript } from "./live-events";
+import { NO_SPEECH, SpeechTextCleaner, hasBoundarySpace, joinTranscript } from "./live-events";
 import { formatMemory, formatTutorState } from "./tutor-policy";
 import { TutorRuntime } from "./tutor-runtime";
 import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, finishReplyNote, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
@@ -75,6 +75,8 @@ export type SessionCallbacks = {
   onConnected: () => void;
   onDisconnected: () => void;
   onError: (msg: string) => void;
+  /** A dropped connection is being restored (true), or is back (false). */
+  onReconnecting?: (reconnecting: boolean) => void;
   onInterrupted: () => void;
   onTurnComplete?: () => void;
   onDebugEvent?: (event: {
@@ -87,6 +89,11 @@ export type SessionCallbacks = {
 type GeminiContentPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } };
+
+/** A close that means the server session is gone and its resume handle is useless. */
+export function isDeadSession(code: number, reason: string): boolean {
+  return code === 1008 && /not found|expired/i.test(reason);
+}
 
 export type ToolCallResult =
   | { success: true; message?: string }
@@ -148,6 +155,13 @@ export class GeminiLiveSession {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectAttempts = 0;
   private sessionHandle: string | null = null;
+  /** A new server session stands in for one Google destroyed: it gets the lesson so far at setupComplete. */
+  private restartPending = false;
+  /** The model was composing when the socket dropped (its reply was cut off). */
+  private busyAtDrop = false;
+  private reconnecting = false;
+  /** A held line waited for a reconnect, not for the model. */
+  private waitedReconnect = false;
   private systemInstruction: string;
   private voiceName: string;
   /** Which Live model this session runs (LIVE_MODELS). */
@@ -293,6 +307,7 @@ export class GeminiLiveSession {
   private lastStudentLine = "";
   private turnTools: string[] = [];
   private inputSeq = 0;
+  private lastInputAt = 0;
 
   constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: { topic: () => string; board: () => string; grade: () => string } }) {
     this.coach = options.coach;
@@ -313,6 +328,7 @@ export class GeminiLiveSession {
     // waits for the server to cut it off.
     this.gate.onNewInput(kind === "voice" && Date.now() - this.lastModelAudioAt < 400);
     this.inputSeq += 1;
+    this.lastInputAt = Date.now();
     this.lastInputKind = kind;
     this.turnHadAudio = false;
     this.replyText = "";
@@ -479,7 +495,16 @@ export class GeminiLiveSession {
         manual: this.manualDisconnect,
       });
       if (this.manualDisconnect) return;
-      if (this.scheduleReconnect("socket closed")) return;
+      if (this.ready) this.busyAtDrop = this.modelBusy;
+      this.ready = false;
+      // 1008 "session not found or expired": the server destroyed the session
+      // (Oct 8 2026: a 1011, then four resumes refused with this). Its handle
+      // is dead, so the next attempt opens a fresh session instead.
+      if (isDeadSession(e.code, e.reason) && this.sessionHandle) {
+        this.sessionHandle = null;
+        this.debug("connection", "resume_handle_dead", { code: e.code, reason: e.reason || "" });
+      }
+      if (this.scheduleReconnect(`socket closed ${e.code}`)) return;
       this.callbacks.onDisconnected();
     };
 
@@ -532,6 +557,14 @@ export class GeminiLiveSession {
   }
 
   sendText(text: string): boolean {
+    // Mid-reconnect: keep the line until the new socket is ready (it was lost).
+    if (this.hasReportedConnected && (!this.ready || this.ws?.readyState !== WebSocket.OPEN)) {
+      this.heldText.push(text);
+      this.debug("pacing", "text_held_reconnecting", { text: text.slice(0, 80) });
+      this.waitedReconnect = true;
+      this.scheduleHeldFlush(1_000);
+      return true;
+    }
     // Mid-reply: hold the line until the reply is done (see modelBusy), but
     // never longer than a stalled model deserves.
     if (this.modelBusy && this.ready && this.ws?.readyState === WebSocket.OPEN && Date.now() - this.lastServerAt < GeminiLiveSession.BUSY_STALL_MS) {
@@ -549,17 +582,34 @@ export class GeminiLiveSession {
     this.heldTimer = setTimeout(() => {
       this.heldTimer = null;
       if (!this.heldText.length || this.manualDisconnect) return;
-      const stalled = Date.now() - this.lastServerAt >= GeminiLiveSession.BUSY_STALL_MS;
+      const stalled = !this.waitedReconnect && Date.now() - this.lastServerAt >= GeminiLiveSession.BUSY_STALL_MS;
       if (this.modelBusy && !stalled) return this.scheduleHeldFlush(1_000);
-      if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) return this.scheduleHeldFlush(1_000);
+      if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) {
+        this.waitedReconnect = true;
+        return this.scheduleHeldFlush(1_000);
+      }
       const text = this.heldText.join("\n");
       this.heldText = [];
-      this.debug("pacing", "text_released", { text: text.slice(0, 80), stalled });
+      const afterReconnect = this.waitedReconnect;
+      this.waitedReconnect = false;
+      this.debug("pacing", "text_released", { text: text.slice(0, 80), stalled, ...(afterReconnect ? { afterReconnect } : {}) });
       this.deliverText(text);
     }, afterMs);
   }
 
+  /**
+   * A line the tutor never answered stays in the history the planner and
+   * coach read (Oct 8 2026: "wait where did the ex go?" then "2 x" two
+   * seconds later, and the planner for the second never saw the first).
+   */
+  private keepUnanswered() {
+    const prev = this.lastStudentLine.trim();
+    if (!prev || !this.awaitingReply || this.turnHadAudio || this.coachHistory.at(-1)?.student === prev) return;
+    this.coachHistory = [...this.coachHistory, { student: prev, tutor: "", tools: [] }].slice(-8);
+  }
+
   private deliverText(text: string): boolean {
+    this.keepUnanswered();
     this.lastStudentLine = text;
     this.tutorRuntime.noteStudentUtterance(text);
     this.newStudentInput("text");
@@ -674,11 +724,11 @@ export class GeminiLiveSession {
         }),
         signal: controller.signal,
       });
-      const j = r.ok ? ((await r.json()) as { note?: string | null; model?: string }) : null;
+      const j = r.ok ? ((await r.json()) as { note?: string | null; model?: string; failures?: string[] }) : null;
       const note = j?.note ?? null;
       // The planner read the late turn note: its order stands in for it.
       if (note && reminders && reminders === this.lateTurnNote) this.lateTurnNote = null;
-      this.debug("pacing", "planner", { note, model: j?.model, ms: Date.now() - started });
+      this.debug("pacing", "planner", { note, model: j?.model, ms: Date.now() - started, ...(r.ok ? {} : { status: r.status }), ...(j?.failures?.length ? { failures: j.failures } : {}) });
       return note;
     } catch {
       this.debug("pacing", "planner_missed", { ms: Date.now() - started });
@@ -726,11 +776,12 @@ export class GeminiLiveSession {
     title: string,
     recentTurns: { role: "tutor" | "student"; text: string }[],
     files: UploadedFile[],
+    board = "",
   ): boolean {
     const parts = this.buildFileParts(files);
     const lines: string[] = [];
     lines.push("Session event: resume.");
-    lines.push("The app is reconnecting to a paused session. You do not directly see the whiteboard; only use concrete details listed here.");
+    lines.push("The app is reconnecting to a paused session. Only use concrete details listed here; the board list is what is on the restored board.");
     if (title && title !== "Session") {
       lines.push(`Possible session label: "${title}". Treat this as a label only, not proof of the exact problem.`);
     }
@@ -740,10 +791,12 @@ export class GeminiLiveSession {
         lines.push(`- ${t.role}: ${t.text}`);
       }
     }
+    const onBoard = board.trim();
+    if (onBoard) lines.push(onBoard.startsWith("[Board") ? onBoard : `[Board: ${onBoard}]`);
     lines.push(
       "Resume behavior: If the recent conversation contains a specific confirmed problem, briefly orient to it and ask whether to continue. " +
       "If the context is generic, missing, or the student sounds confused, say you may have lost the thread and ask what they want help with. " +
-      "Do not invent equations, givens, previous steps, or board content: the board was restored from a snapshot, and anything not listed above is not on it. Once you and the student pick the task back up, draw it fresh rather than pointing at what you cannot see.",
+      "Do not invent equations, givens, previous steps, or board content: anything not listed above is not on the board.",
     );
     parts.push({ text: lines.join("\n") });
     return this.sendUserTurn(parts, "resume");
@@ -780,6 +833,10 @@ export class GeminiLiveSession {
     this.turns.noteInput(trigger, Date.now());
     this.modelBusy = true;
     this.lastServerAt = Date.now();
+    // When each turn really left the browser: a line held, planned or lost on a
+    // reconnect shows up here, not at the time it was typed.
+    const chars = parts.reduce((n, p) => n + ("text" in p ? p.text.length : 0), 0);
+    this.debug("send", "user_turn_sent", { trigger, chars, open: this.ws?.readyState === WebSocket.OPEN });
     return this.send({
       clientContent: {
         turns: [{ role: "user", parts }],
@@ -863,6 +920,7 @@ export class GeminiLiveSession {
     const text = this.studentUtterance.trim();
     this.studentUtterance = "";
     if (text) {
+      if (text !== this.lastStudentLine) this.keepUnanswered();
       this.lastStudentLine = text;
       this.tutorRuntime.noteStudentUtterance(text);
     }
@@ -1070,12 +1128,20 @@ export class GeminiLiveSession {
         hasResumeHandle: Boolean(this.sessionHandle),
       });
       this.modelBusy = false;
+      if (this.reconnecting) {
+        this.reconnecting = false;
+        this.callbacks.onReconnecting?.(false);
+      }
       if (!this.hasReportedConnected) {
         this.hasReportedConnected = true;
         this.callbacks.onConnected();
+      } else if (this.restartPending) {
+        this.restartPending = false;
+        this.sendRestartContext();
       } else {
         this.askAfterResume();
       }
+      this.busyAtDrop = false;
       return;
     }
 
@@ -1090,10 +1156,10 @@ export class GeminiLiveSession {
               ? resumptionUpdate.token
               : "";
 
+      // 3.8 sends one update, at setup; 3.1 one about every half second (Oct 11 probe).
+      this.debug("connection", "resumption_update", { resumable: resumptionUpdate.resumable === true, hasHandle: Boolean(handle) });
       if (resumptionUpdate.resumable === true && handle) {
         this.sessionHandle = handle;
-        console.log("[Gemini] Stored resumable session handle");
-        this.debug("connection", "resumption_handle_stored");
       }
     }
 
@@ -1158,6 +1224,13 @@ export class GeminiLiveSession {
 
       // Tutor speech transcript, kept exactly as sent (see transcriptEntry).
       const outTx = serverContent.outputTranscription as Record<string, unknown> | undefined;
+      // "Nothing to say": the model is not composing, so a held line and the
+      // nudge may go (it kept the turn open 14 s after this, Oct 8 2026).
+      if (typeof outTx?.text === "string" && NO_SPEECH.test(outTx.text)) {
+        this.modelBusy = false;
+        this.debug("turn", "no_speech_marker", { text: outTx.text.slice(0, 40) });
+        if (this.heldText.length) this.scheduleHeldFlush(400);
+      }
       const tutorEntry = typeof outTx?.text === "string" && !this.gate.muted ? this.transcriptEntry("tutor", this.speechText.clean(outTx.text)) : null;
       if (tutorEntry) {
         this.turns.noteTutorText(tutorEntry.text, tutorEntry.spaced === true, now);
@@ -1186,6 +1259,7 @@ export class GeminiLiveSession {
       }
       if (serverContent.turnComplete === true) {
         this.modelBusy = false;
+        this.speechText.reset();
         // 3.8 can send turnComplete before its audio: a held line waits a
         // moment for sound that is still coming (SILENT_TURN_MS).
         if (this.heldText.length) this.scheduleHeldFlush(this.turnHadAudio ? 400 : GeminiLiveSession.SILENT_TURN_MS);
@@ -1200,7 +1274,10 @@ export class GeminiLiveSession {
         // the sound follows (an early turnComplete mid-reasoning).
         // Not while a call is still out: its result re-arms the nudge itself
         // (the bench always had this guard; the app did not, Sept 26 2026).
-        if (this.awaitingReply && !this.turnHadAudio && this.nudgesThisTurn === 0 && this.pendingTools === 0) this.armUnanswered(this.lastInputKind, GeminiLiveSession.SILENT_TURN_MS);
+        if (this.awaitingReply && !this.turnHadAudio && this.pendingTools === 0) {
+          this.debug("turn", "silent_turn_complete", { nudges: this.nudgesThisTurn, sinceInputMs: Date.now() - this.lastInputAt });
+          if (this.nudgesThisTurn === 0) this.armUnanswered(this.lastInputKind, GeminiLiveSession.SILENT_TURN_MS);
+        }
       }
     }
 
@@ -1381,39 +1458,84 @@ export class GeminiLiveSession {
   private scheduleReconnect(reason: string): boolean {
     if (this.manualDisconnect || this.reconnectTimer) return true;
 
-    if (!this.sessionHandle) {
-      console.warn(`[Gemini] Cannot resume after ${reason}: no session handle yet`);
+    // Never connected: nothing to resume, and the page shows the failure.
+    if (!this.hasReportedConnected) {
       this.debug("connection", "reconnect_unavailable", { reason });
       return false;
     }
 
     if (this.reconnectAttempts >= GeminiLiveSession.MAX_RECONNECT_ATTEMPTS) {
-      this.debug("connection", "reconnect_exhausted", {
-        reason,
-        attempts: this.reconnectAttempts,
-      });
+      this.debug("connection", "reconnect_exhausted", { reason, attempts: this.reconnectAttempts });
       this.callbacks.onError("The tutor connection could not be resumed.");
       return false;
     }
 
+    if (this.ready) this.busyAtDrop = this.modelBusy;
+    // Two refused resumes in a row: stop trying the handle and start fresh.
+    if (this.sessionHandle && this.reconnectAttempts >= 2) {
+      this.debug("connection", "resume_handle_abandoned", { attempts: this.reconnectAttempts });
+      this.sessionHandle = null;
+    }
     this.reconnectAttempts++;
     const handle = this.sessionHandle;
-    console.log(`[Gemini] Reconnecting after ${reason} (attempt ${this.reconnectAttempts})`);
+    this.restartPending = !handle;
+    console.log(`[Gemini] ${handle ? "Resuming" : "Starting a fresh session"} after ${reason} (attempt ${this.reconnectAttempts})`);
 
     const oldWs = this.ws;
     this.ws = null;
+    this.ready = false;
     oldWs?.close(1000, "Reconnecting");
-    this.debug("connection", "reconnect_scheduled", {
-      reason,
-      attempt: this.reconnectAttempts,
-    });
+    this.debug("connection", "reconnect_scheduled", { reason, attempt: this.reconnectAttempts, fresh: !handle });
+    if (!this.reconnecting) {
+      this.reconnecting = true;
+      this.callbacks.onReconnecting?.(true);
+    }
 
+    // Back off a little after the first try: a server that just failed often fails again at once.
+    const delay = this.reconnectAttempts === 1 ? 250 : 1_000 * (this.reconnectAttempts - 1);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.manualDisconnect) this.openSocket(handle);
-    }, 250);
+    }, delay);
 
     return true;
+  }
+
+  /**
+   * A fresh session in place of one Google destroyed: it knows nothing, so it
+   * gets the recent conversation and the board as they stand. It answers the
+   * student when a reply is owed, says its cut-off question again when the
+   * drop cut it off, and otherwise only reads (turnComplete false).
+   */
+  private sendRestartContext() {
+    const board = (this.planner?.board() || this.coach?.board() || "").trim();
+    const turns = this.coachHistory.slice(-6);
+    const lines = [
+      "Session event: the connection dropped and this is a new connection to the same lesson. You don't remember it, so here is where it stands. Don't greet the student or start over; carry on from here.",
+    ];
+    if (turns.length) {
+      lines.push("Recent conversation:");
+      for (const t of turns) {
+        if (t.student.trim()) lines.push(`- student: ${t.student.trim().slice(0, 300)}`);
+        if (t.tutor.trim()) lines.push(`- you: ${t.tutor.trim().slice(0, 300)}`);
+      }
+    }
+    if (board) lines.push(board.startsWith("[Board") ? board : `[Board: ${board}]`);
+    const owed = (this.studentUtterance.trim() || this.lastStudentLine).trim().slice(0, 300);
+    const replyOwed = this.awaitingReply && !this.turnHadAudio && Boolean(owed);
+    const order = replyOwed
+      ? `The student just said: "${owed}" and has not been answered. Answer them now, out loud, in a sentence or two.`
+      : this.busyAtDrop
+        ? "Your last reply was cut off by the drop. Say its question again in one short sentence."
+        : "";
+    this.debug("connection", "restart_context_sent", { turns: turns.length, board: board.length, replyOwed, cutOff: this.busyAtDrop && !replyOwed });
+    if (order) {
+      lines.push(order);
+      this.sendUserTurn([{ text: lines.join("\n") }], "event");
+      this.armUnanswered(this.lastInputKind, GeminiLiveSession.ESCALATE_MS);
+    } else {
+      this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: lines.join("\n") }] }], turnComplete: false } });
+    }
   }
 
   disconnect() {

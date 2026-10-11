@@ -610,6 +610,9 @@ export function runTutorTool(
   const problem = text(args.problem).slice(0, 300);
   const answer = text(args.student_answer).slice(0, 200);
   if (!problem.trim() || !answer.trim()) return { success: false, error: "check_answer needs problem and student_answer, both as strings." };
+  // The answer written as the problem itself proves nothing (Oct 8 2026: "x^2 + 1"
+  // checked against "x^2 + 1" was stored as a right answer and froze the lesson state).
+  if (answerKey(problem) === answerKey(answer)) return { success: true, message: "Verdict: cannot_check. The problem you sent is their answer itself. Send the question they were answering as problem (in digits and symbols), or judge it yourself and reply now." };
   // The same answer the code checked a moment ago: the same verdict, recorded once.
   const auto = policy.autoChecked;
   // …and only for the same problem: a model checking another problem gets a

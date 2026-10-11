@@ -56,6 +56,7 @@ export class GeminiTutorSession {
   private player: AudioPlayer | null = null;
   private meter: ReturnType<typeof setInterval> | null = null;
   private speaking = false;
+  private reconnects = 0;
   private muted = false;
   private ended = false;
   private turnText = "";
@@ -192,12 +193,25 @@ export class GeminiTutorSession {
         onConnected: () => {
           this.callbacks.onConnected({ resumed: opts.mode === "resume", expiresAt: null });
           const sent = opts.mode === "resume"
-            ? session.sendResumeContext(opts.sessionTitle, opts.history, opts.files)
+            ? session.sendResumeContext(opts.sessionTitle, opts.history, opts.files, opts.getBoardSummary?.() ?? "")
             : active
               ? session.sendOpening(intakeOpeningMessage(active.intake, opts.files.length), opts.files)
               : session.sendInitialGreeting(opts.files);
           this.debug("session", "opening_turn_sent", { sent, mode: opts.mode, fromIntake: Boolean(active) });
           if (active) clearActiveIntake();
+        },
+        onReconnecting: (on) => {
+          if (this.ended) return;
+          if (on) {
+            this.reconnects += 1;
+            this.player?.flush();
+            this.resetTurn();
+            this.showCaption("");
+            this.setSpeaking(false);
+            this.callbacks.onReconnecting(this.reconnects);
+          } else {
+            this.callbacks.onConnected({ resumed: true, expiresAt: null });
+          }
         },
         onDisconnected: () => {
           if (!this.ended) this.callbacks.onDisconnected("socket_closed");

@@ -164,12 +164,37 @@ export type SessionAnalysis = {
   mutedReplies: number;
   /** Times the microphone was found sending nothing. */
   micProblems: number;
+  /**
+   * What the student waited: from the end of their line (typed or spoken) to
+   * the tutor's next sound, before they said anything else. Unlike
+   * medianReplyMs it counts the time the app held or planned the line.
+   */
+  medianWaitMs: number | null;
+  longestWaitMs: number | null;
   flags: SessionFlag[];
 };
 
 const SLOW_START_MS = 8000;
 
 const SLOW_REPLY_MS = 6000;
+const LONG_WAIT_MS = 10_000;
+
+/** Each student line and how long it waited for the tutor's next sound (see SessionAnalysis.medianWaitMs). */
+export function studentWaits(utterances: readonly Utterance[], speaking: ReadonlyArray<{ startMs: number; endMs: number }>, breaks: readonly number[] = []): Array<{ atMs: number; waitMs: number }> {
+  const students = utterances.filter((u) => u.role === "student");
+  const out: Array<{ atMs: number; waitMs: number }> = [];
+  students.forEach((u, i) => {
+    const next = students[i + 1]?.startMs ?? Infinity;
+    const start = speaking.find((s) => s.startMs >= u.endMs)?.startMs;
+    // Answered while they were still talking, or not before they spoke again.
+    if (start === undefined || start >= next) return;
+    if (speaking.some((s) => s.startMs < u.endMs && s.endMs > u.endMs)) return;
+    const wait = start - u.endMs;
+    if (wait > 120_000 || breaks.some((b) => b > u.endMs && b < start)) return;
+    out.push({ atMs: u.endMs, waitMs: wait });
+  });
+  return out;
+}
 const LONG_SILENCE_MS = 20_000;
 
 function inner(e: TimelineEvent): Record<string, unknown> {
@@ -383,6 +408,9 @@ export function analyzeSession(events: readonly TimelineEvent[], durationMs = 0)
   }
   if (longest >= LONG_SILENCE_MS) flags.push({ offsetMs: longestAt, tone: "warn", label: `${Math.round(longest / 1000)} s of silence` });
 
+  const waits = studentWaits(utterances, speaking, breaks);
+  for (const w of waits) if (w.waitMs >= LONG_WAIT_MS) flags.push({ offsetMs: w.atMs, tone: "warn", label: `The student waited ${(w.waitMs / 1000).toFixed(1)} s for an answer` });
+
   flags.sort((a, b) => a.offsetMs - b.offsetMs);
   const lastOffset = sorted.length ? sorted[sorted.length - 1].offsetMs : 0;
   return {
@@ -403,6 +431,8 @@ export function analyzeSession(events: readonly TimelineEvent[], durationMs = 0)
     cutOffs: cut.length,
     mutedReplies: muted.length,
     micProblems: mic.length,
+    medianWaitMs: median(waits.map((w) => w.waitMs)),
+    longestWaitMs: waits.length ? Math.max(...waits.map((w) => w.waitMs)) : null,
     flags,
   };
 }
@@ -504,8 +534,8 @@ export function buildLog(events: readonly TimelineEvent[]): LogEntry[] {
           entries.push({ ...base, lane: "tutor", title: `Cut off after ${played} of ${total} s: the student heard ${heard ? `“${heard}”` : "nothing"}`, detail: `It said: ${String(data.said ?? "")}`, tone: "warn", hidden: false, issue: true });
         } else if (message === "second_reply_dropped") {
           entries.push({ ...base, lane: "tutor", title: "Reply muted: taken for a second reply to one line, so the student heard none of it", tone: "warn", hidden: false, issue: true });
-        } else if (message === "text_held" || message === "text_released") {
-          entries.push({ ...base, lane: "system", title: message === "text_held" ? "Typed line held while the tutor composes" : `Typed line sent${data.stalled ? " (the tutor had gone quiet)" : ""}`, detail: String(data.text ?? ""), tone: "default", hidden: false, issue: false });
+        } else if (message === "text_held" || message === "text_held_reconnecting" || message === "text_released") {
+          entries.push({ ...base, lane: "system", title: message === "text_held" ? "Typed line held while the tutor composes" : message === "text_held_reconnecting" ? "Typed line held while the connection comes back" : `Typed line sent${data.afterReconnect ? " (after the reconnect)" : data.stalled ? " (the tutor had gone quiet)" : ""}`, detail: String(data.text ?? ""), tone: "default", hidden: false, issue: false });
         } else if (message === "mic_problem" || message === "mic_ok") {
           entries.push({ ...base, lane: "system", title: message === "mic_problem" ? `Mic problem shown: ${String(data.problem ?? "")}` : "Mic sending sound again", detail: compactJson(data), tone: message === "mic_problem" ? "warn" : "default", hidden: false, issue: message === "mic_problem" });
         } else if (message === "interrupted") {
