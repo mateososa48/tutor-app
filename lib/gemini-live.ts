@@ -290,6 +290,21 @@ export class GeminiLiveSession {
   private plannedOrder: string | null = null;
   /** Typed lines wait for the planner in order, so a quick second line never overtakes the first. */
   private textChain: Promise<void> = Promise.resolve();
+  /**
+   * The typed line still waiting for its order. A line typed meanwhile joins it
+   * and the plan is made again on both, so the two go to the tutor as one turn
+   * (Oct 11 2026: "I think we need the same denominator." then "Can I change one
+   * half to two fourths?" 0.4 s later went in as two turns 3 s apart; the reply
+   * to the first asked how to rewrite one half, the second cut it off, and the
+   * answer to the second was muted as a second reply).
+   */
+  private typedBatch: { texts: string[]; notes: string[]; turnNote: string | null; version: number; abort: AbortController | null } | null = null;
+  /** Planner misses in a row, and when a planner that keeps missing is tried again. */
+  private plannerMisses = 0;
+  private plannerPausedUntil = 0;
+  // Two misses in a row and the planner is left out for a minute: a planner
+  // that is down cost every typed line 3.2 s for nothing (Oct 11 2026, 22:26).
+  private static readonly PLANNER_PAUSE_MS = 60_000;
   // The route gives up at 3.2 s; this covers the trip.
   private static readonly PLANNER_MS = 3_600;
   // The spoken path starts the planner once the student's words stop coming
@@ -609,7 +624,8 @@ export class GeminiLiveSession {
   }
 
   private deliverText(text: string): boolean {
-    this.keepUnanswered();
+    const batch = this.planner ? this.typedBatch : null;
+    if (!batch) this.keepUnanswered();
     this.lastStudentLine = text;
     this.tutorRuntime.noteStudentUtterance(text);
     this.newStudentInput("text");
@@ -618,6 +634,15 @@ export class GeminiLiveSession {
     // interrupts a generation in progress).
     const note = this.tutorRuntime.takeAutoCheckNote();
     if (note) this.debug("tool", "auto_check", { note: note.slice(0, 200) });
+    if (batch) {
+      batch.texts.push(text);
+      if (note) batch.notes.push(note);
+      batch.version += 1;
+      batch.abort?.abort();
+      this.lastStudentLine = batch.texts.join("\n");
+      this.debug("pacing", "typed_merged", { lines: batch.texts.length, text: text.slice(0, 80) });
+      return true;
+    }
     const turnNote = this.pendingTurnNote;
     this.pendingTurnNote = null;
     if (turnNote) this.debug("pacing", "turn_note", { note: turnNote });
@@ -631,18 +656,30 @@ export class GeminiLiveSession {
     // ?plan=1: the line waits (at most PLANNER_MS) for the planner's one order,
     // which takes the turn note's place (the note is one of its inputs).
     const open = this.ws?.readyState === WebSocket.OPEN;
-    const seq = this.inputSeq;
+    const mine = { texts: [text], notes: note ? [note] : [], turnNote, version: 0, abort: null as AbortController | null };
+    this.typedBatch = mine;
     this.textChain = this.textChain
-      .then(() => this.askPlanner(text, note, turnNote))
-      .then((order) => {
-        this.plannedFor = seq;
+      .then(async () => {
+        // Planned again (at most twice more) when a line joins while planning.
+        let order: string | null = null;
+        for (let tries = 0; tries < 3; tries++) {
+          const version = mine.version;
+          mine.abort = new AbortController();
+          order = await this.askPlanner(mine.texts.join("\n"), mine.notes.join("\n") || null, mine.turnNote, mine.abort.signal);
+          if (mine.version === version) break;
+        }
+        if (this.typedBatch === mine) this.typedBatch = null;
+        mine.abort = null;
+        this.plannedFor = this.inputSeq;
         this.plannedOrder = order;
         if (this.manualDisconnect) return;
-        const context = [note, order ?? turnNote].filter(Boolean).join("\n");
+        const context = [mine.notes.join("\n"), order ?? mine.turnNote].filter(Boolean).join("\n");
         if (context) this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: context }] }], turnComplete: false } });
-        if (this.sendUserTurn([{ text }], "text")) this.armUnanswered("text");
+        if (this.sendUserTurn([{ text: mine.texts.join("\n") }], "text")) this.armUnanswered("text");
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (this.typedBatch === mine) this.typedBatch = null;
+      });
     return open;
   }
 
@@ -703,11 +740,17 @@ export class GeminiLiveSession {
   }
 
   /** The planner's order for the tutor's reply to this line (/api/plan), or null when none came in time. */
-  private async askPlanner(line: string, verdict: string | null, reminders: string | null): Promise<string | null> {
+  private async askPlanner(line: string, verdict: string | null, reminders: string | null, cancel?: AbortSignal): Promise<string | null> {
     if (!this.planner || !line.trim()) return null;
+    if (Date.now() < this.plannerPausedUntil) {
+      this.debug("pacing", "planner_skipped", { resumesInMs: this.plannerPausedUntil - Date.now() });
+      return null;
+    }
     const started = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GeminiLiveSession.PLANNER_MS);
+    const onCancel = () => controller.abort();
+    cancel?.addEventListener("abort", onCancel, { once: true });
     try {
       const r = await fetch("/api/plan", {
         method: "POST",
@@ -729,13 +772,33 @@ export class GeminiLiveSession {
       // The planner read the late turn note: its order stands in for it.
       if (note && reminders && reminders === this.lateTurnNote) this.lateTurnNote = null;
       this.debug("pacing", "planner", { note, model: j?.model, ms: Date.now() - started, ...(r.ok ? {} : { status: r.status }), ...(j?.failures?.length ? { failures: j.failures } : {}) });
+      this.notePlannerResult(Boolean(note));
       return note;
     } catch {
+      // Cancelled because another typed line joined: planned again, not a miss.
+      if (cancel?.aborted) {
+        this.debug("pacing", "planner_replanned", { ms: Date.now() - started });
+        return null;
+      }
       this.debug("pacing", "planner_missed", { ms: Date.now() - started });
+      this.notePlannerResult(false);
       return null;
     } finally {
       clearTimeout(timer);
+      cancel?.removeEventListener("abort", onCancel);
     }
+  }
+
+  private notePlannerResult(gotOrder: boolean) {
+    if (gotOrder) {
+      this.plannerMisses = 0;
+      return;
+    }
+    this.plannerMisses += 1;
+    if (this.plannerMisses < 2) return;
+    this.plannerMisses = 0;
+    this.plannerPausedUntil = Date.now() + GeminiLiveSession.PLANNER_PAUSE_MS;
+    this.debug("pacing", "planner_paused", { forMs: GeminiLiveSession.PLANNER_PAUSE_MS });
   }
 
   /**

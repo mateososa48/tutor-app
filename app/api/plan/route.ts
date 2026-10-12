@@ -70,9 +70,12 @@ export async function POST(req: NextRequest) {
   const verdict = text(body.verdict, 400) || null;
   // Why a model gave nothing (429 quota, 503 overload…), for the recording.
   const failures: string[] = [];
+  const asked = new Set<string>();
+  const done = new Set<string>();
   const won = await hedged(
     MODELS,
     async (model, signal) => {
+      asked.add(model);
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
@@ -84,14 +87,21 @@ export async function POST(req: NextRequest) {
         signal,
       });
       if (!r.ok) {
+        done.add(model);
         failures.push(`${model} ${r.status}`);
         return null;
       }
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
-      return plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
+      done.add(model);
+      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
+      if (!note) failures.push(`${model} unusable`);
+      return note;
     },
     { hedgeMs: HEDGE_MS, deadlineMs: DEADLINE_MS },
   );
+  // A model still out when the deadline came is a timeout (Oct 11 2026: a
+  // session lost every order to the deadline and the record said nothing).
+  for (const m of asked) if (!done.has(m) && m !== won?.model) failures.push(`${m} timeout`);
   if (won) return NextResponse.json({ note: won.value, model: won.model, ms: Date.now() - started, ...(failures.length ? { failures } : {}) });
   return NextResponse.json({ note: null, ms: Date.now() - started, failures });
 }

@@ -586,3 +586,23 @@ test("check_answer refuses an answer sent as its own problem, and records nothin
   assert.match(r && r.success ? r.message ?? "" : "", /cannot_check/);
   assert.equal(p.attempts.length, 0);
 });
+
+test("a fraction in a sentence is a number, not a division, and a chatty answer goes up as its value", () => {
+  // Oct 11 2026: "adding the extra 1/4 gives 3/4" went up as "1/4 = 3/4" and was ringed.
+  assert.equal(answerLine("\\frac{1}{2} + \\frac{1}{4}", "2/4, so adding the extra 1/4 gives 3/4."), "1/2 + 1/4 = 3/4");
+  assert.equal(answerLine("1/2 + 1/4", "2/4 plus 1/4 is 3/4"), "2/4 + 1/4 = 3/4");
+  assert.equal(answerLine("12 / 2", "12 / 2 is 6"), "12 / 2 = 6");
+  assert.equal(answerLine("x + 2 = 5", "x = 3"), "x = 3");
+});
+
+test("an answer the app checked is not recorded again when the model checks it in other words", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Adding fractions", problem: "\\frac{1}{2} + \\frac{1}{4}", ask: "Where do we start?" });
+  noteStudentUtterance(p, "2/4, so adding the extra 1/4 gives 3/4.", 1000);
+  assert.ok(autoCheck(p, "2/4, so adding the extra 1/4 gives 3/4.", 1000));
+  const before = p.attempts.length;
+  const r = runTutorTool("check_answer", { problem: "1/2 + 1/4", student_answer: "3/4", skill: "adding fractions" }, p, 5000);
+  assert.ok(r && r.success);
+  assert.match(r.message ?? "", /correct/);
+  assert.equal(p.attempts.length, before, "one answer, one attempt");
+});

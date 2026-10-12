@@ -243,6 +243,9 @@ function ownClaim(text: string): { problem: string; answer: string } | null {
   const m = CLAIM.exec(spokenToDigits(text.replace(/[?!]+/g, " ")));
   if (!m) return null;
   if (/\b(is|equals?|which|so|=)\b/i.test(m[3])) return null;
+  // A lone fraction is a number, not a division (Oct 11 2026: "adding the
+  // extra 1/4 gives 3/4" went up as "1/4 = 3/4" and was ringed as right).
+  if (/^-?\d+(?:\.\d+)?\/\d+(?:\.\d+)?$/.test(m[1].trim())) return null;
   return { problem: m[1].trim(), answer: m[2] };
 }
 
@@ -261,7 +264,7 @@ export function answerLine(problem: string, answer: string): string {
     .split(/\s+(?:because|cause|'cause|cuz|since|bc)\b/i)[0];
   const tidy = (c: string) => c.replace(LINE_FILLER, " ").replace(/\s+/g, " ").replace(/^[\s,;:.]+|[\s,;:.]+$/g, "").trim();
   const clauses = said.split(/\s*[,;]\s*|\s+so\s+/i).map(tidy).filter((c) => /\d/.test(c));
-  const core = (clauses.at(-1) ?? tidy(said)).slice(0, 60);
+  let core = (clauses.at(-1) ?? tidy(said)).slice(0, 60);
   // A comparison carries both numbers (Sept 26 2026: "0.8 is bigger" went up
   // under 0.35 vs 0.5 and read as a wrong answer to it).
   const pair = /(-?\d[\d.]*(?:\/\d+)?)\s*(?:vs\.?|versus|or|,|and)\s*(-?\d[\d.]*(?:\/\d+)?)/i.exec(spokenToDigits(problem.replace(/\\text\{\s*vs\s*\}/g, " vs ")));
@@ -276,11 +279,18 @@ export function answerLine(problem: string, answer: string): string {
     const other = core === pair[1] ? pair[2] : pair[1];
     return `${core} ${/^(smaller|less|lower|fewer)$/i.test(asksWhich[1]) ? "<" : ">"} ${other}`;
   }
+  // A sentence that ends on its value ("adding the extra 1/4 gives 3/4") goes
+  // up as that value with what it answers, never as the sentence.
+  // Not when the last number is the one they reject ("would be 30 not 15").
+  const ending = /\b(?:not|isn'?t|instead|than|or)\b/i.test(core) ? null : /\b[a-z]{3,}\b.*?(-?\d[\d.]*(?:\/\d+)?%?)$/i.exec(core);
+  if (ending) core = ending[1];
   if (/^-?\d[\d.,/]*%?$/.test(core)) {
     // A bare value: say what it answers when that is short math.
     const call = /(?<![a-z\\])([a-z]\s*\(\s*-?\d+(?:\.\d+)?\s*\))/i.exec(problem);
     if (call) return `${call[1].replace(/\s+/g, "")} = ${core}`;
-    const asked = spokenToDigits((questionMath(problem.replace(/\$/g, "")) ?? problem.replace(/\$/g, "").replace(/^\s*(?:what(?:'s| is)|find|compute|work out)\s+/i, "")).replace(/\s*\?+\s*$/, "").trim());
+    // A typeset problem reads as plain math here ("\frac{1}{2} + \frac{1}{4}" is 1/2 + 1/4).
+    const plain = /\\frac\{/.test(problem) ? problem.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "$1/$2").replace(/\\(?:cdot|times)/g, "*").replace(/\\div/g, "/") : problem;
+    const asked = spokenToDigits((questionMath(plain.replace(/\$/g, "")) ?? plain.replace(/\$/g, "").replace(/^\s*(?:what(?:'s| is)|find|compute|work out)\s+/i, "")).replace(/\s*\?+\s*$/, "").trim());
     if (asked.length <= 24 && pureArithmetic(asked) && !asked.includes("=")) return pretty(`${asked} = ${core}`);
   }
   return core || answer.trim().slice(0, 60);
@@ -619,7 +629,11 @@ export function runTutorTool(
   // fresh check (Sept 27 2026: its check of "-7 - 4" got back the auto-check's
   // stale verdict on "-5 + 8").
   const sameNumbers = (a: string, b: string) => numbersIn(a).sort().join(",") === numbersIn(b).sort().join(",");
-  const reused = auto && !auto.consumed && now - auto.at < 60_000 && answerKey(auto.answer) === answerKey(answer) && sameNumbers(auto.problem, problem) ? auto : null;
+  // The same answer in other words counts too: "2/4, so … gives 3/4" checked by
+  // the app and "3/4" checked by the model are one answer (Oct 11 2026: it was
+  // recorded twice, "2 of 2 right" for one answer).
+  const sameAnswer = (a: { answer: string; problem: string }) => (answerKey(a.answer) === answerKey(answer) && sameNumbers(a.problem, problem)) || answerLine(a.problem, a.answer) === answerLine(problem, answer);
+  const reused = auto && !auto.consumed && now - auto.at < 60_000 && sameAnswer(auto) ? auto : null;
   let check = reused ? { verdict: reused.verdict as CheckVerdict, message: reused.message } : checkAnswer(withKnownRules(problem, policy.functionRules), answer);
   if (reused) reused.consumed = true;
   // "x - 2 = ?" on the way through the page's equation: its box holds that
