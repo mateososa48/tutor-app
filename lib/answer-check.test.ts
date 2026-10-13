@@ -450,3 +450,41 @@ test("trig in calculus steps: LaTeX commands and a factor before a function", ()
   assert.equal(checkAnswer("\\frac{d}{dx} \\sin(x^2)", "2x cos(x^2)").verdict, "correct");
   assert.equal(checkAnswer("\\frac{d}{dx} \\sin(x^2)", "cos(x^2)").verdict, "incorrect");
 });
+
+test("division with a remainder: q R r, the remainder alone, and the quotient alone", () => {
+  // Oct 12 2026: a right "6 r 5" for 53 ÷ 8 was read with r as a letter and called wrong.
+  assert.equal(checkAnswer("53 \\div 8", "6 r 5").verdict, "correct");
+  assert.equal(checkAnswer("53 \\div 8", "six remainder five").verdict, "correct");
+  assert.equal(checkAnswer("53 \\div 8", "umm 6").verdict, "partial");
+  assert.equal(checkAnswer("53 \\div 8", "7 r 3").verdict, "incorrect");
+  assert.equal(checkAnswer("Find the remainder when 47 is divided by 6.", "5").verdict, "correct");
+  assert.equal(checkAnswer("Find the remainder when 47 is divided by 6.", "7").verdict, "partial");
+  assert.equal(checkAnswer("38 \\equiv \\_ \\pmod{7}", "3").verdict, "correct");
+  assert.equal(checkAnswer("Complete: 93 ≡ ___ (mod 10).", "3").verdict, "correct");
+  // Not division with a remainder: unchanged.
+  assert.equal(checkAnswer("7 / 2", "3.5").verdict, "correct");
+  assert.equal(checkAnswer("3/4 of 12", "9").verdict, "correct");
+  assert.equal(checkAnswer("1/2 + 1/4", "3/4").verdict, "correct");
+});
+
+test("how many times one number goes into another asks for the quotient alone", () => {
+  assert.equal(checkAnswer("How many times does 9 go into 125?", "13").verdict, "correct");
+  assert.equal(checkAnswer("How many times does 9 go into 125?", "13 r 8").verdict, "correct");
+  assert.notEqual(checkAnswer("How many times does 9 go into 125?", "14").verdict, "correct");
+  assert.notEqual(checkAnswer("How many times does 6 go into 47?", "5").verdict, "incorrect", "a stale question never rules an answer wrong");
+});
+
+test("a full stop after a filler word is not a decimal point", () => {
+  // Oct 13 2026: "hmm. like 7" was read as 0.7 and a right 7 was called wrong.
+  assert.equal(checkAnswer("3 + 4", "hmm. like 7").verdict, "correct");
+  assert.equal(checkAnswer("3 + 4", "um. 7").verdict, "correct");
+  assert.equal(checkAnswer("0.3 + 0.4", "0.7").verdict, "correct");
+  assert.equal(checkAnswer("3 + 4", "7.").verdict, "correct");
+});
+
+test("a step asked as a wrapped task is read, and a remainder answer to a non-division is not read as a letter", () => {
+  assert.equal(checkAnswer("Now, what do you get when you subtract forty-two from forty-seven?", "5").verdict, "correct");
+  assert.equal(checkAnswer("Subtract forty-two from forty-seven and tell me what you get.", "5").verdict, "correct");
+  assert.equal(checkAnswer("what do you get when you multiply six by seven?", "42").verdict, "correct");
+  assert.equal(checkAnswer("9 \\times 7 = ?", "13 r 8").verdict, "cannot_check");
+});

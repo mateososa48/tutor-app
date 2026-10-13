@@ -90,6 +90,9 @@ type GeminiContentPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } };
 
+/** What the planner is told when the student brought their own work. */
+const WORKSHEET_NOTE = "They are working from their own uploaded sheet: when a problem is finished, the next one is the next problem on their sheet (say its number; the tutor reads it from the sheet and puts it up with start_new_problem). Never make up a practice problem while their sheet has problems left.";
+
 /** A close that means the server session is gone and its resume handle is useless. */
 export function isDeadSession(code: number, reason: string): boolean {
   return code === 1008 && /not found|expired/i.test(reason);
@@ -299,6 +302,8 @@ export class GeminiLiveSession {
    * answer to the second was muted as a second reply).
    */
   private typedBatch: { texts: string[]; notes: string[]; turnNote: string | null; version: number; abort: AbortController | null } | null = null;
+  /** The student brought work (a photo or PDF): the planner goes through their sheet, not invented problems. */
+  private hasWorksheet = false;
   /** Planner misses in a row, and when a planner that keeps missing is tried again. */
   private plannerMisses = 0;
   private plannerPausedUntil = 0;
@@ -763,7 +768,9 @@ export class GeminiLiveSession {
           verdict,
           board: this.planner.board(),
           state: formatTutorState(this.tutorRuntime.policy, Date.now()),
-          reminders,
+          // Oct 12 2026: with a remainders worksheet up, the planner made up
+          // 53 ÷ 8 and 43 ÷ 7 instead of going on to problem 2 on the sheet.
+          reminders: [reminders, this.hasWorksheet ? WORKSHEET_NOTE : null].filter(Boolean).join(" ") || null,
         }),
         signal: controller.signal,
       });
@@ -871,6 +878,7 @@ export class GeminiLiveSession {
    * tutor starts on the problem rather than asking what to work on.
    */
   sendOpening(text: string, files: UploadedFile[]): boolean {
+    if (files.length) this.hasWorksheet = true;
     // The intake message is the student's first line: next_move plans a reply to it.
     this.lastStudentLine = text;
     this.newStudentInput("text");
@@ -880,6 +888,7 @@ export class GeminiLiveSession {
   }
 
   sendFiles(files: UploadedFile[]): boolean {
+    if (files.length) this.hasWorksheet = true;
     const parts = this.buildFileParts(files);
     if (parts.length === 0) return false;
     parts.push({

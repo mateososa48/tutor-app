@@ -135,6 +135,9 @@ function splitAnswers(raw: string): string[] {
 function stripFiller(raw: string): string {
   return raw
     .replace(/[?!]+|\.{2,}|…/g, " ")
+    // A full stop before a space ends a sentence; it is never a decimal point
+    // (Oct 13 2026: "hmm. like 7" was read as .7).
+    .replace(/\.(?=\s|$)/g, " ")
     .replace(/\b(i think|i guess|maybe|probably|um+|uh+|hmm+|oh+|ok|okay|well|like|wait|yeah|so|is it|it'?s|it is|the answer is|answer)\b:?/gi, " ")
     .replace(/\s+/g, " ")
     .replace(/^[\s,;:]+|[\s,;:.]+$/g, "")
@@ -493,6 +496,67 @@ export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck
   return verdict;
 }
 
+/**
+ * Whole-number division with a remainder (Oct 12 2026: a right "6 r 5" for
+ * 53 ÷ 8 was read with r as a letter and called wrong, and the quotient "6"
+ * alone was called wrong as 6 ≠ 6.625). Reads the division from "53 \\div 8",
+ * "53 ÷ 8", "53 divided by 8", "the remainder when 47 is divided by 6" and
+ * "38 ≡ __ (mod 7)", and the answer as "6 r 5", "6 R 5", "6 remainder 5",
+ * "remainder 5", or a bare number. Null when it is not this kind of problem.
+ */
+export function checkRemainder(problem: string, studentAnswer: string): AnswerCheck | null {
+  const p = spokenToDigits(problem.replace(/\\div|÷/g, " divided by ").replace(/\\equiv|≡/g, " ≡ ").replace(/\\(?:p?mod|bmod)\b/g, " mod ").replace(/[{}]/g, " "));
+  const mod = /(\d+)\s*≡[\s_?\\]*\(?\s*mod\s*(\d+)/i.exec(p);
+  const when = /remainder\D{0,20}?(\d+)\s+(?:is\s+)?divided by\s+(\d+)/i.exec(p);
+  // A bare division only: "3/4 of 12" and "1/2 + 1/4" are fractions, not this.
+  // After "=" only a box or an answer: "1/2 = n/6" is an equation, not this.
+  const plain = /^\D{0,30}?(\d+)\s*(?:divided by|\/)\s*(\d+)\s*(?:=\s*(?:\?|\d+(?:\s*(?:\\text\s*[Rr]|[Rr]|remainder)\s*\d+)?)?)?\s*[?.]?\s*$/i.exec(p.trim());
+  // "How many times does 9 go into 125?": the divisor comes first.
+  const into = /(\d+)\s+(?:go(?:es)?|fits?)\s+into\s+(\d+)/i.exec(p);
+  const m = mod ?? when ?? plain ?? (into ? ([into[0], into[2], into[1]] as unknown as RegExpExecArray) : null);
+  // A remainder answer to something that is not a division: the R is not a letter.
+  if (!m) return /\d+\s*(?:r|rem|remainder)\s*\d+/i.test(spokenToDigits(studentAnswer)) ? cannot(`"${studentAnswer}" answers a division with a remainder, and "${problem}" is not one.`) : null;
+  const a = Number(m[1]), b = Number(m[2]);
+  if (!Number.isInteger(a) || !Number.isInteger(b) || b <= 0) return null;
+  const q = Math.floor(a / b), r = a % b;
+  const asksRemainder = Boolean(mod || when || /\bremainder\b|\bleft over\b|\bmod\b/i.test(p));
+  const ans = spokenToDigits(studentAnswer.toLowerCase(), { the: true }).replace(/\\text\{\s*(r|rem(?:ainder)?)\s*\}/g, " $1 ").trim();
+  const both = /(-?\d+)\s*(?:r|rem|remainder|with a remainder of|with remainder|left ?over|and)\s*(-?\d+)(?:\s*(?:left ?over|leftover))?\b/.exec(ans);
+  const onlyR = /(?:remainder(?: is| of)?|r|left ?over|leftover)\s*(-?\d+)|(-?\d+)\s*(?:left ?over|leftover)/.exec(ans);
+  const bare = /^(?:(?:it'?s|is it|maybe|um+|uh+|hmm+|like|so|ok|okay|oh)[\s.,!]+)*(-?\d+)\s*[?.!]*$/.exec(ans);
+  const key = `${a} ÷ ${b} = ${q} R ${r}`;
+  const said = (x: string) => `the student's ${x}`;
+  if (both) {
+    const sq = Number(both[1]), sr = Number(both[2]);
+    if (sq === q && sr === r) return { verdict: "correct", message: `Correct: ${key}, and ${said(`${sq} R ${sr}`)} matches.` };
+    if (sq === q) return { verdict: "partial", message: `Partial: the ${q} is right, the remainder is not (for you only: ${key}). Ask what is left over after ${q} groups of ${b}.` };
+    if (sr === r && asksRemainder) return { verdict: "correct", message: `Correct: the remainder is ${r} (${key}).` };
+    return { verdict: "incorrect", message: `Incorrect: ${said(`${sq} R ${sr}`)} is not ${a} ÷ ${b} (for you only: ${key}). Don't say it or write it; ask how many groups of ${b} fit in ${a}.` };
+  }
+  if (onlyR) {
+    const sr = Number(onlyR[1] ?? onlyR[2]);
+    return sr === r
+      ? { verdict: "correct", message: `Correct: the remainder is ${r} (${key}).` }
+      : { verdict: "incorrect", message: `Incorrect: the remainder is not ${sr} (for you only: ${key}). Don't say it or write it; ask how many groups of ${b} fit in ${a} and what is left.` };
+  }
+  if (bare) {
+    const n = Number(bare[1]);
+    if (asksRemainder) {
+      if (n === r) return { verdict: "correct", message: `Correct: the remainder is ${r} (${key}).` };
+      if (n === q && q !== r) return { verdict: "partial", message: `Partial: ${q} is how many times ${b} fits in ${a}, not what is left (for you only: ${key}). Ask what is left over.` };
+      return { verdict: "incorrect", message: `Incorrect: the remainder is not ${n} (for you only: ${key}). Don't say it or write it; ask how many groups of ${b} fit in ${a}.` };
+    }
+    // "How many times does 9 go into 125?" asks for the 13 alone.
+    // Only a confirmation: the board's "go into" question is often stale by the
+    // time a number comes (Oct 13 2026: a right 5 for 47 - 42 was called wrong
+    // against it, and the tutor read its confusion aloud).
+    if (into && !mod && !when && !plain) return n === q ? { verdict: "correct", message: `Correct: ${b} goes into ${a} ${q} times (${key}).` } : null;
+    // A whole-number quotient where there is a remainder: right as far as it goes.
+    if (r !== 0 && n === q) return { verdict: "partial", message: `Partial: ${b} fits in ${a} ${q} times, and there is ${r} left over (for you only: ${key}). Ask what is left.` };
+  }
+  return null;
+}
+
 function checkAnswerAsWritten(problem: string, studentAnswer: string): AnswerCheck {
   problem = unTextLatex(problem ?? "");
   const pm = checkPlusMinus(problem, studentAnswer ?? "");
@@ -505,6 +569,9 @@ function checkAnswerAsWritten(problem: string, studentAnswer: string): AnswerChe
   // its reason (Sept 27 2026: the reason made Priya's right 9 unreadable).
   const heard = (studentAnswer ?? "").trim().replace(/\\%/g, "%").split(/\s*[,;]?\s+(?:because|cause|'cause|cuz|coz|since|bc)\b/i)[0].trim();
   if (!asked || !heard) return cannot("it needs both the problem and the student's answer.");
+  // Division with a remainder ("7 R 5", "remainder 5", "38 ≡ 3 (mod 7)").
+  const remainder = checkRemainder(asked, heard);
+  if (remainder) return remainder;
   // Diagnostic questions an opening asks, before anything is read as math.
   const diagnostic = checkHowMany(asked, heard) ?? checkComparison(asked, heard);
   if (diagnostic) return diagnostic;
@@ -973,11 +1040,16 @@ export function questionMath(problem: string): string | null {
 
 // "Subtract 1275 from 8500 to get the value after two years.": a step said as a
 // task (Sept 27 2026: every step of Ethan's year-by-year was one, unchecked).
+// A step said as a task, plain or wrapped: "Subtract 42 from 47", "what do you
+// get when you subtract 42 from 47?", "…and tell me what you get" (Oct 13 2026:
+// the wrapped forms were unread and the board's older question was used instead).
+const TASK_LEAD = String.raw`^(?:(?:now|ok(?:ay)?|so|then|first|next|alright)[,\s]+)*(?:(?:what do (?:you|we) get (?:when|if) (?:you|we)|what happens (?:when|if) (?:you|we)|can you|could you|let'?s|go ahead and|try to|try)\s+)?`;
+const TASK_TAIL = String.raw`(?:\s+(?:to\s+(?:get|find)|and\s+(?:tell|what|see)|what\s+do\s+you\s+get)\b.*)?[.?!]*$`;
 const VERB_TASK: Array<[RegExp, (a: string, b: string) => string]> = [
-  [/^(?:(?:now|ok(?:ay)?|so|then),?\s+)?(?:subtract|take)\s+(.+?)\s+(?:away\s+)?from\s+(.+?)(?:\s+to\s+(?:get|find)\b.*)?[.?!]*$/i, (a, b) => `${b} - ${a}`],
-  [/^(?:(?:now|ok(?:ay)?|so|then),?\s+)?add\s+(.+?)\s+to\s+(.+?)(?:\s+to\s+(?:get|find)\b.*)?[.?!]*$/i, (a, b) => `${b} + ${a}`],
-  [/^(?:(?:now|ok(?:ay)?|so|then),?\s+)?multiply\s+(.+?)\s+by\s+(.+?)(?:\s+to\s+(?:get|find)\b.*)?[.?!]*$/i, (a, b) => `${a} * ${b}`],
-  [/^(?:(?:now|ok(?:ay)?|so|then),?\s+)?divide\s+(.+?)\s+by\s+(.+?)(?:\s+to\s+(?:get|find)\b.*)?[.?!]*$/i, (a, b) => `${a} / ${b}`],
+  [new RegExp(TASK_LEAD + String.raw`(?:subtract|take)\s+(.+?)\s+(?:away\s+)?from\s+(.+?)` + TASK_TAIL, "i"), (a, b) => `${b} - ${a}`],
+  [new RegExp(TASK_LEAD + String.raw`add\s+(.+?)\s+to\s+(.+?)` + TASK_TAIL, "i"), (a, b) => `${b} + ${a}`],
+  [new RegExp(TASK_LEAD + String.raw`multiply\s+(.+?)\s+(?:by|and)\s+(.+?)` + TASK_TAIL, "i"), (a, b) => `${a} * ${b}`],
+  [new RegExp(TASK_LEAD + String.raw`divide\s+(.+?)\s+by\s+(.+?)` + TASK_TAIL, "i"), (a, b) => `${a} / ${b}`],
 ];
 
 export function verbTask(problem: string): string | null {

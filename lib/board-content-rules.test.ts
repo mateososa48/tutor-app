@@ -134,3 +134,12 @@ test("an attempt that is the same expression written another way is a duplicate 
   assert.equal(findDuplicate("add_student_attempt", contentFingerprint("add_student_attempt", "((x^2+1)^4)/4 + C"), items), "b13");
   assert.equal(findDuplicate("add_student_attempt", contentFingerprint("add_student_attempt", "(x^2+1)^4"), items), null);
 });
+
+test("an answer typeset and the same answer typed are one line", () => {
+  // Oct 13 2026: "6 × 7 = 42" (the app) and "6 \\times 7 = 42" (the model) both went up and were ringed.
+  const fp = (t: string) => contentFingerprint("add_student_attempt", t);
+  const items = [{ id: "b7", tool: "add_student_attempt", content: fp("6 × 7 = 42") }, { id: "b18", tool: "add_student_attempt", content: fp("125 ÷ 9 = 13 R 8") }];
+  assert.equal(findDuplicate("add_student_attempt", fp("6 \\times 7 = 42"), items), "b7");
+  assert.equal(findDuplicate("add_student_attempt", fp("13 \\text{ r } 8"), items), "b18");
+  assert.equal(findDuplicate("add_student_attempt", fp("47 − 42 = 5"), [{ id: "b1", tool: "add_student_attempt", content: fp("47 - 42 = 5") }]), "b1");
+});

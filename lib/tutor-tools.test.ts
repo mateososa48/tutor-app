@@ -606,3 +606,43 @@ test("an answer the app checked is not recorded again when the model checks it i
   assert.match(r.message ?? "", /correct/);
   assert.equal(p.attempts.length, before, "one answer, one attempt");
 });
+
+test("the board holds back a q R r answer, refuses a false line, and writes steps with their question", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "hmm. like 7", 1);
+  noteStudentUtterance(p, "5", 2);
+  const held = withholdResult(p, "draw_equation_step", { latex: "47 \\div 6 = 7 \\text{ R } 5" });
+  assert.equal(held.args.latex, "47 \\div 6 = ?");
+  assert.ok(withholdResult(p, "draw_equation_step", { latex: "53 \\div 8 = 6" }).refuse);
+  noteStudentUtterance(p, "7 remainder 5", 3);
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "47 \\div 6 = 7 \\text{ R } 5" }).args.latex, "47 \\div 6 = 7 \\text{ R } 5");
+  assert.equal(answerLine("47 - 42 = ?", "5"), "47 − 42 = 5");
+  assert.equal(answerLine("6 \\times 7", "42"), "6 × 7 = 42");
+  assert.equal(answerLine("53 \\div 8", "6 r 5"), "53 ÷ 8 = 6 R 5");
+});
+
+test("a late true claim about other numbers is checked as itself, not against the newer question", () => {
+  // Oct 13 2026: "6*7 is 42", typed after the tutor had moved on to "47 - 42 = ?", was called wrong.
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Problem 1", problem: "Find the remainder when 47 is divided by 6.", ask: "How many times does 6 go into 47?" });
+  noteBoardWrite(p, "draw_equation_step", { latex: "47 - 42 = ?" });
+  noteStudentUtterance(p, "6*7 is 42", 1000);
+  assert.match(autoCheck(p, "6*7 is 42", 1000) ?? "", /→ correct/);
+  assert.equal(answerLine("How many times does 9 go into 125?", "13 r 8"), "125 ÷ 9 = 13 R 8");
+});
+
+test("the question asked aloud at the end of the turn is the one an answer answers", () => {
+  // Oct 13 2026: "5" for "…subtract forty-two from forty-seven?" was checked against an earlier "6 × 8 = ?".
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Problem 1", problem: "Find the remainder when 47 is divided by 6.", ask: "How many times does 6 fit into 47?" });
+  noteBoardWrite(p, "draw_equation_step", { latex: "6 \\times 8 = ?" });
+  noteTutorTurn(p, "Since six times eight is forty-eight, that's too big. Now, what do you get when you subtract forty-two from forty-seven?", true, false);
+  noteStudentUtterance(p, "5", 1000);
+  assert.match(autoCheck(p, "5", 1000) ?? "", /→ correct/);
+});
+
+test("answer lines read worded steps and fit-into divisions", () => {
+  assert.equal(answerLine("What do you get when you subtract forty-two from forty-seven?", "5"), "47 − 42 = 5");
+  assert.equal(answerLine("How many times does nine fit into one hundred twenty-five?", "13 r 8"), "125 ÷ 9 = 13 R 8");
+  assert.equal(answerLine("What is the remainder when 125 is divided by 9?", "7 remainder 5"), "125 ÷ 9 = 7 R 5");
+});

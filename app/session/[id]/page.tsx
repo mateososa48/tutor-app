@@ -604,10 +604,12 @@ function SessionDetailPage({ id }: { id: string }) {
       const shaped = tutorRuntime.shapeBoardCall(name, args);
       // A step line whose "= ?" version is on the board takes its place.
       if (shaped.replaces) dispatchWhiteboardTool("erase_items", { targets: shaped.replaces }, { whiteboard: whiteboardRef.current });
-      let result = dispatchWhiteboardTool(name, shaped.args, {
-        whiteboard: whiteboardRef.current,
-        callId,
-      });
+      let result: ToolCallResult = shaped.refuse
+        ? { success: false, error: shaped.refuse }
+        : dispatchWhiteboardTool(name, shaped.args, {
+          whiteboard: whiteboardRef.current,
+          callId,
+        });
       const item = result.success ? /\(item (b\d+)\)|as (b\d+)\b/.exec(result.message ?? "") : null;
       if (shaped.withheld && item) tutorRuntime.noteWithheldItem(shaped.withheld, item[1] ?? item[2]);
       if (result.success && shaped.note) result = { success: true, message: `${result.message ?? "Done"} ${shaped.note}` };

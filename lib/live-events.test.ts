@@ -185,3 +185,11 @@ test("speech cleaner drops 3.8's no-speech marker, and a new turn ends an open c
   c.reset();
   assert.equal(c.clean("Next turn."), "Next turn.");
 });
+
+test("a caption of only dots is dropped, a lone period is kept", () => {
+  const c = new SpeechTextCleaner();
+  assert.equal(c.clean("..."), "");
+  assert.equal(c.clean(" … "), "");
+  assert.equal(c.clean("."), ".");
+  assert.equal(c.clean("So... five?"), "So... five?");
+});

@@ -99,6 +99,8 @@ export type TutorPolicy = {
   askedAge: number;
   /** The last question the tutor said with a number in it ("Which is bigger, 0.35 or 0.5?"), for the auto-check. */
   lastSpokenQuestion: string | null;
+  /** The spoken question came in the tutor's latest turn, after the board's last question: it is the one on the table. */
+  spokenFresh: boolean;
   /** Every number the tutor said in its last turn: what a student's answer can be answering. Null before it has spoken. */
   lastTutorNumbers: string[] | null;
   /** A student line the code checked itself (Sept 25 2026), with the note the model gets. */
@@ -197,6 +199,7 @@ export function createPolicy(now: number): TutorPolicy {
     boardAsk: null,
     lastAsked: null,
     lastSpokenQuestion: null,
+    spokenFresh: false,
     lastTutorNumbers: null,
     askedAtTurnEnd: null,
     askedAge: 0,
@@ -735,6 +738,10 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
   const sentences = text.split(/(?<=[.!?])\s*(?=[A-Z])|(?<=\?)\s+/).map((q) => q.trim()).filter(Boolean);
   const asks = sentences.filter((q) => (q.endsWith("?") || SPOKEN_TASK.test(q)) && /\d/.test(spokenToDigits(q)));
   if (asks.length) p.lastSpokenQuestion = withBackReference(asks[asks.length - 1], text, p.lastStudentValue).slice(0, 200);
+  // Said at the end of the turn, after its drawings: the question they answer
+  // (Oct 13 2026: "5" for "subtract 42 from 47" was checked against an earlier
+  // "6 × 8 = ?" and went up in their hand as "6 × 8 = 5").
+  p.spokenFresh = asks.length > 0;
   for (const [name, rule] of Object.entries(functionRulesIn(spokenToDigits(text)))) (p.functionRules ??= {})[name] = rule;
   // Numbers said in pairs ("twelve seventy-five") and a "that" the question
   // resolved to count as said.
@@ -770,8 +777,8 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
   }
   if (name && PICTURE_TOOLS.has(name)) p.pagePictures += 1;
   // What was asked on the board, so an answer can be checked against it.
-  if (name === "add_callout" && typeof args?.text === "string" && args.text.trim()) p.lastAsked = args.text.trim().slice(0, 200);
-  if (name === "draw_equation_step" && typeof args?.latex === "string" && /\?/.test(args.latex)) p.lastAsked = args.latex.trim().slice(0, 200);
+  if (name === "add_callout" && typeof args?.text === "string" && args.text.trim()) { p.lastAsked = args.text.trim().slice(0, 200); p.spokenFresh = false; }
+  if (name === "draw_equation_step" && typeof args?.latex === "string" && /\?/.test(args.latex)) { p.lastAsked = args.latex.trim().slice(0, 200); p.spokenFresh = false; }
   if (name === "start_problem" || name === "start_new_problem") {
     const raw = typeof args?.problem === "string" ? args.problem : typeof args?.title === "string" ? args.title : "";
     p.pageProblem = raw.trim() ? raw.trim().slice(0, 200) : null;

@@ -315,6 +315,8 @@ export class SpeechTextCleaner {
     }
     // "•" arrived as a whole tutor turn in a spoken session (Sept 26 2026):
     // list bullets are markup, never words.
+    // A fragment of only dots is the tutor saying nothing (Oct 12 2026: a "…" caption).
+    if (/^\s*(?:\.{2,}|…)[\s.…]*$/.test(out)) return "";
     return out.replace(/<no speech>|\{pause\}/gi, "").replace(/\$/g, "").replace(/-{3,}/g, " ").replace(/\*\*/g, "").replace(/[•◦▪]/g, "");
   }
 }

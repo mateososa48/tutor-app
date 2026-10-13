@@ -11,7 +11,7 @@
 
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer, checkBlankInPage, prepareExpression, questionMath, sameExpression, spokenExpression, spokenToDigits, withKnownRules, type CheckVerdict } from "./answer-check";
+import { checkAnswer, checkBlankInPage, prepareExpression, questionMath, sameExpression, spokenExpression, spokenToDigits, verbTask, withKnownRules, type CheckVerdict } from "./answer-check";
 import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import { latexToPlain } from "./latex-plain";
@@ -256,6 +256,12 @@ function ownClaim(text: string): { problem: string; answer: string } | null {
 // whole chatty sentence.
 
 export function answerLine(problem: string, answer: string): string {
+  // A remainder answer goes up with its division: "53 ÷ 8 = 6 R 5".
+  const rem = /(\d+)\s*(?:r|rem|remainder)\s*(\d+)\b/i.exec(spokenToDigits(answer.toLowerCase()));
+  const div = /(\d+)\s*(?:\\div|÷|\/|(?:is\s+)?divided by)\s*(\d+)/i.exec(spokenToDigits(problem));
+  const into = /(\d+)\s+(?:go(?:es)?|fits?)\s+into\s+(\d+)/i.exec(spokenToDigits(problem));
+  if (rem && div) return `${div[1]} ÷ ${div[2]} = ${rem[1]} R ${rem[2]}`;
+  if (rem && into) return `${into[2]} ÷ ${into[1]} = ${rem[1]} R ${rem[2]}`;
   const own = ownClaim(answer);
   // A signed number after an operation is bracketed: "6 - -2" is written 6 − (-2).
   const pretty = (t: string) => t.replace(/([-+*/])\s*-\s*(\d[\d.]*)/g, "$1 (-$2)").replace(/\s*\*\s*/g, " × ").replace(/\s*-\s*(?=\d|\()/g, (m, off: number, all: string) => (off === 0 || /[=(]\s*$/.test(all.slice(0, off)) ? "-" : " − ")).replace(/\s+/g, " ").trim();
@@ -289,8 +295,9 @@ export function answerLine(problem: string, answer: string): string {
     const call = /(?<![a-z\\])([a-z]\s*\(\s*-?\d+(?:\.\d+)?\s*\))/i.exec(problem);
     if (call) return `${call[1].replace(/\s+/g, "")} = ${core}`;
     // A typeset problem reads as plain math here ("\frac{1}{2} + \frac{1}{4}" is 1/2 + 1/4).
-    const plain = /\\frac\{/.test(problem) ? problem.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "$1/$2").replace(/\\(?:cdot|times)/g, "*").replace(/\\div/g, "/") : problem;
-    const asked = spokenToDigits((questionMath(plain.replace(/\$/g, "")) ?? plain.replace(/\$/g, "").replace(/^\s*(?:what(?:'s| is)|find|compute|work out)\s+/i, "")).replace(/\s*\?+\s*$/, "").trim());
+    // A step asked on the board ("47 - 42 = ?") answers as its line: "47 − 42 = 5".
+    const plain = problem.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, "$1/$2").replace(/\\(?:cdot|times)|×/g, "*").replace(/\\div|÷/g, "/").replace(/\s*=\s*\?\s*$/, "");
+    const asked = verbTask(plain) ?? spokenToDigits((questionMath(plain.replace(/\$/g, "")) ?? plain.replace(/\$/g, "").replace(/^\s*(?:what(?:'s| is)|find|compute|work out)\s+/i, "")).replace(/\s*\?+\s*$/, "").trim());
     if (asked.length <= 24 && pureArithmetic(asked) && !asked.includes("=")) return pretty(`${asked} = ${core}`);
   }
   return core || answer.trim().slice(0, 60);
@@ -377,6 +384,7 @@ export function applyVerdictMarks(
 // whose result the student has not said (and the problem did not give) goes
 // up as "… = ?", which is also the question the auto-check reads their answer
 // against. A worked example (help at H5) shows its results.
+const REMAINDER_TAIL = /^(.*=)\s*(\d+)\s*(?:\\text\{\s*[Rr]\s*\}|\\mathrm\{\s*[Rr]\s*\}|[Rr]|\\text\{\s*remainder\s*\})\s*(\d+)\s*$/;
 const RESULT_TAIL = /^(.*=)\s*(-?\d+(?:\.\d+)?|-?\\[dt]?frac\{\d+\}\{\d+\}|-?\d+\s*\/\s*\d+)\s*(\\%|%)?\s*$/;
 
 // A caption that states a result ("1 cup makes 6 cookies", "total = 60") says
@@ -450,7 +458,7 @@ function withholdStep(policy: TutorPolicy, latex: string): { latex: string; note
   return { latex: asked, note: `Wrote it as "${latexToPlain(asked)}": that step is theirs to say. Ask for it; don't say it.` };
 }
 
-export type ShapedCall = { args: Record<string, unknown>; note: string | null; withheld?: string; replaces?: string };
+export type ShapedCall = { args: Record<string, unknown>; note: string | null; withheld?: string; replaces?: string; refuse?: string };
 
 /** The "= ?" lines the student has now said: their full lines go up in place of the "?" ones. */
 export function filledSteps(policy: TutorPolicy): Array<{ item: string; latex: string }> {
@@ -487,11 +495,32 @@ export function withholdResult(policy: TutorPolicy, name: string, args: Record<s
     policy.withheld = policy.withheld.filter((w) => w !== open);
     if (open.item) return { args, note: null, replaces: open.item };
   }
+  // A division's "q R r" is the answer to the whole problem: it waits until
+  // they have said it in that form, even when both numbers came up on the way
+  // (Oct 12 2026: "47 ÷ 6 = 7 R 5" went up as the tutor asked for the answer).
+  const rem = REMAINDER_TAIL.exec(latex);
+  if (rem) {
+    const said = [...policy.saidLines, policy.lastUtterance ?? ""].some((line) => {
+      const t = spokenToDigits(line.toLowerCase());
+      return new RegExp(`\\b${rem[2]}\\s*(?:r|rem|remainder|with a remainder of|left ?over)\\s*${rem[3]}\\b`).test(t);
+    });
+    if (said) return { args, note: null };
+    const asked = `${rem[1]} ?`;
+    policy.lastAsked = asked;
+    return { args: { ...args, latex: asked }, note: `Wrote it as "${latexToPlain(asked)}": the result is theirs to say. Ask for it; don't say it.` };
+  }
   const m = RESULT_TAIL.exec(latex);
   if (!m) return { args, note: null };
   const before = m[1].slice(0, -1);
   const lastSide = before.split("=").at(-1) ?? before;
   if (!pureArithmetic(lastSide)) return { args, note: null };
+  // A false line is never written in the tutor's ink (Oct 12 2026: "53 ÷ 8 = 6"
+  // went up typeset, the student's wrong answer stated as a fact).
+  const holds = checkAnswer(lastSide, m[2] + (m[3] ?? ""));
+  if (holds.verdict === "incorrect" || holds.verdict === "partial") {
+    const shown = latexToPlain(latex);
+    return { args, note: null, refuse: `"${shown}" is not true, so it was not written as your line. If it is the student's answer, it is already on the board in their hand: point at it and ask how they got it.` };
+  }
   const value = numbersIn(m[2])[0];
   if (!value || policy.saidNumbers.includes(value)) return { args, note: null };
   const asked = `${m[1]} ?`;
@@ -532,7 +561,8 @@ function answerCandidates(policy: TutorPolicy, text: string): { t: string; candi
     const said = new Set([...policy.lastTutorNumbers, ...numbersIn(spokenToDigits(t))]);
     return numbersIn(problem).every((n) => said.has(n));
   };
-  for (const c of [policy.lastAsked, policy.lastSpokenQuestion, page]) if (c && c.trim() && live(c)) for (const a of answers) candidates.push({ problem: withKnownRules(c, policy.functionRules), answer: a });
+  const order = policy.spokenFresh ? [policy.lastSpokenQuestion, policy.lastAsked, page] : [policy.lastAsked, policy.lastSpokenQuestion, page];
+  for (const c of order) if (c && c.trim() && live(c)) for (const a of answers) candidates.push({ problem: withKnownRules(c, policy.functionRules), answer: a });
   // Their own arithmetic ("9 minus 8 is 1") only when the question can't be
   // read: checked first, "3 times 4 is 12, so h(4) is 12" was called right by
   // its first step while the answer to h(x) = 3x - 1 was wrong.
@@ -560,9 +590,23 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
   const found = answerCandidates(policy, text);
   if (!found) return null;
   const { t, candidates } = found;
-  for (const { problem, answer } of candidates) {
-    const check = checkAnswer(problem, answer);
+  for (const candidate of candidates) {
+    let { problem, answer } = candidate;
+    let check = checkAnswer(problem, answer);
     if (check.verdict === "cannot_check") continue;
+    // Their own whole claim about other numbers answers an earlier question,
+    // not this one (Oct 13 2026: "6*7 is 42", typed after the tutor had moved
+    // on to "47 - 42 = ?", was called wrong against 47 - 42).
+    const own = check.verdict !== "correct" ? ownClaim(t) : null;
+    if (own) {
+      const theirs = numbersIn(own.problem), asked = numbersIn(problem);
+      const mine = checkAnswer(own.problem, own.answer);
+      if (theirs.length && !theirs.some((n) => asked.includes(n)) && mine.verdict !== "cannot_check") {
+        problem = own.problem;
+        answer = own.answer;
+        check = mine;
+      }
+    }
     const skill = policy.currentSkill ?? policy.pageSkill ?? "unnamed skill";
     // What the board gave them on this problem, not a guess: an answer found
     // with no picture or shown step is found alone (Sept 26 2026: the old

@@ -963,10 +963,12 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
         m.policy.notePlanAdvanced(runtime.policy);
         await page.evaluate(() => (window as BoardWindow).__chalkBoard?.planAnswered?.());
       }
-      const shaped = runtime.shapeBoardCall(name, args) as { args: Record<string, unknown>; note: string | null; withheld?: string; replaces?: string };
+      const shaped = runtime.shapeBoardCall(name, args) as { args: Record<string, unknown>; note: string | null; withheld?: string; replaces?: string; refuse?: string };
       args = shaped.args;
       if (shaped.replaces) await page.evaluate((t) => (window as BoardWindow).__chalkDispatch?.("erase_items", { targets: t }), shaped.replaces);
-      result = await page.evaluate(({ name, args, callId }) => (window as BoardWindow).__chalkDispatch?.(name, args, callId) ?? { success: false, error: "no dispatcher on the page" }, { name, args, callId });
+      result = shaped.refuse
+        ? { success: false, error: shaped.refuse }
+        : await page.evaluate(({ name, args, callId }) => (window as BoardWindow).__chalkDispatch?.(name, args, callId) ?? { success: false, error: "no dispatcher on the page" }, { name, args, callId });
       const item = result.success ? /\(item (b\d+)\)|as (b\d+)\b/.exec(result.message ?? "") : null;
       if (shaped.withheld && item && typeof (runtime as { noteWithheldItem?: unknown }).noteWithheldItem === "function") runtime.noteWithheldItem(shaped.withheld, item[1] ?? item[2]);
       if (result.success && shaped.note) result = { success: true, message: `${result.message ?? "Done"} ${shaped.note}` };

@@ -143,9 +143,16 @@ export function calloutProblem(text: string): string | null {
 
 /** What a text or a drawing says, reduced to compare: case, spacing and punctuation dropped. */
 export function contentFingerprint(tool: string, content: string): string {
+  // The same line typeset or typed is the same line (Oct 13 2026: the app's
+  // "6 × 7 = 42" and the model's "6 \\times 7 = 42" both went up and were ringed).
   const body = content
     .normalize("NFKC")
     .toLowerCase()
+    .replace(/\\(?:text|mathrm)\{([^{}]*)\}/g, "$1")
+    .replace(/\\times|\\cdot|\*/g, "×")
+    .replace(/\\div/g, "÷")
+    .replace(/−/g, "-")
+    .replace(/\bremainder\b|\brem\b/g, "r")
     .replace(/\\(?:left|right|,|;|!|quad)/g, "")
     .replace(/[\s"'“”.,;:!?]+/g, "");
   return `${tool}:${body}`;
@@ -170,7 +177,7 @@ function claimedValue(fingerprint: string): string | null {
   const body = fingerprint.slice(fingerprint.indexOf(":") + 1);
   if (/[<>≤≥≠]/.test(body)) return null;
   const tail = body.includes("=") ? body.slice(body.lastIndexOf("=") + 1) : body;
-  return /^-?\d+(?:\.\d+)?(?:\/\d+)?$/.test(tail) ? tail : null;
+  return /^-?\d+(?:\.\d+)?(?:\/\d+)?$|^\d+r\d+$/.test(tail) ? tail : null;
 }
 
 export function findDuplicate(tool: string, fingerprint: string, items: FingerprintedItem[]): string | null {
