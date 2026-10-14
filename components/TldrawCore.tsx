@@ -47,7 +47,7 @@ import { PlanShapeUtil, measurePlanBox, type TLPlanShape } from "@/components/bo
 import { CardShapeUtil } from "@/components/board/CardShape";
 import { TAG_FONT_PX, TAG_H, TAG_PAD_X, TAG_TAIL, TagShapeUtil } from "@/components/board/TagShape";
 import { BoardStrip } from "@/components/board/BoardStrip";
-import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance } from "@/lib/board-archive";
+import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance, worthKeeping } from "@/lib/board-archive";
 import { planAfterCorrect, planAfterStart, planSummary, readPlan, type BoardPlan } from "@/lib/board-plan";
 import { desmosAvailable, desmosFailure, desmosStatus, devParam, renderDesmosGraph } from "@/components/board/desmos-renderer";
 import { buildBarChartGraph } from "@/lib/desmos-bar-chart";
@@ -2847,6 +2847,34 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       for (const item of retired) retiredItemsRef.current.set(item.id, item);
       const solved = solvedRef.current;
       solvedRef.current = false;
+      if (!worthKeeping(retired)) {
+        // Only a heading and a question (the opening): cleared, once written,
+        // with a short fade, and nothing goes into the strip.
+        const ids = work.map((shape) => shape.id);
+        const reduceClear = instantRef.current || prefersReducedMotion();
+        editor.run(() => {
+          if (oldPlans.length) editor.deleteShapes(oldPlans);
+          editor.updateShapes(work.map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, archived: true } })));
+        }, { history: "ignore" });
+        enqueue({
+          kind: "action",
+          wait: reduceClear ? 0 : 240,
+          run: () => {
+            const gone = () => editor.run(() => editor.deleteShapes(ids.filter((id) => editor.getShape(id))), { history: "ignore" });
+            if (reduceClear) return gone();
+            const from = new Map(ids.map((id) => [id, editor.getShape(id)?.opacity ?? 1]));
+            const t0 = performance.now();
+            const step = (now: number) => {
+              const p = Math.min(1, Math.max(0, (now - t0) / 200));
+              editor.run(() => editor.updateShapes(ids.map((id) => editor.getShape(id)).filter((sh): sh is NonNullable<typeof sh> => Boolean(sh)).map((sh) => ({ id: sh.id, type: sh.type, opacity: (from.get(sh.id) ?? 1) * (1 - p) }))), { history: "ignore" });
+              if (p < 1) requestAnimationFrame(step);
+              else gone();
+            };
+            requestAnimationFrame(step);
+          },
+        });
+        return;
+      }
       const cardId = createShapeId();
       editor.run(() => {
         if (oldPlans.length) editor.deleteShapes(oldPlans);

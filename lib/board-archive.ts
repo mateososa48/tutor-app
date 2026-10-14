@@ -61,3 +61,14 @@ export function archiveFrameAt(elapsed: number): { opacity: number; slide: numbe
   const slideAt = easeInOutCubic((elapsed - fade - hold) / slide);
   return { opacity, slide: slideAt, done: elapsed >= fade + hold + slide };
 }
+
+// What a board holds that is only page furniture: its heading, the tutor's
+// question tags and section headings. A board of nothing else (the opening
+// "Which problem do you want to start with?") is cleared, not filed: a strip
+// entry the student can go back to should hold work.
+const FURNITURE = new Set(["start_new_problem", "add_callout", "start_board_section", "set_plan"]);
+
+/** Whether a board's items hold any work worth keeping in the strip. */
+export function worthKeeping(items: Array<{ tool: string }>): boolean {
+  return items.some((item) => !FURNITURE.has(item.tool));
+}

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance } from "./board-archive";
+import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance, worthKeeping } from "./board-archive";
 
 test("the card wraps everything on the board with a margin", () => {
   const r = archiveRect([{ x: 40, y: 100, w: 300, h: 50 }, { x: 600, y: 300, w: 200, h: 100 }], 20);
@@ -24,4 +24,11 @@ test("the frame fades in first, then holds, then the board slides", () => {
   assert.equal(archiveFrameAt(260 + 140 + 560).slide, 1);
   assert.ok(archiveFrameAt(260 + 140 + 560).done);
   assert.ok(ARCHIVE_TOTAL_MS < 1200, "the whole turn stays under a second and a bit");
+});
+
+test("a board of only a heading and a question is cleared, not filed", () => {
+  assert.equal(worthKeeping([{ tool: "start_new_problem" }, { tool: "add_callout" }]), false);
+  assert.equal(worthKeeping([]), false);
+  assert.equal(worthKeeping([{ tool: "start_new_problem" }, { tool: "draw_equation_step" }]), true);
+  assert.equal(worthKeeping([{ tool: "start_new_problem" }, { tool: "add_student_attempt" }]), true);
 });
