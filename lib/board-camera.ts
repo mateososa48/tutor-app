@@ -18,7 +18,7 @@ export type Camera = { x: number; y: number; z: number };
 export function planCamera(
   rect: Rect,
   view: { w: number; h: number },
-  opts: { inset?: number; minZoom?: number; maxZoom?: number } = {},
+  opts: { inset?: number; minZoom?: number; maxZoom?: number; anchor?: "center" | "start" } = {},
 ): Camera {
   const inset = opts.inset ?? 0;
   const maxZoom = opts.maxZoom ?? 1;
@@ -30,7 +30,11 @@ export function planCamera(
   const pad = inset / z;
   // Centred while the rect itself fits (the padding shrinks first: on a phone
   // a graph kept its left padding and lost its right edge); else its start.
-  const left = rect.w <= seenW ? rect.x + rect.w / 2 - seenW / 2 : rect.x - pad;
+  // A row framed from the page's left edge (a phone, Oct 14 2026) keeps that
+  // edge at the left of the screen even when it would fit centred: centring a
+  // short line pushed the page's start to the middle and cut the long rows
+  // under it off at the right.
+  const left = opts.anchor === "start" ? rect.x - pad : rect.w <= seenW ? rect.x + rect.w / 2 - seenW / 2 : rect.x - pad;
   const top = rect.h <= seenH ? rect.y + rect.h / 2 - seenH / 2 : rect.y - pad;
   return { x: -left, y: -top, z };
 }

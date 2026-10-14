@@ -389,7 +389,7 @@ export function mergeLineRects(rects: ItemBounds[], single = false): ItemBounds[
 // A hand-drawn ring around a box: an ellipse with a slight wobble, starting
 // at the upper left and overlapping itself a little at the end.
 /** How far a ring runs past its start, like a hand closing a loop (radians). */
-export const RING_OVERLAP = 0.35;
+export const RING_OVERLAP = 0.28;
 
 export function ringPoints(b: ItemBounds, pad = 12, n = 48): Array<{ x: number; y: number }> {
   // A hand loop (Oct 14 2026: the old ring, a superellipse of exponent 6, read
@@ -398,7 +398,7 @@ export function ringPoints(b: ItemBounds, pad = 12, n = 48): Array<{ x: number; 
   // its start the way a pen closes a loop. Its axes still grow until even the
   // wobble's inward dips clear the box's corners.
   const EXP = 5;
-  const SPIRAL = 0.035;
+  const SPIRAL = 0.018;
   const WOBBLE_IN = 1 - 0.025 - 0.012 - SPIRAL;
   const TILT = 0;
   const cx = b.x + b.w / 2;
@@ -470,7 +470,30 @@ export function handBoxPoints(b: ItemBounds, pad = 10): Array<{ x: number; y: nu
   side(x0, y1 - r - 1, x0 - 1, y0 + r, bow * 0.6, 5);
   corner(x0 + r - 1, y0 + r, Math.PI);
   // On along the top edge a little past the start, as a pen finishes a box.
-  for (let i = 1; i <= 3; i++) pts.push({ x: x0 + r + i * Math.min(8, b.w / 8), y: y0 + 0.6 + i * 0.3 });
+  for (let i = 1; i <= 2; i++) pts.push({ x: x0 + r + i * Math.min(6, b.w / 10), y: y0 + 0.5 + i * 0.25 });
+  return pts;
+}
+
+/**
+ * A strike through a line of words (Oct 14 2026): one quick pen stroke,
+ * rising a little left to right with a slight bow, starting and ending just
+ * past the words. It replaced a ruler-straight line that ran well past both
+ * ends of the text.
+ */
+export function strikePoints(b: ItemBounds): Array<{ x: number; y: number }> {
+  const over = Math.min(5, 2 + b.w / 80);
+  const x0 = b.x - over;
+  const x1 = b.x + b.w + over;
+  const rise = Math.min(4, b.h * 0.12);
+  const y0 = b.y + b.h * 0.56 + rise / 2;
+  const y1 = b.y + b.h * 0.56 - rise / 2;
+  const n = Math.max(8, Math.round((x1 - x0) / 14));
+  const pts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const bow = Math.sin(t * Math.PI) * 1.4 + Math.sin(t * 9.1 + 0.4) * 0.35;
+    pts.push({ x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t - bow });
+  }
   return pts;
 }
 

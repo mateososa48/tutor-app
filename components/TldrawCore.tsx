@@ -27,6 +27,7 @@ import {
   resolveItemTarget,
   ringPoints,
   handBoxPoints,
+  strikePoints,
   checkPoints,
   scribbleUnderlinePoints,
   toolRole,
@@ -44,6 +45,7 @@ import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
 import { GraphShapeUtil, type TLGraphShape, type TLGraphShapeProps } from "@/components/board/GraphShape";
 import { PlanShapeUtil, measurePlanBox, type TLPlanShape } from "@/components/board/PlanShape";
 import { CardShapeUtil } from "@/components/board/CardShape";
+import { TAG_FONT_PX, TAG_H, TAG_PAD_X, TAG_TAIL, TagShapeUtil } from "@/components/board/TagShape";
 import { BoardStrip } from "@/components/board/BoardStrip";
 import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance } from "@/lib/board-archive";
 import { planAfterCorrect, planAfterStart, planSummary, readPlan, type BoardPlan } from "@/lib/board-plan";
@@ -67,7 +69,7 @@ import {
 } from "@/lib/desmos-spec";
 
 const OVERLAY_UTILS = [TutorPenOverlayUtil, TutorScribbleOverlayUtil];
-const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil, PlanShapeUtil, CardShapeUtil];
+const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil, PlanShapeUtil, CardShapeUtil, TagShapeUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -806,6 +808,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const pendingFocusRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
   // Board items (b1, b2, …) and the tutor's presence (cursor + laser rings).
   const itemsRef = useRef<BoardItem[]>([]);
+  // Items of boards that have turned: marks and writing still queued for them
+  // find their host here once the next problem has emptied itemsRef.
+  const retiredItemsRef = useRef<Map<string, BoardItem>>(new Map());
+  const findHost = useCallback((id: string) => itemsRef.current.find((i) => i.id === id) ?? retiredItemsRef.current.get(id), []);
   const itemSeqRef = useRef(0);
   const presenceIdRef = useRef<TLInstancePresence["id"] | null>(null);
   const cursorAnimRef = useRef<number | null>(null);
@@ -915,6 +921,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const pendingIsPageRef = useRef(false);
   // A lone item too wide for a phone at the readable zoom: framed tight, a little further out.
   const pendingTightRef = useRef<number | null>(null);
+  const pendingStartRef = useRef(false);
   const highlightRafRef = useRef<number | null>(null);
   // Desmos renders graphs asynchronously; board pictures wait for these.
   const pendingGraphsRef = useRef<Set<Promise<void>>>(new Set());
@@ -1396,25 +1403,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     }, 0);
   }, [runQueue]);
 
-  // Everything still being written goes up at once (the board is about to be
-  // framed and slid away: a line left half written would be archived blank).
-  const flushReveal = useCallback((editor: Editor) => {
-    const active = currentJobRef.current;
-    const jobs = [...(active && active.kind === "reveal" ? [active] : []), ...revealQueueRef.current];
-    for (const job of jobs) {
-      if (job.kind === "reveal") {
-        for (const step of job.steps) {
-          try {
-            applyStep(editor, step, 1, {});
-          } catch {}
-        }
-      } else {
-        try {
-          job.run();
-        } catch {}
-      }
-    }
-  }, [applyStep]);
 
   // "Back to now": the page in play, as the camera frames a whole page.
   const goNow = useCallback(() => {
@@ -1537,8 +1525,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           const plain = revealTextRef.current.get(shape.id) ?? (props.richText ? renderPlaintextFromRichText(editor, props.richText as Parameters<typeof renderPlaintextFromRichText>[1]) : "");
           if (plain && props.font && props.size && !props.autoSize) {
             const m = measureText(editor, plain, props.font, props.size, b.w);
-            const w = Math.min(b.w, m.w + 8);
-            const x = props.textAlign === "middle" ? b.x + (b.w - w) / 2 : props.textAlign === "end" ? b.x + b.w - w : b.x;
+            // The words start at the box's edge (measured in the DOM), so the
+            // slack goes on both sides: +8 on the right alone made every ring,
+            // box and strike run long past the end of the words.
+            const w = Math.min(b.w, m.w + 4);
+            const x = props.textAlign === "middle" ? b.x + (b.w - w) / 2 : props.textAlign === "end" ? b.x + b.w - w : b.x - 2;
             add({ x, y: b.y, w, h: Math.min(b.h, m.h + 4) });
             continue;
           }
@@ -1853,7 +1844,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     const reduce = prefersReducedMotion() || instantRef.current;
     const next = (k: number) => {
       const stroke = strokes[k];
-      const host = itemsRef.current.find((i) => i.id === itemId);
+      const host = findHost(itemId);
       if (!stroke || !host) {
         scheduleCursorHide(editor, 2400);
         return;
@@ -1914,7 +1905,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       });
     };
     next(0);
-  }, [checkMarkLanded, moveCursor, patchPresence, scheduleCursorHide]);
+  }, [checkMarkLanded, findHost, moveCursor, patchPresence, scheduleCursorHide]);
 
   useEffect(() => {
     const timers = scribbleTimersRef.current;
@@ -1990,6 +1981,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // right-hand panel is framed on its own).
       const pageLeft = frame && cx >= frame.x && cx <= frame.x + frame.w ? Math.min(x, frame.x + PAGE_INSET.left) : x;
       const rowStart = (x + w - pageLeft + 64) * 0.8 <= screen.w ? pageLeft : x;
+      const fromPageLeft = !wholePage && Boolean(frame) && rowStart === pageLeft;
       // A number line or chart wider than a phone at 0.8 is shown whole, a
       // little further out (never below 0.55), rather than cut at the right.
       const tight = !wholePage && rowStart === x && (w + 64) * 0.8 > screen.w;
@@ -2004,6 +1996,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const merge = pending && !wholePage && !pendingIsPageRef.current;
       pendingFocusRef.current = merge ? unionRect(pending, rect) : rect;
       pendingIsPageRef.current = wholePage;
+      pendingStartRef.current = merge ? pendingStartRef.current || fromPageLeft : fromPageLeft;
       pendingTightRef.current = merge && pendingTightRef.current !== null ? Math.min(pendingTightRef.current, tightZoom ?? 0.8) : tightZoom;
       if (focusDebounceRef.current.raf !== null) cancelAnimationFrame(focusDebounceRef.current.raf);
       focusDebounceRef.current.raf = requestAnimationFrame(() => {
@@ -2011,6 +2004,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const f = pendingFocusRef.current;
         const isPage = pendingIsPageRef.current;
         const tightZoom = pendingTightRef.current;
+        const fromStart = pendingStartRef.current;
+        pendingStartRef.current = false;
         pendingTightRef.current = null;
         pendingFocusRef.current = null;
         pendingIsPageRef.current = false;
@@ -2019,7 +2014,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           // One planned move. Animating zoomToBounds and then clamping the zoom
           // stopped the first move, so the camera zoomed in place instead.
           const screen = editor.getViewportScreenBounds();
-          const camera = planCamera(f, { w: screen.w, h: screen.h }, { inset: isPage || tightZoom !== null ? 0 : 48, maxZoom: 1, minZoom: isPage ? 0.1 : (tightZoom ?? 0.8) });
+          // A row read from the page's left edge sits at the readable 0.8, so
+          // the long rows under a short one fit too (at 1 they ran off the right).
+          const camera = planCamera(f, { w: screen.w, h: screen.h }, { inset: isPage || tightZoom !== null ? 0 : fromStart ? 16 : 48, maxZoom: fromStart ? 0.8 : 1, minZoom: isPage ? 0.1 : (tightZoom ?? 0.8), anchor: fromStart ? "start" : "center" });
           editor.setCamera(camera, { animation: { duration: 320 } });
         } catch {
           // Editor may be mid-teardown; a missed camera move is harmless.
@@ -2815,19 +2812,25 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     // The "You said" chip before a student's line: a grey pill with no edge,
     // its words in the student's pencil. It decorates the line, so marks on
     // the line measure without it (meta.decor).
+    // The "You said" label's width without its tail, measured in its own face.
+    const youSaidBodyW = (): number => {
+      let textW = 56;
+      try {
+        const ctx = document.createElement("canvas").getContext("2d");
+        if (ctx) {
+          ctx.font = `500 ${TAG_FONT_PX}px "Hanken Grotesk", system-ui, sans-serif`;
+          textW = ctx.measureText("You said").width;
+        }
+      } catch {}
+      return Math.ceil(textW) + TAG_PAD_X * 2;
+    };
+
     const youSaidTag = (editor: Editor, x: number, y: number): { w: number; h: number } => {
-      const label = "You said";
-      const measured = measureText(editor, label, "sans", "s", 160);
-      const w = Math.ceil(measured.w) + 22;
-      const h = 26;
-      const before = currentShapeIdSet(editor);
-      createBox(editor, x, y, w, h, "", "pencil-soft", "solid", { size: "s" });
-      createText(editor, label, x, y + (h - measured.h) / 2 - 1, { size: "s", font: "sans", color: PENCIL, width: w, align: "middle" });
-      const made = diffStringSet(currentShapeIdSet(editor), before)
-        .map((sid) => editor.getShape(sid as TLShapeId))
-        .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape));
-      if (made.length > 0) editor.updateShapes(made.map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, decor: true } })));
-      return { w, h };
+      const w = youSaidBodyW();
+      const h = TAG_H;
+      editor.createShape({ id: createShapeId(), type: "tag", x, y, props: { w, h, text: "You said" }, meta: { ...currentMeta(), decor: true } } as unknown as Parameters<Editor["createShape"]>[0]);
+      // With its tail, so the words start a steady gap after it on every row.
+      return { w: w + TAG_TAIL, h };
     };
 
     // The board as it stands is framed and slid off to the left
@@ -2835,45 +2838,70 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     // is written only once the page is clear. Nothing is deleted: finished
     // boards wait in a row to the left, and the strip at the top goes back.
     const archiveBoard = (editor: Editor) => {
-      finishArchive();
       const live = editor.getCurrentPageShapes().filter((shape) => !isArchived(shape));
       if (live.length === 0) return;
-      const rects = live
-        .map((shape) => editor.getShapePageBounds(shape.id))
-        .filter((b): b is NonNullable<typeof b> => Boolean(b))
-        .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
-      const card = archiveRect(rects);
-      if (!card) return;
+      // The old plan box is drawn again on the new board; it does not go into the frame.
+      const oldPlans = live.filter((shape) => shape.type === "plan").map((shape) => shape.id);
+      const work = live.filter((shape) => shape.type !== "plan");
+      const retired = [...itemsRef.current];
+      for (const item of retired) retiredItemsRef.current.set(item.id, item);
       const solved = solvedRef.current;
       solvedRef.current = false;
       const cardId = createShapeId();
       editor.run(() => {
-        editor.createShape({ id: cardId, type: "card", x: card.x, y: card.y, opacity: 0, props: { w: card.w, h: card.h, solved }, meta: { archived: true, archiveCard: true } } as unknown as Parameters<Editor["createShape"]>[0]);
-        editor.sendToBack([cardId]);
-        editor.updateShapes(live.map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, archived: true } })));
+        if (oldPlans.length) editor.deleteShapes(oldPlans);
+        editor.updateShapes(work.map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, archived: true } })));
       }, { history: "ignore" });
-      // Every finished board moves by the same distance, so the row keeps its order.
-      const dist = slideDistance(card);
-      const start = new Map<TLShapeId, { x: number; type: string }>();
-      for (const shape of editor.getCurrentPageShapes()) {
-        if (isArchived(shape) && shape.parentId === editor.getCurrentPageId()) start.set(shape.id, { x: shape.x, type: shape.type });
-      }
-      const place = (slide: number, opacity: number) => {
-        editor.run(() => {
-          editor.updateShapes([...start].map(([id, at]) => ({ id, type: at.type, x: at.x - dist * slide })) as Parameters<Editor["updateShapes"]>[0]);
-          if (editor.getShape(cardId)) editor.updateShape({ id: cardId, type: "card", opacity } as Parameters<Editor["updateShape"]>[0]);
-        }, { history: "ignore" });
-      };
       setArchives((prev) => [...prev, { id: cardId, solved }]);
       const reduce = instantRef.current || prefersReducedMotion();
+      // Queued, not forced: whatever is still being written on this board is
+      // written out first, and only then is it framed and turned (it used to
+      // be finished at once, so the last lines popped onto the board as the
+      // frame appeared).
       enqueue({
         kind: "action",
         wait: reduce ? 160 : ARCHIVE_TOTAL_MS,
         run: () => {
-          // The pen steps away while the board turns; it comes back to write.
           if (cursorHideRef.current) clearTimeout(cursorHideRef.current);
           cursorHideRef.current = null;
           patchPresence(editor, { cursor: null });
+          // The frame hugs the work as it reads (words and drawings, their marks
+          // included), not the wide layout boxes behind the text.
+          const rects: Array<{ x: number; y: number; w: number; h: number }> = [];
+          for (const item of retired) {
+            const b = itemBounds(editor, item);
+            if (b) rects.push(b);
+            for (const sid of item.shapeIds) {
+              const shape = editor.getShape(sid as TLShapeId);
+              if ((shape?.meta as { mark?: unknown } | undefined)?.mark !== true) continue;
+              const mb = editor.getShapePageBounds(sid as TLShapeId);
+              if (mb) rects.push({ x: mb.x, y: mb.y, w: mb.w, h: mb.h });
+            }
+          }
+          if (rects.length === 0) {
+            for (const shape of work) {
+              const b = editor.getShapePageBounds(shape.id);
+              if (b) rects.push({ x: b.x, y: b.y, w: b.w, h: b.h });
+            }
+          }
+          const card = archiveRect(rects);
+          if (!card) return;
+          editor.run(() => {
+            editor.createShape({ id: cardId, type: "card", x: card.x, y: card.y, opacity: reduce ? 1 : 0, props: { w: card.w, h: card.h, solved }, meta: { archived: true, archiveCard: true } } as unknown as Parameters<Editor["createShape"]>[0]);
+            editor.sendToBack([cardId]);
+          }, { history: "ignore" });
+          // Every finished board moves by the same distance, so the row keeps its order.
+          const dist = slideDistance(card);
+          const start = new Map<TLShapeId, { x: number; type: string }>();
+          for (const shape of editor.getCurrentPageShapes()) {
+            if (isArchived(shape) && shape.parentId === editor.getCurrentPageId()) start.set(shape.id, { x: shape.x, type: shape.type });
+          }
+          const place = (slide: number, opacity: number) => {
+            editor.run(() => {
+              editor.updateShapes([...start].filter(([id]) => editor.getShape(id)).map(([id, at]) => ({ id, type: at.type, x: at.x - dist * slide })) as Parameters<Editor["updateShapes"]>[0]);
+              if (editor.getShape(cardId)) editor.updateShape({ id: cardId, type: "card", opacity } as Parameters<Editor["updateShape"]>[0]);
+            }, { history: "ignore" });
+          };
           if (reduce) {
             place(1, 1);
             return;
@@ -2997,6 +3025,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const shapes = editor.getCurrentPageShapes();
       if (shapes.length > 0) editor.deleteShapes(shapes.map(s => s.id));
       setArchives([]);
+      retiredItemsRef.current.clear();
       solvedRef.current = false;
       pageTop.current = 0;
       pageIndex.current = 1;
@@ -3029,8 +3058,6 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         }
       }
       // The board in play is framed and turned, not wiped (Oct 14 2026).
-      flushReveal(editor);
-      resetReveal();
       archiveBoard(editor);
       pageTop.current = 0;
       pageIndex.current = 1;
@@ -4578,7 +4605,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           kind: "action",
           wait: style === "circle" ? 1100 : 600,
           run: () => {
-            const host = itemsRef.current.find((i) => i.id === item.id);
+            const host = findHost(item.id);
             const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
             if (!host || !bb) return;
             focusOn(editor, bb.x - 16, bb.y - 16, bb.w + 32, bb.h + 32);
@@ -4642,16 +4669,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           kind: "action",
           wait: 600,
           run: () => {
-            const host = itemsRef.current.find((i) => i.id === item.id);
+            const host = findHost(item.id);
             const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
             if (!host || !bb) return;
             focusOn(editor, bb.x, bb.y, bb.w, bb.h);
-            const before = currentShapeIdSet(editor);
-            createLineShape(editor, undefined, undefined, [{ x: bb.x - 6, y: bb.y + bb.h * 0.55 }, { x: bb.x + bb.w + 6, y: bb.y + bb.h * 0.45 }], { color: STRIKE, size: "m", dash: "solid" });
-            const ids = diffStringSet(currentShapeIdSet(editor), before);
-            markShapes(editor, host, ids, meta);
-            checkMarkLanded(editor, host, ids);
-            revealItem(editor, { ...host, shapeIds: ids }, bb);
+            runHighlights(editor, host.id, [{ points: strikePoints(bb), size: "m", duration: Math.min(520, 240 + bb.w * 1.2), ring: true, color: STRIKE }], meta);
           },
         });
         recordDirectSemanticAction(
@@ -4967,7 +4989,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         // Two glides (240 ms each), the box (560) and the check (280).
         wait: 1400,
         run: () => {
-          const host = itemsRef.current.find((i) => i.id === item.id);
+          const host = findHost(item.id);
           const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
           if (!host || !bb) return;
           focusOn(editor, bb.x - 16, bb.y - 24, bb.w + 48, bb.h + 40);
@@ -5019,9 +5041,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const y = colY("left").current;
       // The tag's width first, so the line can start after it; the tag goes
       // up centred on the line once the line's height is known.
-      const tagW = Math.ceil(measureText(editor, "You said", "sans", "s", 160).w) + 22;
-      const line = createMath(editor, { latex, x: x + tagW + 12, y, display: true });
-      const tag = youSaidTag(editor, x, y + Math.max(0, (line.h - 26) / 2));
+      // The math box pads its formula by 4px, so it starts 4px early to line
+      // up with the handwritten answers on the rows around it.
+      const tagW = youSaidBodyW() + TAG_TAIL;
+      const line = createMath(editor, { latex, x: x + tagW + 12 - 4, y, display: true });
+      const tag = youSaidTag(editor, x, y + Math.max(0, (line.h - TAG_H) / 2));
       const pitch = Math.max(EQ_H, line.h + 6);
       colY("left").current += pitch + EQ_ROW_GAP;
       focusOn(editor, x, y, tag.w + 12 + Math.max(200, line.w), pitch);
@@ -5050,13 +5074,13 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         kind: "action",
         wait: keep ? 1100 : 700,
         run: () => {
-          const host = itemsRef.current.find((i) => i.id === item.id);
+          const host = findHost(item.id);
           const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
           if (!host || !bb) return;
           focusOn(editor, bb.x - 16, bb.y - 16, bb.w + 32, bb.h + 32);
           // A kept ring is a real sky stroke that belongs to the item; the
           // laser ring is the tutor's presence and fades.
-          if (keep) runHighlights(editor, host.id, [{ points: ringPoints(bb, 12), size: "m", duration: 900, ring: true }], meta);
+          if (keep) runHighlights(editor, host.id, [{ points: ringPoints(bb, 9), size: "m", duration: 900, ring: true }], meta);
           else tutorScribble(editor, ringPoints(bb, 12), { duration: 640, hold: 3000, size: 5 });
         },
       });
@@ -5100,7 +5124,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const swipes = (rects: Rect[]): HighlightStroke[] =>
         how === "marker" ? markerSwipes(rects) : rects.slice(0, 4).map((r) => ({ points: scribbleUnderlinePoints(r), size: "s" as TLDefaultSizeStyle, duration: Math.min(720, 320 + r.w * 1.6), ring: true }));
       const draw = () => {
-        const host = itemsRef.current.find((i) => i.id === item.id);
+        const host = findHost(item.id);
         if (!host) return;
         // Words on a Desmos graph (a labelled point, "rise 4"): a dab on the
         // point or the label. A graph's only DOM text is its credit, so a
@@ -5134,7 +5158,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         kind: "action",
         wait: part === "text" ? 1300 : textual ? 2400 : 1500,
         run: () => {
-          const host = itemsRef.current.find((i) => i.id === item.id);
+          const host = findHost(item.id);
           const bb = (host && itemBounds(editor, host, MARK_BOUNDS)) ?? box;
           const moving = !rectVisible(editor, bb);
           focusOn(editor, bb.x, bb.y, bb.w, bb.h);

@@ -44,3 +44,12 @@ test("min zoom never exceeds max zoom", () => {
   const cam = planCamera({ x: 0, y: 0, w: 5000, h: 5000 }, { w: 500, h: 500 }, { minZoom: 2, maxZoom: 1 });
   assert.equal(cam.z, 1);
 });
+
+test("a row anchored at the page's start stays at the left edge on a phone, even when it would fit centred", () => {
+  const cam = planCamera({ x: 12, y: 100, w: 224, h: 140 }, { w: 390, h: 844 }, { inset: 16, maxZoom: 0.8, minZoom: 0.8, anchor: "start" });
+  const view = cameraView(cam, { w: 390, h: 844 });
+  assert.equal(cam.z, 0.8);
+  assert.equal(Math.round(view.x), 12 - 20);
+  const centred = cameraView(planCamera({ x: 12, y: 100, w: 224, h: 140 }, { w: 390, h: 844 }, { inset: 16, maxZoom: 0.8, minZoom: 0.8 }), { w: 390, h: 844 });
+  assert.ok(centred.x < view.x - 50, "centring pushed the page's start right");
+});

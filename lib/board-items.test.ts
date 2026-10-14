@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatBoardItems, highlightSizeFor, highlightSwipeFor, itemLabelFrom, matchVariants, mergeLineRects, normalizeForMatch, swipePoints, parseTargetList, resolveItemTarget, ringPoints, RING_OVERLAP, toolRole, marksLast, type BoardItem } from "./board-items";
+import { formatBoardItems, highlightSizeFor, highlightSwipeFor, itemLabelFrom, matchVariants, mergeLineRects, normalizeForMatch, swipePoints, parseTargetList, resolveItemTarget, ringPoints, RING_OVERLAP, toolRole, marksLast, strikePoints, type BoardItem } from "./board-items";
 
 const item = (id: string, tool: string, label: string, owner: "tutor" | "student" = "tutor"): BoardItem => ({
   id, tool, label, shapeIds: [`shape:${id}`], eqItemIds: [], owner, createdAt: 0,
@@ -215,4 +215,14 @@ test("a LaTeX target finds its plain line (Oct 7 2026, calculus)", () => {
   assert.equal(resolveItemTarget(items, "\\frac{du}{dx} = 2x")?.id, "b6");
   assert.equal(resolveItemTarget(items, "du = 2x \\, dx")?.id, "b7");
   assert.equal(resolveItemTarget(items, "\\int 2x(x^2+1)^3 \\, dx = ?")?.id, "b3");
+});
+
+test("a strike runs just past the words, rising a little, never a ruler line past the text", () => {
+  const b = { x: 100, y: 50, w: 200, h: 30 };
+  const pts = strikePoints(b);
+  const xs = pts.map((p) => p.x);
+  assert.ok(Math.min(...xs) >= b.x - 5 && Math.min(...xs) < b.x);
+  assert.ok(Math.max(...xs) <= b.x + b.w + 5 && Math.max(...xs) > b.x + b.w);
+  assert.ok(pts[0].y > pts[pts.length - 1].y, "rises left to right");
+  for (const p of pts) assert.ok(p.y > b.y + b.h * 0.3 && p.y < b.y + b.h * 0.8, "stays through the middle of the words");
 });
