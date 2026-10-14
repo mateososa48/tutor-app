@@ -97,6 +97,12 @@ export default function BoardDemo() {
     const timers = demo.map((call, i) =>
       setTimeout(() => {
         if (cancelled) return;
+        if (call.name === "__solved") {
+          // A checked final answer, as the session page reports one.
+          ref.current?.planAnswered?.();
+          setLog((prev) => [...prev, "solved"]);
+          return;
+        }
         if (call.name === "__undo") {
           const undone = ref.current?.undoCall?.(String(call.args.call ?? "")) ?? "";
           setLog((prev) => [...prev, `undo ${String(call.args.call)}: ${undone || "nothing to undo"}`]);
@@ -119,6 +125,7 @@ export default function BoardDemo() {
         ref={ref}
         onExplore={exploreOn ? openExplore : undefined}
         exploringItemId={exploreState?.open ? exploreState.target.itemId : null}
+        boardStrip
       />
       {exploreState && (
         <GraphExplorer

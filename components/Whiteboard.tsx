@@ -25,6 +25,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Whiteb
       autoFocus={props.autoFocus}
       onExplore={props.onExplore}
       exploringItemId={props.exploringItemId}
+      boardStrip={props.boardStrip}
     />
   );
 });

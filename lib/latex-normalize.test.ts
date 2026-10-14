@@ -48,3 +48,8 @@ test("variable products stay math, long powers keep their digits together", () =
   assert.equal(normalizeLatex("a_12"), "a_{12}");
   assert.equal(normalizeLatex("x^2y"), "x^2y");
 });
+
+test("a blank after a relation is a symbol, so it is spaced like one", () => {
+  assert.equal(normalizeLatex("x = ?"), "x = {?}");
+  assert.equal(normalizeLatex("\\text{why?}"), "\\text{why?}");
+});

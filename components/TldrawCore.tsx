@@ -26,6 +26,9 @@ import {
   normalizeForMatch,
   resolveItemTarget,
   ringPoints,
+  handBoxPoints,
+  checkPoints,
+  scribbleUnderlinePoints,
   toolRole,
   type BoardItem,
   type ItemBounds,
@@ -40,6 +43,9 @@ import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from
 import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
 import { GraphShapeUtil, type TLGraphShape, type TLGraphShapeProps } from "@/components/board/GraphShape";
 import { PlanShapeUtil, measurePlanBox, type TLPlanShape } from "@/components/board/PlanShape";
+import { CardShapeUtil } from "@/components/board/CardShape";
+import { BoardStrip } from "@/components/board/BoardStrip";
+import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance } from "@/lib/board-archive";
 import { planAfterCorrect, planAfterStart, planSummary, readPlan, type BoardPlan } from "@/lib/board-plan";
 import { desmosAvailable, desmosFailure, desmosStatus, devParam, renderDesmosGraph } from "@/components/board/desmos-renderer";
 import { buildBarChartGraph } from "@/lib/desmos-bar-chart";
@@ -61,7 +67,7 @@ import {
 } from "@/lib/desmos-spec";
 
 const OVERLAY_UTILS = [TutorPenOverlayUtil, TutorScribbleOverlayUtil];
-const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil, PlanShapeUtil];
+const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil, PlanShapeUtil, CardShapeUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -200,7 +206,8 @@ const PICTURE_TOOLS = new Set([
 const MARK_BOUNDS = { decor: false } as const;
 // The tutor's presence (pen cursor, laser ring) in the app's sky.
 const TUTOR_COLOR = SKY;
-type HighlightStroke = { points: Array<{ x: number; y: number }>; size: TLDefaultSizeStyle; duration: number; ring?: boolean };
+// `ring`: drawn as a pen stroke (rings, boxes, checks, underlines) rather than a highlighter swipe.
+type HighlightStroke = { points: Array<{ x: number; y: number }>; size: TLDefaultSizeStyle; duration: number; ring?: boolean; color?: TldrawColor };
 
 function pageFrame(base: { w: number; h: number }, index: number): Rect {
   return { x: (index - 1) * (base.w + PAGE_GAP), y: 0, w: base.w, h: base.h };
@@ -398,7 +405,13 @@ export interface WhiteboardHandle {
   /** What placement or a mark wants the tool result to say ("stayed on this page: there was room"); clears them. */
   takeNotes?(): string[];
   /** A highlighter over the words `text` in an item, or over the whole item. `part` says which it managed. */
-  highlight?(target: string, text: string | undefined): { item: BoardItem; part: "text" | "item" } | null;
+  highlight?(target: string, text: string | undefined, how?: "underline" | "marker"): { item: BoardItem; part: "text" | "item" } | null;
+  /** The question tags on the board in play fade once a right answer settles them. */
+  fadeQuestions?(): number;
+  /** A right answer: a green box drawn round it and a check beside it (Oct 14 2026). */
+  markCorrect?(target: string): BoardItem | null;
+  /** The student's answer typeset (it had math in it), behind a "You said" tag. */
+  addStudentMath?(latex: string): void;
   /** The board's items as they are now (the dispatcher looks for duplicates in them). */
   itemsSnapshot?(): BoardItem[];
   /** Take back what a cancelled tool call did. Returns what was undone, in words ("" for nothing). */
@@ -450,13 +463,34 @@ function compactArtifactMeta(meta: BoardArtifactMeta | null): BoardArtifactMeta 
   return compact;
 }
 
+/** A finished board kept to the left of the page (lib/board-archive): its work and its frame. */
+function isArchived(shape: { meta?: unknown } | undefined | null): boolean {
+  return Boolean(shape && (shape.meta as { archived?: unknown } | undefined)?.archived);
+}
+
+/** The view is on the finished boards, left of the page in play. */
+function lookingBack(editor: Editor): boolean {
+  try {
+    const view = editor.getViewportPageBounds();
+    return view.x + view.w * 0.5 < -ARCHIVE_GAP / 2;
+  } catch {
+    return false;
+  }
+}
+
+// The shapes of the board in play: archived boards are never part of a new item.
 function currentShapeIdSet(editor: Editor): Set<string> {
   try {
-    return new Set(Array.from(editor.getCurrentPageShapeIds() as unknown as Iterable<string>));
+    const out = new Set<string>();
+    for (const shape of editor.getCurrentPageShapes()) if (!isArchived(shape)) out.add(shape.id);
+    return out;
   } catch {
     return new Set();
   }
 }
+
+/** The finished boards, for the strip at the top: oldest first. */
+type ArchiveEntry = { id: string; solved: boolean };
 
 // Saved boards leave graph pictures out: each is 30-80 KB of SVG and is
 // drawn again from its spec when the board is loaded.
@@ -721,9 +755,11 @@ export type TldrawCoreProps = {
   onExplore?: (target: ExploreTarget) => void;
   /** The graph item open in Explore; its button shows as pressed. */
   exploringItemId?: string | null;
+  /** Show the strip of finished boards at the top (the session page; the landing has none). */
+  boardStrip?: boolean;
 };
 
-const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting, autoFocus = true, onExplore, exploringItemId = null }, ref) {
+const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting, autoFocus = true, onExplore, exploringItemId = null, boardStrip = false }, ref) {
   const editorRef = useRef<Editor | null>(null);
   const leftY = useRef(START_Y);
   const rightY = useRef(START_Y);
@@ -773,6 +809,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const itemSeqRef = useRef(0);
   const presenceIdRef = useRef<TLInstancePresence["id"] | null>(null);
   const cursorAnimRef = useRef<number | null>(null);
+  const cursorDoneRef = useRef<(() => void) | null>(null);
   const scribbleAnimRef = useRef<number | null>(null);
   // The reveal queue: tool calls appear one after another, written not pasted.
   type RevealJob = (
@@ -780,6 +817,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     | { kind: "action"; run: () => void; wait: number }
   ) & { callId?: string };
   const revealQueueRef = useRef<RevealJob[]>([]);
+  // The job being written now (a board turned mid-write is finished first).
+  const currentJobRef = useRef<RevealJob | null>(null);
   const revealActiveRef = useRef(false);
   const revealRafRef = useRef<number | null>(null);
   const revealWaitersRef = useRef<Array<() => void>>([]);
@@ -859,6 +898,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const currentCallIdRef = useRef<string | null>(null);
   const mathChangesRef = useRef<Array<{ callId: string; id: string; prop: "highlight" | "crossOut"; prev: unknown }>>([]);
   const clearedBoardsRef = useRef<Map<string, WhiteboardSnapshot>>(new Map());
+  // Finished boards (lib/board-archive): whether the board in play was solved,
+  // the transition running now (its end state, applied at once if cut short),
+  // and the list the strip at the top shows.
+  const solvedRef = useRef(false);
+  const archiveRunRef = useRef<{ raf: number | null; finish: () => void } | null>(null);
+  const [archives, setArchives] = useState<ArchiveEntry[]>([]);
   const notesRef = useRef<string[]>([]);
   const placeRequestRef = useRef<PlaceRequest | null>(null);
   const placedRectsRef = useRef<Map<string, Rect>>(new Map());
@@ -1024,6 +1069,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     const rec = ensurePresence(editor);
     if (!rec) return;
     if (cursorAnimRef.current !== null) cancelAnimationFrame(cursorAnimRef.current);
+    // A glide cut short still runs what was waiting on it: a mark's stroke is
+    // created hidden and drawn by that callback, so dropping it left the
+    // stroke invisible (a green check vanished when the next job moved the pen).
+    const pending = cursorDoneRef.current;
+    cursorDoneRef.current = done ?? null;
+    pending?.();
     if (cursorHideRef.current) {
       clearTimeout(cursorHideRef.current);
       cursorHideRef.current = null;
@@ -1031,7 +1082,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     const from = rec.cursor ? { x: rec.cursor.x, y: rec.cursor.y } : { x: x + 90, y: y + 70 };
     const t0 = performance.now();
     const step = (now: number) => {
-      const p = Math.min(1, (now - t0) / Math.max(1, duration));
+      const p = Math.min(1, Math.max(0, (now - t0) / Math.max(1, duration)));
       const e = 1 - Math.pow(1 - p, 3);
       patchPresence(editor, { cursor: { x: from.x + (x - from.x) * e, y: from.y + (y - from.y) * e, type: "default", rotation: 0 } });
       if (p < 1) {
@@ -1039,7 +1090,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       } else {
         cursorAnimRef.current = null;
         scheduleCursorHide(editor);
-        done?.();
+        const finish = cursorDoneRef.current;
+        cursorDoneRef.current = null;
+        finish?.();
       }
     };
     cursorAnimRef.current = requestAnimationFrame(step);
@@ -1210,6 +1263,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   }, []);
 
   const finishReveal = useCallback(() => {
+    currentJobRef.current = null;
     revealActiveRef.current = false;
     revealRafRef.current = null;
     if (writingRef.current) {
@@ -1230,6 +1284,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return;
     }
     revealActiveRef.current = true;
+    currentJobRef.current = job;
     if (job.kind === "action") {
       try {
         job.run();
@@ -1341,7 +1396,50 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     }, 0);
   }, [runQueue]);
 
+  // Everything still being written goes up at once (the board is about to be
+  // framed and slid away: a line left half written would be archived blank).
+  const flushReveal = useCallback((editor: Editor) => {
+    const active = currentJobRef.current;
+    const jobs = [...(active && active.kind === "reveal" ? [active] : []), ...revealQueueRef.current];
+    for (const job of jobs) {
+      if (job.kind === "reveal") {
+        for (const step of job.steps) {
+          try {
+            applyStep(editor, step, 1, {});
+          } catch {}
+        }
+      } else {
+        try {
+          job.run();
+        } catch {}
+      }
+    }
+  }, [applyStep]);
+
+  // "Back to now": the page in play, as the camera frames a whole page.
+  const goNow = useCallback(() => {
+    const editor = editorRef.current;
+    const frame = pageFrameRef.current;
+    if (!editor || !frame) return;
+    const screen = editor.getViewportScreenBounds();
+    const zoom = Math.max(0.5, Math.min(1, screen.w / frame.w, screen.h / frame.h));
+    editor.zoomToBounds({ x: frame.x, y: frame.y, w: frame.w, h: frame.h }, { targetZoom: zoom, animation: { duration: 420 } });
+  }, []);
+
+  // A board turn cut short (a new problem straight after, an undo, a reload)
+  // jumps to where it was going.
+  const finishArchive = useCallback(() => {
+    const run = archiveRunRef.current;
+    if (!run) return;
+    archiveRunRef.current = null;
+    if (run.raf !== null) cancelAnimationFrame(run.raf);
+    try {
+      run.finish();
+    } catch {}
+  }, []);
+
   const resetReveal = useCallback(() => {
+    finishArchive();
     if (queueTimerRef.current !== null) {
       clearTimeout(queueTimerRef.current);
       queueTimerRef.current = null;
@@ -1351,7 +1449,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     finishReveal();
     strokePointsRef.current.clear();
     revealTextRef.current.clear();
-  }, [finishReveal]);
+  }, [finishArchive, finishReveal]);
 
   const awaitRevealIdle = useCallback((): Promise<void> => {
     if (!revealActiveRef.current && revealQueueRef.current.length === 0) return Promise.resolve();
@@ -1783,8 +1881,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           y: minY,
           opacity: reduce ? 1 : 0,
           props: stroke.ring
-            ? { ...common, color: MARK, size: "m", fill: "none", dash: "solid", isClosed: false }
-            : { ...common, color: MARK, size: stroke.size },
+            ? { ...common, color: stroke.color ?? MARK, size: stroke.size, fill: "none", dash: "solid", isClosed: false }
+            : { ...common, color: stroke.color ?? MARK, size: stroke.size },
           meta: { ...meta, itemId, mark: true },
         } as Parameters<Editor["createShape"]>[0]);
       }, { history: "ignore" });
@@ -1867,6 +1965,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const focusOn = useCallback((editor: Editor, x: number, y: number, w = 420, h = 180) => {
     // Mid tool call the shapes are not in their final place yet; endItem focuses.
     if (buildingItemRef.current) return;
+    // The student went back to a finished board (left of the page): leave them
+    // there; "Back to now" on the strip brings them back.
+    if (lookingBack(editor) && x >= 0) return;
     try {
       if (rectVisible(editor, { x, y, w, h })) return;
       // The page that holds it: a mark can point back at an earlier page.
@@ -2711,6 +2812,90 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
     // The board as saved: graph pictures are dropped unless `keepGraphs`
     // (an in-memory copy an undo puts straight back).
+    // The "You said" chip before a student's line: a grey pill with no edge,
+    // its words in the student's pencil. It decorates the line, so marks on
+    // the line measure without it (meta.decor).
+    const youSaidTag = (editor: Editor, x: number, y: number): { w: number; h: number } => {
+      const label = "You said";
+      const measured = measureText(editor, label, "sans", "s", 160);
+      const w = Math.ceil(measured.w) + 22;
+      const h = 26;
+      const before = currentShapeIdSet(editor);
+      createBox(editor, x, y, w, h, "", "pencil-soft", "solid", { size: "s" });
+      createText(editor, label, x, y + (h - measured.h) / 2 - 1, { size: "s", font: "sans", color: PENCIL, width: w, align: "middle" });
+      const made = diffStringSet(currentShapeIdSet(editor), before)
+        .map((sid) => editor.getShape(sid as TLShapeId))
+        .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape));
+      if (made.length > 0) editor.updateShapes(made.map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, decor: true } })));
+      return { w, h };
+    };
+
+    // The board as it stands is framed and slid off to the left
+    // (lib/board-archive), in the writing queue, so the new problem's heading
+    // is written only once the page is clear. Nothing is deleted: finished
+    // boards wait in a row to the left, and the strip at the top goes back.
+    const archiveBoard = (editor: Editor) => {
+      finishArchive();
+      const live = editor.getCurrentPageShapes().filter((shape) => !isArchived(shape));
+      if (live.length === 0) return;
+      const rects = live
+        .map((shape) => editor.getShapePageBounds(shape.id))
+        .filter((b): b is NonNullable<typeof b> => Boolean(b))
+        .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
+      const card = archiveRect(rects);
+      if (!card) return;
+      const solved = solvedRef.current;
+      solvedRef.current = false;
+      const cardId = createShapeId();
+      editor.run(() => {
+        editor.createShape({ id: cardId, type: "card", x: card.x, y: card.y, opacity: 0, props: { w: card.w, h: card.h, solved }, meta: { archived: true, archiveCard: true } } as unknown as Parameters<Editor["createShape"]>[0]);
+        editor.sendToBack([cardId]);
+        editor.updateShapes(live.map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, archived: true } })));
+      }, { history: "ignore" });
+      // Every finished board moves by the same distance, so the row keeps its order.
+      const dist = slideDistance(card);
+      const start = new Map<TLShapeId, { x: number; type: string }>();
+      for (const shape of editor.getCurrentPageShapes()) {
+        if (isArchived(shape) && shape.parentId === editor.getCurrentPageId()) start.set(shape.id, { x: shape.x, type: shape.type });
+      }
+      const place = (slide: number, opacity: number) => {
+        editor.run(() => {
+          editor.updateShapes([...start].map(([id, at]) => ({ id, type: at.type, x: at.x - dist * slide })) as Parameters<Editor["updateShapes"]>[0]);
+          if (editor.getShape(cardId)) editor.updateShape({ id: cardId, type: "card", opacity } as Parameters<Editor["updateShape"]>[0]);
+        }, { history: "ignore" });
+      };
+      setArchives((prev) => [...prev, { id: cardId, solved }]);
+      const reduce = instantRef.current || prefersReducedMotion();
+      enqueue({
+        kind: "action",
+        wait: reduce ? 160 : ARCHIVE_TOTAL_MS,
+        run: () => {
+          // The pen steps away while the board turns; it comes back to write.
+          if (cursorHideRef.current) clearTimeout(cursorHideRef.current);
+          cursorHideRef.current = null;
+          patchPresence(editor, { cursor: null });
+          if (reduce) {
+            place(1, 1);
+            return;
+          }
+          const t0 = performance.now();
+          const run = { raf: null as number | null, finish: () => place(1, 1) };
+          archiveRunRef.current = run;
+          const step = (now: number) => {
+            if (archiveRunRef.current !== run) return;
+            const at = archiveFrameAt(now - t0);
+            place(at.slide, at.opacity);
+            if (at.done) {
+              archiveRunRef.current = null;
+              return;
+            }
+            run.raf = requestAnimationFrame(step);
+          };
+          run.raf = requestAnimationFrame(step);
+        },
+      });
+    };
+
     const snapshotBoard = (keepGraphs: boolean): WhiteboardSnapshot | null => {
       const editor = editorRef.current;
       if (!editor) return null;
@@ -2793,6 +2978,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       },
 
       planAnswered() {
+        // A checked final answer: the board's frame says "Solved" when it turns.
+        solvedRef.current = true;
         const editor = editorRef.current;
         const next = planAfterCorrect(planRef.current);
         if (!next.changed) return;
@@ -2809,6 +2996,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       resetReveal();
       const shapes = editor.getCurrentPageShapes();
       if (shapes.length > 0) editor.deleteShapes(shapes.map(s => s.id));
+      setArchives([]);
+      solvedRef.current = false;
       pageTop.current = 0;
       pageIndex.current = 1;
       leftY.current = START_Y;
@@ -2839,9 +3028,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           while (clearedBoardsRef.current.size > 3) clearedBoardsRef.current.delete(clearedBoardsRef.current.keys().next().value as string);
         }
       }
+      // The board in play is framed and turned, not wiped (Oct 14 2026).
+      flushReveal(editor);
       resetReveal();
-      const shapes = editor.getCurrentPageShapes();
-      if (shapes.length > 0) editor.deleteShapes(shapes.map(s => s.id));
+      archiveBoard(editor);
       pageTop.current = 0;
       pageIndex.current = 1;
       leftY.current = START_Y;
@@ -3267,25 +3457,18 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const editor = editorRef.current;
       if (!editor) return;
       const col = column ?? "left";
-      // The student's words in pencil with a small "you" tag, the way a tutor
-      // jots down what the student said rather than boxing it as an exhibit.
+      // "You said" first, then their words in their pencil (Oct 14 2026, Mateo:
+      // "at the start put a box that says you said"). The tag is a quiet grey
+      // chip with no outline; their words are the thing to read.
       const textW = 460;
-      const measured = measureText(editor, text, "draw", "m", textW);
-      const usedW = Math.min(textW, measured.w);
-      const w = usedW + 96;
-      const h = Math.max(32, measured.h);
       const x = colX(col);
       const y = colY(col).current;
-      createText(editor, text, x, y, { size: "m", font: "draw", color: PENCIL, width: textW });
-      // Tag drawn as a box plus its own text: a geo label would grow the box.
-      // It decorates the words, so a strike or ring on them leaves it alone.
-      const beforeTag = currentShapeIdSet(editor);
-      createBox(editor, x + usedW + 14, y + 3, 58, 28, "", PENCIL, "solid");
-      createText(editor, "you", x + usedW + 14, y + 5, { size: "s", font: "sans", color: PENCIL, width: 58, align: "middle" });
-      const tagShapes = diffStringSet(currentShapeIdSet(editor), beforeTag)
-        .map((sid) => editor.getShape(sid as TLShapeId))
-        .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape));
-      if (tagShapes.length > 0) editor.updateShapes(tagShapes.map((shape) => ({ id: shape.id, type: shape.type, meta: { ...shape.meta, decor: true } })));
+      const tag = youSaidTag(editor, x, y + 4);
+      const measured = measureText(editor, text, "draw", "m", textW);
+      const usedW = Math.min(textW, measured.w);
+      const w = tag.w + 12 + usedW;
+      const h = Math.max(32, measured.h);
+      createText(editor, text, x + tag.w + 12, y, { size: "m", font: "draw", color: PENCIL, width: textW });
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);
       recordDirectSemanticAction(
@@ -3309,7 +3492,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const h = Math.ceil(measured.h) + PAD_Y * 2;
       const x = colX(col);
       const y = colY(col).current;
-      createBox(editor, x, y, w, h, "", "sky", "semi", { size: "s" });
+      // A pale sky chip with no outline (Oct 14 2026: the bordered box was the
+      // loudest thing on the board for what is only a question).
+      createBox(editor, x, y, w, h, "", "sky-soft", "solid", { size: "s" });
       createText(editor, text, x + PAD_X, y + PAD_Y, { color: INK, size: "s", font: "sans", width: w - PAD_X * 2 });
       colY(col).current += h + ROW_GAP;
       focusOn(editor, x, y, w, h);
@@ -4766,6 +4951,86 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return item;
     },
 
+    markCorrect(target: string) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const item = resolveItemTarget(itemsRef.current, target);
+      if (!item) return null;
+      notePage(editor, item);
+      const meta = currentMeta();
+      recordDirectSemanticAction(
+        { type: "highlight_step", step_label: item.label, style: "circle" },
+        { shapeIds: [], bounds: (() => { const b = itemBounds(editor, item); return b ? { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } : undefined; })() },
+      );
+      enqueue({
+        kind: "action",
+        // Two glides (240 ms each), the box (560) and the check (280).
+        wait: 1400,
+        run: () => {
+          const host = itemsRef.current.find((i) => i.id === item.id);
+          const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
+          if (!host || !bb) return;
+          focusOn(editor, bb.x - 16, bb.y - 24, bb.w + 48, bb.h + 40);
+          // A box drawn round the answer, then a check ticked over its top
+          // right corner, in one green pen. On the corner, not beside it: the
+          // layout does not know about marks, and a check beside the box ran
+          // into whatever was written next on that row.
+          const size = Math.max(22, Math.min(28, bb.h * 0.85));
+          runHighlights(editor, host.id, [
+            { points: handBoxPoints(bb, 9), size: "m", duration: 560, ring: true, color: "check" },
+            { points: checkPoints(bb.x + bb.w - size * 0.2, bb.y + size * 0.05, size), size: "m", duration: 280, ring: true, color: "check" },
+          ], meta);
+        },
+      });
+      return item;
+    },
+
+    fadeQuestions() {
+      const editor = editorRef.current;
+      if (!editor) return 0;
+      const shapes = itemsRef.current
+        .filter((item) => item.tool === "add_callout")
+        .flatMap((item) => item.shapeIds)
+        .map((sid) => editor.getShape(sid as TLShapeId))
+        .filter((shape): shape is NonNullable<typeof shape> => Boolean(shape) && shape!.opacity > 0.5);
+      if (shapes.length === 0) return 0;
+      const from = new Map(shapes.map((shape) => [shape.id, shape.opacity]));
+      const TO = 0.4;
+      const reduce = prefersReducedMotion() || instantRef.current;
+      const set = (p: number) => editor.run(() => editor.updateShapes(shapes.filter((shape) => editor.getShape(shape.id)).map((shape) => ({ id: shape.id, type: shape.type, opacity: Math.min(1, Math.max(0, (from.get(shape.id) ?? 1) + (TO - (from.get(shape.id) ?? 1)) * p)) }))), { history: "ignore" });
+      if (reduce) set(1);
+      else {
+        const t0 = performance.now();
+        const step = (now: number) => {
+          // A frame's timestamp can come before t0: clamp, or the ease overshoots past 1.
+          const p = Math.min(1, Math.max(0, (now - t0) / 280));
+          set(1 - Math.pow(1 - p, 3));
+          if (p < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      }
+      return shapes.length;
+    },
+
+    addStudentMath(latex: string) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const x = colX("left");
+      const y = colY("left").current;
+      // The tag's width first, so the line can start after it; the tag goes
+      // up centred on the line once the line's height is known.
+      const tagW = Math.ceil(measureText(editor, "You said", "sans", "s", 160).w) + 22;
+      const line = createMath(editor, { latex, x: x + tagW + 12, y, display: true });
+      const tag = youSaidTag(editor, x, y + Math.max(0, (line.h - 26) / 2));
+      const pitch = Math.max(EQ_H, line.h + 6);
+      colY("left").current += pitch + EQ_ROW_GAP;
+      focusOn(editor, x, y, tag.w + 12 + Math.max(200, line.w), pitch);
+      recordDirectSemanticAction(
+        { type: "student_attempt", text: latex, column: "left" },
+        { bounds: { x, y, w: tag.w + 12 + line.w, h: pitch, column: "left", pageIndex: pageIndex.current } },
+      );
+    },
+
     circleItem(target: string, keep: boolean) {
       const editor = editorRef.current;
       if (!editor) return null;
@@ -4798,7 +5063,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return item;
     },
 
-    highlight(target: string, text: string | undefined) {
+    highlight(target: string, text: string | undefined, how?: "underline" | "marker") {
       const editor = editorRef.current;
       if (!editor) return null;
       const item = resolveItemTarget(itemsRef.current, target);
@@ -4825,11 +5090,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         return type === "math" || type === "text";
       });
       const meta = currentMeta();
-      const swipes = (rects: Rect[]): HighlightStroke[] =>
+      // Words get the tutor's scribbly sky underline (Oct 14 2026, Mateo: "a
+      // light blue scribbly line"); how: "marker" keeps the highlighter swipe.
+      const markerSwipes = (rects: Rect[]): HighlightStroke[] =>
         rects.slice(0, 4).map((r) => {
           const swipe = highlightSwipeFor(r);
           return { points: swipe.points, size: swipe.size as TLDefaultSizeStyle, duration: Math.min(620, 260 + Math.max(r.w, r.h) * 1.4) };
         });
+      const swipes = (rects: Rect[]): HighlightStroke[] =>
+        how === "marker" ? markerSwipes(rects) : rects.slice(0, 4).map((r) => ({ points: scribbleUnderlinePoints(r), size: "s" as TLDefaultSizeStyle, duration: Math.min(720, 320 + r.w * 1.6), ring: true }));
       const draw = () => {
         const host = itemsRef.current.find((i) => i.id === item.id);
         if (!host) return;
@@ -4845,7 +5114,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           const marker = spec ? findMarker(spec, (label) => variants.some((v) => normalizeForMatch(label).includes(v))) : undefined;
           if (spec && marker && gb) {
             const dab = markerBox(marker, spec.bounds, { w: gp.w, h: gp.h });
-            runHighlights(editor, item.id, swipes([{ x: gb.x + dab.x, y: gb.y + dab.y, w: dab.w, h: dab.h }]), meta);
+            runHighlights(editor, item.id, markerSwipes([{ x: gb.x + dab.x, y: gb.y + dab.y, w: dab.w, h: dab.h }]), meta);
             return;
           }
         }
@@ -4920,13 +5189,17 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         // A graph Desmos could not draw is written in again as vectors.
         await awaitRevealIdle();
       }
-      const ids = editor.getCurrentPageShapeIds();
-      if (ids.size === 0) return null;
+      // The board in play only: finished boards are in the strip, and a
+      // picture of all of them would grow every turn.
+      const live = editor.getCurrentPageShapes().filter((shape) => !isArchived(shape));
+      const ids = live.map((shape) => shape.id);
+      if (ids.length === 0) return null;
       try {
         // Every shape exports itself, math included (as plain text).
-        const bounds = editor.getCurrentPageBounds();
-        const scale = bounds && bounds.w > maxWidth ? maxWidth / bounds.w : 1;
-        const out = await editor.toImageDataUrl(Array.from(ids), { format: "jpeg", quality: 0.72, scale, pixelRatio: 1, background: true, padding: 24 });
+        const boxes = ids.map((id) => editor.getShapePageBounds(id)).filter((b): b is NonNullable<typeof b> => Boolean(b));
+        const width = boxes.length ? Math.max(...boxes.map((b) => b.x + b.w)) - Math.min(...boxes.map((b) => b.x)) : 0;
+        const scale = width > maxWidth ? maxWidth / width : 1;
+        const out = await editor.toImageDataUrl(ids, { format: "jpeg", quality: 0.72, scale, pixelRatio: 1, background: true, padding: 24 });
         return out ? { url: out.url, width: out.width, height: out.height } : null;
       } catch (err) {
         if (process.env.NODE_ENV !== "production") console.warn("[TldrawCore] exportImage", err);
@@ -4955,10 +5228,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       currentSectionRef.current = null;
       placedRectsRef.current.clear();
       planRef.current = readPlan(snap.plan);
-      planShapeRef.current = (editor.getCurrentPageShapes().find((sh) => sh.type === "plan")?.id as TLShapeId | undefined) ?? null;
+      planShapeRef.current = (editor.getCurrentPageShapes().find((sh) => sh.type === "plan" && !isArchived(sh))?.id as TLShapeId | undefined) ?? null;
+      setArchives(editor.getCurrentPageShapesSorted().filter((sh) => sh.type === "card").sort((a, b) => a.x - b.x).map((sh) => ({ id: sh.id, solved: Boolean((sh.props as { solved?: boolean }).solved) })));
       if (planRef.current && !planShapeRef.current) drawPlanBox(editor, false);
       // Math shapes came back with the store; old overlay items become shapes.
-      mathOrderRef.current = editor.getCurrentPageShapesSorted().filter((shape) => shape.type === "math").map((shape) => shape.id);
+      mathOrderRef.current = editor.getCurrentPageShapesSorted().filter((shape) => shape.type === "math" && !isArchived(shape)).map((shape) => shape.id);
       for (const item of snap.eqItems ?? []) {
         if (!item || typeof item.latex !== "string") continue;
         createMath(editor, {
@@ -4976,7 +5250,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       }
       // Items: saved with the snapshot, or rebuilt from the itemId every
       // shape carries in its meta (snapshots from before items were saved).
-      const live = new Set(editor.getCurrentPageShapes().map((shape) => shape.id as string));
+      const live = new Set(editor.getCurrentPageShapes().filter((shape) => !isArchived(shape)).map((shape) => shape.id as string));
       if (Array.isArray(snap.items) && snap.items.length > 0) {
         itemsRef.current = snap.items
           .map((item) => ({ ...item, shapeIds: item.shapeIds.filter((id) => live.has(id)) }))
@@ -4984,6 +5258,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       } else {
         const byItem = new Map<string, BoardItem>();
         for (const shape of editor.getCurrentPageShapesSorted()) {
+          if (isArchived(shape)) continue;
           const meta = shape.meta as { itemId?: unknown; tutorReferenceLabel?: unknown; owner?: unknown };
           const itemId = typeof meta.itemId === "string" ? meta.itemId : null;
           if (!itemId) continue;
@@ -5041,6 +5316,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY}
       />
       {onExplore && mountedEditor && <ExploreButtons editor={mountedEditor} activeItemId={exploringItemId} open={openExplore} />}
+      {boardStrip && mountedEditor && archives.length > 0 && <BoardStrip editor={mountedEditor} entries={archives} onNow={goNow} />}
     </div>
   );
 });

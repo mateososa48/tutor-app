@@ -374,4 +374,33 @@ const plan: DemoCall[] = [
   { name: "set_plan", args: { step: 3 } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };
+// A finished board is framed and turned (lib/board-archive): two problems
+// solved, a third started. "__solved" is a checked final answer.
+const turn: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Problem 1: Remainders", problem: "Find the remainder when 47 is divided by 6.", ask: "How many times does 6 go into 47?" } },
+  { name: "draw_equation_step", args: { latex: "6 \\times 7 = 42" } },
+  { name: "draw_equation_step", args: { latex: "47 - 42 = 5" } },
+  { name: "add_student_attempt", args: { text: "47 ÷ 6 = 7 R 5" } },
+  { name: "__solved", args: {} },
+  { name: "start_new_problem", args: { title: "Problem 2", problem: "Find the remainder when 125 is divided by 9.", ask: "How many nines fit in 125?" } },
+  { name: "draw_equation_step", args: { latex: "9 \\times 13 = 117" } },
+  { name: "add_student_attempt", args: { text: "125 ÷ 9 = 13 R 8" } },
+  { name: "__solved", args: {} },
+  { name: "start_new_problem", args: { title: "Problem 3", problem: "38 \\equiv ? \\pmod{7}", ask: "What is left when you take sevens out of 38?" } },
+];
+
+// How answers and marks look (Oct 14 2026): "You said" lines, a right answer
+// boxed in green with a check, the scribbled underline, a hand ring.
+const answers: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Remainders", problem: "Find the remainder when 47 is divided by 6." } },
+  { name: "draw_equation_step", args: { latex: "6 \\times 7 = 42" } },
+  { name: "add_student_attempt", args: { text: "47 ÷ 6 = 8 R 1" } },
+  { name: "add_student_attempt", args: { text: "x = \\frac{3}{4}" } },
+  { name: "add_student_attempt", args: { text: "47 ÷ 6 = 7 R 5" } },
+  { name: "mark_correct", args: { target: "last" } },
+  { name: "cross_out_step", args: { step_label: "8 R 1" } },
+  { name: "highlight", args: { target: "b2", text: "47" } },
+  { name: "circle_item", args: { target: "6 × 7 = 42", keep: true } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { turn, answers, fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };

@@ -10,6 +10,7 @@ import {
   pictureContent,
   splitSlots,
   splitSteps,
+  repeatsProblem,
   withoutPraise,
 } from "./board-content-rules";
 
@@ -142,4 +143,15 @@ test("an answer typeset and the same answer typed are one line", () => {
   assert.equal(findDuplicate("add_student_attempt", fp("6 \\times 7 = 42"), items), "b7");
   assert.equal(findDuplicate("add_student_attempt", fp("13 \\text{ r } 8"), items), "b18");
   assert.equal(findDuplicate("add_student_attempt", fp("47 − 42 = 5"), [{ id: "b1", tool: "add_student_attempt", content: fp("47 - 42 = 5") }]), "b1");
+});
+
+test("a question tag that only repeats the problem is noise; a short question is not", () => {
+  const lines = ["2 cups flour = 12 cookies", "1 cup flour = ? cookies"];
+  assert.ok(repeatsProblem("If two cups of flour make twelve cookies, how many cookies do you get with 1 cup of flour?", ["If two cups of flour make 12 cookies, how many cookies with 1 cup of flour?"]));
+  assert.ok(!repeatsProblem("How many for one cup?", lines));
+  assert.ok(!repeatsProblem("What do you notice about the cups?", lines));
+});
+
+test("LaTeX's \\mid splits a problem into lines", () => {
+  assert.deepEqual(splitSteps("2 \\text{ cups} = 12 \\text{ cookies} \\mid 1 \\text{ cup} = ?"), ["2 \\text{ cups} = 12 \\text{ cookies}", "1 \\text{ cup} = ?"]);
 });

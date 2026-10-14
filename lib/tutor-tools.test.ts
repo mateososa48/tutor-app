@@ -323,7 +323,8 @@ test("the marks run through the board: line, then ring by id, then the strike by
   assert.deepEqual(calls, [
     'add_student_attempt {"text":"5 × 6 = 35"}',
     'add_student_attempt {"text":"5 × 6 = 30"}',
-    'circle_item {"target":"b2","keep":true}',
+    'mark_correct {"target":"b2"}',
+    'settle_questions {}',
     'cross_out_step {"step_label":"b1"}',
   ]);
 });
@@ -413,7 +414,7 @@ test("the app never rings an existing line that says something else", () => {
   calls.length = 0;
   const same = (name: string) => (calls.push(name), name === "add_student_attempt" ? { success: true as const, message: 'Already on the board as b2 ("7"), so it was not written again.' } : { success: true as const, message: "ok" });
   applyVerdictMarks({ line: "f(3) = 7", ring: true, strike: null }, same, new Map());
-  assert.deepEqual(calls, ["add_student_attempt", "circle_item"], "the model's own copy of the same answer is ringed");
+  assert.deepEqual(calls, ["add_student_attempt", "mark_correct", "settle_questions"], "the model's own copy of the same answer is boxed");
 });
 
 test("a stale question is never checked: the student answers what the tutor just asked", () => {
@@ -645,4 +646,24 @@ test("answer lines read worded steps and fit-into divisions", () => {
   assert.equal(answerLine("What do you get when you subtract forty-two from forty-seven?", "5"), "47 − 42 = 5");
   assert.equal(answerLine("How many times does nine fit into one hundred twenty-five?", "13 r 8"), "125 ÷ 9 = 13 R 8");
   assert.equal(answerLine("What is the remainder when 125 is divided by 9?", "7 remainder 5"), "125 ÷ 9 = 7 R 5");
+});
+
+test("no board text gives away the answer to the question on the table until they say it", () => {
+  // Oct 14 2026, Mateo: "it asked what the answer is but it had put the answer on the board already".
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Remainders", problem: "Find the remainder when 47 is divided by 6.", ask: "How many times does 6 go into 47?" });
+  noteTutorTurn(p, "Six times seven is forty-two. What do you get when you subtract forty-two from forty-seven?", false, false);
+  assert.equal(withholdResult(p, "add_callout", { text: "47 - 42 leaves 5" }).args.text, "47 - 42 leaves ?");
+  assert.equal(withholdResult(p, "add_number_line", { min: 0, max: 50, points: "42, 47", label: "5 left over" }).args.label, "? left over");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "47 - 42 = 5" }).args.latex, "47 - 42 = ?");
+  assert.equal(withholdResult(p, "add_callout", { text: "What is left after 42?" }).args.text, "What is left after 42?", "the question itself stays");
+  noteStudentUtterance(p, "5", 1);
+  assert.equal(withholdResult(p, "add_callout", { text: "47 - 42 leaves 5" }).args.text, "47 - 42 leaves 5", "once said, it can go up");
+});
+
+test("a true claim of their own is a right step even when it shares a number with the problem", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Problem 1", problem: "Find the remainder when 47 is divided by 6." });
+  noteStudentUtterance(p, "6*7 is 42", 1000);
+  assert.match(autoCheck(p, "6*7 is 42", 1000) ?? "", /→ correct/);
 });

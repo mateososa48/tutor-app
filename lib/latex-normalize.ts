@@ -70,6 +70,9 @@ export function normalizeLatex(input: string): string {
   // "40 / 2" stays a slash; "3/4" as a lone fraction reads better typeset.
   s = s.replace(/(^|[\s=(+\-])(\d+)\/(\d+)(?=$|[\s=)+\-])/g, (m, before: string, a: string, b: string) => `${before}\\tfrac{${a}}{${b}}`);
   s = wrapWords(s);
+  // A blank after a relation ("1 cup = ? cookies"): TeX sets "?" as closing
+  // punctuation, so it sat against the "=" with no space. Braced, it is a symbol.
+  s = s.replace(/([=<>]|\\(?:approx|le|ge|ne|equiv))\s*\?(?!\})/g, "$1 {?}");
   return s.replace(/\s+/g, " ").trim();
 }
 

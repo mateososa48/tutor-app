@@ -31,6 +31,7 @@ import {
   attemptProblem,
   boardLines,
   calloutProblem,
+  repeatsProblem,
   contentFingerprint,
   findDuplicate,
   pictureContent,
@@ -101,6 +102,8 @@ const CALLOUT_MAX = 120;
 const NEXT = "\u241e";
 /** A drawing younger than this is kept when a new heading arrives. */
 const FRESH_WORK_MS = 30_000;
+/** Writing, not pictures: none of it keeps a board from turning. */
+const LINE_TOOLS = new Set(["draw_equation_step", "add_equation_sequence", "add_student_attempt", "add_callout", "add_text_note", "add_worked_example_box", "add_problem_setup", "start_board_section"]);
 
 function countLines(body: string): number {
   return body.split(/\n|\s\|\s/).map((l) => l.trim()).filter(Boolean).length;
@@ -179,7 +182,11 @@ export function dispatchWhiteboardTool(
   // opens a section beside it instead, and the result says so.
   if (name === "start_new_problem" && ctx.whiteboard?.itemsSnapshot) {
     const now = Date.now();
-    const fresh = ctx.whiteboard.itemsSnapshot().filter((it) => it.owner === "tutor" && !isHeadingItem(it) && now - it.createdAt < FRESH_WORK_MS);
+    // A picture just drawn stays beside the next problem (the student works
+    // the next one from it: Jayden's cookies). Lines, answers and tags do not
+    // hold the board: it is turned, framed and slid away (Oct 14 2026), and
+    // nothing on it is lost.
+    const fresh = ctx.whiteboard.itemsSnapshot().filter((it) => it.owner === "tutor" && !isHeadingItem(it) && !LINE_TOOLS.has(it.tool) && now - it.createdAt < FRESH_WORK_MS);
     if (fresh.length > 0 && typeof args.title === "string" && args.title.trim()) {
       const problemText = typeof args.problem === "string" ? args.problem.trim() : "";
       // The same title again ("Comparing Decimals" three times across one board,
@@ -431,6 +438,13 @@ function dispatchInner(
       if (tag.length > CALLOUT_MAX) {
         return fail(`That tag is ${tag.length} characters. A tag holds one short line (${CALLOUT_MAX} max): keep the question or the rule, say the rest.`);
       }
+      // The problem is already up: a tag repeating it is noise.
+      const items = board.itemsSnapshot?.() ?? [];
+      const since = items.slice(items.map((i) => i.tool).lastIndexOf("start_new_problem") + 1);
+      const problemLines = since.filter((i) => i.tool === "draw_equation_step").slice(0, 6);
+      if (repeatsProblem(tag, problemLines.map((i) => i.label))) {
+        return fail(`The problem is already on the board (${problemLines[0].id}): ask about it in a few words ("How many for one cup?"), or say it.`);
+      }
       const column = opt(args, "column"); if (column.error) return column.error;
       board.withDirectMeta({ owner: "tutor" }, () => board.addCallout(tag, pickColumn(column.value)));
       return ok(`Tagged "${tag.slice(0, 90)}".${question ? " The praise before it was left out: say it instead." : ""}`);
@@ -450,7 +464,10 @@ function dispatchInner(
       if (/\\[a-zA-Z]|[{}^_]/.test(attempt)) {
         const lines = splitLatexLines(attempt).map(normalizeLatex).filter(Boolean);
         board.withDirectMeta({ owner: "student", tutorReferenceLabel: attempt }, () =>
-          lines.forEach((line, i) => board.drawEquationStep(line, i === lines.length - 1 ? "their answer" : undefined, pickColumn(column.value))),
+          lines.forEach((line, i) =>
+            // The answer line behind its "You said" tag; working lines above it plain.
+            i === lines.length - 1 && board.addStudentMath ? board.addStudentMath(line) : board.drawEquationStep(line, i === lines.length - 1 ? "their answer" : undefined, pickColumn(column.value)),
+          ),
         );
         return ok(`Student's attempt ${lines.map(latexToPlain).join(" / ")} typeset as their line.`);
       }
@@ -1142,14 +1159,37 @@ function dispatchInner(
       if (isToolError(target)) return target;
       const text = opt(args, "text");
       if (text.error) return text.error;
-      // One sky highlighter (Sept 16): an old `color` argument is ignored.
+      // One sky pen (Sept 16): an old `color` argument is ignored. Words are
+      // underlined with a scribble unless how is "marker" (Oct 14 2026).
+      const how = typeof args.how === "string" && args.how.trim().toLowerCase() === "marker" ? "marker" : "underline";
       if (!board.highlight) return fail("Highlighting is not available on this board.");
-      const res = board.withDirectMeta({ owner: "tutor" }, () => board.highlight!(target, text.value));
+      const res = board.withDirectMeta({ owner: "tutor" }, () => board.highlight!(target, text.value, how));
       if (!res) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
       if (text.value && res.part === "item") {
         return ok(`Couldn't find "${text.value}" written in ${res.item.id}, so the whole item (${res.item.label}) is marked`);
       }
-      return ok(text.value ? `Highlighted "${text.value}" in ${res.item.id} (${res.item.label})` : `Marked ${res.item.id} (${res.item.label})`);
+      return ok(text.value ? `${how === "marker" ? "Highlighted" : "Underlined"} "${text.value}" in ${res.item.id} (${res.item.label})` : `Marked ${res.item.id} (${res.item.label})`);
+    }
+
+    // Answered: the question tags fade (the app, after a right answer).
+    case "settle_questions": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const n = board.fadeQuestions?.() ?? 0;
+      return ok(n ? `Faded ${n} answered question tag${n === 1 ? "" : "s"}.` : "No question tags to fade.");
+    }
+
+    // A right answer, marked by the app (not declared to the model): a green
+    // box drawn round it and a check beside it (Oct 14 2026).
+    case "mark_correct": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const target = requiredString(args, "target");
+      if (isToolError(target)) return target;
+      if (!board.markCorrect) return dispatchWhiteboardTool("circle_item", { target, keep: true }, ctx);
+      const item = board.withDirectMeta({ owner: "tutor" }, () => board.markCorrect!(target));
+      if (!item) return fail(`Nothing on the board matches "${target}".`);
+      return ok(`Boxed ${item.id} (${item.label}) in green with a check.`);
     }
 
     case "circle_item": {

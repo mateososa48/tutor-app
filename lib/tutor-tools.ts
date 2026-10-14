@@ -372,7 +372,11 @@ export function applyVerdictMarks(
   const twin = wrote.success ? /Already on the board as b\d+ \("([^"]*)"\)/.exec(wrote.message ?? "")?.[1] : undefined;
   if (twin !== undefined && sayValue(twin) !== sayValue(marks.line)) id = null;
   if (id) ids.set(marks.line, id);
-  if (marks.ring && id) run("circle_item", { target: id, keep: true });
+  // A right answer gets the green box and check (Oct 14 2026; it was a sky ring).
+  if (marks.ring && id) {
+    run("mark_correct", { target: id });
+    run("settle_questions", {});
+  }
   const struck = marks.strike ? ids.get(marks.strike) : null;
   if (struck) run("cross_out_step", { step_label: struck });
   return done;
@@ -467,8 +471,62 @@ export function filledSteps(policy: TutorPolicy): Array<{ item: string; latex: s
   return done.map((w) => ({ item: w.item!, latex: w.latex }));
 }
 
+// ── The answer on the table stays theirs (Oct 14 2026) ──────────────────
+// Mateo: "it asked what the answer is but it had put the answer on the board
+// already". The older guards caught a plain arithmetic line; the answer also
+// went up in tags, labels, captions, table cells and annotations. So every
+// number a board call is about to write is put to the checker against the
+// question on the table: one that would be the right answer, which they have
+// not said and the problem did not give, goes up as "?".
+// An equation line's own result is the result rule's (it becomes the "= ?"
+// question the auto-check reads), so `latex` is not here.
+const GUARDED_KEYS = new Set(["text", "annotation", "annotations", "label", "caption", "second_label", "cells", "rows", "body", "ask", "total", "points"]);
+const NUMBER_TOKEN = /(?<![\w.\/])-?\d+(?:\.\d+)?(?:\s*\/\s*\d+)?(?![\w.\/]*\d)/g;
+
+function answerGuard(policy: TutorPolicy, name: string, args: Record<string, unknown>): ShapedCall | null {
+  if (args.__guarded || name === "add_student_attempt" || name === "set_plan" || policy.boardHelp >= 4) return null;
+  const page = policy.pageProblem && /[\d=+\-−×÷*/^\\<>]/.test(policy.pageProblem) ? policy.pageProblem : null;
+  const asked = policy.spokenFresh ? [policy.lastSpokenQuestion, policy.lastAsked] : [policy.lastAsked, policy.lastSpokenQuestion];
+  const questions = [...new Set([...asked, page].filter((q): q is string => Boolean(q && q.trim())))];
+  if (!questions.length) return null;
+  const given = new Set([...policy.saidNumbers, ...policy.boardNumbers, ...questions.flatMap((q) => numbersIn(spokenToDigits(q)))]);
+  const answers = (token: string) => questions.some((q) => {
+    try {
+      return checkAnswer(withKnownRules(q, policy.functionRules), token).verdict === "correct";
+    } catch {
+      return false;
+    }
+  });
+  let changed: string | null = null;
+  const out: Record<string, unknown> = { ...args };
+  for (const [key, value] of Object.entries(args)) {
+    if (!GUARDED_KEYS.has(key) || typeof value !== "string") continue;
+    // A new problem's own text is its givens.
+    if (name === "start_new_problem" && key !== "ask") continue;
+    const next = value.replace(NUMBER_TOKEN, (token) => {
+      const plain = token.replace(/\s+/g, "");
+      if (given.has(plain) || numbersIn(plain).every((n) => given.has(n))) return token;
+      if (!answers(plain)) return token;
+      changed = plain;
+      return "?";
+    });
+    out[key] = next;
+  }
+  if (!changed) return null;
+  return { args: out, note: `Wrote "?" where ${changed} was: it answers the question on the table, and that is theirs to say. Ask for it.` };
+}
+
 export function withholdResult(policy: TutorPolicy, name: string, args: Record<string, unknown>): ShapedCall {
   if (policy.boardHelp >= 5) return { args, note: null };
+  const guarded = answerGuard(policy, name, args);
+  if (guarded) {
+    if (name !== "draw_equation_step") return guarded;
+    // An equation line goes on through the step and result rules below.
+    const rest = withholdResult(policy, name, { ...guarded.args, __guarded: true });
+    const { __guarded: _drop, ...clean } = rest.args;
+    void _drop;
+    return { ...rest, args: clean, note: [guarded.note, rest.note].filter(Boolean).join(" ") || null };
+  }
   if (name !== "draw_equation_step" && name !== "add_student_attempt" && name !== "start_new_problem" && name !== "set_plan") {
     const captions = withholdCaptions(policy, args);
     if (captions.note) return captions;
@@ -601,7 +659,9 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
     if (own) {
       const theirs = numbersIn(own.problem), asked = numbersIn(problem);
       const mine = checkAnswer(own.problem, own.answer);
-      if (theirs.length && !theirs.some((n) => asked.includes(n)) && mine.verdict !== "cannot_check") {
+      // About other numbers, or simply true (Oct 14 2026: "6*7 is 42" was
+      // called a wrong remainder for 47 ÷ 6 because both have a 6 in them).
+      if (theirs.length && mine.verdict !== "cannot_check" && (mine.verdict === "correct" || !theirs.some((n) => asked.includes(n)))) {
         problem = own.problem;
         answer = own.answer;
         check = mine;

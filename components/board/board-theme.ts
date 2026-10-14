@@ -20,6 +20,11 @@ declare module "@tldraw/tlschema" {
     "sky-deep": TLDefaultColor;
     /** The student's pencil and quiet captions. */
     pencil: TLDefaultColor;
+    /** A right answer: its hand-drawn box and check (Oct 14 2026). */
+    check: TLDefaultColor;
+    /** A quiet fill with no visible edge: the "You said" tag, question tags. */
+    "pencil-soft": TLDefaultColor;
+    "sky-soft": TLDefaultColor;
   }
 }
 
@@ -27,6 +32,8 @@ export const SKY = "#3d9cff";
 export const SKY_DEEP = "#1d7ee6";
 export const SKY_SOFT = "#e9f3ff";
 export const PENCIL_HEX = "#5b5b66";
+// 5.0:1 on white: the check reads as a mark, and its label as text.
+export const CHECK_HEX = "#15803d";
 // Behind ink at tldraw's 82% underlay opacity: light enough that black text on it stays easy to read.
 const SKY_HIGHLIGHT = "#8cc4ff";
 
@@ -52,14 +59,18 @@ function color(solid: string, semi: string, highlight: string, highlightP3: stri
 const sky = color(SKY, SKY_SOFT, SKY_HIGHLIGHT, "color(display-p3 0.56 0.76 0.99)", "#7ab8ff");
 const skyDeep = color(SKY_DEEP, SKY_SOFT, SKY_HIGHLIGHT, "color(display-p3 0.56 0.76 0.99)", "#5a9ff0");
 const pencil = color(PENCIL_HEX, "#ececf0", "#cbe7f1", "color(display-p3 0.8163 0.9023 0.9416)", "#8a8a94");
+const check = color(CHECK_HEX, "#e7f6ec", "#9fdcb4", "color(display-p3 0.66 0.86 0.71)", "#4caf74");
+// Edge and fill the same: a tag with no outline.
+const pencilSoft = color("#efeff3", "#efeff3", "#cbe7f1", "color(display-p3 0.8163 0.9023 0.9416)", "#d5d5dc");
+const skySoft = color(SKY_SOFT, SKY_SOFT, SKY_HIGHLIGHT, "color(display-p3 0.56 0.76 0.99)", "#b8d8ff");
 
 export const CHALK_THEME: TLTheme = {
   ...DEFAULT_THEME,
   colors: {
     // The board is white on screen (PlainBackground); exports used tldraw's
     // #f9fafb, which framed every white Desmos picture in a faint box.
-    light: { ...DEFAULT_THEME.colors.light, background: "#ffffff", sky, "sky-deep": skyDeep, pencil },
-    dark: { ...DEFAULT_THEME.colors.dark, sky, "sky-deep": skyDeep, pencil },
+    light: { ...DEFAULT_THEME.colors.light, background: "#ffffff", sky, "sky-deep": skyDeep, pencil, check, "pencil-soft": pencilSoft, "sky-soft": skySoft },
+    dark: { ...DEFAULT_THEME.colors.dark, sky, "sky-deep": skyDeep, pencil, check, "pencil-soft": pencilSoft, "sky-soft": skySoft },
   },
 };
 

@@ -35,8 +35,28 @@ export function splitSlots(input: string | undefined): string[] {
  * "|" only counts when no spaced one is present, so "|x| = 3 | x = 3" keeps
  * its absolute value.
  */
+/**
+ * A question tag that only says the problem again (Oct 14 2026: "If two cups
+ * of flour make twelve cookies, how many cookies do you get with just one
+ * cup?" in a three-line box under the same problem, typeset). True when most
+ * of the tag's words are already in one of the problem's lines.
+ */
+export function repeatsProblem(tag: string, lines: string[]): boolean {
+  const words = (t: string) => (t.toLowerCase().match(/[a-z]{3,}|\d+(?:\.\d+)?/g) ?? []).filter((w) => !STOP.has(w));
+  const mine = words(tag);
+  if (mine.length < 5) return false;
+  return lines.some((line) => {
+    const theirs = new Set(words(line));
+    return mine.filter((w) => theirs.has(w)).length / mine.length >= 0.7;
+  });
+}
+const STOP = new Set(["the", "and", "you", "how", "what", "many", "much", "with", "just", "get", "does", "for", "are", "that", "this", "your", "can", "would", "will", "one"]);
+
 export function splitSteps(input: string): string[] {
-  const parts = /\s\|\s/.test(input) ? input.split(/\s+\|\s+/) : input.split("|");
+  // LaTeX's own divider counts too (Oct 14 2026: "2 \\text{ cups} = 12 \\text{ cookies}
+  // \\mid 1 \\text{ cup} = ?" went up as one line with a bar in the middle).
+  const text = input.replace(/\s*\\mid\s*/g, " | ");
+  const parts = /\s\|\s/.test(text) ? text.split(/\s+\|\s+/) : text.split("|");
   return parts.map((s) => s.trim()).filter(Boolean);
 }
 

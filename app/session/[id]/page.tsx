@@ -1541,6 +1541,7 @@ function SessionDetailPage({ id }: { id: string }) {
           onWriting={handleBoardWriting}
           onExplore={openExplore}
           exploringItemId={exploreState?.open ? exploreState.target.itemId : null}
+          boardStrip
         />
 
         <SessionChip

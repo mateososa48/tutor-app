@@ -228,6 +228,8 @@ export type ToolRole = "draw" | "mark" | "erase" | "look" | "memory";
 const TOOL_ROLES: Record<string, ToolRole> = {
   point_at: "mark",
   circle_item: "mark",
+  mark_correct: "mark",
+  settle_questions: "mark",
   highlight: "mark",
   highlight_step: "mark",
   cross_out_step: "mark",
@@ -390,17 +392,23 @@ export function mergeLineRects(rects: ItemBounds[], single = false): ItemBounds[
 export const RING_OVERLAP = 0.35;
 
 export function ringPoints(b: ItemBounds, pad = 12, n = 48): Array<{ x: number; y: number }> {
-  // A squarish oval (superellipse, exponent 6) with a slight hand wobble. Its
-  // axes grow until even the wobble's inward dips clear the box's corners: a
-  // plain ellipse cut through the corners of wide items, and a rounder shape
-  // had to grow so much it ran into the neighbours.
-  const EXP = 6;
-  const WOBBLE_IN = 1 - 0.02 - 0.01;
+  // A hand loop (Oct 14 2026: the old ring, a superellipse of exponent 6, read
+  // as a thick rounded rectangle). Rounder (exponent 5; a tilt cost too much
+  // width on tall items), wobbling, and spiralling in a little so its end passes just inside
+  // its start the way a pen closes a loop. Its axes still grow until even the
+  // wobble's inward dips clear the box's corners.
+  const EXP = 5;
+  const SPIRAL = 0.035;
+  const WOBBLE_IN = 1 - 0.025 - 0.012 - SPIRAL;
+  const TILT = 0;
   const cx = b.x + b.w / 2;
   const cy = b.y + b.h / 2;
   let rx = b.w / 2 + pad;
   let ry = b.h / 2 + pad;
-  const reach = Math.pow((b.w / 2) / (rx * WOBBLE_IN), EXP) + Math.pow((b.h / 2) / (ry * WOBBLE_IN), EXP);
+  // The tilt moves a corner outward by at most this much along each axis.
+  const tw = (b.w / 2) * Math.cos(TILT) + (b.h / 2) * Math.abs(Math.sin(TILT));
+  const th = (b.h / 2) * Math.cos(TILT) + (b.w / 2) * Math.abs(Math.sin(TILT));
+  const reach = Math.pow(tw / (rx * WOBBLE_IN), EXP) + Math.pow(th / (ry * WOBBLE_IN), EXP);
   if (reach > 1) {
     const grow = Math.pow(reach, 1 / EXP);
     rx *= grow;
@@ -410,11 +418,103 @@ export function ringPoints(b: ItemBounds, pad = 12, n = 48): Array<{ x: number; 
   const start = -2.35; // radians, upper left
   const sweep = Math.PI * 2 + RING_OVERLAP;
   const shape = (v: number) => Math.sign(v) * Math.pow(Math.abs(v), 2 / EXP);
+  const cosT = Math.cos(TILT);
+  const sinT = Math.sin(TILT);
   for (let i = 0; i <= n; i++) {
     const p = i / n;
     const a = start + sweep * p;
-    const wobble = 1 + 0.02 * Math.sin(p * 17.3) + 0.01 * Math.cos(p * 7.1);
-    pts.push({ x: cx + rx * wobble * shape(Math.cos(a)), y: cy + ry * wobble * shape(Math.sin(a)) });
+    const wobble = (1 + SPIRAL * (1 - p)) * (1 + 0.025 * Math.sin(p * 13.7 + 0.6) + 0.012 * Math.cos(p * 5.3));
+    const ex = rx * wobble * shape(Math.cos(a));
+    const ey = ry * wobble * shape(Math.sin(a));
+    pts.push({ x: cx + ex * cosT - ey * sinT, y: cy + ex * sinT + ey * cosT });
+  }
+  return pts;
+}
+
+/**
+ * A box drawn by hand around a right answer (Oct 14 2026): one stroke from the
+ * upper left, four slightly bowed sides with soft corners, running a little
+ * past where it began.
+ */
+export function handBoxPoints(b: ItemBounds, pad = 10): Array<{ x: number; y: number }> {
+  const x0 = b.x - pad;
+  const y0 = b.y - pad * 0.8;
+  const x1 = b.x + b.w + pad;
+  const y1 = b.y + b.h + pad * 0.8;
+  const r = Math.min(10, (y1 - y0) / 3);
+  const pts: Array<{ x: number; y: number }> = [];
+  // Each side bows out by a little, as a quick hand stroke does.
+  const side = (ax: number, ay: number, bx: number, by: number, bow: number, steps: number) => {
+    const len = Math.hypot(bx - ax, by - ay) || 1;
+    const nx = (by - ay) / len;
+    const ny = -(bx - ax) / len;
+    for (let i = 0; i < steps; i++) {
+      const t = i / steps;
+      const out = Math.sin(t * Math.PI) * bow;
+      pts.push({ x: ax + (bx - ax) * t - nx * out, y: ay + (by - ay) * t - ny * out });
+    }
+  };
+  const corner = (cxp: number, cyp: number, a0: number) => {
+    for (let i = 0; i < 4; i++) {
+      const a = a0 + (i / 4) * (Math.PI / 2);
+      pts.push({ x: cxp + r * Math.cos(a), y: cyp + r * Math.sin(a) });
+    }
+  };
+  const bow = Math.min(3, b.w / 60 + 1);
+  side(x0 + r, y0, x1 - r, y0 + 1, bow, 10);
+  corner(x1 - r, y0 + r + 1, -Math.PI / 2);
+  side(x1, y0 + r + 1, x1 + 1, y1 - r, bow * 0.6, 5);
+  corner(x1 - r + 1, y1 - r, 0);
+  side(x1 - r + 1, y1, x0 + r, y1 - 1, bow, 10);
+  corner(x0 + r, y1 - r - 1, Math.PI / 2);
+  side(x0, y1 - r - 1, x0 - 1, y0 + r, bow * 0.6, 5);
+  corner(x0 + r - 1, y0 + r, Math.PI);
+  // On along the top edge a little past the start, as a pen finishes a box.
+  for (let i = 1; i <= 3; i++) pts.push({ x: x0 + r + i * Math.min(8, b.w / 8), y: y0 + 0.6 + i * 0.3 });
+  return pts;
+}
+
+/** A check mark at (x, y) (its left end), `size` tall: a short drop, then a long rise. */
+export function checkPoints(x: number, y: number, size = 26): Array<{ x: number; y: number }> {
+  const pts: Array<{ x: number; y: number }> = [];
+  const low = { x: x + size * 0.36, y: y + size * 0.42 };
+  for (let i = 0; i <= 5; i++) {
+    const t = i / 5;
+    pts.push({ x: x + (low.x - x) * t, y: y + (low.y - y) * t + Math.sin(t * Math.PI) * 1.2 });
+  }
+  const top = { x: x + size * 1.02, y: y - size * 0.62 };
+  for (let i = 1; i <= 10; i++) {
+    const t = i / 10;
+    // The long stroke curves a little and eases off at the top.
+    pts.push({ x: low.x + (top.x - low.x) * t, y: low.y + (top.y - low.y) * Math.pow(t, 0.9) + Math.sin(t * Math.PI) * 2.4 });
+  }
+  return pts;
+}
+
+/**
+ * The tutor's underline (Oct 14 2026, Mateo: "a light blue scribbly line"):
+ * a quick wavy pass under the words and a shorter, lower pass back, the way a
+ * pen underlines in a hurry.
+ */
+export function scribbleUnderlinePoints(b: ItemBounds): Array<{ x: number; y: number }> {
+  const y = b.y + b.h + 5;
+  const x0 = b.x - 4;
+  const w = b.w + 8;
+  // About one wave per 44px: a short word gets a gentle line, not a coil.
+  const waves = Math.max(1.5, w / 44);
+  const amp = w < 60 ? 1.4 : 2.2;
+  const pts: Array<{ x: number; y: number }> = [];
+  const n = Math.max(12, Math.round(waves * 8));
+  for (let i = 0; i <= n; i++) {
+    const p = i / n;
+    pts.push({ x: x0 + w * p, y: y + amp * Math.sin(p * waves * Math.PI * 2) + p * 1.5 });
+  }
+  // The pass back only under longer words.
+  if (w < 70) return pts;
+  const back = Math.round(n * 0.75);
+  for (let i = 1; i <= back; i++) {
+    const p = 1 - i / n;
+    pts.push({ x: x0 + w * p, y: y + 5 + amp * 0.8 * Math.sin(p * waves * Math.PI * 2 + 1.3) });
   }
   return pts;
 }
