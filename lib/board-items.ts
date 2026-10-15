@@ -542,6 +542,23 @@ export function scribbleUnderlinePoints(b: ItemBounds): Array<{ x: number; y: nu
   return pts;
 }
 
+/**
+ * The rule under a heading (Oct 14 2026, Mateo: "this line should be
+ * scribbly"): the underline's wave language, one quick pass the heading's
+ * width, rising a touch. It was a straight grey ruled line.
+ */
+export function headingRulePoints(x: number, y: number, w: number): Array<{ x: number; y: number }> {
+  const waves = Math.max(2, w / 46);
+  const amp = 2.2;
+  const n = Math.max(16, Math.round(waves * 8));
+  const pts: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i <= n; i++) {
+    const p = i / n;
+    pts.push({ x: x + w * p, y: y + amp * Math.sin(p * waves * Math.PI * 2 + 0.4) - p * 1.5 });
+  }
+  return pts;
+}
+
 export function underlinePoints(b: ItemBounds, n = 18): Array<{ x: number; y: number }> {
   const y = b.y + b.h + 6;
   const pts: Array<{ x: number; y: number }> = [];

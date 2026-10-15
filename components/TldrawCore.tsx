@@ -27,6 +27,7 @@ import {
   resolveItemTarget,
   ringPoints,
   handBoxPoints,
+  headingRulePoints,
   strikePoints,
   checkPoints,
   scribbleUnderlinePoints,
@@ -37,7 +38,7 @@ import {
 import { planCamera } from "@/lib/board-camera";
 import { BOARD_THEMES, SKY } from "@/components/board/board-theme";
 import { catchUpPace, planReveal, pointsShown, polylineLength, typedPrefix, REVEAL_CAP_MS, type RevealInput, type RevealStep } from "@/lib/board-reveal";
-import { findSpot, freeSpace, inArea, intersect, LAYOUT_GAP, PANEL_MIN_W, pageAt, planSection, regionName, shouldOpenPage, usedCells, type PlaceHint, type PlaceRequest, type Rect, type Size } from "@/lib/board-layout";
+import { findSpot, freeSpace, inArea, intersect, LAYOUT_GAP, overlaps, PANEL_MIN_W, pageAt, planSection, regionName, shouldOpenPage, usedCells, type PlaceHint, type PlaceRequest, type Rect, type Size } from "@/lib/board-layout";
 import { latexToPlain } from "@/lib/latex-plain";
 import { TutorPenOverlayUtil, TutorScribbleOverlayUtil } from "@/components/board/TutorPenOverlay";
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
@@ -2734,7 +2735,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       createText(editor, title, region.x, region.y, { size: "l", font: "sans", color: INK, width: headW });
       const sectionW = Math.min(headW, Math.max(200, measured.w + 8));
       const ruleY = region.y + measured.h + 6;
-      createLine(editor, region.x, ruleY, region.x + sectionW, ruleY, PENCIL);
+      createDrawStroke(editor, undefined, undefined, headingRulePoints(region.x, ruleY, sectionW), { color: MARK, size: "m", dash: "solid" });
       return ruleY + 24;
     };
 
@@ -3130,7 +3131,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       });
       const titleW = Math.min(headW, Math.max(240, measured.w + 8));
       const ruleY = usable.y + measured.h + 8;
-      createLine(editor, usable.x, ruleY, usable.x + titleW, ruleY, PENCIL);
+      createDrawStroke(editor, undefined, undefined, headingRulePoints(usable.x, ruleY, titleW), { color: MARK, size: "m", dash: "solid" });
       recordDirectSemanticAction(
         { type: "start_new_problem", title },
         { bounds: { x: usable.x, y: usable.y, w: titleW, h: 80, column: "full", pageIndex: pageIndex.current } },
@@ -5008,10 +5009,54 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!item) return null;
       notePage(editor, item);
       const meta = currentMeta();
+      const now = itemBounds(editor, item, MARK_BOUNDS);
       recordDirectSemanticAction(
         { type: "highlight_step", step_label: item.label, style: "circle" },
-        { shapeIds: [], bounds: (() => { const b = itemBounds(editor, item); return b ? { x: b.x, y: b.y, w: b.w, h: b.h, pageIndex: pageIndex.current } : undefined; })() },
+        { shapeIds: [], bounds: now ? { x: now.x, y: now.y, w: now.w, h: now.h, pageIndex: pageIndex.current } : undefined },
       );
+      // The check goes beside the box, clear of the words (Mateo, Oct 14: on
+      // the box's corner it sat on the last digit). Its room is decided now
+      // and added to the answer's placed rectangle, so what is drawn next
+      // steers around it; when something already sits there, it goes just
+      // above the box's right end instead.
+      const BOX_PAD = 9;
+      const GAP = 8;
+      const sizeFor = (b: ItemBounds) => Math.max(22, Math.min(28, b.h * 0.85));
+      const besideAt = (b: ItemBounds) => {
+        const size = sizeFor(b);
+        return { size, x: b.x + b.w + BOX_PAD + GAP, y: b.y + b.h * 0.55 };
+      };
+      const aboveAt = (b: ItemBounds) => {
+        const size = sizeFor(b);
+        return { size, x: b.x + b.w + BOX_PAD - size * 0.9, y: b.y - BOX_PAD - size * 0.42 - 3 };
+      };
+      const belowAt = (b: ItemBounds) => {
+        const size = sizeFor(b);
+        return { size, x: b.x + b.w + BOX_PAD - size * 0.9, y: b.y + b.h + BOX_PAD + size * 0.62 + 3 };
+      };
+      // Last resort, when beside, above and below are all taken: over the
+      // box's top right corner, as before.
+      const cornerAt = (b: ItemBounds) => {
+        const size = sizeFor(b);
+        return { size, x: b.x + b.w - size * 0.2, y: b.y + size * 0.05 };
+      };
+      const SPOTS = { beside: besideAt, above: aboveAt, below: belowAt, corner: cornerAt } as const;
+      const checkRect = (c: { size: number; x: number; y: number }): Rect => ({ x: c.x - 2, y: c.y - c.size * 0.62 - 2, w: c.size * 1.02 + 6, h: c.size * 1.04 + 4 });
+      let side: keyof typeof SPOTS = "beside";
+      if (now) {
+        const frame = pageFrameRef.current ?? ensurePageFrame(editor);
+        const others = occupiedOn(editor, frame, item.id).slice(1);
+        const free = (key: keyof typeof SPOTS) => !others.some((r) => overlaps(r, checkRect(SPOTS[key](now)), 2));
+        side = (["beside", "above", "below"] as const).find(free) ?? "corner";
+        const box = { x: now.x - BOX_PAD, y: now.y - BOX_PAD, w: now.w + BOX_PAD * 2, h: now.h + BOX_PAD * 2 };
+        const mark = checkRect(SPOTS[side](now));
+        const held = rectOf(editor, item) ?? box;
+        const x0 = Math.min(held.x, box.x, mark.x);
+        const y0 = Math.min(held.y, box.y, mark.y);
+        const x1 = Math.max(held.x + held.w, box.x + box.w, mark.x + mark.w);
+        const y1 = Math.max(held.y + held.h, box.y + box.h, mark.y + mark.h);
+        placedRectsRef.current.set(item.id, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      }
       enqueue({
         kind: "action",
         // Two glides (240 ms each), the box (560) and the check (280).
@@ -5020,15 +5065,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           const host = findHost(item.id);
           const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
           if (!host || !bb) return;
-          focusOn(editor, bb.x - 16, bb.y - 24, bb.w + 48, bb.h + 40);
-          // A box drawn round the answer, then a check ticked over its top
-          // right corner, in one green pen. On the corner, not beside it: the
-          // layout does not know about marks, and a check beside the box ran
-          // into whatever was written next on that row.
-          const size = Math.max(22, Math.min(28, bb.h * 0.85));
+          focusOn(editor, bb.x - 16, bb.y - 40, bb.w + 80, bb.h + 56);
+          const c = SPOTS[side](bb);
           runHighlights(editor, host.id, [
-            { points: handBoxPoints(bb, 9), size: "m", duration: 560, ring: true, color: "check" },
-            { points: checkPoints(bb.x + bb.w - size * 0.2, bb.y + size * 0.05, size), size: "m", duration: 280, ring: true, color: "check" },
+            { points: handBoxPoints(bb, BOX_PAD), size: "m", duration: 560, ring: true, color: "check" },
+            { points: checkPoints(c.x, c.y, c.size), size: "m", duration: 280, ring: true, color: "check" },
           ], meta);
         },
       });
