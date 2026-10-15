@@ -47,6 +47,7 @@ import { GraphShapeUtil, type TLGraphShape, type TLGraphShapeProps } from "@/com
 import { PlanShapeUtil, measurePlanBox, type TLPlanShape } from "@/components/board/PlanShape";
 import { CardShapeUtil } from "@/components/board/CardShape";
 import { TAG_FONT_PX, TAG_H, TAG_PAD_X, TAG_TAIL, TagShapeUtil } from "@/components/board/TagShape";
+import { ConfettiLayer, type ConfettiBurst } from "@/components/board/ConfettiLayer";
 import { BoardStrip } from "@/components/board/BoardStrip";
 import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance, worthKeeping } from "@/lib/board-archive";
 import { planAfterCorrect, planAfterStart, planSummary, readPlan, type BoardPlan } from "@/lib/board-plan";
@@ -210,7 +211,7 @@ const MARK_BOUNDS = { decor: false } as const;
 // The tutor's presence (pen cursor, laser ring) in the app's sky.
 const TUTOR_COLOR = SKY;
 // `ring`: drawn as a pen stroke (rings, boxes, checks, underlines) rather than a highlighter swipe.
-type HighlightStroke = { points: Array<{ x: number; y: number }>; size: TLDefaultSizeStyle; duration: number; ring?: boolean; color?: TldrawColor };
+type HighlightStroke = { points: Array<{ x: number; y: number }>; size: TLDefaultSizeStyle; duration: number; ring?: boolean; color?: TldrawColor; /** Runs once this stroke is drawn. */ after?: () => void };
 
 function pageFrame(base: { w: number; h: number }, index: number): Rect {
   return { x: (index - 1) * (base.w + PAGE_GAP), y: 0, w: base.w, h: base.h };
@@ -911,6 +912,16 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const solvedRef = useRef(false);
   const archiveRunRef = useRef<{ raf: number | null; finish: () => void } | null>(null);
   const [archives, setArchives] = useState<ArchiveEntry[]>([]);
+  // Confetti from the green check on a right answer (lib/confetti).
+  const [bursts, setBursts] = useState<ConfettiBurst[]>([]);
+  const burstSeqRef = useRef(0);
+  const celebrate = useCallback((editor: Editor, at: { x: number; y: number }) => {
+    if (instantRef.current) return;
+    const v = editor.pageToViewport(at);
+    const id = ++burstSeqRef.current;
+    setBursts((prev) => [...prev.slice(-3), { id, x: v.x, y: v.y }]);
+  }, []);
+  const endBurst = useCallback((id: number) => setBursts((prev) => prev.filter((b) => b.id !== id)), []);
   const notesRef = useRef<string[]>([]);
   const placeRequestRef = useRef<PlaceRequest | null>(null);
   const placedRectsRef = useRef<Map<string, Rect>>(new Map());
@@ -1881,6 +1892,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       host.shapeIds = [...host.shapeIds, id];
       checkMarkLanded(editor, host, [id]);
       if (reduce) {
+        stroke.after?.();
         next(k + 1);
         return;
       }
@@ -1900,6 +1912,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
             highlightRafRef.current = requestAnimationFrame(frame);
             return;
           }
+          stroke.after?.();
           next(k + 1);
         };
         highlightRafRef.current = requestAnimationFrame(frame);
@@ -5069,7 +5082,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           const c = SPOTS[side](bb);
           runHighlights(editor, host.id, [
             { points: handBoxPoints(bb, BOX_PAD), size: "m", duration: 560, ring: true, color: "check" },
-            { points: checkPoints(c.x, c.y, c.size), size: "m", duration: 280, ring: true, color: "check" },
+            { points: checkPoints(c.x, c.y, c.size), size: "m", duration: 280, ring: true, color: "check", after: () => celebrate(editor, { x: c.x + c.size * 1.02, y: c.y - c.size * 0.62 }) },
           ], meta);
         },
       });
@@ -5410,6 +5423,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       />
       {onExplore && mountedEditor && <ExploreButtons editor={mountedEditor} activeItemId={exploringItemId} open={openExplore} />}
       {boardStrip && mountedEditor && archives.length > 0 && <BoardStrip editor={mountedEditor} entries={archives} onNow={goNow} />}
+      <ConfettiLayer bursts={bursts} reduce={prefersReducedMotion()} onDone={endBurst} />
     </div>
   );
 });
