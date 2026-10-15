@@ -1,0 +1,9 @@
+boy-listening.json and boy-talking.json are changed copies of "Maya avatar"
+(https://lottiefiles.com/animations/maya-avatar-G5Di8YOICP) and "Talking a Maya
+avatar" (https://lottiefiles.com/animations/talking-a-maya-avatar-Kbb1XTzQAv)
+by macro Loano, published on LottieFiles under the Lottie Simple License
+(https://lottiefiles.com/page/license). These copies are distributed under the
+same licence.
+
+Changes: the two long hair layers removed, the mouth enlarged 35%, the embedded
+images downscaled to a third and reduced to a 128-colour palette.

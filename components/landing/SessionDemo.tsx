@@ -15,7 +15,7 @@ import type { UploadedFile } from "@/lib/file-processor";
 import { dispatchWhiteboardTool } from "@/lib/whiteboard-tool-dispatch";
 import { loadBoardFonts } from "@/lib/board-fonts";
 import { LESSON, LESSON_LOOP_MS, LESSON_SEED, LESSON_STUDENT, LESSON_TITLE, resolveRefs, type BoardCall } from "./lesson";
-import { StudentTile, useSpoken } from "./StudentTile";
+import { StudentTile, useSpoken, type StudentLottie } from "./StudentTile";
 import { useReduce } from "./useScript";
 
 // The session screen itself, not a picture of it. The rail, the title chip,
@@ -90,6 +90,21 @@ function useIsWide() {
     () => false,
   );
 }
+
+// The student: a cartoon boy with glasses, talking while they speak. From
+// "Maya avatar" / "Talking a Maya avatar" by macro Loano on LottieFiles
+// (https://lottiefiles.com/animations/maya-avatar-G5Di8YOICP and
+// …/talking-a-maya-avatar-Kbb1XTzQAv), Lottie Simple License: free for
+// commercial use, no credit required, and changed copies stay under the same
+// licence. Changed for Chalk: the long side hair removed (a boy), the mouth
+// 35% larger so talking reads at this size, the pictures inside redrawn at a
+// third of their size (1.75 MB to about 55 KB each).
+const STUDENT: StudentLottie = {
+  idle: "/landing/student/boy-listening.json",
+  talk: "/landing/student/boy-talking.json",
+  zoom: 1.32,
+  y: 7,
+};
 
 export function SessionDemo() {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -326,6 +341,7 @@ export function SessionDemo() {
           said={student.said}
           speaking={student.speaking}
           reduce={reduce === true}
+          lottie={STUDENT}
           compact={!wide}
           className={wide ? "absolute top-[72px] right-6 z-30" : "absolute top-[64px] right-3 z-30"}
         />

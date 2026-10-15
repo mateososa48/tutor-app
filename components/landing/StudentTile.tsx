@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { Mic } from "lucide-react";
 import { PetBubble } from "@/components/board/PetBubble";
@@ -17,8 +17,9 @@ import { cn } from "@/lib/utils";
 // tile as they say them, in the same bubble the pet uses, so the two read as
 // one conversation.
 //
-// `video` puts a clip in the circle (muted, looping). Without one it shows the
-// waveform, which is what ships until a clip exists.
+// `lottie` puts the student in the circle as a vector cartoon: a listening
+// loop, and a talking loop that crossfades in while they speak. `video` does
+// the same with two muted clips. Without either it shows the waveform.
 
 /** About how fast people talk: words arrive at 3.5 a second. */
 export const WORD_MS = 285;
@@ -47,6 +48,13 @@ export function useSpoken(line: string, key: number): { said: string; speaking: 
   return { said: words.slice(0, current.count).join(" "), speaking: current.count > 0 && current.count < words.length };
 }
 
+export type StudentVideo = { idle: string; talk?: string };
+/**
+ * A Lottie pair: listening and talking, the same face in the same framing.
+ * `zoom` and `y` (percent) fit the drawing to the circle.
+ */
+export type StudentLottie = { idle: string; talk: string; zoom?: number; y?: number };
+
 type Props = {
   name: string;
   /** What they are saying (the whole line so far). Empty when quiet. */
@@ -54,7 +62,10 @@ type Props = {
   speaking: boolean;
   /** Their words stay up this long after they stop. */
   lingerMs?: number;
-  video?: string;
+  video?: StudentVideo;
+  lottie?: StudentLottie;
+  /** Anything else to fill the circle (a dev preview of an animation). Wins over `video`. */
+  media?: ReactNode;
   reduce: boolean;
   /** A phone: a smaller tile, and a narrower bubble. */
   compact?: boolean;
@@ -63,7 +74,7 @@ type Props = {
 
 const SIZE = { full: 112, compact: 60 } as const;
 
-export function StudentTile({ name, said, speaking, lingerMs = 3200, video, reduce, compact = false, className }: Props) {
+export function StudentTile({ name, said, speaking, lingerMs = 3200, video, lottie, media, reduce, compact = false, className }: Props) {
   const size = compact ? SIZE.compact : SIZE.full;
   // The bubble stays a moment after the last word, then goes: a voice, not a chat log.
   const [lingering, setLingering] = useState(false);
@@ -93,8 +104,21 @@ export function StudentTile({ name, said, speaking, lingerMs = 3200, video, redu
           )}
         />
         <div className="relative size-full overflow-hidden rounded-full bg-[#5aa2ff] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_6px_18px_-6px_rgba(29,114,220,0.45)]">
-          {video ? (
-            <video src={video} autoPlay muted loop playsInline className="size-full object-cover" />
+          {media ? (
+            media
+          ) : lottie ? (
+            <LottieFace lottie={lottie} speaking={speaking} reduce={reduce} />
+          ) : video ? (
+            <>
+              <Clip src={video.idle} reduce={reduce} />
+              {video.talk && (
+                <Clip
+                  src={video.talk}
+                  reduce={reduce}
+                  className={cn("transition-opacity duration-150 ease-out", speaking ? "opacity-100" : "opacity-0")}
+                />
+              )}
+            </>
           ) : (
             <>
               <DitherWave {...SWIRL} pixelSize={compact ? 2 : 3} lightness={-0.12} animate={!reduce} className="absolute inset-0" />
@@ -154,6 +178,75 @@ function VoiceBars({ speaking, reduce, height, bar, gap }: { speaking: boolean; 
           />
         );
       })}
+    </span>
+  );
+}
+
+// One muted loop filling the circle. Under reduced motion it holds its first frame.
+function Clip({ src, reduce, className }: { src: string; reduce: boolean; className?: string }) {
+  return (
+    <video
+      src={src}
+      autoPlay={!reduce}
+      muted
+      loop
+      playsInline
+      preload="auto"
+      className={cn("absolute inset-0 size-full object-cover", className)}
+    />
+  );
+}
+
+// The Lottie pair. The player (lottie-web's SVG-only build, MIT) is loaded when
+// the first tile mounts, so the page never pays for it before the demo is up.
+// Only the visible loop plays; the other waits on its first frame. Under
+// reduced motion both hold their first frame.
+type LottieAnim = import("lottie-web").AnimationItem;
+
+function LottieFace({ lottie, speaking, reduce }: { lottie: StudentLottie; speaking: boolean; reduce: boolean }) {
+  const idleHost = useRef<HTMLDivElement>(null);
+  const talkHost = useRef<HTMLDivElement>(null);
+  const anims = useRef<{ idle?: LottieAnim; talk?: LottieAnim }>({});
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    const made: LottieAnim[] = [];
+    void import("lottie-web/build/player/lottie_light").then(({ default: player }) => {
+      if (!live || !idleHost.current || !talkHost.current) return;
+      const load = (container: HTMLDivElement, path: string) => {
+        const a = player.loadAnimation({ container, renderer: "svg", loop: true, autoplay: false, path, rendererSettings: { preserveAspectRatio: "xMidYMid slice" } });
+        made.push(a);
+        return a;
+      };
+      anims.current = { idle: load(idleHost.current, lottie.idle), talk: load(talkHost.current, lottie.talk) };
+      let loaded = 0;
+      for (const a of made) a.addEventListener("DOMLoaded", () => { if (++loaded === made.length && live) setReady(true); });
+    });
+    return () => {
+      live = false;
+      made.forEach((a) => a.destroy());
+      anims.current = {};
+    };
+  }, [lottie.idle, lottie.talk]);
+
+  useEffect(() => {
+    const { idle, talk } = anims.current;
+    if (!ready || !idle || !talk) return;
+    const run = (a: LottieAnim, on: boolean) => (on && !reduce ? a.play() : a.goToAndStop(0, true));
+    run(idle, !speaking);
+    run(talk, speaking);
+  }, [ready, speaking, reduce]);
+
+  const fit = { transform: `translateY(${lottie.y ?? 0}%) scale(${lottie.zoom ?? 1})` };
+  return (
+    <span className={cn("absolute inset-0 bg-[#dbeafe] transition-opacity duration-300", ready ? "opacity-100" : "opacity-0")}>
+      <span className="absolute inset-0">
+        <div ref={idleHost} className="size-full" style={fit} />
+      </span>
+      <span className={cn("absolute inset-0 transition-opacity duration-150 ease-out", speaking ? "opacity-100" : "opacity-0")}>
+        <div ref={talkHost} className="size-full bg-[#dbeafe]" style={fit} />
+      </span>
     </span>
   );
 }
