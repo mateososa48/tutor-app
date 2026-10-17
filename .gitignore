@@ -52,4 +52,5 @@ output/
 
 # tutor benchmark runs (scripts/bench.ts): screenshots and transcripts
 /bench/runs/
+/bench/illustrate/
 /lib/_bench-*
