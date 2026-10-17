@@ -403,4 +403,15 @@ const answers: DemoCall[] = [
   { name: "circle_item", args: { target: "6 × 7 = 42", keep: true } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { turn, answers, fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };
+// Illustrations (Oct 2026): scenes Claude Haiku 5.5 wrote in the bake-off,
+// laid out by lib/illustration/scene.ts and drawn as one board shape each.
+const illustrations: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Sharing", problem: "12 \\div 3 = ?" } },
+  { name: "draw_illustration", args: { caption: "12 marbles in 3 jars", scene: {"title": "Sharing 12 marbles", "root": {"type": "row", "gap": 48, "children": [{"type": "container", "shape": "jar", "id": "j1", "label": "Friend 1", "child": {"type": "items", "icon": "blue_circle", "count": 4, "per_row": 2}}, {"type": "container", "shape": "jar", "id": "j2", "label": "Friend 2", "child": {"type": "items", "icon": "blue_circle", "count": 4, "per_row": 2}}, {"type": "container", "shape": "jar", "id": "j3", "label": "Friend 3", "child": {"type": "items", "icon": "blue_circle", "count": 4, "per_row": 2}}]}, "brackets": [{"over": ["j1", "j2", "j3"], "side": "top", "label": "12 marbles"}]} } },
+  { name: "start_new_problem", args: { title: "Probability", problem: "P(\\text{red}) = ?" } },
+  { name: "draw_illustration", args: { caption: "the bag", scene: {"title": "Marbles in a bag", "root": {"type": "container", "shape": "bag", "label": "Bag", "child": {"type": "column", "gap": 12, "children": [{"type": "items", "icon": "red_circle", "count": 3, "per_row": 3}, {"type": "items", "icon": "blue_circle", "count": 5, "per_row": 5}]}}} } },
+  { name: "start_new_problem", args: { title: "Place value", problem: "3 \\text{ tens} + 4 \\text{ ones} = ?" } },
+  { name: "draw_illustration", args: { caption: "bundles of ten", scene: {"title": "Tens and ones", "root": {"type": "row", "gap": 32, "children": [{"type": "container", "shape": "box", "id": "t1", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "box", "id": "t2", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "box", "id": "t3", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "none", "id": "o", "label": "loose ones", "child": {"type": "items", "icon": "pencil", "count": 4, "per_row": 4}}]}, "brackets": [{"over": ["t1", "t2", "t3"], "side": "top", "label": "3 tens"}]} } },
+];
+
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { illustrations, turn, answers, fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };

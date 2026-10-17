@@ -48,7 +48,7 @@ export type Rendered = { svg: string; w: number; h: number; parts: Record<string
 
 export const COLORS: Record<Tone, string> = { ink: "#1d1d21", pencil: "#5b5b66", sky: "#3d9cff", green: "#15803d", red: "#e5484d" };
 const SKY_SOFT = "#e6f1ff";
-const FONT = "'IBM Plex Sans', 'Hanken Grotesk', system-ui, sans-serif";
+const FONT = "'tldraw_sans', 'IBM Plex Sans', 'Hanken Grotesk', system-ui, sans-serif";
 const STROKE = 2.5;
 const FONT_PX: Record<Size, number> = { s: 15, m: 19, l: 26 };
 const ICON_PX: Record<Size, number> = { s: 26, m: 36, l: 54 };

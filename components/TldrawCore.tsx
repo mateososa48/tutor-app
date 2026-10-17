@@ -48,6 +48,8 @@ import { PlanShapeUtil, measurePlanBox, type TLPlanShape } from "@/components/bo
 import { CardShapeUtil } from "@/components/board/CardShape";
 import { TAG_FONT_PX, TAG_H, TAG_PAD_X, TAG_TAIL, TagShapeUtil } from "@/components/board/TagShape";
 import { ConfettiLayer, type ConfettiBurst } from "@/components/board/ConfettiLayer";
+import { IllustrationShapeUtil } from "@/components/board/IllustrationShape";
+import { renderScene, type Scene } from "@/lib/illustration/scene";
 import { BoardStrip } from "@/components/board/BoardStrip";
 import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance, worthKeeping } from "@/lib/board-archive";
 import { planAfterCorrect, planAfterStart, planSummary, readPlan, type BoardPlan } from "@/lib/board-plan";
@@ -71,7 +73,7 @@ import {
 } from "@/lib/desmos-spec";
 
 const OVERLAY_UTILS = [TutorPenOverlayUtil, TutorScribbleOverlayUtil];
-const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil, PlanShapeUtil, CardShapeUtil, TagShapeUtil];
+const SHAPE_UTILS = [MathShapeUtil, IconShapeUtil, GraphShapeUtil, PlanShapeUtil, CardShapeUtil, TagShapeUtil, IllustrationShapeUtil];
 import {
   compressLegacySegments,
   type TLDefaultColorStyle,
@@ -397,6 +399,8 @@ export interface WhiteboardHandle {
   // Math pictures added Sept 14 2026.
   drawTapeDiagram(opts: TapeDrawing): void;
   drawGrid(opts: GridDrawing): void;
+  /** An illustration from a scene (lib/illustration/scene.ts): laid out, drawn, its parts kept for pointing. */
+  drawIllustration?(scene: Scene, opts?: { column?: "left" | "right" }): { w: number; h: number; parts: string[]; problems: string[] } | null;
   writeVertical(opts: VerticalDrawing): void;
   drawLongDivision(opts: LongDivisionDrawing): void;
   drawTransversal(opts: TransversalDrawing): void;
@@ -1474,6 +1478,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         inputs.push({ id: shape.id, kind: "eq", x, y, chars: String(props.latex ?? "").length });
       } else if (shape.type === "graph") {
         inputs.push({ id: shape.id, kind: "eq", x, y, chars: 70 });
+      } else if (shape.type === "illustration") {
+        inputs.push({ id: shape.id, kind: "eq", x, y, chars: 90 });
       } else if (shape.type === "draw" && props.dash === "none") {
         // A fill with no outline (an inequality's side) has nothing to trace.
         inputs.push({ id: shape.id, kind: "fade", x, y });
@@ -1498,7 +1504,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     const steps = planReveal(inputs, 28, REVEAL_CAP_MS, catchUpPace(revealQueueRef.current.length));
     editor.run(() => {
       if (hide.length > 0) editor.updateShapes(hide.map((h) => ({ id: h.id, type: h.type, opacity: 0 })) as unknown as Parameters<Editor["updateShapes"]>[0]);
-      const maths = hide.filter((h) => h.type === "math" || h.type === "graph");
+      const maths = hide.filter((h) => h.type === "math" || h.type === "graph" || h.type === "illustration");
       if (maths.length > 0) editor.updateShapes(maths.map((h) => ({ id: h.id, type: h.type, props: { reveal: 0 } })) as unknown as Parameters<Editor["updateShapes"]>[0]);
     }, { history: "ignore" });
     enqueue({ kind: "reveal", steps, restAt });
@@ -2826,6 +2832,34 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     // The "You said" chip before a student's line: a grey pill with no edge,
     // its words in the student's pencil. It decorates the line, so marks on
     // the line measure without it (meta.decor).
+    // A named part of an illustration ("jar2" in b3), as a page rectangle. The
+    // target is "b3.jar2", "b3 jar2", or a bare part name, which means the
+    // newest illustration that has it. Null when it names no part.
+    const illustrationPart = (editor: Editor, target: string): { item: BoardItem; rect: Rect } | null => {
+      const t = target.trim();
+      const m = /^(?:item\s+)?(b\d+)\s*[.:\s]\s*([A-Za-z_][\w.-]*)$/i.exec(t);
+      const named = m ? [resolveItemTarget(itemsRef.current, m[1])].filter((x): x is BoardItem => Boolean(x)) : [...itemsRef.current].reverse();
+      const want = (m ? m[2] : t).toLowerCase();
+      for (const item of named) {
+        for (const sid of item.shapeIds) {
+          const shape = editor.getShape(sid as TLShapeId);
+          if (shape?.type !== "illustration") continue;
+          let parsed: { scale?: number; rects?: Record<string, Rect> } = {};
+          try {
+            parsed = JSON.parse(String((shape.props as { parts?: string }).parts ?? "{}"));
+          } catch {}
+          const rects = parsed.rects ?? {};
+          const key = Object.keys(rects).find((k) => k.toLowerCase() === want);
+          const page = editor.getShapePageBounds(shape.id);
+          if (!key || !page) continue;
+          const k = parsed.scale ?? 1;
+          const r = rects[key];
+          return { item, rect: { x: page.x + r.x * k, y: page.y + r.y * k, w: r.w * k, h: r.h * k } };
+        }
+      }
+      return null;
+    };
+
     // The "You said" label's width without its tail, measured in its own face.
     const youSaidBodyW = (): number => {
       let textW = 56;
@@ -3981,6 +4015,34 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       );
     },
 
+    drawIllustration(scene: Scene, opts: { column?: "left" | "right" } = {}) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const col = opts.column ?? "left";
+      // Only built-in objects: a model-written SVG body never reaches the board.
+      const out = renderScene({ ...scene, defs: undefined });
+      if (out.w <= 0 || out.h <= 0) return null;
+      // At most a column's width and a readable height; never scaled up.
+      const MAX_W = 600;
+      const MAX_H = 420;
+      const k = Math.min(1, MAX_W / out.w, MAX_H / out.h);
+      const w = Math.round(out.w * k);
+      const h = Math.round(out.h * k);
+      const x = colX(col);
+      const y = colY(col).current;
+      editor.createShape({
+        id: createShapeId(),
+        type: "illustration",
+        x,
+        y,
+        props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: k, rects: out.parts }), scene: JSON.stringify(scene), reveal: 1 },
+        meta: currentMeta(),
+      } as unknown as Parameters<Editor["createShape"]>[0]);
+      colY(col).current += h + ROW_GAP;
+      focusOn(editor, x, y, w, h);
+      return { w, h, parts: Object.keys(out.parts), problems: out.problems };
+    },
+
     drawGrid(opts: GridDrawing) {
       const editor = editorRef.current;
       if (!editor) return;
@@ -4993,7 +5055,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     pointAt(target: string) {
       const editor = editorRef.current;
       if (!editor) return null;
-      const item = resolveItemTarget(itemsRef.current, target);
+      const part = illustrationPart(editor, target);
+      const item = part?.item ?? resolveItemTarget(itemsRef.current, target);
       if (!item) return null;
       const b = itemBounds(editor, item);
       if (!b) return null;
@@ -5002,7 +5065,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         kind: "action",
         wait: 520,
         run: () => {
-          const bb = itemBounds(editor, item) ?? b;
+          const bb = (part ? illustrationPart(editor, target)?.rect : null) ?? itemBounds(editor, item) ?? b;
           focusOn(editor, bb.x, bb.y, bb.w, bb.h);
           const px = bb.x + Math.min(40, bb.w * 0.25);
           const py = bb.y + bb.h * 0.6;
@@ -5140,7 +5203,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     circleItem(target: string, keep: boolean) {
       const editor = editorRef.current;
       if (!editor) return null;
-      const item = resolveItemTarget(itemsRef.current, target);
+      const part = illustrationPart(editor, target);
+      const item = part?.item ?? resolveItemTarget(itemsRef.current, target);
       if (!item) return null;
       const b = itemBounds(editor, item);
       if (!b) return null;
@@ -5157,7 +5221,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         wait: keep ? 1100 : 700,
         run: () => {
           const host = findHost(item.id);
-          const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
+          const bb = host ? (part ? illustrationPart(editor, target)?.rect : null) ?? itemBounds(editor, host, MARK_BOUNDS) : null;
           if (!host || !bb) return;
           focusOn(editor, bb.x - 16, bb.y - 16, bb.w + 32, bb.h + 32);
           // A kept ring is a real sky stroke that belongs to the item; the

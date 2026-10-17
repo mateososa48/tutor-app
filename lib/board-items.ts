@@ -60,6 +60,7 @@ const KIND_BY_TOOL: Record<string, string> = {
   draw_sketch: "sketch",
   draw_tape_diagram: "tape diagram",
   draw_grid: "grid",
+  draw_illustration: "illustration",
   write_vertical: "stacked arithmetic",
   draw_long_division: "long division",
   draw_transversal: "transversal",

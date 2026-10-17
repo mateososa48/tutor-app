@@ -1,3 +1,4 @@
+import { parseScene, type Scene } from "@/lib/illustration/scene";
 import type { WhiteboardHandle } from "@/components/TldrawCore";
 import { parsePlan, planSummary, PLAN_MAX_STEPS, validStep } from "@/lib/board-plan";
 import {
@@ -135,6 +136,10 @@ function contentOf(name: string, args: Args): string | null {
       return splitLatexLines(str("latex")).map(normalizeLatex).join("\n");
     case "add_equation_sequence":
       return splitSteps(str("steps")).map(normalizeLatex).join("\n");
+    case "draw_illustration":
+      // The scene is an object: the generic picture fingerprint reads only
+      // strings, so every illustration had looked like the first one.
+      return typeof args.scene === "string" ? args.scene : JSON.stringify(args.scene ?? null);
     default:
       return toolRole(name) === "draw" ? pictureContent(args) : null;
   }
@@ -1040,6 +1045,28 @@ function dispatchInner(
         ? `${shadeRows ? `${shadeRows} of ${rows} rows tinted` : ""}${shadeRows && shadeColumns ? ", " : ""}${shadeColumns ? `${shadeColumns} of ${columns} columns hatched` : ""}${shadeRows && shadeColumns ? `; overlap ${shadeRows * shadeColumns} of ${rows * columns}` : ""}`
         : `${shaded} shaded`;
       return ok(`Drew a ${rows} × ${columns} grid (${rows * columns} squares) with ${bands}${label.value ? `, captioned "${label.value}"` : ""}.${bandsIgnored ? " (shade_rows/shade_columns were ignored: shaded=N is the count; use the bands only for a product of fractions.)" : ""}`);
+    }
+
+    case "draw_illustration": {
+      // An illustration from a scene the illustrator wrote (lib/illustration).
+      // Not offered to the Live model: the app draws these from the planner's
+      // orders (Oct 2026). The scene comes as an object or as its JSON.
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      if (!board.drawIllustration) return fail("This board can't draw illustrations.");
+      const raw = args.scene;
+      const scene = typeof raw === "string" ? parseScene(raw) : raw && typeof raw === "object" && "root" in (raw as object) ? (raw as Scene) : null;
+      if (!scene) return fail("draw_illustration needs a scene with a root.");
+      const caption = typeof args.caption === "string" ? args.caption.trim().slice(0, 80) : "";
+      const name = caption || scene.title || "illustration";
+      let drawn: ReturnType<NonNullable<typeof board.drawIllustration>> = null;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: name }, () => {
+        drawn = board.drawIllustration!(scene);
+      });
+      const done = drawn as { parts: string[]; problems: string[] } | null;
+      if (!done) return fail("The illustration came out empty.");
+      const parts = done.parts.filter((p) => !p.includes("."));
+      return ok(`Drew the picture "${name}"${parts.length ? ` (parts: ${parts.slice(0, 8).join(", ")})` : ""}.${done.problems.length ? ` Not drawn: ${done.problems.slice(0, 3).join("; ")}.` : ""}`);
     }
 
     case "write_vertical": {
