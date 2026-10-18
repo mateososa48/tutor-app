@@ -80,7 +80,7 @@ import { GoogleGenAI } from "@google/genai";
 import { CASES, HELDOUT, REAL, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { hedged } from "../lib/hedge";
-import { NEXT_MOVE_DECLARATION, PLANNER_SYSTEM, illustrationOf, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
+import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, PLANNER_SYSTEM, illustrationOf, pictureRefusal, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
 import { callCost, callIllustrator } from "../lib/illustration/model";
 import { guardLabels, illustratorPrompt } from "../lib/illustration/prompt";
 import { parseScene } from "../lib/illustration/scene";
@@ -866,10 +866,15 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   // illustrator (--illustrator), on this board, while the tutor talks.
   const pictures = new Map<string, Picture>();
   let pictureNote: string | null = null;
+  // The picture the app is drawing for this reply: the tutor's own picture
+  // tools are refused until the next line, as lib/gemini-live does.
+  let pictureOut: string | null = null;
   const deliver = (order: string | null, line: string) => {
     const pic = order ? pictures.get(order) : undefined;
     pictures.clear();
-    if (pic) void drawPicture(pic, line);
+    if (!pic) return;
+    pictureOut = pic.what;
+    void drawPicture(pic, line);
   };
   const drawPicture = async (pic: Picture, line: string) => {
     const t0 = Date.now();
@@ -979,6 +984,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       deliver(order, voiceLine());
       return { success: true, message: [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n") };
     }
+    if (pictureOut && PICTURE_TOOLS.has(name)) return { success: true, message: pictureRefusal(pictureOut) };
     const tutor = runtime.runTool(name, args, now, callId);
     if (tutor && name === "check_answer" && voicePlan && turns.length && !live.spokeNow && tutor.success && plannedFor !== lineSeq) {
       const early = takeSpec(voiceLine());
@@ -1159,6 +1165,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     if (bye(studentText) && turns.length && bye(turns[turns.length - 1].student)) { console.log(`  (${c.name} has left)`); break; }
     pendingNote = [nextNote, coached].filter(Boolean).join("\n") || null;
     live.lastLine = studentText;
+    pictureOut = null;
     if (opts.voice) {
       // The app's voice path: the note goes in as the student starts talking;
       // the utterance is read when they stop, and a checked answer's note rides

@@ -9,7 +9,7 @@ import { TutorRuntime } from "./tutor-runtime";
 import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, finishReplyNote, toolScheduling, withToolBehavior, type LiveVadConfig, type ToolScheduling } from "./live-tool-behavior";
 import { givesTask } from "./tutor-policy";
 import type { CoachTurn } from "./tutor-coach";
-import { NEXT_MOVE_DECLARATION, sameLine } from "./tutor-planner";
+import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, pictureRefusal, sameLine } from "./tutor-planner";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
@@ -302,6 +302,8 @@ export class GeminiLiveSession {
   private readonly planner: PlannerOption | undefined;
   /** Orders that carry a picture (illustrate), by their note: drawn once, when the order is used. */
   private readonly pictures = new Map<string, { what: string; notice: string; line: string }>();
+  /** The picture the app is drawing for this reply, until the student's next line. */
+  private pictureOut: string | null = null;
   /** The student line (inputSeq) the planner already gave an order for, and that order: planned once per line. */
   private plannedFor = -1;
   private plannedOrder: string | null = null;
@@ -362,6 +364,7 @@ export class GeminiLiveSession {
     // waits for the server to cut it off.
     this.gate.onNewInput(kind === "voice" && Date.now() - this.lastModelAudioAt < 400);
     this.inputSeq += 1;
+    this.pictureOut = null;
     this.lastInputAt = Date.now();
     this.lastInputKind = kind;
     this.turnHadAudio = false;
@@ -692,10 +695,11 @@ export class GeminiLiveSession {
         this.plannedFor = this.inputSeq;
         this.plannedOrder = order;
         if (this.manualDisconnect) return;
-        this.deliverOrder(order);
         const context = [mine.notes.join("\n"), order ?? mine.turnNote].filter(Boolean).join("\n");
         if (context) this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: context }] }], turnComplete: false } });
         if (this.sendUserTurn([{ text: mine.texts.join("\n") }], "text")) this.armUnanswered("text");
+        // After the line went in, so the new line does not end the picture's turn.
+        this.deliverOrder(order);
       })
       .catch(() => {
         if (this.typedBatch === mine) this.typedBatch = null;
@@ -768,7 +772,9 @@ export class GeminiLiveSession {
   private deliverOrder(order: string | null) {
     const pic = order ? this.pictures.get(order) : undefined;
     this.pictures.clear();
-    if (pic) void this.illustrate(pic);
+    if (!pic) return;
+    this.pictureOut = pic.what;
+    void this.illustrate(pic);
   }
 
   /** Ask /api/illustrate for the scene and put it on the board; a failure becomes a note for the next turn. */
@@ -1501,6 +1507,12 @@ export class GeminiLiveSession {
           result = { ...result, message: `${result.message ?? ""}\n${CHECK_AFTER_REPLY_NOTE}` };
           if (this.gate.muted) this.debug("turn", "check_after_reply_muted", {});
         }
+      } else if (this.pictureOut && PICTURE_TOOLS.has(name)) {
+        // Oct 17 2026: told the app was drawing two batches of cookies, 3.8
+        // drew its own picture too, and the board showed both. A tool result is
+        // what it follows; success, so it is filed quietly and wakes nothing.
+        result = { success: true, message: pictureRefusal(this.pictureOut) };
+        this.debug("board", "picture_tool_refused", { name, picture: this.pictureOut });
       } else if (name === "remember_about_student") {
         // App-owned tool: record a durable student-model fact and echo the
         // full memory back so it refreshes in the model's context.

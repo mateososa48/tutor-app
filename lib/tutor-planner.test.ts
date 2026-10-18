@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PLANNER_SYSTEM, illustrationOf, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "./tutor-planner";
+import { PICTURE_TOOLS, PLANNER_SYSTEM, illustrationOf, pictureRefusal, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "./tutor-planner";
 
 test("the planner's prompt carries the new line, the private verdict, the board and the reminders", () => {
   const text = plannerPrompt({
@@ -90,4 +90,10 @@ test("an illustrate order with no question tells the tutor to ask about the pict
   const note = plannerNote('Say: "Let me draw the flour and cookies." Board: illustrate(2 cups and 12 cookies, twice | doubling)')!;
   assert.match(note, /Then ask one question about what the picture shows\./);
   assert.doesNotMatch(plannerNote('Say: "Let me draw it. Which slice is bigger?" Board: illustrate(two pizzas | slices)')!, /Then ask one question/);
+});
+
+test("while the app draws the planner's picture, the tutor's own picture tools are refused, but not its marks or equations", () => {
+  for (const t of ["draw_icons", "draw_grid", "draw_tape_diagram", "draw_sketch"]) assert.ok(PICTURE_TOOLS.has(t));
+  for (const t of ["point_at", "draw_equation_step", "add_student_attempt", "draw_desmos", "add_number_line", "check_answer"]) assert.ok(!PICTURE_TOOLS.has(t));
+  assert.match(pictureRefusal("two batches of cookies"), /^Not drawn: the app is drawing the picture for this reply \(two batches of cookies\)/);
 });

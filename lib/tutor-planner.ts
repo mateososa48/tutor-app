@@ -131,6 +131,20 @@ export function plannerNote(reply: string | null | undefined, verdict: string | 
   return `[Next move, not from the student: ${body}]`;
 }
 
+/**
+ * The tutor's own picture tools, refused while the app is drawing the
+ * planner's picture for the same reply: two pictures of one idea is clutter,
+ * and the second was usually the worse one. Equations, marks, attempts and
+ * graphs still go through.
+ */
+export const PICTURE_TOOLS: ReadonlySet<string> = new Set([
+  "draw_icons", "draw_grid", "draw_tape_diagram", "draw_sketch", "draw_balance", "add_area_model", "draw_fraction", "draw_figure", "draw_array",
+]);
+
+export function pictureRefusal(what: string): string {
+  return `Not drawn: the app is drawing the picture for this reply (${what.slice(0, 100)}). Don't draw another; point at its parts once it is up.`;
+}
+
 /** The planner's illustrate(what | notice) move, or null for any other move. */
 export function illustrationOf(board: string | null | undefined): { what: string; notice: string } | null {
   const m = /^illustrate\(([\s\S]*)\)$/.exec((board ?? "").trim());
