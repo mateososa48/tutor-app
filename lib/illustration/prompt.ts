@@ -85,9 +85,18 @@ const NUMBER = /-?\d+(?:[.,]\d+)?(?:\/\d+)?%?/g;
 const NAMING = /\b[A-Za-z]{2,}\s*#?\s*$/;
 const RESULT_WORD = /\b(?:total|sum|each|left|answer|altogether|all|makes|equals|is|are|gets?|per)\s*#?\s*$/i;
 
-/** Every number written anywhere in `text` ("1/2" counts as 1/2, 1 and 2). */
-function numbersIn(text: string): Set<string> {
+const WORD_NUMBERS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+  half: 2, third: 3, thirds: 3, fourth: 4, fourths: 4, quarter: 4, quarters: 4, fifth: 5, fifths: 5, sixth: 6, sixths: 6, eighth: 8, eighths: 8, tens: 10,
+};
+
+/** Every number written anywhere in `text` ("1/2" counts as 1/2, 1 and 2; "ten" counts as 10). */
+function numbersIn(raw: string): Set<string> {
   const out = new Set<string>();
+  // "bundles of ten" has seen 10 as surely as "10" (Oct 17 2026: a bundle labelled 10 became "?").
+  const text = raw.replace(/\b[a-z]+\b/gi, (w) => (w.toLowerCase() in WORD_NUMBERS ? `${w} ${WORD_NUMBERS[w.toLowerCase()]}` : w));
   for (const m of text.matchAll(NUMBER)) {
     const n = m[0].replace(",", ".").replace(/%$/, "");
     out.add(n);

@@ -67,3 +67,9 @@ test("scaffolding numbers stay: zero, a whole, unit fractions of a whole already
   assert.equal(kids[3].text, "? left");
   assert.deepEqual(withheld, ["1/5"]);
 });
+
+test("numbers said in words count as seen", () => {
+  const { scene, withheld } = guardLabels({ root: { type: "label", text: "10 sticks" } }, "3 bundles of ten sticks and 4 single sticks");
+  assert.equal((scene.root as { text: string }).text, "10 sticks");
+  assert.deepEqual(withheld, []);
+});

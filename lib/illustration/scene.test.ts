@@ -100,3 +100,22 @@ test("two brackets over overlapping spans on one side stack instead of colliding
   const b = ys.find((r) => r.t === "$40 price")!;
   assert.ok(Math.abs(a.y - b.y) >= 22, `bracket label ${a.y} vs total ${b.y}`);
 });
+
+test("coins are drawn as themselves, with their value on the face, by loose names too", () => {
+  const out = renderScene({ root: { type: "row", children: [{ type: "items", icon: "pennies", count: 3, id: "p" }, { type: "items", icon: "dime coins", count: 2, id: "d" }, { type: "icon", icon: "Quarter" }] } });
+  assert.deepEqual(out.problems, []);
+  assert.equal(count(out.svg, ">1¢<"), 3);
+  assert.equal(count(out.svg, ">10¢<"), 2);
+  assert.equal(count(out.svg, ">25¢<"), 1);
+});
+
+test("a bracket over things inside a container sits outside the container", () => {
+  const out = renderScene({
+    root: { type: "container", shape: "bag", id: "bag", child: { type: "row", children: [{ type: "items", icon: "red_marble", count: 3, id: "red" }, { type: "items", icon: "blue_marble", count: 5, id: "blue" }] } },
+    brackets: [{ over: "blue", side: "top", label: "5 blue" }],
+  });
+  const label = [...out.svg.matchAll(/<text x="[-\d.]+" y="([-\d.]+)"[^>]*>5 blue</g)][0];
+  // In the SVG's own coordinates; the bag's top is at its part's y less the viewBox shift.
+  const vy = Number(/viewBox="[-\d.]+ ([-\d.]+)/.exec(out.svg)![1]);
+  assert.ok(Number(label[1]) < out.parts.bag.y + vy, `label baseline ${label[1]} above the bag top ${out.parts.bag.y + vy}`);
+});

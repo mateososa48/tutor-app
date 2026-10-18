@@ -13,6 +13,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { ILLUSTRATION_CASES, ILLUSTRATION_HELDOUT } from "./illustrate-cases";
 import { PLANNER_SYSTEM, illustrationOf, parsePlannerOrder, plannerPrompt, type PlannerTurn } from "../lib/tutor-planner";
+import { callCost, callIllustrator } from "../lib/illustration/model";
+import { guardLabels, illustratorPrompt } from "../lib/illustration/prompt";
+import { parseScene, renderScene } from "../lib/illustration/scene";
 
 const ROOT = path.resolve(__dirname, "..");
 const env: Record<string, string> = {};
@@ -30,6 +33,13 @@ const MODELS = opt("model", "gemini-3.5-flash-lite@GEMINI_API_KEY_2,gemini-3.5-f
 const OUT = path.join(ROOT, opt("out", "bench/illustrate/decide.json"));
 const SYSTEM_FILE = opt("system", "");
 const SYSTEM = SYSTEM_FILE ? fs.readFileSync(SYSTEM_FILE, "utf8") : PLANNER_SYSTEM;
+// --draw DIR: every picture the planner orders is drawn the way the app draws
+// it (Haiku, the production prompt, the label guard, the engine) and written as
+// a packet for blind raters: the moment, the planner's words, the picture.
+const DRAW = opt("draw", "");
+// --from FILE: the decisions of an earlier run (its --out), drawn again without asking the planner.
+const FROM = opt("from", "");
+for (const [k, v] of Object.entries(env)) if (!process.env[k]) process.env[k] = v;
 
 type Moment = { id: string; should: boolean; grade: string; topic: string; turns: PlannerTurn[]; line: string; board: string; verdict?: string };
 
@@ -101,7 +111,61 @@ async function plan(m: Moment): Promise<{ reply: string; ms: number } | null> {
   return null;
 }
 
+const packets: Array<{ id: string; ms: number; cost: number | null; withheld: string[]; problems: string[]; error?: string }> = [];
+
+async function drawPacket(m: Moment, run: number, say: string, pic: { what: string; notice: string }) {
+  const id = `${m.id}-r${run}`;
+  const conversation = [...m.turns.flatMap((t) => [...(t.student ? [{ who: "student" as const, text: t.student }] : []), { who: "tutor" as const, text: t.tutor }]), { who: "student" as const, text: m.line }];
+  const t0 = Date.now();
+  const reply = await callIllustrator("claude-haiku-5-5", illustratorPrompt({ grade: m.grade, what: pic.what, notice: pic.notice, conversation, board: m.board })).catch((e) => ({ text: "", error: String(e) }));
+  const ms = Date.now() - t0;
+  const scene = reply ? parseScene(reply.text) : null;
+  const dir = path.join(ROOT, DRAW);
+  fs.mkdirSync(dir, { recursive: true });
+  if (!scene) {
+    packets.push({ id, ms, cost: null, withheld: [], problems: [], error: "no scene" });
+    return;
+  }
+  const guarded = guardLabels(scene, [conversation.map((l) => l.text).join(" "), m.board, pic.what, pic.notice].join(" "));
+  const out = renderScene(guarded.scene);
+  fs.writeFileSync(path.join(dir, `${id}.svg`), out.svg);
+  fs.writeFileSync(path.join(dir, `${id}.scene.json`), JSON.stringify(guarded.scene));
+  packets.push({ id, ms, cost: callCost("claude-haiku-5-5", (reply as { usage?: Record<string, unknown> }).usage), withheld: guarded.withheld, problems: out.problems });
+  const lesson = conversation.slice(0, -1).map((l) => `${l.who === "tutor" ? "Tutor" : "Student"}: ${l.text}`).join("\n");
+  fs.writeFileSync(
+    path.join(dir, `${id}.md`),
+    [
+      `# Picture ${id}`,
+      `Student: ${m.grade}.`,
+      "",
+      "## The lesson so far",
+      lesson || "(start)",
+      `On the board: ${m.board}`,
+      "",
+      "## This moment",
+      `Student: ${m.line}`,
+      `The tutor says: "${say}"`,
+      `While it talks, this picture is drawn on the board (asked for: ${pic.what}; to notice: ${pic.notice || "-"}).`,
+      "",
+      `## The picture`,
+      `Look at the image file: ${path.join(dir, `${id}.png`)}`,
+    ].join("\n"),
+  );
+}
+
+async function redraw() {
+  const rows = JSON.parse(fs.readFileSync(path.join(ROOT, FROM), "utf8")) as Array<{ id: string; run: number; say: string | null; picture: { what: string; notice: string } | null }>;
+  const todo = rows.filter((r) => r.picture && r.say);
+  for (let i = 0; i < todo.length; i += 4) {
+    await Promise.all(todo.slice(i, i + 4).map((r) => drawPacket(MOMENTS.find((m) => m.id === r.id)!, r.run, r.say!, r.picture!)));
+  }
+  fs.writeFileSync(path.join(ROOT, DRAW, "packets.json"), JSON.stringify(packets, null, 2));
+  const ms = packets.filter((p) => !p.error).map((p) => p.ms).sort((a, b) => a - b);
+  console.log(`drew ${ms.length}/${packets.length} · p50 ${ms[Math.floor(ms.length / 2)]} ms · max ${ms.at(-1)} ms · guard hits ${packets.filter((p) => p.withheld.length).length} (${packets.flatMap((p) => p.withheld).join(", ")}) · engine problems ${packets.filter((p) => p.problems.length).length}`);
+}
+
 async function main() {
+  if (FROM && DRAW) return redraw();
   const rows: Array<{ id: string; should: boolean; run: number; say: string | null; board: string | null; picture: { what: string; notice: string } | null }> = [];
   for (let run = 1; run <= RUNS; run++) {
     for (let i = 0; i < MOMENTS.length; i += 4) {
@@ -109,6 +173,7 @@ async function main() {
       for (const { m, r } of batch) {
         const order = parsePlannerOrder(r?.reply);
         const picture = illustrationOf(order?.board);
+        if (DRAW && picture && order) await drawPacket(m, run, order.say, picture);
         rows.push({ id: m.id, should: m.should, run, say: order?.say ?? null, board: order?.board ?? null, picture });
         console.log(`${m.should ? "DRAW" : "skip"} ${m.id.padEnd(14)} r${run} ${picture ? "→ illustrate" : `→ ${order?.board?.split("(")[0] ?? "(words only)"}`}${picture ? `: ${picture.what.slice(0, 90)}` : ""}`);
       }
@@ -127,5 +192,10 @@ async function main() {
   console.log(`any picture move where a picture helps: ${drew(true)} · where it does not: ${drew(false)}`);
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(rows, null, 2));
+  if (DRAW) {
+    fs.writeFileSync(path.join(ROOT, DRAW, "packets.json"), JSON.stringify(packets, null, 2));
+    const ms = packets.filter((p) => !p.error).map((p) => p.ms).sort((a, b) => a - b);
+    console.log(`drew ${ms.length}/${packets.length} · p50 ${ms[Math.floor(ms.length / 2)]} ms · max ${ms.at(-1)} ms · guard hits ${packets.filter((p) => p.withheld.length).length} · engine problems ${packets.filter((p) => p.problems.length).length}`);
+  }
 }
 main();

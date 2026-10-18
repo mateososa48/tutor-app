@@ -91,10 +91,27 @@ export const BUILTIN_OBJECTS: Record<string, { svg: string; w: number; h: number
   jacket: { svg: `<path d="M8 3 L12 6 L16 3 L21 7 L19 12 L17 11 L17 22 L7 22 L7 11 L5 12 L3 7 Z" fill="#8fb8e8" stroke="#1d1d21" stroke-width="1.3" stroke-linejoin="round"/><path d="M12 6 V22" stroke="#1d1d21" stroke-width="1.1"/><circle cx="13.6" cy="13" r="0.9" fill="#1d1d21"/><circle cx="13.6" cy="17" r="0.9" fill="#1d1d21"/>`, w: 24, h: 24 },
 };
 BUILTIN_OBJECTS.flour_cup = BUILTIN_OBJECTS.measuring_cup;
+// US coins, each in its own metal and size with its value on its face (Oct 17
+// 2026: Maya's 35 pennies and 5 dimes came out as one gold emoji coin twice, so
+// the picture hid the very difference it was drawn to show).
+const coin = (r: number, fill: string, rim: string, value: string, ink = "#1d1d21") =>
+  `<circle cx="12" cy="12" r="${r}" fill="${fill}" stroke="${rim}" stroke-width="1.4"/><circle cx="12" cy="12" r="${r - 2.2}" fill="none" stroke="${rim}" stroke-width="0.6" opacity="0.6"/><text x="12" y="${n1(12 + (r > 9 ? 3.3 : 2.9))}" text-anchor="middle" font-family="'IBM Plex Sans', system-ui, sans-serif" font-size="${r > 9 ? 8.5 : 7.5}" font-weight="700" fill="${ink}">${value}</text>`;
+BUILTIN_OBJECTS.penny = { svg: coin(9.2, "#e0a070", "#9a5a2a", "1¢"), w: 24, h: 24 };
+BUILTIN_OBJECTS.nickel = { svg: coin(10, "#dcdfe4", "#7c828c", "5¢"), w: 24, h: 24 };
+BUILTIN_OBJECTS.dime = { svg: coin(8.4, "#e3e6ea", "#7c828c", "10¢"), w: 24, h: 24 };
+BUILTIN_OBJECTS.quarter = { svg: coin(11, "#d6dae0", "#6b717b", "25¢"), w: 24, h: 24 };
 export const BUILTIN_NAMES = Object.keys(BUILTIN_OBJECTS);
 
+/** A built-in object by a loose name: "pennies", "Dime coin", "red marbles". */
+export function builtinObject(name: string): { svg: string; w: number; h: number } | undefined {
+  const base = name.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/_coins?$/, "");
+  const tries = [base, base.replace(/ies$/, "y"), base.replace(/es$/, ""), base.replace(/s$/, "")];
+  for (const t of tries) if (BUILTIN_OBJECTS[t]) return BUILTIN_OBJECTS[t];
+  return undefined;
+}
+
 function iconMarkup(name: string, x: number, y: number, size: number, defs: Scene["defs"], out: Out): void {
-  const def = defs?.[name] ?? BUILTIN_OBJECTS[name];
+  const def = defs?.[name] ?? builtinObject(name);
   if (def) {
     const s = size / Math.max(def.w, def.h);
     out.svg.push(`<g transform="translate(${n1(x + (size - def.w * s) / 2)} ${n1(y + (size - def.h * s) / 2)}) scale(${n1(s * 1000) / 1000})">${def.svg}</g>`);
@@ -192,7 +209,7 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
       // A lone object nobody can draw is left out rather than shown as a dot
       // (Oct 17 2026: "road" beside the car read as a stray circle). Rows of
       // items keep their dots, because there the count is the point.
-      if (!scene.defs?.[name] && !BUILTIN_OBJECTS[name] && !resolveIconName(name)) {
+      if (!scene.defs?.[name] && !builtinObject(name) && !resolveIconName(name)) {
         out.problems.push(`no icon or def named "${name}"`);
         return { w: 0, h: 0, draw: () => {} };
       }
@@ -642,7 +659,12 @@ function drawBracket(r: Rect, side: "top" | "bottom" | "left" | "right", text: s
     const mid = r.x + r.w / 2;
     out.svg.push(`<path d="M${n1(r.x)} ${n1(y - d)}Q${n1(r.x)} ${n1(y)} ${n1(r.x + 10)} ${n1(y)}H${n1(mid - 8)}Q${n1(mid)} ${n1(y)} ${n1(mid)} ${n1(y + d)}Q${n1(mid)} ${n1(y)} ${n1(mid + 8)} ${n1(y)}H${n1(r.x + r.w - 10)}Q${n1(r.x + r.w)} ${n1(y)} ${n1(r.x + r.w)} ${n1(y - d)}" ${s}/>`);
     const ty = side === "top" ? y + d - 8 : y + d + px + 4;
-    out.ext.push({ x: r.x, y: Math.min(y + d, ty - px), w: r.w, h: Math.abs(d) + px * 1.4 });
+    // The whole curl and the label: for a bottom bracket the line itself sits
+    // above y + d, and leaving it out let a label below the picture sit on it.
+    // The ends curl 8px back toward the thing bracketed, the middle 8px away.
+    const top = Math.min(y - 8, ty - px);
+    const bottom = Math.max(y + 8, ty + px * 0.3);
+    out.ext.push({ x: r.x, y: top, w: r.w, h: bottom - top });
     if (text) out.ext.push({ x: mid - textWidth(text, px) / 2, y: ty - px, w: textWidth(text, px), h: px * 1.3 });
     if (text) out.svg.push(`<text x="${n1(mid - textWidth(text, px) / 2)}" y="${n1(ty)}" font-family="${FONT}" font-size="${px}" font-weight="600" fill="${col}">${esc(text)}</text>`);
   } else {
@@ -708,14 +730,29 @@ export function renderScene(scene: Scene): Rendered {
       out.problems.push(`bracket over ${ids.join(", ")}: no part with that id`);
       continue;
     }
-    const span = union(rs);
+    // A bracket over things inside a container (marbles in a bag, cans in a
+    // batch) goes outside the container on its side, or it crosses the bag's
+    // neck and the box's own label (Oct 17 2026, the bag and paint pictures).
+    const inner = union(rs);
+    const holderOf = (r: Rect) =>
+      Object.entries(out.parts)
+        .filter(([k, h]) => !ids.includes(k) && !k.includes(".") && h.w * h.h > r.w * r.h * 1.05 && inside(r, h))
+        .map(([, h]) => h)
+        .sort((a, b) => a.w * a.h - b.w * b.h)[0];
+    const holders = rs.map(holderOf).filter((h): h is Rect => Boolean(h));
+    const side = b.side ?? "top";
+    const outer = union([inner, ...holders]);
+    const span =
+      side === "top" || side === "bottom"
+        ? { x: inner.x, w: inner.w, y: outer.y, h: outer.h }
+        : { y: inner.y, h: inner.h, x: outer.x, w: outer.w };
     // "4 ft" on a bracket over a grid that already says "4 ft" on its edge is
     // the same words twice (Oct 17 2026, the tiles and chairs pictures).
     const said = (t: string) => t.toLowerCase().replace(/[^a-z0-9/.%-]+/g, " ").trim();
     if (b.label && textRects(out).some((r, i) => overlaps(r, { x: span.x - 30, y: span.y - 30, w: span.w + 60, h: span.h + 60 }) && said(textsIn(out)[i]) === said(b.label!))) continue;
     // Further out until it covers no other words and no earlier bracket
     // (Oct 17 2026: "4 equal parts" sat on "$40 price", "3 yellow" on "Batch 1").
-    const avoid = [...textRects(out).filter((r) => !inside(r, span)), ...out.ext];
+    const avoid = [...textRects(out).filter((r) => !inside(r, inner)), ...out.ext];
     let drawn: Out | null = null;
     for (const gap of [12, 28, 44, 60, 76]) {
       const tmp: Out = { svg: [], parts: {}, problems: [], ext: [] };
