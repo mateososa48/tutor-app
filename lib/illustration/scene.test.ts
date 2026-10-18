@@ -119,3 +119,9 @@ test("a bracket over things inside a container sits outside the container", () =
   const vy = Number(/viewBox="[-\d.]+ ([-\d.]+)/.exec(out.svg)![1]);
   assert.ok(Number(label[1]) < out.parts.bag.y + vy, `label baseline ${label[1]} above the bag top ${out.parts.bag.y + vy}`);
 });
+
+test("an axis reaches a step past its furthest move, so no arrow runs off it or stops on its end", () => {
+  const out = renderScene({ root: { type: "axis", orientation: "vertical", min: -10, max: 0, moves: [{ from: -7, to: -11, label: "down 4" }] } });
+  assert.match(out.svg, />-12</);
+  assert.deepEqual(out.problems, []);
+});

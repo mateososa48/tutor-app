@@ -479,9 +479,13 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
     }
 
     case "axis": {
-      const min = Math.min(node.min, node.max);
-      const max = Math.max(node.min, node.max);
       const step = node.step && node.step > 0 ? node.step : 1;
+      // The axis reaches one step past every move and mark: an arrow ran off
+      // the end of the scale, and one that stopped on the last tick made the
+      // answer the axis's end (Oct 17 2026, the elevator pictures).
+      const ends = [...(node.moves ?? []).flatMap((m) => [m.from, m.to]), ...(node.marks ?? []).map((m) => m.at)].filter(Number.isFinite);
+      const min = Math.min(node.min, node.max, ...ends.map((v) => v - step));
+      const max = Math.max(node.min, node.max, ...ends.map((v) => v + step));
       const ticks = Math.floor((max - min) / step) + 1;
       const vertical = node.orientation === "vertical";
       const gapPx = Math.max(22, Math.min(46, (vertical ? 420 : 560) / Math.max(1, ticks - 1)));
