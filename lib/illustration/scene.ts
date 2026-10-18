@@ -284,7 +284,10 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
       const neck = node.shape === "jar" ? 14 : node.shape === "bag" ? 26 : 0;
       const plate = node.shape === "plate" ? 14 : 0;
       let bw = inner.w + pad * 2;
-      let bh = inner.h + pad * 2 + neck + plate;
+      // A wide bag gets more height, or its round body cannot hold a long row.
+      // Its body is kept to at most about 2:1, so it reads as a sack, not a boat.
+      const padY = node.shape === "bag" ? Math.max(pad, Math.min(90, (inner.w / 2.1 - inner.h) / 2)) : pad;
+      let bh = inner.h + padY * 2 + neck + plate;
       if (node.shape === "circle") bw = bh = Math.max(inner.w, inner.h) * 1.42 + pad;
       const lab = node.label ? label(node.label, "m", "ink") : null;
       const labGap = lab ? 10 : 0;
@@ -314,13 +317,22 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
               const nw = Math.max(26, bw * 0.16);
               const top = by + 2;
               const tie = by + neck;
-              o.svg.push(`<path d="M${n1(mid - nw)} ${n1(tie)}C${n1(bx - 22)} ${n1(tie + 22)} ${n1(bx - 20)} ${n1(by + bh)} ${n1(mid)} ${n1(by + bh)}C${n1(bx + bw + 20)} ${n1(by + bh)} ${n1(bx + bw + 22)} ${n1(tie + 22)} ${n1(mid + nw)} ${n1(tie)}Z" fill="#f3e3c3" ${s}/>`);
+              // The body passes 14px outside the contents at their middle
+              // height, so a long row of marbles stays inside the sack (Oct 17
+              // 2026: one curve from neck to bottom never reached the row's ends).
+              const cy = by + neck + padY + inner.h / 2;
+              const lx = bx - 14;
+              const rx = bx + bw + 14;
+              const bot = by + bh;
+              o.svg.push(
+                `<path d="M${n1(mid - nw)} ${n1(tie)}C${n1(lx + (mid - nw - lx) * 0.35)} ${n1(tie + 2)} ${n1(lx)} ${n1(cy - (cy - tie) * 0.6)} ${n1(lx)} ${n1(cy)}C${n1(lx)} ${n1(cy + (bot - cy) * 0.75)} ${n1(bx + bw * 0.18)} ${n1(bot)} ${n1(mid)} ${n1(bot)}C${n1(bx + bw * 0.82)} ${n1(bot)} ${n1(rx)} ${n1(cy + (bot - cy) * 0.75)} ${n1(rx)} ${n1(cy)}C${n1(rx)} ${n1(cy - (cy - tie) * 0.6)} ${n1(rx - (rx - mid - nw) * 0.35)} ${n1(tie + 2)} ${n1(mid + nw)} ${n1(tie)}Z" fill="#f3e3c3" ${s}/>`,
+              );
               o.svg.push(`<path d="M${n1(mid - nw)} ${n1(tie)}L${n1(mid - nw * 1.35)} ${n1(top)}Q${n1(mid)} ${n1(top + 7)} ${n1(mid + nw * 1.35)} ${n1(top)}L${n1(mid + nw)} ${n1(tie)}Z" fill="#f3e3c3" ${s}/>`);
               o.svg.push(`<path d="M${n1(mid - nw - 3)} ${n1(tie)}H${n1(mid + nw + 3)}" stroke="#a8742c" stroke-width="4" stroke-linecap="round"/>`);
             }
             if (node.shape === "plate") o.svg.push(`<ellipse cx="${n1(bx + bw / 2)}" cy="${n1(by + bh - plate)}" rx="${n1(bw / 2)}" ry="${n1(plate)}" fill="#f7f7f9" ${s}/>`);
             if (node.shape === "circle") o.svg.push(`<circle cx="${n1(bx + bw / 2)}" cy="${n1(by + bh / 2)}" r="${n1(bw / 2)}" fill="none" ${s}/>`);
-            inner.draw(bx + (bw - inner.w) / 2, by + neck + (node.shape === "circle" ? (bh - inner.h) / 2 : pad), o);
+            inner.draw(bx + (bw - inner.w) / 2, by + neck + (node.shape === "circle" ? (bh - inner.h) / 2 : padY), o);
             if (lab) lab.draw(x + (w - lab.w) / 2, top ? y : by + bh + labGap, o);
           },
         },

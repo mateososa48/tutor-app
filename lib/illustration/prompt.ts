@@ -30,6 +30,9 @@ const DESIGN = `How the picture should be:
 - Quantities exactly as stated: count every object; equal parts are exactly equal.
 - Words are labels of one to four words, never sentences.
 - Never show a result the student has not said yet: no totals, no answers, no "= 4". Label what is given; use "?" for the unknown. The tutor asks for it next.
+- Draw every object the request names, all of them: "12 marbles" means twelve marbles in the picture. If putting them into groups would show the answer, draw them loose beside the empty containers.
+- Up and down (floors, temperature, height, depth) is a vertical axis with marks and moves, never objects in a row.
+- A pie or a grid stands on its own, never inside a container.
 - Say each thing once: a bracket or an edge label, never both with the same words.
 - Arrows only between parts you gave an id, and only when something moves or turns into something; a label or a bracket says the rest.
 - Readable on a phone: few labels, big enough objects.`;

@@ -88,7 +88,10 @@ const AGAINST: Moment[] = [
   { id: "percent-done", should: false, grade: "7th grade", topic: "percent", turns: [{ student: "", tutor: "What's 10% of 80?", tools: [] }], line: "8 because you move the decimal", board: 'b1 heading "Percent"; b2 equation line "10% of 80 = ?"', verdict: "[Answer check, not from the student: \"8\" → correct.]" },
 ];
 
-const MOMENTS: Moment[] = [...ILLUSTRATION_CASES.map(fromCase), ...ILLUSTRATION_HELDOUT.map(fromCase), ...AGAINST];
+const ALL_MOMENTS: Moment[] = [...ILLUSTRATION_CASES.map(fromCase), ...ILLUSTRATION_HELDOUT.map(fromCase), ...AGAINST];
+// --only a,b: just those moments.
+const ONLY = opt("only", "");
+const MOMENTS = ONLY ? ALL_MOMENTS.filter((m) => ONLY.split(",").includes(m.id)) : ALL_MOMENTS;
 
 let turn = 0;
 async function plan(m: Moment): Promise<{ reply: string; ms: number } | null> {
