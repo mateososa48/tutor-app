@@ -1,4 +1,4 @@
-import { parseScene, type Scene } from "@/lib/illustration/scene";
+import { parseScene, renderScene, type Scene } from "@/lib/illustration/scene";
 import type { WhiteboardHandle } from "@/components/TldrawCore";
 import { parsePlan, planSummary, PLAN_MAX_STEPS, validStep } from "@/lib/board-plan";
 import {
@@ -1058,7 +1058,10 @@ function dispatchInner(
       const scene = typeof raw === "string" ? parseScene(raw) : raw && typeof raw === "object" && "root" in (raw as object) ? (raw as Scene) : null;
       if (!scene) return fail("draw_illustration needs a scene with a root.");
       const caption = typeof args.caption === "string" ? args.caption.trim().slice(0, 80) : "";
-      const name = caption || scene.title || "illustration";
+      // The part names go in the label the board summary shows, so the tutor
+      // and the planner can point at "jar2" without having drawn it.
+      const partList = Object.keys(renderScene(scene).parts).filter((k) => !k.includes(".")).slice(0, 8);
+      const name = `${caption || scene.title || "illustration"}${partList.length ? ` (parts: ${partList.join(", ")})` : ""}`;
       let drawn: ReturnType<NonNullable<typeof board.drawIllustration>> = null;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: name }, () => {
         drawn = board.drawIllustration!(scene);

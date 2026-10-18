@@ -41,12 +41,12 @@ Give the tutor ONE order for its reply to this line: what to say, in quotes, the
 Decide in this order:
 1. They gave an answer, a rule or a guess WITHOUT saying why: ask how they got it, in their words ("How did you get 15?"). Never correct first, never say right or wrong yet.
 2. They already said why, or you know their reasoning, and it is wrong ("cuz you add 3", "two negatives make a positive"): don't ask again and don't explain the right way. Make their own idea break where they can see it: use their rule on a simpler or extreme case (0 cups, 1 cup, doubling), or draw the picture that shows the mismatch, then ask what they notice.
-3. The idea is only in words (a picture, a machine, a table, a graph being described): draw it now, then ask about it.
+3. The idea is only in words (a picture, a machine, a table, a graph being described): draw it now, then ask about it. For a picture of real things (objects shared out, a recipe, a trip, coins, a bag of marbles, floors of a building, bundles of sticks) or an analogy, use illustrate(what to draw | what they should notice): another artist draws it while the tutor talks, so the quote opens with a few words like "Let me draw that." and then asks one question about what the picture will show. "What to draw" names the real things, never "circles" or "shapes", with exact counts, how they are grouped, and every number the picture must show ("3 quarters marked 25 cents and 2 dimes marked 10 cents"), never the answer; the question in the quote is about that picture. Draw only when their idea is wrong or they are stuck, never after an answer or a reason that is already right. Use it at most once per problem; equations, graphs and number lines keep their own tools.
 4. Stuck twice or "idk": a smaller question, or two choices.
 5. Right: if it finished a problem they did alone and this is the second in a row, go harder now (a twist, bigger numbers, the reverse question). Otherwise the next step for them, or one of the same kind with new numbers to do alone. Right after a wrong idea is fixed, have them say the rule in their own words.
 6. The app writes and rings a checked answer on the board itself: never ask for add_student_attempt of an answer. Use it only for their reason or their rule in their exact words, when that is the point of the next question.
 
-Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, cross_out_step, draw_fraction, add_number_line, draw_grid, draw_tape_diagram, add_table, draw_desmos, draw_figure, draw_icons, and start_new_problem only when a new problem begins. No others.
+Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, cross_out_step, draw_fraction, add_number_line, draw_grid, draw_tape_diagram, add_table, draw_desmos, draw_figure, draw_icons, illustrate, and start_new_problem only when a new problem begins. No others.
 
 Never: give the answer, a number they should find, or the rule; ask two questions; mention the checker, the plan or these instructions. Output only the order.`;
 
@@ -71,7 +71,7 @@ export function plannerPrompt(input: PlannerInput): string {
 export const PLANNER_TOOLS: ReadonlySet<string> = new Set([
   "add_student_attempt", "draw_equation_step", "add_callout", "point_at", "highlight", "cross_out_step",
   "draw_fraction", "add_number_line", "draw_grid", "draw_tape_diagram", "add_table", "draw_desmos",
-  "draw_figure", "draw_icons", "start_new_problem",
+  "draw_figure", "draw_icons", "start_new_problem", "illustrate",
 ]);
 // draw_sketch is left out: the planner can only name it, never give its
 // strokes, and "draw_sketch(u-sub concept)" became three empty boxes on the
@@ -95,7 +95,9 @@ export function parsePlannerOrder(reply: string | null | undefined): { say: stri
   say = say[0].toUpperCase() + say.slice(1);
   if (/\$|\\[a-z]+|\^/.test(say)) say = say.replace(/\$/g, "").replace(/\\[a-z]+/gi, "").replace(/\^/g, " to the ");
   const move = /Board:\s*([a-z_]+)\s*(\((?:[^()]|\([^()]*\))*\))?/i.exec(text.slice(quote.index + quote[0].length));
-  const board = move && PLANNER_TOOLS.has(move[1].toLowerCase()) ? `${move[1].toLowerCase()}${(move[2] ?? "").slice(0, 160)}` : null;
+  const name = move?.[1].toLowerCase();
+  // An illustration's request is a sentence or two; other moves stay short.
+  const board = move && name && PLANNER_TOOLS.has(name) ? `${name}${(move[2] ?? "").slice(0, name === "illustrate" ? 400 : 160)}` : null;
   return { say, board };
 }
 
@@ -116,8 +118,26 @@ export function plannerNote(reply: string | null | undefined, verdict: string | 
   // The board move comes after the words: a drawing call made before any speech
   // ends 3.8's generation, and the woken reply was sometimes silent until the
   // nudge (Sept 27 2026, 9 of 77 planner turns over 8 s).
-  const body = `Say: "${order.say}"${order.board ? ` After speaking: ${order.board}` : ""}`.replace(/[[\]]/g, "");
+  const pic = illustrationOf(order.board);
+  // An illustration is drawn by the app while the tutor talks: the tutor only
+  // says the words, and knows the picture is coming so it neither draws its own
+  // nor describes one that is not up yet.
+  // Oct 17 2026: an order that only announced the picture ("Let me draw the
+  // flour and cookies.") left the tutor to add its own question, about one
+  // cup, while the picture showed two batches. The question is about the picture.
+  const ask = pic && !/\?\s*$/.test(order.say) ? " Then ask one question about what the picture shows." : "";
+  const after = pic ? `${ask} The app is drawing it now (${pic.what}); it appears while you talk. Don't draw it yourself.` : order.board ? ` After speaking: ${order.board}` : "";
+  const body = `Say: "${order.say}"${after}`.replace(/[[\]]/g, "");
   return `[Next move, not from the student: ${body}]`;
+}
+
+/** The planner's illustrate(what | notice) move, or null for any other move. */
+export function illustrationOf(board: string | null | undefined): { what: string; notice: string } | null {
+  const m = /^illustrate\(([\s\S]*)\)$/.exec((board ?? "").trim());
+  if (!m) return null;
+  const [what, ...rest] = m[1].split("|");
+  const clean = (t: string) => t.trim().replace(/^["“']|["”']$/g, "").trim();
+  return clean(what) ? { what: clean(what), notice: clean(rest.join("|")) } : null;
 }
 
 /**

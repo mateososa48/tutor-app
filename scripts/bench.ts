@@ -80,7 +80,10 @@ import { GoogleGenAI } from "@google/genai";
 import { CASES, HELDOUT, REAL, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { hedged } from "../lib/hedge";
-import { NEXT_MOVE_DECLARATION, PLANNER_SYSTEM, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
+import { NEXT_MOVE_DECLARATION, PLANNER_SYSTEM, illustrationOf, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
+import { callCost, callIllustrator } from "../lib/illustration/model";
+import { guardLabels, illustratorPrompt } from "../lib/illustration/prompt";
+import { parseScene } from "../lib/illustration/scene";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
@@ -631,8 +634,20 @@ const PLAN_HEDGE_MS = Number(arg("planhedge", "1500"));
 // n4-on half the turns timed out waiting (Sept 27 2026).
 const PLAN_KEY = arg("plankey", "") || arg("textkey", "");
 
+// --illustrator MODEL: who draws the planner's illustrate(…) pictures (lib/illustration).
+// --nopictures: the planner's prompt without the illustrate rule (the A arm of
+// the illustration A/B, Oct 2026); everything else identical.
+const ILLUSTRATOR = arg("illustrator", "claude-haiku-5-5");
+const NO_PICTURES = process.argv.includes("--nopictures");
+const PICTURE_RULE = / For a picture of real things[^\n]*?keep their own tools\./;
+const PICTURE_TOOL = /, illustrate, /;
+if (!PICTURE_RULE.test(PLANNER_SYSTEM) || !PICTURE_TOOL.test(PLANNER_SYSTEM)) throw new Error("bench: the planner's illustrate rule moved; update PICTURE_RULE");
+const PLANNER = NO_PICTURES ? PLANNER_SYSTEM.replace(PICTURE_RULE, "").replace(PICTURE_TOOL, ", ") : PLANNER_SYSTEM;
+
+type Picture = { what: string; notice: string };
+
 /** The planner's order for this reply, or null when no model answered usably in time. */
-async function planOrder(text: string, verdict: string | null = null): Promise<{ note: string; model: string } | null> {
+async function planOrder(text: string, verdict: string | null = null): Promise<{ note: string; model: string; illustrate: Picture | null } | null> {
   const won = await hedged(
     PLAN_MODELS,
     async (spec, signal) => {
@@ -641,16 +656,18 @@ async function planOrder(text: string, verdict: string | null = null): Promise<{
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": key, "content-type": "application/json" },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: PLANNER_SYSTEM }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: "low" } } }),
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: PLANNER }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: "low" } } }),
         signal,
       });
       if (!r.ok) return null;
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
-      return plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
+      const reply = j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
+      const note = plannerNote(reply, verdict);
+      return note ? { note, illustrate: illustrationOf(parsePlannerOrder(reply)?.board) } : null;
     },
     { hedgeMs: PLAN_HEDGE_MS, deadlineMs: PLAN_TIME_MS },
   );
-  return won ? { note: won.value, model: won.model } : null;
+  return won ? { note: won.value.note, model: won.model, illustrate: won.value.illustrate } : null;
 }
 
 // ── Text models (the student, and any judge that is not Gemini) ────────────
@@ -844,6 +861,38 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     }).catch(() => undefined);
   });
 
+  // Pictures the planner ordered (illustrate), drawn as lib/gemini-live draws
+  // them: once, when the order carrying one goes to the tutor, by the
+  // illustrator (--illustrator), on this board, while the tutor talks.
+  const pictures = new Map<string, Picture>();
+  let pictureNote: string | null = null;
+  const deliver = (order: string | null, line: string) => {
+    const pic = order ? pictures.get(order) : undefined;
+    pictures.clear();
+    if (pic) void drawPicture(pic, line);
+  };
+  const drawPicture = async (pic: Picture, line: string) => {
+    const t0 = Date.now();
+    // The line being answered too, as lib/gemini-live sends it (it is not a turn yet).
+    const conversation = [...turns.slice(-3).flatMap((x) => [{ who: "student" as const, text: x.student }, { who: "tutor" as const, text: x.tutor }]), { who: "student" as const, text: line }].filter((l) => l.text);
+    const board = turns.at(-1)?.boardCompact ?? "";
+    let rec: ToolRecord;
+    try {
+      const reply = await callIllustrator(ILLUSTRATOR, illustratorPrompt({ grade: c.grade, what: pic.what, notice: pic.notice, conversation, board }));
+      const scene = reply ? parseScene(reply.text) : null;
+      if (!scene) throw new Error(reply ? "unreadable scene" : "no illustrator key");
+      const guarded = guardLabels(scene, [conversation.map((l) => l.text).join(" "), board, pic.what, pic.notice].join(" "));
+      const r = (await page.evaluate(({ name, args }) => (window as BoardWindow).__chalkDispatch?.(name, args, `appi${Date.now()}`) ?? { success: false, error: "no dispatcher" }, { name: "draw_illustration", args: { scene: guarded.scene } })) as ToolCallResult;
+      rec = { name: "draw_illustration", args: { what: pic.what, notice: pic.notice, model: ILLUSTRATOR, ms: Date.now() - t0, withheld: guarded.withheld, cost: callCost(ILLUSTRATOR, reply!.usage) }, callId: "app-picture", atMs: 0, beforeSpeech: false, ok: r.success, result: r.success ? r.message ?? "Done" : `Error: ${r.error}`, durationMs: Date.now() - t0, by: "app" };
+    } catch (err) {
+      rec = { name: "draw_illustration", args: { what: pic.what, notice: pic.notice, model: ILLUSTRATOR }, callId: "app-picture", atMs: 0, beforeSpeech: false, ok: false, result: `Error: ${(err as Error).message}`, durationMs: Date.now() - t0, by: "app" };
+    }
+    if (!rec.ok) pictureNote = `The picture you said you'd draw (${pic.what.slice(0, 80)}) could not be drawn. Say so in a few words and go on without it.`;
+    if (live.active) live.noteAppTools([rec]);
+    else pendingApp.push(rec);
+    scheduleFrame(900);
+  };
+
   // The spoken path's planner, as lib/gemini-live runs it: one plan per student
   // line (lineSeq), asked by next_move or by a check_answer made before any words.
   let lineSeq = 0;
@@ -861,9 +910,11 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       verdict,
       board: turns.at(-1)?.boardCompact ?? "",
       state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
-      reminders: voiceNote,
+      reminders: [voiceNote, pictureNote].filter(Boolean).join(" ") || null,
     }), verdict).then((r) => {
       if (r?.note) voiceNote = null;
+      if (r?.note) pictureNote = null;
+      if (r?.note && r.illustrate) pictures.set(r.note, r.illustrate);
       pendingPlanMs = (pendingPlanMs ?? 0) + (Date.now() - t0);
       pendingPlanModel = r?.model ?? pendingPlanModel;
       return r?.note ?? null;
@@ -925,6 +976,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       const order = plannedFor === lineSeq ? plannedOrder : early ? await early.order : await planLine(voiceLine(), verdict);
       plannedFor = lineSeq;
       plannedOrder = order;
+      deliver(order, voiceLine());
       return { success: true, message: [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n") };
     }
     const tutor = runtime.runTool(name, args, now, callId);
@@ -935,6 +987,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       const order = usable ? await early.order : await planLine(voiceLine(), tutor.message ?? null);
       plannedFor = lineSeq;
       plannedOrder = order;
+      deliver(order, voiceLine());
       if (order) return { ...tutor, message: `${tutor.message ?? ""}\n${order}` };
     }
     if (tutor) return tutor;
@@ -1142,11 +1195,14 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
           verdict: pendingAuto,
           board: turn.boardCompact,
           state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
-          reminders: pendingNote,
+          reminders: [pendingNote, pictureNote].filter(Boolean).join(" ") || null,
         }), pendingAuto);
         pendingPlanMs = Date.now() - t0;
         pendingPlanModel = order?.model ?? null;
         if (order) pendingNote = order.note;
+        if (order) pictureNote = null;
+        if (order?.illustrate) pictures.set(order.note, order.illustrate);
+        deliver(order?.note ?? null, studentText);
       }
       const context = [pendingAuto, pendingNote].filter(Boolean).join("\n");
       if (context) live.sendNote(context);

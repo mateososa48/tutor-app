@@ -1,5 +1,5 @@
 import type { LiveVadConfig } from "./live-tool-behavior";
-import { DEFAULT_LIVE_MODEL, GeminiLiveSession } from "./gemini-live";
+import { DEFAULT_LIVE_MODEL, GeminiLiveSession, type PlannerOption } from "./gemini-live";
 import { joinTranscript } from "./live-events";
 import { AudioCapture, AudioPlayer, micProblem, quietFrame } from "./audio";
 import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
@@ -74,7 +74,7 @@ export class GeminiTutorSession {
 
   readonly boardFrames = "auto" as const;
 
-  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: { topic: () => string; board: () => string; grade: () => string } } = {}) {}
+  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption } = {}) {}
 
   /** The Live model this session runs, for the recording and the QA chip. */
   get model(): string {

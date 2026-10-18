@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { hedged } from "@/lib/hedge";
-import { PLANNER_SYSTEM, plannerNote, plannerPrompt, type PlannerTurn } from "@/lib/tutor-planner";
+import { PLANNER_SYSTEM, illustrationOf, parsePlannerOrder, plannerNote, plannerPrompt, type PlannerTurn } from "@/lib/tutor-planner";
 
 // The small models answer in about 1-2 s; the bigger flash models took 10-37 s
 // under load on Sept 27 2026, too slow for a live turn.
@@ -93,15 +93,17 @@ export async function POST(req: NextRequest) {
       }
       const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
       done.add(model);
-      const note = plannerNote(j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "", verdict);
+      const reply = j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
+      const note = plannerNote(reply, verdict);
       if (!note) failures.push(`${model} unusable`);
-      return note;
+      // A picture the app draws itself while the tutor talks (lib/illustration).
+      return note ? { note, illustrate: illustrationOf(parsePlannerOrder(reply)?.board) } : null;
     },
     { hedgeMs: HEDGE_MS, deadlineMs: DEADLINE_MS },
   );
   // A model still out when the deadline came is a timeout (Oct 11 2026: a
   // session lost every order to the deadline and the record said nothing).
   for (const m of asked) if (!done.has(m) && m !== won?.model) failures.push(`${m} timeout`);
-  if (won) return NextResponse.json({ note: won.value, model: won.model, ms: Date.now() - started, ...(failures.length ? { failures } : {}) });
+  if (won) return NextResponse.json({ note: won.value.note, ...(won.value.illustrate ? { illustrate: won.value.illustrate } : {}), model: won.model, ms: Date.now() - started, ...(failures.length ? { failures } : {}) });
   return NextResponse.json({ note: null, ms: Date.now() - started, failures });
 }

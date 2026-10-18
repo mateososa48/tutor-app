@@ -1144,7 +1144,20 @@ function SessionDetailPage({ id }: { id: string }) {
           asyncTools,
           vad: liveVad,
           coach: coachOn ? { topic: () => coachTopicRef.current, board: () => whiteboardRef.current?.getBoardSummary?.(true) ?? "" } : undefined,
-          planner: planOn ? { topic: () => coachTopicRef.current, board: () => whiteboardRef.current?.getBoardSummary?.(true) ?? "", grade: () => "" } : undefined,
+          planner: planOn
+            ? {
+                topic: () => coachTopicRef.current,
+                board: () => whiteboardRef.current?.getBoardSummary?.(true) ?? "",
+                grade: () => "",
+                // A picture the planner ordered (lib/illustration): drawn through
+                // the same path as the tutor's own calls, so it is recorded,
+                // pictured for the tutor, and undoable like any other.
+                draw: async (scene) => {
+                  const result = await handleToolCall("draw_illustration", { scene }, `illustration-${Date.now()}`);
+                  return result.success ? result.message ?? "Drew the picture." : null;
+                },
+              }
+            : undefined,
         })
       : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;

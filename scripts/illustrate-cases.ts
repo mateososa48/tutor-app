@@ -157,3 +157,69 @@ export const ILLUSTRATION_CASES: IllustrationCase[] = [
     mustShow: ["two pizzas the same size", "3 and 4 EQUAL slices (exact, not hand-wavy)", "one slice of each shaded", "no '1/3 > 1/4' written"],
   },
 ];
+
+// Five held-out moments (Oct 17 2026), written after the engine and prompt were
+// tuned on the ten above, to check the production illustrator on cases it was
+// never shaped around.
+export const ILLUSTRATION_HELDOUT: IllustrationCase[] = [
+  {
+    id: "eighths",
+    grade: "5th grade",
+    conversation: [
+      { who: "tutor", text: "What is three eighths plus one fourth?" },
+      { who: "student", text: "4 twelfths? you add the tops and the bottoms" },
+    ],
+    board: 'b1 heading "Adding fractions"; b2 equation line "3/8 + 1/4 = ?"; b3 student attempt "4/12"',
+    what: "two bars the same length: one cut into 8 equal parts with 3 shaded, one cut into 4 equal parts with 1 shaded",
+    why: "a fourth is the same size as two eighths, so the pieces are not the same size and can't just be added",
+    mustShow: ["two equal-length bars", "8 equal parts with 3 shaded", "4 equal parts with 1 shaded", "no 5/8 written"],
+  },
+  {
+    id: "thermometer",
+    grade: "6th grade",
+    conversation: [
+      { who: "tutor", text: "It was minus 3 degrees in the morning and it got 8 degrees warmer. What's the temperature now?" },
+      { who: "student", text: "-11" },
+    ],
+    board: 'b1 heading "Temperature"; b2 equation line "-3 + 8 = ?"; b3 student attempt "-11"',
+    what: "a vertical thermometer scale from -10 to 10, a mark at -3 labelled morning, and an arrow going up 8",
+    why: "warmer means up, so the arrow goes up past zero, not down",
+    mustShow: ["a vertical scale through 0", "a mark at -3", "an arrow up of length 8", "the end point not labelled 5"],
+  },
+  {
+    id: "paint",
+    grade: "6th grade",
+    conversation: [
+      { who: "tutor", text: "A green paint uses 2 cans of blue for every 3 cans of yellow. For a double batch, how many cans of yellow?" },
+      { who: "student", text: "4? cuz you double it so 3 plus 1" },
+    ],
+    board: 'b1 heading "Paint ratio"; b2 equation line "2 : 3 = 4 : ?"; b3 student attempt "4"',
+    what: "one batch as 2 blue cans and 3 yellow cans in a box, and a second identical batch beside it",
+    why: "a double batch is two whole batches, so the yellow cans double too",
+    mustShow: ["two identical batches", "2 blue and 3 yellow cans in each", "no 6 written"],
+  },
+  {
+    id: "chairs",
+    grade: "4th grade",
+    conversation: [
+      { who: "tutor", text: "There are 6 rows of chairs with 8 chairs in each row. How many chairs?" },
+      { who: "student", text: "14" },
+    ],
+    board: 'b1 heading "Rows of chairs"; b2 equation line "6 × 8 = ?"; b3 student attempt "14"',
+    what: "6 rows of 8 chairs, with the rows and the chairs in a row labelled",
+    why: "14 is 6 plus 8; there are 8 chairs in every one of the 6 rows",
+    mustShow: ["exactly 6 rows of 8 chairs", "rows and columns labelled 6 and 8", "no 48 written"],
+  },
+  {
+    id: "coins",
+    grade: "3rd grade",
+    conversation: [
+      { who: "tutor", text: "You have 3 quarters and 2 dimes. How much money is that?" },
+      { who: "student", text: "5 cents? there's 5 coins" },
+    ],
+    board: 'b1 heading "Counting money"; b2 student attempt "5 cents"',
+    what: "3 quarters and 2 dimes, each coin labelled with its value",
+    why: "the coins are worth different amounts, so counting coins is not counting cents",
+    mustShow: ["3 quarters", "2 dimes", "each labelled 25¢ or 10¢", "no 95 written"],
+  },
+];

@@ -65,3 +65,38 @@ test("a scene is read from model output with or without a code fence", () => {
   assert.equal(parseScene("no json here"), null);
   assert.equal(parseScene('{"title":"no root"}'), null);
 });
+
+test("a bracket that repeats a label inside it is left out, and marks that repeat their tick lose the label", () => {
+  const out = renderScene({ root: { type: "grid", rows: 3, cols: 4, top_label: "4 ft", id: "g" }, brackets: [{ over: "g", side: "top", label: "4 ft" }] });
+  assert.equal(count(out.svg, ">4 ft<"), 1);
+  const axis = renderScene({ root: { type: "axis", orientation: "vertical", min: -3, max: 3, marks: [{ at: 2, label: "+2" }, { at: -1, label: "start" }] } });
+  assert.doesNotMatch(axis.svg, />\+2</);
+  assert.match(axis.svg, />start</);
+});
+
+test("an arrow's label never lands on other words", () => {
+  const out = renderScene({
+    root: { type: "row", gap: 30, children: [{ type: "label", text: "1 cup", id: "a" }, { type: "label", text: "6 cookies", id: "b" }] },
+    arrows: [{ from: "a", to: "b", label: "makes" }],
+  });
+  const boxes = [...out.svg.matchAll(/<text x="([-\d.]+)" y="([-\d.]+)"[^>]*font-size="(\d+)"[^>]*>([^<]*)</g)].map((m) => ({ x: +m[1], y: +m[2] - +m[3], w: m[4].length * +m[3] * 0.55, h: +m[3] * 1.3, t: m[4] }));
+  const arrow = boxes.find((b) => b.t === "makes")!;
+  for (const b of boxes.filter((b) => b.t !== "makes")) assert.ok(!(arrow.x < b.x + b.w && b.x < arrow.x + arrow.w && arrow.y < b.y + b.h && b.y < arrow.y + arrow.h), `"makes" overlaps "${b.t}"`);
+});
+
+test("an arrow from a part to itself is reported, and the picture still has a size", () => {
+  const out = renderScene({ root: { type: "axis", orientation: "vertical", min: -10, max: 10, id: "s" }, arrows: [{ from: "s", to: "s", label: "warmer" }] });
+  assert.ok(Number.isFinite(out.w) && out.w > 0 && Number.isFinite(out.h));
+  assert.ok(out.problems.some((p) => /two different parts/.test(p)));
+});
+
+test("two brackets over overlapping spans on one side stack instead of colliding", () => {
+  const out = renderScene({
+    root: { type: "bar", parts: [{ label: "$10" }, { label: "$10" }, { label: "$10" }, { label: "$10" }], total_label: "$40 price", id: "bar" },
+    brackets: [{ over: "bar", side: "top", label: "4 equal parts" }],
+  });
+  const ys = [...out.svg.matchAll(/<text x="[-\d.]+" y="([-\d.]+)"[^>]*>([^<]+)</g)].map((m) => ({ y: +m[1], t: m[2] }));
+  const a = ys.find((r) => r.t === "4 equal parts")!;
+  const b = ys.find((r) => r.t === "$40 price")!;
+  assert.ok(Math.abs(a.y - b.y) >= 22, `bracket label ${a.y} vs total ${b.y}`);
+});

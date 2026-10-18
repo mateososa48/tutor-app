@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PLANNER_SYSTEM, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "./tutor-planner";
+import { PLANNER_SYSTEM, illustrationOf, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "./tutor-planner";
 
 test("the planner's prompt carries the new line, the private verdict, the board and the reminders", () => {
   const text = plannerPrompt({
@@ -67,4 +67,27 @@ test("an early plan still fits a line that grew by a few number-free words", () 
   assert.equal(sameLine("0.45 is bigger", "0.45 is bigger like 45 cents"), false);
   assert.equal(sameLine("so it's 12", "so it's 12 because you add them and then you get the answer and it works"), false);
   assert.equal(sameLine("it's 12", "wait it's 12"), false);
+});
+
+test("an illustrate move is drawn by the app: the tutor gets the words and is told the picture is coming", () => {
+  const reply = 'Say: "Let me draw that. How many marbles does each jar get?" Board: illustrate(12 marbles shared into 3 jars, one jar per friend | each jar gets the same number)';
+  assert.deepEqual(illustrationOf(parsePlannerOrder(reply)!.board), { what: "12 marbles shared into 3 jars, one jar per friend", notice: "each jar gets the same number" });
+  const note = plannerNote(reply)!;
+  assert.match(note, /Say: "Let me draw that\. How many marbles does each jar get\?"/);
+  assert.match(note, /The app is drawing it now \(12 marbles shared into 3 jars/);
+  assert.doesNotMatch(note, /After speaking: illustrate/);
+  assert.equal(illustrationOf('add_callout("x")'), null);
+  assert.equal(illustrationOf("illustrate()"), null);
+  assert.deepEqual(illustrationOf('illustrate("3 quarters (25 cents each) and 2 dimes")'), { what: "3 quarters (25 cents each) and 2 dimes", notice: "" });
+});
+
+test("the planner may name illustrate, and is told how to open the reply", () => {
+  assert.match(PLANNER_SYSTEM, /illustrate\(what to draw \| what they should notice\)/);
+  assert.match(PLANNER_SYSTEM, /Let me draw that/);
+});
+
+test("an illustrate order with no question tells the tutor to ask about the picture", () => {
+  const note = plannerNote('Say: "Let me draw the flour and cookies." Board: illustrate(2 cups and 12 cookies, twice | doubling)')!;
+  assert.match(note, /Then ask one question about what the picture shows\./);
+  assert.doesNotMatch(plannerNote('Say: "Let me draw it. Which slice is bigger?" Board: illustrate(two pizzas | slices)')!, /Then ask one question/);
 });

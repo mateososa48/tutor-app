@@ -90,6 +90,18 @@ type GeminiContentPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } };
 
+/**
+ * The planner on each student line (?plan=1). `draw` puts an illustration the
+ * planner ordered on the board (the page dispatches draw_illustration); it
+ * resolves to the tool's result message, or null when nothing was drawn.
+ */
+export type PlannerOption = {
+  topic: () => string;
+  board: () => string;
+  grade: () => string;
+  draw?: (scene: unknown) => Promise<string | null>;
+};
+
 /** What the planner is told when the student brought their own work. */
 const WORKSHEET_NOTE = "They are working from their own uploaded sheet: when a problem is finished, the next one is the next problem on their sheet (say its number; the tutor reads it from the sheet and puts it up with start_new_problem). Never make up a practice problem while their sheet has problems left.";
 
@@ -287,7 +299,9 @@ export class GeminiLiveSession {
   /** The coach between turns (lib/tutor-coach, /api/coach), when the session asks for it (?coach=1). */
   private readonly coach: { topic: () => string; board: () => string } | undefined;
   /** The planner on the student's line (lib/tutor-planner, /api/plan), when the session asks for it (?plan=1). */
-  private readonly planner: { topic: () => string; board: () => string; grade: () => string } | undefined;
+  private readonly planner: PlannerOption | undefined;
+  /** Orders that carry a picture (illustrate), by their note: drawn once, when the order is used. */
+  private readonly pictures = new Map<string, { what: string; notice: string; line: string }>();
   /** The student line (inputSeq) the planner already gave an order for, and that order: planned once per line. */
   private plannedFor = -1;
   private plannedOrder: string | null = null;
@@ -329,7 +343,7 @@ export class GeminiLiveSession {
   private inputSeq = 0;
   private lastInputAt = 0;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: { topic: () => string; board: () => string; grade: () => string } }) {
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption }) {
     this.coach = options.coach;
     this.planner = options.planner;
     this.callbacks = callbacks;
@@ -678,6 +692,7 @@ export class GeminiLiveSession {
         this.plannedFor = this.inputSeq;
         this.plannedOrder = order;
         if (this.manualDisconnect) return;
+        this.deliverOrder(order);
         const context = [mine.notes.join("\n"), order ?? mine.turnNote].filter(Boolean).join("\n");
         if (context) this.send({ clientContent: { turns: [{ role: "user", parts: [{ text: context }] }], turnComplete: false } });
         if (this.sendUserTurn([{ text: mine.texts.join("\n") }], "text")) this.armUnanswered("text");
@@ -740,8 +755,57 @@ export class GeminiLiveSession {
     const order = this.plannedFor === seq ? this.plannedOrder : early ? await early.order : await this.askPlanner(this.lastStudentLine, verdict, this.lateTurnNote);
     this.plannedFor = seq;
     this.plannedOrder = order;
+    this.deliverOrder(order);
     const message = [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n");
     return { success: true, message };
+  }
+
+  /**
+   * An order is going to the tutor: if it carries a picture, start drawing it
+   * now, while the tutor says "let me draw that" (Oct 2026). Once per order:
+   * a next_move after a check_answer in the same turn gets the same order.
+   */
+  private deliverOrder(order: string | null) {
+    const pic = order ? this.pictures.get(order) : undefined;
+    this.pictures.clear();
+    if (pic) void this.illustrate(pic);
+  }
+
+  /** Ask /api/illustrate for the scene and put it on the board; a failure becomes a note for the next turn. */
+  private async illustrate(pic: { what: string; notice: string; line: string }) {
+    const started = Date.now();
+    const draw = this.planner?.draw;
+    if (!draw) return;
+    this.debug("board", "illustration_requested", { what: pic.what, notice: pic.notice });
+    const conversation = [
+      ...this.coachHistory.slice(-3).flatMap((t) => [
+        ...(t.student ? [{ who: "student" as const, text: t.student }] : []),
+        ...(t.tutor ? [{ who: "tutor" as const, text: t.tutor }] : []),
+      ]),
+      ...(this.coachHistory.at(-1)?.student === pic.line ? [] : [{ who: "student" as const, text: pic.line }]),
+    ];
+    let failed = "no picture came back";
+    try {
+      const r = await fetch("/api/illustrate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ grade: this.planner!.grade(), what: pic.what, notice: pic.notice, conversation, board: this.planner!.board() }),
+      });
+      const j = r.ok ? ((await r.json()) as { scene?: unknown; parts?: string[]; withheld?: string[]; problems?: string[]; model?: string; cost?: number | null; failures?: string[] }) : null;
+      if (j?.scene && !this.manualDisconnect) {
+        const message = await draw(j.scene);
+        this.debug("board", "illustration_drawn", { ms: Date.now() - started, model: j.model, parts: j.parts, withheld: j.withheld, problems: j.problems, cost: j.cost, result: message });
+        if (message) return;
+        failed = "the board refused it";
+      } else if (j?.failures?.length) failed = j.failures.join("; ");
+      else if (!r.ok) failed = `status ${r.status}`;
+    } catch {
+      failed = "the request failed";
+    }
+    this.debug("board", "illustration_failed", { ms: Date.now() - started, why: failed });
+    // The tutor said it would draw: the next turn knows it didn't happen.
+    const note = `The picture you said you'd draw (${pic.what.slice(0, 80)}) could not be drawn. Say so in a few words and go on without it.`;
+    this.pendingTurnNote = [this.pendingTurnNote, note].filter(Boolean).join(" ");
   }
 
   /** The planner's order for the tutor's reply to this line (/api/plan), or null when none came in time. */
@@ -774,8 +838,9 @@ export class GeminiLiveSession {
         }),
         signal: controller.signal,
       });
-      const j = r.ok ? ((await r.json()) as { note?: string | null; model?: string; failures?: string[] }) : null;
+      const j = r.ok ? ((await r.json()) as { note?: string | null; illustrate?: { what: string; notice: string }; model?: string; failures?: string[] }) : null;
       const note = j?.note ?? null;
+      if (note && j?.illustrate?.what && this.planner?.draw) this.pictures.set(note, { ...j.illustrate, line });
       // The planner read the late turn note: its order stands in for it.
       if (note && reminders && reminders === this.lateTurnNote) this.lateTurnNote = null;
       this.debug("pacing", "planner", { note, model: j?.model, ms: Date.now() - started, ...(r.ok ? {} : { status: r.status }), ...(j?.failures?.length ? { failures: j.failures } : {}) });
@@ -1428,6 +1493,7 @@ export class GeminiLiveSession {
           // A next_move later in this turn gets the same order, not a second plan.
           this.plannedFor = seq;
           this.plannedOrder = order;
+          this.deliverOrder(order);
           if (order) result = { ...result, message: `${result.message ?? ""}\n${order}` };
         }
         if (name === "check_answer" && this.turnHadAudio && result.success) {

@@ -189,6 +189,13 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
     case "custom": {
       const size = ICON_PX[node.size ?? "m"];
       const name = node.type === "icon" ? node.icon : node.use;
+      // A lone object nobody can draw is left out rather than shown as a dot
+      // (Oct 17 2026: "road" beside the car read as a stray circle). Rows of
+      // items keep their dots, because there the count is the point.
+      if (!scene.defs?.[name] && !BUILTIN_OBJECTS[name] && !resolveIconName(name)) {
+        out.problems.push(`no icon or def named "${name}"`);
+        return { w: 0, h: 0, draw: () => {} };
+      }
       return withId({ w: size, h: size, draw: (x, y, o) => iconMarkup(name, x, y, size, scene.defs, o) }, node.id);
     }
 
@@ -450,7 +457,11 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
       const vertical = node.orientation === "vertical";
       const gapPx = Math.max(22, Math.min(46, (vertical ? 420 : 560) / Math.max(1, ticks - 1)));
       const len = (ticks - 1) * gapPx;
-      const marks = node.marks ?? [];
+      // A mark labelled with its own value ("+3" at 3, "-7" at -7) repeats the
+      // tick beside it; the elevator picture had one on every floor (Oct 17 2026).
+      const marks = (node.marks ?? [])
+        .map((m) => (m.label && Number(m.label.replace(/^\+/, "").trim()) === m.at ? { ...m, label: undefined } : m))
+        .filter((m) => m.label || m.icon);
       const markW = Math.max(0, ...marks.map((m) => (m.icon ? 40 : 0) + (m.label ? textWidth(m.label, FONT_PX.m) + 12 : 0)));
       const moves = node.moves ?? [];
       // Moves run in their own lane beside the marks (vertical) or above the
@@ -577,20 +588,56 @@ function drawArrow(a: Rect, b: Rect, text: string | undefined, tone: Tone, out: 
   if (text) {
     const px = FONT_PX.m;
     const tw = textWidth(text, px);
-    const lx = mx + nx * (bow + 16) - tw / 2;
-    const ly = my + ny * (bow + 16) + px * 0.35;
-    out.svg.push(`<rect x="${n1(lx - 4)}" y="${n1(ly - px)}" width="${n1(tw + 8)}" height="${n1(px * 1.3)}" fill="#ffffff" opacity="0.85"/>`);
-    out.ext.push({ x: lx - 4, y: ly - px, w: tw + 8, h: px * 1.3 });
-    out.svg.push(`<text x="${n1(lx)}" y="${n1(ly)}" font-family="${FONT}" font-size="${px}" font-weight="600" fill="${col}">${esc(text)}</text>`);
+    // Beside the bow first, then further out, then the other side, then by
+    // either end: the first spot that covers no other words and no part the
+    // arrow does not join (Oct 17 2026: "1 cup" and "price" sat on labels).
+    const avoid = [...textRects(out), ...out.ext, ...Object.values(out.parts).filter((r) => r !== a && r !== b && !inside(a, r) && !inside(b, r))];
+    const spots: Array<{ x: number; y: number }> = [];
+    for (const off of [16, 32, 50]) for (const side of [1, -1]) spots.push({ x: mx + nx * (bow * side + off * side), y: my + ny * (bow * side + off * side) });
+    spots.push({ x: p0.x, y: p0.y - 22 }, { x: p1.x, y: p1.y - 22 }, { x: p0.x, y: p0.y + 26 });
+    const boxAt = (c: { x: number; y: number }) => ({ x: c.x - tw / 2 - 4, y: c.y - px * 0.65, w: tw + 8, h: px * 1.3 });
+    const spot = spots.find((c) => !avoid.some((r) => overlaps(boxAt(c), r))) ?? spots[0];
+    const box = boxAt(spot);
+    const lx = box.x + 4;
+    const ly = box.y + px;
+    out.ext.push(box);
+    out.svg.push(`<text x="${n1(lx)}" y="${n1(ly)}" font-family="${FONT}" font-size="${px}" font-weight="600" fill="${col}" ${HALO}>${esc(text)}</text>`);
   }
 }
 
-function drawBracket(r: Rect, side: "top" | "bottom" | "left" | "right", text: string | undefined, tone: Tone, out: Out) {
+/** Where the words already drawn sit, read back from the SVG so far (icon bodies' tiny text left out). */
+function textRects(out: Out): Rect[] {
+  const rects: Rect[] = [];
+  for (const chunk of out.svg) {
+    for (const m of chunk.matchAll(/<text x="([-\d.]+)" y="([-\d.]+)"[^>]*font-size="(\d+)"[^>]*>([^<]*)</g)) {
+      const px = Number(m[3]);
+      if (px < 12) continue;
+      rects.push({ x: Number(m[1]), y: Number(m[2]) - px, w: textWidth(m[4], px), h: px * 1.3 });
+    }
+  }
+  return rects;
+}
+
+function textsIn(out: Out): string[] {
+  const texts: string[] = [];
+  for (const chunk of out.svg) for (const m of chunk.matchAll(/<text x="[-\d.]+" y="[-\d.]+"[^>]*font-size="(\d+)"[^>]*>([^<]*)</g)) if (Number(m[1]) >= 12) texts.push(m[2]);
+  return texts;
+}
+
+function overlaps(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+
+function inside(small: Rect, big: Rect): boolean {
+  return small.x >= big.x - 1 && small.y >= big.y - 1 && small.x + small.w <= big.x + big.w + 1 && small.y + small.h <= big.y + big.h + 1;
+}
+
+function drawBracket(r: Rect, side: "top" | "bottom" | "left" | "right", text: string | undefined, tone: Tone, out: Out, gap = 12) {
   const col = COLORS[tone];
   const s = `fill="none" stroke="${col}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"`;
   const px = FONT_PX.m;
   if (side === "top" || side === "bottom") {
-    const y = side === "top" ? r.y - 12 : r.y + r.h + 12;
+    const y = side === "top" ? r.y - gap : r.y + r.h + gap;
     const d = side === "top" ? -8 : 8;
     const mid = r.x + r.w / 2;
     out.svg.push(`<path d="M${n1(r.x)} ${n1(y - d)}Q${n1(r.x)} ${n1(y)} ${n1(r.x + 10)} ${n1(y)}H${n1(mid - 8)}Q${n1(mid)} ${n1(y)} ${n1(mid)} ${n1(y + d)}Q${n1(mid)} ${n1(y)} ${n1(mid + 8)} ${n1(y)}H${n1(r.x + r.w - 10)}Q${n1(r.x + r.w)} ${n1(y)} ${n1(r.x + r.w)} ${n1(y - d)}" ${s}/>`);
@@ -599,7 +646,7 @@ function drawBracket(r: Rect, side: "top" | "bottom" | "left" | "right", text: s
     if (text) out.ext.push({ x: mid - textWidth(text, px) / 2, y: ty - px, w: textWidth(text, px), h: px * 1.3 });
     if (text) out.svg.push(`<text x="${n1(mid - textWidth(text, px) / 2)}" y="${n1(ty)}" font-family="${FONT}" font-size="${px}" font-weight="600" fill="${col}">${esc(text)}</text>`);
   } else {
-    const x = side === "left" ? r.x - 12 : r.x + r.w + 12;
+    const x = side === "left" ? r.x - gap : r.x + r.w + gap;
     const d = side === "left" ? -8 : 8;
     const mid = r.y + r.h / 2;
     out.svg.push(`<path d="M${n1(x - d)} ${n1(r.y)}Q${n1(x)} ${n1(r.y)} ${n1(x)} ${n1(r.y + 10)}V${n1(mid - 8)}Q${n1(x)} ${n1(mid)} ${n1(x + d)} ${n1(mid)}Q${n1(x)} ${n1(mid)} ${n1(x)} ${n1(mid + 8)}V${n1(r.y + r.h - 10)}Q${n1(x)} ${n1(r.y + r.h)} ${n1(x - d)} ${n1(r.y + r.h)}" ${s}/>`);
@@ -609,7 +656,10 @@ function drawBracket(r: Rect, side: "top" | "bottom" | "left" | "right", text: s
   }
 }
 
-function union(rs: Rect[]): Rect {
+function union(all: Rect[]): Rect {
+  // A rect with a NaN in it would make the whole picture NaN; it is left out.
+  const rs = all.filter((r) => [r.x, r.y, r.w, r.h].every(Number.isFinite));
+  if (!rs.length) return { x: 0, y: 0, w: 0, h: 0 };
   const x0 = Math.min(...rs.map((r) => r.x));
   const y0 = Math.min(...rs.map((r) => r.y));
   const x1 = Math.max(...rs.map((r) => r.x + r.w));
@@ -642,6 +692,13 @@ export function renderScene(scene: Scene): Rendered {
       out.problems.push(`arrow ${a.from} → ${a.to}: no part with that id`);
       continue;
     }
+    // An arrow from a part to itself has no direction and no length (Oct 17
+    // 2026: Haiku drew "warmer" from the thermometer to itself, and the
+    // picture's size came out NaN, so the board showed nothing).
+    if (from === to || a.from === a.to) {
+      out.problems.push(`arrow ${a.from} → ${a.to}: an arrow needs two different parts`);
+      continue;
+    }
     drawArrow(from, to, a.label, a.tone ?? "sky", out);
   }
   for (const b of scene.brackets ?? []) {
@@ -651,7 +708,26 @@ export function renderScene(scene: Scene): Rendered {
       out.problems.push(`bracket over ${ids.join(", ")}: no part with that id`);
       continue;
     }
-    drawBracket(union(rs), b.side ?? "top", b.label, b.tone ?? "sky", out);
+    const span = union(rs);
+    // "4 ft" on a bracket over a grid that already says "4 ft" on its edge is
+    // the same words twice (Oct 17 2026, the tiles and chairs pictures).
+    const said = (t: string) => t.toLowerCase().replace(/[^a-z0-9/.%-]+/g, " ").trim();
+    if (b.label && textRects(out).some((r, i) => overlaps(r, { x: span.x - 30, y: span.y - 30, w: span.w + 60, h: span.h + 60 }) && said(textsIn(out)[i]) === said(b.label!))) continue;
+    // Further out until it covers no other words and no earlier bracket
+    // (Oct 17 2026: "4 equal parts" sat on "$40 price", "3 yellow" on "Batch 1").
+    const avoid = [...textRects(out).filter((r) => !inside(r, span)), ...out.ext];
+    let drawn: Out | null = null;
+    for (const gap of [12, 28, 44, 60, 76]) {
+      const tmp: Out = { svg: [], parts: {}, problems: [], ext: [] };
+      drawBracket(span, b.side ?? "top", b.label, b.tone ?? "sky", tmp, gap);
+      drawn ??= tmp;
+      if (!tmp.ext.some((e) => avoid.some((a) => overlaps(e, a)))) {
+        drawn = tmp;
+        break;
+      }
+    }
+    out.svg.push(...drawn!.svg);
+    out.ext.push(...drawn!.ext);
   }
   // The title goes above everything, brackets and arrow labels included
   // (a bracket's label over the top row had landed on the title).
