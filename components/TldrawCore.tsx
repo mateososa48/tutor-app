@@ -35,7 +35,7 @@ import { BOARD_THEMES, SKY } from "@/components/board/board-theme";
 import { catchUpPace, planReveal, pointsShown, polylineLength, typedPrefix, REVEAL_CAP_MS, type RevealInput, type RevealStep } from "@/lib/board-reveal";
 import { findSpot, freeSpace, inArea, intersect, LAYOUT_GAP, PANEL_MIN_W, pageAt, planSection, regionName, shouldOpenPage, usedCells, type PlaceHint, type PlaceRequest, type Rect, type Size } from "@/lib/board-layout";
 import { latexToPlain } from "@/lib/latex-plain";
-import { TutorPenOverlayUtil, TutorScribbleOverlayUtil } from "@/components/board/TutorPenOverlay";
+import { SCALED_BOARDS, TutorPenOverlayUtil, TutorScribbleOverlayUtil } from "@/components/board/TutorPenOverlay";
 import { MathShapeUtil, measureMath, type MathHighlight, type TLMathShape } from "@/components/board/MathShape";
 import { IconShapeUtil, type TLIconShape } from "@/components/board/IconShape";
 import { GraphShapeUtil, type TLGraphShape, type TLGraphShapeProps } from "@/components/board/GraphShape";
@@ -721,10 +721,20 @@ export type TldrawCoreProps = {
   onExplore?: (target: ExploreTarget) => void;
   /** The graph item open in Explore; its button shows as pressed. */
   exploringItemId?: string | null;
+  /**
+   * Lay the board out as if the screen were this size, and show its page the
+   * way that screen would, scaled down to the real one (no following the work
+   * at a readable zoom). The landing's phone demo is the laptop's, shrunk.
+   */
+  layoutSize?: { w: number; h: number };
 };
 
-const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting, autoFocus = true, onExplore, exploringItemId = null }, ref) {
+const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function TldrawCore({ onWriting, autoFocus = true, onExplore, exploringItemId = null, layoutSize }, ref) {
   const editorRef = useRef<Editor | null>(null);
+  // layoutSize: the screen the board lays itself out for (see the prop).
+  const layoutSizeRef = useRef(layoutSize ?? null);
+  layoutSizeRef.current = layoutSize ?? null;
+  const layoutScreen = useCallback((editor: Editor): { w: number; h: number } => layoutSizeRef.current ?? editor.getViewportScreenBounds(), []);
   const leftY = useRef(START_Y);
   const rightY = useRef(START_Y);
   const pageTop = useRef(0);
@@ -1460,7 +1470,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     let w = 1280;
     let h = 760;
     try {
-      const screen = editor.getViewportScreenBounds();
+      const screen = layoutScreen(editor);
       if (screen.w > 0 && screen.h > 0) {
         w = screen.w;
         h = screen.h;
@@ -1471,7 +1481,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     const base = { w: Math.round(Math.min(1800, Math.max(900, w))), h: Math.round(Math.min(1100, Math.max(560, h))) };
     pageFrameRef.current = pageFrame(base, pageIndex.current);
     return pageFrameRef.current;
-  }, []);
+  }, [layoutScreen]);
 
   const openPage = useCallback((editor: Editor): Rect => {
     const current = ensurePageFrame(editor);
@@ -1832,6 +1842,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
 
   const handleMount = useCallback((editor: Editor) => {
     editorRef.current = editor;
+    if (layoutSizeRef.current) SCALED_BOARDS.add(editor);
     setMountedEditor(editor);
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as { __chalkEditor?: Editor }).__chalkEditor = editor;
@@ -1859,6 +1870,35 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     }
   }, []);
 
+  // layoutSize mode: the camera shows the page exactly as a screen of that size
+  // shows it, scaled to the real one, so a phone sees the laptop's board,
+  // smaller (Oct 14 2026, Mateo: "the same as on desktop, just shrunk down").
+  const fitRafRef = useRef<number | null>(null);
+  const fitAll = useCallback((editor: Editor) => {
+    if (fitRafRef.current !== null) cancelAnimationFrame(fitRafRef.current);
+    fitRafRef.current = requestAnimationFrame(() => {
+      fitRafRef.current = null;
+      try {
+        const frame = ensurePageFrame(editor);
+        const screen = editor.getViewportScreenBounds();
+        if (screen.w <= 0 || screen.h <= 0) return;
+        const z = Math.min(screen.w / frame.w, screen.h / frame.h);
+        editor.setCamera({ x: -frame.x, y: -frame.y, z }, { animation: { duration: 320 } });
+      } catch {
+        // Editor may be mid-teardown; a missed camera move is harmless.
+      }
+    });
+  }, [ensurePageFrame]);
+
+  // The phone turns, or the frame resizes: show all of it again.
+  const fitting = Boolean(layoutSize);
+  useEffect(() => {
+    if (!fitting) return;
+    const refit = () => editorRef.current && fitAll(editorRef.current);
+    window.addEventListener("resize", refit);
+    return () => window.removeEventListener("resize", refit);
+  }, [fitting, fitAll]);
+
   // Bring new or referenced work into view. When the board page fits on
   // screen at a readable zoom the camera frames the whole page, so the board
   // holds still while the tutor writes around it; otherwise it frames the
@@ -1867,6 +1907,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
   const focusOn = useCallback((editor: Editor, x: number, y: number, w = 420, h = 180) => {
     // Mid tool call the shapes are not in their final place yet; endItem focuses.
     if (buildingItemRef.current) return;
+    if (layoutSizeRef.current) {
+      fitAll(editor);
+      return;
+    }
     try {
       if (rectVisible(editor, { x, y, w, h })) return;
       // The page that holds it: a mark can point back at an earlier page.
@@ -1927,7 +1971,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     } catch {
       // Camera movement is a nicety; drawing should never fail because of it.
     }
-  }, [rectVisible]);
+  }, [rectVisible, fitAll]);
 
   // Cancel any pending post-batch focus and reset both raf/timeout handles.
   const cancelPendingFocus = useCallback(() => {
@@ -2751,7 +2795,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // Top right of the page on a laptop. A phone shows only the left of the
       // 900px page, so there the box goes under the heading, on the left;
       // placement keeps new work clear of it either way (occupiedOn).
-      const narrow = editor.getViewportScreenBounds().w < NARROW_BOARD;
+      const narrow = layoutScreen(editor).w < NARROW_BOARD;
       const x = narrow ? usable.x : usable.x + usable.w - w;
       const y = narrow ? usable.y + HEADING_H + 16 : usable.y;
       const id = createShapeId();
@@ -2861,7 +2905,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // A fresh page the size of the visible board, headed at its top left,
       // the plan's box at its top right (the heading keeps clear of it).
       const usable = usableArea(ensurePageFrame(editor));
-      const narrow = editor.getViewportScreenBounds().w < NARROW_BOARD;
+      const narrow = layoutScreen(editor).w < NARROW_BOARD;
       const planW = !narrow && planRef.current?.steps.length ? measurePlanBox(planRef.current).w + 24 : 0;
       const headW = Math.min(1120, usable.w - planW);
       // Ink heading with a thin pencil rule, the way a board title is written.

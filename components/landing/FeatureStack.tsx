@@ -31,9 +31,9 @@ import { useReduce, useScript } from "./useScript";
 // where they are, being the window, and the cards behind the front one are
 // visibly behind it.
 //
-// Below lg the whole device is off: the cards are a plain vertical list with
-// the picture above the words, because a 520px card that sticks under a phone's
-// viewport is just a card you cannot scroll past.
+// A phone stacks too (Oct 14 2026, Mateo: the overlapping cards on mobile as
+// well). Its cards are sized to the screen (PHONE_*), the picture above the
+// words and the checks left off, so a parked card always fits under the bar.
 
 const CARD_H = 520;
 // The floating header's bottom edge (12px off the top, 48px tall). The heading
@@ -108,6 +108,21 @@ const SINK = 0.022;
 // the ladder of top borders, so this is mostly a fade on those lines.
 const DIMS = [0, 0.45, 0.65, 0.78];
 
+// Where the deck's numbers differ between a laptop and a phone.
+type Geo = { cardH: number; step: number; sink: number; slot: number };
+const LAPTOP: Geo = { cardH: CARD_H, step: STEP, sink: SINK, slot: SLOT };
+// A phone: the cards park 12px under the floating bar, 10px apart, and go back
+// by 10px a side each step (0.055 of a 360px card). The card is as tall as the
+// screen allows under the bar and the three steps, between 520 and 600px; its
+// panel is PHONE_PANEL of that.
+const PHONE_TOP = HEADER + 12;
+const PHONE_STEP = 10;
+const PHONE_PANEL = 320;
+function phoneGeo(vh: number): Geo {
+  const cardH = Math.round(Math.min(600, Math.max(520, vh - PHONE_TOP - 3 * PHONE_STEP - 16)));
+  return { cardH, step: PHONE_STEP, sink: 0.055, slot: cardH - OVERLAP + DWELL };
+}
+
 /* ── The dither, in four colours ────────────────────────────────────────── */
 
 type RGB = [number, number, number];
@@ -174,15 +189,18 @@ const WORKSHEET_SCRIPT = [
 // Each scene plays once as its card comes into view and holds: a loop would
 // blank the second board every nine seconds while the card is being read.
 const LOOP = 0;
-// Below lg the pieces stack in the picture box; from lg they sit in its corners.
-const SCENE = "flex flex-col gap-4 p-5 lg:block lg:h-full lg:p-0";
+// The pieces sit in the panel's corners, overlapping a little: on a phone too
+// (Oct 14 2026), at about two thirds of their size, so the deck can stack there.
+const SCENE = "relative h-full";
 // The card and its panel are square (Mateo, Sept 21), but the pieces lying on
 // the panel keep their corners: they are photographs of the product, not
 // structure, and a square photo on a square panel on a square card reads as
 // one slab.
 const SHADOW = "shadow-[0_14px_36px_rgba(18,18,21,0.16)]";
 
-type SceneProps = { active: boolean };
+type SceneProps = { active: boolean; compact: boolean };
+// A piece's width on a phone.
+const small = (w: number, compact: boolean) => (compact ? Math.round(w * 0.62) : w);
 
 function useScene<K extends string>(steps: readonly { at: number; key: K }[], active: boolean) {
   const reduce = useReduce();
@@ -207,7 +225,7 @@ function Bubble({ shown, className, children }: { shown: boolean; className?: st
 // Mateo asked for the 120px pet, or bigger.
 const PET = 132;
 
-function SceneTutor({ active }: SceneProps) {
+function SceneTutor({ active, compact }: SceneProps) {
   const { fired } = useScene(TUTOR_SCRIPT, active);
   const reduce = useReduce();
   const speaking = fired("say");
@@ -215,67 +233,67 @@ function SceneTutor({ active }: SceneProps) {
     <div className={SCENE}>
       <BoardShot
         shot={SHOTS.hint}
-        width={352}
+        width={small(352, compact)}
         shown={fired("board")}
         alt="The board: 2x = 8, the student's try x = 16 in their own hand, and x = 16 crossed out."
-        className={cn(SHADOW, "lg:absolute lg:top-7 lg:left-7")}
+        className={cn(SHADOW, "absolute top-4 left-4 lg:top-7 lg:left-7")}
       />
-      <Bubble shown={speaking} className="lg:absolute lg:right-7 lg:bottom-[172px] lg:w-[250px]">
+      <Bubble shown={speaking} className="absolute right-3 bottom-[88px] w-[200px] px-3.5 py-2.5 text-[12.5px] lg:right-7 lg:bottom-[172px] lg:w-[250px] lg:px-4 lg:py-3 lg:text-[13.5px]">
         Close. Two times x is eight. Multiply by two, or divide?
       </Bubble>
       {/* The tutor's pet, the one Mateo had drawn: it speaks when the bubble shows. */}
-      <div className="flex justify-end lg:absolute lg:right-7 lg:bottom-5">
-        <TutorPet shape="square" state={speaking ? "speaking" : "idle"} level={speaking ? 0.55 : 0} look={{ x: -0.5, y: 0.35 }} size={PET} reduceMotion={!!reduce} />
+      <div className="absolute right-3 bottom-1 lg:right-7 lg:bottom-5">
+        <TutorPet shape="square" state={speaking ? "speaking" : "idle"} level={speaking ? 0.55 : 0} look={{ x: -0.5, y: 0.35 }} size={compact ? 92 : PET} reduceMotion={!!reduce} />
       </div>
     </div>
   );
 }
 
-function SceneDraw({ active }: SceneProps) {
+function SceneDraw({ active, compact }: SceneProps) {
   const { fired } = useScene(DRAW_SCRIPT, active);
   return (
     <div className={SCENE}>
       <BoardShot
         shot={SHOTS.graph}
-        width={344}
+        width={small(344, compact)}
         shown={fired("graph")}
         alt="The board: a parabola y = x squared minus 4 on Desmos, with its crossings A and B and its vertex C labelled."
-        className={cn(SHADOW, "lg:absolute lg:top-6 lg:left-7")}
+        className={cn(SHADOW, "absolute top-4 left-4 lg:top-6 lg:left-7")}
       />
       <BoardShot
         shot={SHOTS.figure}
-        width={220}
+        width={small(220, compact)}
         shown={fired("figure")}
         alt="The board: a right triangle drawn to scale, legs 6 and 8, hypotenuse x."
-        className={cn(SHADOW, "lg:absolute lg:right-7 lg:bottom-6")}
+        className={cn(SHADOW, "absolute right-4 bottom-4 lg:right-7 lg:bottom-6")}
       />
     </div>
   );
 }
 
-function SceneRelate({ active }: SceneProps) {
+function SceneRelate({ active, compact }: SceneProps) {
   const { fired } = useScene(RELATE_SCRIPT, active);
   return (
     <div className={SCENE}>
       <BoardShot
         shot={SHOTS.icons}
-        width={416}
+        width={small(416, compact)}
         shown={fired("icons")}
         alt="The board: twelve cookies drawn in three groups of four, captioned 12 cookies, 3 friends."
-        className={cn(SHADOW, "lg:absolute lg:top-7 lg:left-7")}
+        className={cn(SHADOW, "absolute top-4 left-4 lg:top-7 lg:left-7")}
       />
       <BoardShot
         shot={SHOTS.fraction}
-        width={320}
+        width={small(320, compact)}
         shown={fired("fraction")}
         alt="The board: two pies, three quarters and six eighths, captioned the same amount."
-        className={cn(SHADOW, "lg:absolute lg:right-7 lg:bottom-7")}
+        className={cn(SHADOW, "absolute right-4 bottom-4 lg:right-7 lg:bottom-7")}
       />
     </div>
   );
 }
 
-function SceneWorksheet({ active }: SceneProps) {
+function SceneWorksheet({ active, compact }: SceneProps) {
   const { fired } = useScene(WORKSHEET_SCRIPT, active);
   return (
     <div className={SCENE}>
@@ -284,23 +302,23 @@ function SceneWorksheet({ active }: SceneProps) {
         initial={false}
         animate={rise(fired("page"))}
         transition={T}
-        className={cn("w-[250px] overflow-hidden rounded-[8px] bg-white ring-1 ring-(--lp-line) lg:absolute lg:top-7 lg:left-8 lg:-rotate-[3deg]", SHADOW)}
+        className={cn("absolute top-4 left-5 w-[150px] -rotate-[3deg] overflow-hidden rounded-[8px] bg-white ring-1 ring-(--lp-line) lg:top-7 lg:left-8 lg:w-[250px]", SHADOW)}
       >
         <Image
           src="/landing/worksheet-page.png"
           width={1600}
           height={2002}
           alt="A worksheet titled 8th Grade Math, Equations and Linear Graphs, with equations to solve and four blank coordinate grids."
-          sizes="250px"
+          sizes="(min-width: 1024px) 250px, 150px"
           className="block h-auto w-full"
         />
       </motion.div>
       <BoardShot
         shot={SHOTS.worksheet}
-        width={396}
+        width={small(396, compact)}
         shown={fired("board")}
         alt="The board: Problem 5, y = 2x + 1 from the worksheet, graphed on Desmos with its intercept marked."
-        className={cn(SHADOW, "lg:absolute lg:right-6 lg:bottom-6")}
+        className={cn(SHADOW, "absolute right-4 bottom-4 lg:right-6 lg:bottom-6")}
       />
     </div>
   );
@@ -400,6 +418,8 @@ function Card({
   deckTop,
   top,
   stacked,
+  geo,
+  compact,
 }: {
   feature: Feature;
   index: number;
@@ -408,6 +428,8 @@ function Card({
   deckTop: number;
   top: number;
   stacked: boolean;
+  geo: Geo;
+  compact: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const inView = useInView(ref, { margin: "-15% 0px" });
@@ -421,9 +443,10 @@ function Card({
   // read, which it did when the sink started at parking. And it goes on: each
   // later card that lands pushes this one a step further back, so the pile
   // fans, the deepest card smallest, instead of three strips the same width.
-  const parked = deckTop + index * SLOT - (top + index * STEP);
+  const { slot, step, sink } = geo;
+  const parked = deckTop + index * slot - (top + index * step);
   const touched = parked + DWELL - EASE_IN;
-  const covered = parked + SLOT - STEP;
+  const covered = parked + slot - step;
   const sinking = stacked && !reduce && !last && deckTop > 0;
   // The last card has nothing behind it and never sinks, but the transforms
   // below still need a range: an empty one throws inside Motion.
@@ -432,8 +455,8 @@ function Card({
   const scales: number[] = [];
   const dims: number[] = [];
   for (let k = 0; k < behind; k++) {
-    at.push(touched + k * SLOT, covered + k * SLOT);
-    scales.push(1 - k * SINK, 1 - (k + 1) * SINK);
+    at.push(touched + k * slot, covered + k * slot);
+    scales.push(1 - k * sink, 1 - (k + 1) * sink);
     dims.push(DIMS[k], DIMS[k + 1]);
   }
   const scale = useTransform(scrollY, at, scales, { clamp: true });
@@ -451,7 +474,7 @@ function Card({
     if (deckTop <= 0) return -index * DWELL;
     let lift = 0;
     for (let i = 1; i <= index; i++) {
-      const openedBy = deckTop + (i - 1) * SLOT - (top + (i - 1) * STEP);
+      const openedBy = deckTop + (i - 1) * slot - (top + (i - 1) * step);
       lift += DWELL - payout(y - openedBy);
     }
     // The soft landing, for every card that parks on the pile (the last card
@@ -462,7 +485,7 @@ function Card({
     let land = 0;
     for (let j = 1; j <= index; j++) {
       if (j === FEATURES.length - 1) continue;
-      const d = deckTop + j * SLOT - y - (top + j * STEP);
+      const d = deckTop + j * slot - y - (top + j * step);
       land += landing(d) - Math.max(0, d);
     }
     return -lift + land;
@@ -480,30 +503,35 @@ function Card({
   // early: the whole pile was dragged off the top before the last card had
   // even parked, leaving a band of half-faded cards above it.
   return (
-    <motion.div className={cn(stacked && !last && "lg:sticky")} style={stacked ? { top: top + index * STEP, marginTop: index > 0 ? -OVERLAP : 0, y: hold } : undefined}>
+    <motion.div className={cn(stacked && !last && "sticky")} style={stacked ? { top: top + index * step, marginTop: index > 0 ? -OVERLAP : 0, y: hold } : undefined}>
       {/* The sized box, so the haze below covers the card and nothing else: it
           used to be a full-width sibling and washed over the left rail, which
           paints under this content while the right rail paints over it. */}
       <motion.div style={sinking ? { scale, transformOrigin: "50% 0%" } : undefined} className="lp-railspan relative">
-        <article ref={ref} data-last={last || undefined} className="lp-deck-card grid overflow-hidden lg:h-[520px] lg:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)]">
-          <div className="lp-deck-copy order-2 flex flex-col justify-center gap-6 lg:order-1">
+        <article
+          ref={ref}
+          data-last={last || undefined}
+          style={{ height: geo.cardH, gridTemplateRows: compact ? `${PHONE_PANEL}px minmax(0,1fr)` : undefined }}
+          className="lp-deck-card grid overflow-hidden lg:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)]"
+        >
+          <div className="lp-deck-copy order-2 flex flex-col justify-start gap-4 !pt-6 lg:order-1 lg:justify-center lg:gap-6 lg:!pt-10">
             {/* The card's mark: a line icon from the Math Only wall's own family
                 (Hugeicons Stroke Rounded) in that wall's blue, replacing the
                 Fluent emoji (Mateo, Sept 22). 48px at a 1.5 stroke: at 64px and
                 1.75 it read too big and too heavy. */}
             <svg
               viewBox="0 0 24 24"
-              width={48}
-              height={48}
+              width={compact ? 36 : 48}
+              height={compact ? 36 : 48}
               aria-hidden
-              className="-ml-0.5 text-[#2f8ef7] [&_*]:[stroke-width:1.5]"
+              className="-ml-0.5 shrink-0 text-[#2f8ef7] [&_*]:[stroke-width:1.5]"
               dangerouslySetInnerHTML={{ __html: DECK_ICONS[feature.icon] }}
             />
             <div>
               <h3 className="lp-title m-0 max-w-[16ch] text-[clamp(1.5rem,2.4vw,2rem)] leading-[1.1] text-(--lp-ink)">{feature.title}</h3>
               <p className="mt-3.5 max-w-[38ch] text-[15.5px] leading-[1.6] text-(--lp-ink-2) sm:text-[16.5px]">{feature.body}</p>
             </div>
-            <ul className="m-0 flex list-none flex-col gap-3 p-0">
+            <ul className="m-0 hidden list-none flex-col gap-3 p-0 lg:flex">
               {feature.points.map((point) => (
                 <li key={point} className="flex items-center gap-3 text-[15px] leading-[1.4] text-(--lp-ink)">
                   <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-(--lp-sky) text-white">
@@ -518,9 +546,9 @@ function Card({
               runs between the panel and every card edge it meets (Mateo,
               Sept 22). No left margin from lg, where that edge is the seam with
               the copy column rather than an edge of the card. */}
-          <div className="order-1 m-3 lg:order-2 lg:my-3 lg:mr-3 lg:ml-0">
+          <div className="order-1 m-3 mb-0 min-h-0 lg:order-2 lg:my-3 lg:mr-3 lg:ml-0">
             <Dither hue={feature.hue} active={inView}>
-              <Scene active={inView} />
+              <Scene active={inView} compact={compact} />
             </Dither>
           </div>
         </article>
@@ -562,14 +590,18 @@ export function FeatureStack() {
   const deckRef = useRef<HTMLDivElement>(null);
   const headRef = useRef<HTMLDivElement>(null);
   const headH = useHeight(headRef);
-  const stacked = useAtLeastLg();
+  const wide = useAtLeastLg();
+  const stacked = true;
   const { scrollY } = useScroll();
   const vh = useViewportHeight();
+  const geo = wide ? LAPTOP : phoneGeo(vh);
   // What is left under the front card (the fourth parks three steps lower),
   // keeping 8px of air above the screen's edge.
   const room = vh - (HEADER + headH + CARD_H + (FEATURES.length - 1) * STEP + 8);
   const under = Math.max(UNDER_MIN, Math.min(UNDER_MAX, room));
-  const top = headH ? HEADER + headH + under : TOP_FALLBACK;
+  // A laptop parks the cards under the pinned heading; a phone, whose heading
+  // scrolls away, just under the bar.
+  const top = !wide ? PHONE_TOP : headH ? HEADER + headH + under : TOP_FALLBACK;
   const deckTop = useDeckTop(deckRef, `${headH}:${under}`);
   // The scroll at which the last card's top reaches the first card's spot:
   // from there the whole pile moves as one, and the heading leaves with it,
@@ -578,8 +610,8 @@ export function FeatureStack() {
   // bug Mateo caught on Sept 22). Released when the last card merely arrived
   // (42px earlier), it pulled away from the three still-parked cards first.
   const lastIndex = FEATURES.length - 1;
-  const release = deckTop + lastIndex * SLOT - top;
-  const lift = useTransform(scrollY, (y) => (deckTop > 0 ? -Math.max(0, y - release) : 0));
+  const release = deckTop + lastIndex * geo.slot - top;
+  const lift = useTransform(scrollY, (y) => (wide && deckTop > 0 ? -Math.max(0, y - release) : 0));
 
   // No bottom padding on the section: it ends on the last card's bottom edge,
   // so the next section's dashed rule is drawn exactly there.
@@ -593,8 +625,8 @@ export function FeatureStack() {
           type and leaves the cards room on a laptop screen. */}
       <motion.div
         ref={headRef}
-        className={cn("relative z-30 mx-auto bg-(--lp-bg) min-[1320px]:w-[calc(2*var(--lp-rail-inset)-2*var(--lp-rail-w))]", stacked && "lg:sticky lg:pt-2 lg:pb-0")}
-        style={stacked ? { top: HEADER, y: lift } : undefined}
+        className={cn("relative z-30 mx-auto bg-(--lp-bg) min-[1320px]:w-[calc(2*var(--lp-rail-inset)-2*var(--lp-rail-w))]", wide && "lg:sticky lg:pt-2 lg:pb-0")}
+        style={wide ? { top: HEADER, y: lift } : undefined}
       >
         <Container>
           <Reveal>
@@ -614,10 +646,10 @@ export function FeatureStack() {
       {/* Full width, not a Container: each card sizes itself to the rails.
           The same space as the cards park under the heading (`under`), so the first card reaches its
           parking spot at the moment the heading sticks and no gap opens. */}
-      <div className="mt-12 lg:mt-0" style={stacked ? { marginTop: under } : undefined}>
+      <div className="mt-10 lg:mt-0" style={wide ? { marginTop: under } : undefined}>
         <div ref={deckRef} className="flex flex-col" style={{ gap: stacked ? DWELL : 32 }}>
           {FEATURES.map((feature, i) => (
-            <Card key={feature.id} feature={feature} index={i} last={i === FEATURES.length - 1} scrollY={scrollY} deckTop={deckTop} top={top} stacked={stacked} />
+            <Card key={feature.id} feature={feature} index={i} last={i === FEATURES.length - 1} scrollY={scrollY} deckTop={deckTop} top={top} stacked={stacked} geo={geo} compact={!wide} />
           ))}
           {/* There used to be a spacer here, giving the last card a dwell at the
               top of the pile. It is gone on purpose: it is the only thing that

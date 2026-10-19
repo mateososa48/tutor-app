@@ -14,6 +14,8 @@ type BlurTextProps = {
   easing?: Easing | Easing[];
   onAnimationComplete?: () => void;
   stepDuration?: number;
+  /** Words between asterisks (`*talk to*`) get this style: the hero's blue words. */
+  accentStyle?: React.CSSProperties;
 };
 
 const buildKeyframes = (
@@ -41,9 +43,24 @@ const BlurText: React.FC<BlurTextProps> = ({
   animationTo,
   easing = (t: number) => t,
   onAnimationComplete,
-  stepDuration = 0.35
+  stepDuration = 0.35,
+  accentStyle
 }) => {
-  const elements = animateBy === 'words' ? text.split(' ') : text.split('');
+  // Words: `*…*` marks accented words and a "\n" word breaks the line (the
+  // hero's title, Oct 14 2026). Letters animate the text as written.
+  const elements = animateBy === 'words' ? text.replace(/\n/g, ' \n ').split(' ').filter(Boolean) : text.split('');
+  const accented: boolean[] = [];
+  if (animateBy === 'words') {
+    let on = false;
+    for (let i = 0; i < elements.length; i++) {
+      const w = elements[i];
+      const opens = w.startsWith('*');
+      if (opens) on = true;
+      accented.push(on);
+      if (w.endsWith('*') && (w.length > 1 || !opens)) on = false;
+      elements[i] = w.replace(/^\*|\*$/g, '');
+    }
+  }
   const [inView, setInView] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
 
@@ -90,6 +107,7 @@ const BlurText: React.FC<BlurTextProps> = ({
   return (
     <span ref={ref} className={`blur-text ${className} flex flex-wrap`}>
       {elements.map((segment, index) => {
+        if (segment === '\n') return <span key={index} aria-hidden className="basis-full" />;
         const animateKeyframes = buildKeyframes(fromSnapshot, toSnapshots);
 
         const spanTransition: Transition = {
@@ -108,11 +126,12 @@ const BlurText: React.FC<BlurTextProps> = ({
             onAnimationComplete={index === elements.length - 1 ? onAnimationComplete : undefined}
             style={{
               display: 'inline-block',
-              willChange: 'transform, filter, opacity'
+              willChange: 'transform, filter, opacity',
+              ...(accented[index] ? accentStyle : null)
             }}
           >
             {segment === ' ' ? '\u00A0' : segment}
-            {animateBy === 'words' && index < elements.length - 1 && '\u00A0'}
+            {animateBy === 'words' && index < elements.length - 1 && elements[index + 1] !== '\n' && '\u00A0'}
           </motion.span>
         );
       })}
