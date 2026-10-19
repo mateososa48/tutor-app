@@ -30,12 +30,23 @@ import { useReduce } from "./useScript";
 // the frame is never empty.
 
 const START_SECONDS = 227;
-// Phones: the finished board. Laptops, until the live board has drawn its
-// opening (about a second and a half on a cold load): that opening board,
+// Until the live board has drawn its opening (about a second and a half on a
+// cold load), every screen shows that opening board,
 // photographed at the stage's own size by scripts/landing-shots.mjs ("live"
 // frame), so it lines up with the live board and simply fades away.
-const POSTER = { src: "/landing/hero-final.png", width: 2104, height: 1280 };
 const OPENING = { src: "/landing/hero-opening.png", width: 2104, height: 1280 };
+// A phone shows the laptop's demo, shrunk to fit (Oct 14 2026, Mateo: "the
+// same as on desktop, just shrunk down"). It is drawn at the size it has in a
+// 1440px window (the frame 1094 x 640, the chrome at 1052/1200 of its size,
+// the stage 1052 wide: the opening photo's own width) and scaled to the phone.
+// The board alone is not scaled with CSS: tldraw measures its box on screen
+// and culls whatever falls outside it, so it draws at its real size and lays
+// the lesson out for the laptop stage, framed the way that stage frames it
+// (TldrawCore's layoutSize).
+const VIRTUAL = { w: 1094, h: 640 };
+const VIRTUAL_CHROME = 1052 / 1200;
+const VIRTUAL_RAIL = 48 * VIRTUAL_CHROME;
+const VIRTUAL_STAGE = { w: VIRTUAL.w - VIRTUAL_RAIL, h: VIRTUAL.h };
 
 function formatClock(total: number): string {
   const m = Math.floor(total / 60);
@@ -50,9 +61,9 @@ function formatClock(total: number): string {
 const RAIL_ITEM = "flex size-8 items-center justify-center rounded-md";
 const DECOR = { cursor: "default" } as const;
 
-function Rail({ scale }: { scale: number }) {
+function Rail({ scale, always = false }: { scale: number; always?: boolean }) {
   return (
-    <div aria-hidden className="hidden w-12 shrink-0 flex-col bg-sidebar sm:flex" style={{ zoom: scale }}>
+    <div aria-hidden className={`w-12 shrink-0 flex-col bg-sidebar ${always ? "flex" : "hidden sm:flex"}`} style={{ zoom: scale }}>
       <div className="relative h-[92px] shrink-0">
         <span className="absolute top-2.5 left-0 flex h-9 w-12 items-center justify-center">
           <ChalkMark size={29} />
@@ -113,6 +124,7 @@ export function SessionDemo() {
   const reduce = useReduce();
   const wide = useIsWide();
   const [stageRef, stage] = useMeasure();
+  const [phoneRef, phone] = useMeasure();
 
   const boardRef = useRef<WhiteboardHandle>(null);
   const [boardReady, setBoardReady] = useState(false);
@@ -136,7 +148,7 @@ export function SessionDemo() {
   // The board loads once the demo has been near the viewport, and only on
   // screens wide enough to read it. It arrives through a dynamic import, so
   // wait for the handle.
-  const wantsBoard = everInView && wide;
+  const wantsBoard = everInView;
   useEffect(() => {
     if (!wantsBoard || boardReady) return;
     const timer = setInterval(() => {
@@ -286,25 +298,126 @@ export function SessionDemo() {
   // conversation is the point. The board keeps its own zoom.
   const scale = wide && stage.width ? Math.min(1, Math.max(0.7, stage.width / 1200)) : 1;
 
+  // Everything over the board: the title chip, End, the student, the dock and
+  // the pet. The same on a phone, shrunk with the rest.
+  const chrome = (frameHeight: number | undefined) => (
+    <>
+      <SessionChip liveState="active" title={LESSON_TITLE} elapsed={formatClock(elapsed)} qaLabel={null} />
+      <span
+        aria-hidden
+        className="absolute top-4 right-4 z-30 inline-flex h-8 items-center gap-1.5 rounded-full border border-(--lp-line-strong) bg-white px-3.5 text-[13px] font-medium text-(--danger)"
+      >
+        <Square className="size-3 fill-current" />
+        End session
+      </span>
+
+      <StudentTile
+        name={LESSON_STUDENT}
+        said={student.said}
+        speaking={student.speaking}
+        reduce={reduce === true}
+        lottie={STUDENT}
+        className="absolute top-[72px] right-6 z-30"
+      />
+
+      <VoiceDock
+        activity={shownActivity}
+        isMuted={muted}
+        onMute={() => setMuted((m) => !m)}
+        analyser={null}
+        onSendText={handleSend}
+        transcript={transcript}
+        transcriptOpen={transcriptOpen}
+        onToggleTranscript={() => setTranscriptOpen((v) => !v)}
+        files={files}
+        onAddFiles={(added) => setFiles((f) => [...f, ...added])}
+        onRemoveFile={(id) => setFiles((f) => f.filter((x) => x.id !== id))}
+        frameHeight={frameHeight}
+        presence={
+          <TutorPresence
+            activity={shownActivity}
+            caption={tutor.said}
+            analyser={null}
+            yourTurn={yourTurn}
+            celebrateKey={celebrateKey}
+            placement="column"
+            hidden={transcriptOpen}
+            studentSpeaking={student.speaking}
+          />
+        }
+      />
+    </>
+  );
+
+  // The opening board, rendered on the server, until the live board has drawn
+  // the same thing (then it fades).
+  const opening = (
+    <Image
+      src={OPENING.src}
+      alt=""
+      aria-hidden
+      width={OPENING.width}
+      height={OPENING.height}
+      priority
+      sizes="1052px"
+      className="pointer-events-none absolute top-0 left-0 w-full transition-opacity duration-[400ms] ease-out"
+      style={{ opacity: seeded ? 0 : 1 }}
+    />
+  );
+
+  // A phone: the laptop demo, shrunk to the frame's width (see VIRTUAL). The
+  // board draws at its real size under the shrunk chrome, in the stage's
+  // place; the chrome is a picture of the screen here, so it takes no taps.
+  if (!wide) {
+    const k = phone.width ? phone.width / VIRTUAL.w : 0;
+    return (
+      <div
+        ref={(el) => {
+          rootRef.current = el;
+          phoneRef(el);
+        }}
+        className="relative w-full overflow-hidden bg-white"
+        style={{ aspectRatio: `${VIRTUAL.w} / ${VIRTUAL.h}` }}
+        data-cycle={cycle}
+      >
+        {k > 0 && (
+          <>
+            <div className="absolute top-0" style={{ left: VIRTUAL_RAIL * k, width: VIRTUAL_STAGE.w * k, height: VIRTUAL_STAGE.h * k }}>
+              {opening}
+              {wantsBoard && (
+                <div
+                  className="pointer-events-none absolute inset-0 transition-opacity duration-[400ms] ease-out"
+                  style={{ opacity: boardVisible && seeded ? 1 : 0 }}
+                  aria-hidden
+                >
+                  <Whiteboard ref={boardRef} onWriting={setBoardBusy} autoFocus={false} layoutSize={VIRTUAL_STAGE} />
+                </div>
+              )}
+            </div>
+            <div
+              aria-hidden
+              className="pointer-events-none absolute top-0 left-0 flex origin-top-left"
+              style={{ width: VIRTUAL.w, height: VIRTUAL.h, transform: `scale(${k})` }}
+            >
+              <Rail scale={VIRTUAL_CHROME} always />
+              <div className="relative min-w-0 flex-1">
+                <div className="absolute inset-0" style={{ zoom: VIRTUAL_CHROME }}>
+                  {chrome(VIRTUAL.h / VIRTUAL_CHROME)}
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div ref={rootRef} className="flex h-[520px] sm:h-[600px] lg:h-[640px]" data-cycle={cycle}>
       <Rail scale={scale} />
       <main ref={stageRef} className="relative min-w-0 flex-1 overflow-hidden bg-white">
-        {/* Laptops (md up, the same line as useIsWide) see the opening board
-            from the first paint, rendered on the server; it fades once the
-            live board has drawn the same thing. */}
-        <Image
-          src={OPENING.src}
-          alt=""
-          aria-hidden
-          width={OPENING.width}
-          height={OPENING.height}
-          priority
-          sizes="1052px"
-          className="pointer-events-none absolute top-0 left-0 hidden w-full transition-opacity duration-[400ms] ease-out md:block"
-          style={{ opacity: seeded ? 0 : 1 }}
-        />
-        {wantsBoard ? (
+        {opening}
+        {wantsBoard && (
           <div
             className="pointer-events-none absolute inset-0 transition-opacity duration-[400ms] ease-out"
             style={{ opacity: boardVisible && seeded ? 1 : 0 }}
@@ -312,66 +425,9 @@ export function SessionDemo() {
           >
             <Whiteboard ref={boardRef} onWriting={setBoardBusy} autoFocus={false} />
           </div>
-        ) : (
-          <Image
-            src={POSTER.src}
-            alt={`The whiteboard during a lesson on ${LESSON_TITLE}: both fractions drawn as bars, the student's guess crossed out, both re-cut into fifteenths, and the answer circled.`}
-            width={POSTER.width}
-            height={POSTER.height}
-            priority
-            sizes="(min-width: 1180px) 1068px, 100vw"
-            // The drawing fills the left 55% of the picture, so on a phone the
-            // picture is sized for the drawing to span the frame, under the chip.
-            className="absolute top-[52px] left-0 h-auto w-[175%] max-w-none md:hidden"
-          />
         )}
-
         <div className="absolute inset-0" style={{ zoom: scale }}>
-        <SessionChip liveState="active" title={LESSON_TITLE} elapsed={formatClock(elapsed)} qaLabel={null} />
-        <span
-          aria-hidden
-          className="absolute top-4 right-4 z-30 hidden h-8 items-center gap-1.5 rounded-full border border-(--lp-line-strong) bg-white px-3.5 text-[13px] font-medium text-(--danger) sm:inline-flex"
-        >
-          <Square className="size-3 fill-current" />
-          End session
-        </span>
-
-        <StudentTile
-          name={LESSON_STUDENT}
-          said={student.said}
-          speaking={student.speaking}
-          reduce={reduce === true}
-          lottie={STUDENT}
-          compact={!wide}
-          className={wide ? "absolute top-[72px] right-6 z-30" : "absolute top-[64px] right-3 z-30"}
-        />
-
-        <VoiceDock
-          activity={shownActivity}
-          isMuted={muted}
-          onMute={() => setMuted((m) => !m)}
-          analyser={null}
-          onSendText={handleSend}
-          transcript={transcript}
-          transcriptOpen={transcriptOpen}
-          onToggleTranscript={() => setTranscriptOpen((v) => !v)}
-          files={files}
-          onAddFiles={(added) => setFiles((f) => [...f, ...added])}
-          onRemoveFile={(id) => setFiles((f) => f.filter((x) => x.id !== id))}
-          frameHeight={stage.height ? stage.height / scale : undefined}
-          presence={
-            <TutorPresence
-              activity={shownActivity}
-              caption={tutor.said}
-              analyser={null}
-              yourTurn={yourTurn}
-              celebrateKey={celebrateKey}
-              placement={wide ? "column" : "compact"}
-              hidden={transcriptOpen}
-              studentSpeaking={student.speaking}
-            />
-          }
-        />
+          {chrome(stage.height ? stage.height / scale : undefined)}
         </div>
       </main>
     </div>

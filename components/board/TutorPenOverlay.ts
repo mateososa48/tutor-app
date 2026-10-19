@@ -5,6 +5,11 @@ import { getStroke } from "tldraw";
 // cursor overlay (same `type`, so the default is swapped out) and draws the
 // pen tip at the presence cursor with a small name tag.
 
+// Editors whose board is a scaled-down picture of a larger screen (the
+// landing's phone demo, TldrawCore's layoutSize): there the pen shrinks with
+// the board, as it would look on that screen, instead of keeping its size.
+export const SCALED_BOARDS = new WeakSet<object>();
+
 export interface TLTutorPenOverlay extends TLOverlay {
   props: { x: number; y: number; color: string; name: string | null };
 }
@@ -33,7 +38,7 @@ export class TutorPenOverlayUtil extends OverlayUtil<TLTutorPenOverlay> {
 
   override render(ctx: CanvasRenderingContext2D, overlays: TLTutorPenOverlay[]): void {
     const zoom = this.editor.getZoomLevel();
-    const scale = 1 / zoom;
+    const scale = SCALED_BOARDS.has(this.editor) ? 1 : 1 / zoom;
     const viewport = this.editor.getViewportPageBounds();
     const margin = 24 / zoom;
     for (const overlay of overlays) {

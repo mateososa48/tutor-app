@@ -26,6 +26,7 @@ const Whiteboard = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Whiteb
       onExplore={props.onExplore}
       exploringItemId={props.exploringItemId}
       boardStrip={props.boardStrip}
+      layoutSize={props.layoutSize}
     />
   );
 });

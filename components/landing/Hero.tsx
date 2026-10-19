@@ -134,12 +134,20 @@ export function Hero() {
   const reduce = useReduce();
 
   return (
-    <section className="relative isolate pt-32 pb-14 sm:pb-20 lg:pt-40 lg:pb-24">
+    <section className="relative isolate pt-28 pb-14 sm:pt-32 sm:pb-20 lg:pt-40 lg:pb-24">
       <Backdrop />
       <div className="mx-auto max-w-[1180px] px-5 sm:px-8">
-        <div className="max-w-[880px]">
+        <div className="max-w-[1040px]">
+          {/* Mateo's line (Oct 14 2026), "talk to" in the section labels' blue:
+              their sky-deep at weight 400, so it reads as the same system. */}
           <h1 className="lp-title text-[clamp(2.75rem,5vw,4.125rem)] leading-[1.02]">
-            <BlurText text="A math tutor you talk to. It writes as it explains." animateBy="words" delay={55} direction="top" />
+            <BlurText
+              text={"A math tutor you *talk to* \n that teaches with a whiteboard."}
+              animateBy="words"
+              delay={55}
+              direction="top"
+              accentStyle={{ color: "var(--lp-sky-deep)", fontWeight: 400 }}
+            />
           </h1>
 
           <motion.p
@@ -148,22 +156,25 @@ export function Hero() {
             transition={{ duration: 0.6, delay: 0.5, ease: EASE }}
             className="mt-6 max-w-[46ch] text-[1.125rem] leading-[1.55] text-(--lp-ink) sm:text-[1.25rem]"
           >
-            Grades 5 to 12. Say where you&rsquo;re stuck. It draws the step, then waits for you to try the next one.
+            Your personal AI math tutor for grades 5 to 12. Say what&rsquo;s confusing out loud, and it draws it out and walks you to the answer instead of handing it over.
           </motion.p>
 
           <motion.div
             initial={reduce ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.62, ease: EASE }}
-            className="mt-9 flex flex-wrap items-center gap-4"
+            // A phone: the two side by side in equal columns, a size down
+            // (the max-sm utilities: important, since .lp-btn sits outside
+            // Tailwind's layers), the arrow left off so both labels fit.
+            className="mt-8 grid grid-cols-2 gap-3 sm:mt-9 sm:flex sm:flex-wrap sm:items-center sm:gap-4"
           >
-            <Magnet padding={48} magnetStrength={22} disabled={!!reduce}>
-              <Link href="/signin" className="lp-btn">
+            <Magnet padding={48} magnetStrength={22} disabled={!!reduce} wrapperClassName="w-full sm:w-auto" innerClassName="w-full">
+              <Link href="/signin" className="lp-btn max-sm:![--press:4px] max-sm:!h-11 max-sm:!w-[calc(100%-4px)] max-sm:!px-3 max-sm:!text-[14px]">
                 Try a session free
-                <ArrowRight size={17} strokeWidth={2.4} aria-hidden />
+                <ArrowRight size={17} strokeWidth={2.4} aria-hidden className="hidden sm:block" />
               </Link>
             </Magnet>
-            <a href="#how-it-works" className="lp-btn lp-btn-quiet">
+            <a href="#how-it-works" className="lp-btn lp-btn-quiet max-sm:![--press:4px] max-sm:!h-11 max-sm:!w-[calc(100%-4px)] max-sm:!px-3 max-sm:!text-[14px]">
               See how it works
             </a>
           </motion.div>

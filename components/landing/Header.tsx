@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useSyncExternalStore } from "react";
-import { motion, useScroll, useSpring, useTransform } from "motion/react";
+import { useState, useSyncExternalStore } from "react";
+import { motion, useMotionValueEvent, useScroll, useSpring, useTransform } from "motion/react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Wordmark } from "./Wordmark";
@@ -86,6 +86,13 @@ export function Header() {
   );
   const backdropFilter = useTransform(p, (v) => `blur(${20 * v}px) saturate(${100 + 80 * v}%)`);
   const sheen = useTransform(p, (v) => v);
+  // A phone opens on the hero's own "Try a session free" a few lines down, so
+  // the bar's copy of it waits until the page has scrolled (and the bar has
+  // become the floating glass one): two black buttons on one screen was one
+  // too many. From sm the bar always has it, beside Sign in.
+  const [scrolled, setScrolled] = useState(false);
+  useMotionValueEvent(scrollY, "change", (y) => setScrolled(y > 320));
+  const ctaShown = isSm || scrolled;
 
   return (
     <motion.div style={{ paddingLeft: wrapperPad, paddingRight: wrapperPad }} className="pointer-events-none fixed inset-x-0 top-0 z-40 flex justify-center">
@@ -131,9 +138,21 @@ export function Header() {
           >
             Sign in
           </Link>
-          <Link href="/signin" className={cn(buttonVariants(), "btn-gloss-lift h-9 rounded-[10px] px-3.5 text-[14px] font-semibold")}>
-            Try a session free
-          </Link>
+          <motion.div
+            initial={false}
+            animate={ctaShown ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.94 }}
+            transition={reduce ? { duration: 0.15 } : { type: "spring", stiffness: 420, damping: 32 }}
+            style={{ pointerEvents: ctaShown ? "auto" : "none" }}
+            aria-hidden={!ctaShown}
+          >
+            <Link
+              href="/signin"
+              tabIndex={ctaShown ? undefined : -1}
+              className={cn(buttonVariants(), "btn-gloss-lift h-9 rounded-[10px] px-3.5 text-[14px] font-semibold")}
+            >
+              Try a session free
+            </Link>
+          </motion.div>
         </div>
       </motion.header>
     </motion.div>
