@@ -72,6 +72,17 @@ const n1 = (v: number) => Math.round(v * 10) / 10;
 // ── Layout ──────────────────────────────────────────────────────────────
 
 type Box = { w: number; h: number; draw: (x: number, y: number, out: Out) => void };
+/** Every id inside a node, its own included. */
+function idsIn(n: SceneNode | undefined, acc = new Set<string>()): Set<string> {
+  if (!n || typeof n !== "object") return acc;
+  if ("id" in n && n.id) acc.add(n.id);
+  for (const v of Object.values(n)) {
+    if (Array.isArray(v)) v.forEach((c) => c && typeof c === "object" && "type" in c && idsIn(c as SceneNode, acc));
+    else if (v && typeof v === "object" && "type" in v) idsIn(v as SceneNode, acc);
+  }
+  return acc;
+}
+
 /** Wider than this, a row of like things wraps (the board shows a picture at most 600px wide). */
 const WRAP_W = 680;
 
@@ -388,7 +399,13 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
 
     case "row":
     case "column": {
-      const gap = node.gap ?? 28;
+      let gap = node.gap ?? 28;
+      // Arrows running between the children need room to fan out: in 40px six
+      // arrows from three shirts to two pants were a knot (Oct 19 2026).
+      if (scene.arrows?.length && (node.children ?? []).length >= 2) {
+        const owner = (id: string) => (node.children ?? []).findIndex((c) => idsIn(c).has(id));
+        if (scene.arrows.some((a) => { const i = owner(a.from), j = owner(a.to); return i >= 0 && j >= 0 && i !== j; })) gap = Math.max(gap, 110);
+      }
       // A long row of like things (six boxes of children, eight plates) wraps
       // onto lines of about equal length instead of shrinking until the faces
       // inside cannot be told apart (Oct 19 2026, the class-ratio picture: six

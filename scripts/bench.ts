@@ -83,6 +83,7 @@ import { hedged } from "../lib/hedge";
 import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, PLANNER_SYSTEM, illustrationOf, pictureRefusal, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
 import { callCost, callIllustrator } from "../lib/illustration/model";
 import { guardLabels, illustratorPrompt } from "../lib/illustration/prompt";
+import { pictureKind, recipeFor } from "../lib/illustration/recipes";
 import { parseScene } from "../lib/illustration/scene";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
@@ -883,7 +884,8 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     const board = turns.at(-1)?.boardCompact ?? "";
     let rec: ToolRecord;
     try {
-      const reply = await callIllustrator(ILLUSTRATOR, illustratorPrompt({ grade: c.grade, what: pic.what, notice: pic.notice, conversation, board }));
+      // As /api/illustrate: the recipe for the picture's kind after the request.
+      const reply = await callIllustrator(ILLUSTRATOR, [illustratorPrompt({ grade: c.grade, what: pic.what, notice: pic.notice, conversation, board }), recipeFor(pictureKind(pic.what, pic.notice))].filter(Boolean).join("\n\n"));
       const scene = reply ? parseScene(reply.text) : null;
       if (!scene) throw new Error(reply ? "unreadable scene" : "no illustrator key");
       const guarded = guardLabels(scene, [conversation.map((l) => l.text).join(" "), board, pic.what, pic.notice].join(" "));

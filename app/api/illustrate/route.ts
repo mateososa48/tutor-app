@@ -13,6 +13,7 @@ import { auth } from "@/lib/auth";
 import { hedged } from "@/lib/hedge";
 import { callCost, callIllustrator } from "@/lib/illustration/model";
 import { guardLabels, illustratorPrompt, partNames } from "@/lib/illustration/prompt";
+import { pictureKind, recipeFor } from "@/lib/illustration/recipes";
 import { parseScene, renderScene } from "@/lib/illustration/scene";
 
 const MODELS = (process.env.ILLUSTRATOR_MODELS || "claude-haiku-5-5,gemini-3.8-flash").split(",").map((s) => s.trim()).filter(Boolean);
@@ -53,7 +54,10 @@ export async function POST(req: NextRequest) {
     .filter((l) => l.who === "student" || l.who === "tutor")
     .map((l) => ({ who: l.who as "student" | "tutor", text: text(l.text, 300) }));
   const request = { grade: text(body.grade, 40), what, notice: text(body.notice, 300), conversation, board: text(body.board, 900) };
-  const prompt = illustratorPrompt(request);
+  // The recipe for this kind of picture rides at the end of the request, so the
+  // system prompt stays cached (Oct 19 2026: held-out cases, blind-judged,
+  // 3.75 without recipes, 4.32 with; a check-and-fix pass on top added nothing).
+  const prompt = [illustratorPrompt(request), recipeFor(pictureKind(request.what, request.notice))].filter(Boolean).join("\n\n");
   // Everything the student has had: numbers in it may be labelled, others not.
   const seen = [conversation.map((l) => l.text).join(" "), request.board, request.what, request.notice].join(" ");
 
