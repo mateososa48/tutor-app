@@ -343,7 +343,10 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
     case "bar": {
       const parts = node.parts?.length ? node.parts : [{}];
       const total = parts.reduce((s, p) => s + (p.value && p.value > 0 ? p.value : 1), 0);
-      const bw = node.width ?? Math.min(520, Math.max(240, parts.length * 90));
+      // One whole is one length, however many pieces it is cut into: a bar of
+      // fourths drawn shorter than a bar of eighths, both "1 whole", undid the
+      // lesson it was drawn for (Oct 19 2026, raters on the eighths picture).
+      const bw = node.width ?? Math.max(480, parts.length * 44);
       const bh = 52;
       const top = node.total_label ? label(node.total_label, "m", "ink") : null;
       const h = bh + (top ? top.h + 20 : 0);

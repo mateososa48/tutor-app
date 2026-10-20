@@ -125,3 +125,11 @@ test("an axis reaches a step past its furthest move, so no arrow runs off it or 
   assert.match(out.svg, />-12</);
   assert.deepEqual(out.problems, []);
 });
+
+test("two bars cut into different numbers of pieces are the same length", () => {
+  const out = renderScene({ root: { type: "column", children: [
+    { type: "bar", parts: Array.from({ length: 8 }, () => ({})), id: "eighths" },
+    { type: "bar", parts: Array.from({ length: 4 }, () => ({})), id: "fourths" },
+  ] } });
+  assert.equal(out.parts.eighths.w, out.parts.fourths.w);
+});
