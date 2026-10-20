@@ -19,15 +19,16 @@ export type Size = "s" | "m" | "l";
 
 export type SceneNode =
   | { type: "row" | "column"; children: SceneNode[]; gap?: number; align?: "start" | "center" | "end"; id?: string }
-  | { type: "items"; icon: string; count: number; per_row?: number; crossed?: number; highlight?: number; size?: Size; id?: string }
-  | { type: "icon"; icon: string; size?: Size; id?: string }
+  | { type: "items"; icon: string; count: number; per_row?: number; crossed?: number; highlight?: number; size?: Size; color?: string; fill?: number; id?: string }
+  | { type: "icon"; icon: string; size?: Size; color?: string; fill?: number; id?: string }
   | { type: "container"; shape: "box" | "jar" | "bag" | "plate" | "circle" | "none"; child: SceneNode; label?: string; label_side?: "top" | "bottom"; id?: string }
   | { type: "label"; text: string; size?: Size; tone?: Tone; id?: string }
-  | { type: "bar"; parts: Array<{ value?: number; label?: string; shade?: boolean }>; width?: number; total_label?: string; id?: string }
+  | { type: "bar"; parts: Array<{ value?: number; label?: string; shade?: boolean | number }>; width?: number; unit?: number; total_label?: string; id?: string }
   | { type: "grid"; rows: number; cols: number; cell?: number; shaded?: number; top_label?: string; side_label?: string; id?: string }
-  | { type: "pie"; slices: number; shaded?: number; size?: Size; style?: "plain" | "pizza"; label?: string; id?: string }
+  | { type: "pie"; slices: number; shaded?: number; colors?: string[]; size?: Size; style?: "plain" | "pizza"; label?: string; id?: string }
+  | { type: "lineup"; icon?: string; values: number[]; labels?: string[]; color?: string; id?: string }
   | { type: "balance"; left: SceneNode; right: SceneNode; tilt?: -1 | 0 | 1; id?: string }
-  | { type: "axis"; min: number; max: number; step?: number; orientation?: "horizontal" | "vertical"; marks?: Array<{ at: number; icon?: string; label?: string; tone?: Tone }>; moves?: Array<{ from: number; to: number; label?: string }>; unit?: string; id?: string }
+  | { type: "axis"; min: number; max: number; step?: number; orientation?: "horizontal" | "vertical"; marks?: Array<{ at: number; icon?: string; label?: string; tone?: Tone }>; moves?: Array<{ from: number; to: number; label?: string }>; unit?: string; hide?: number[]; id?: string }
   | { type: "bundles"; bundles: number; size?: number; loose?: number; id?: string }
   | { type: "custom"; use: string; size?: Size; id?: string }
   | { type: "spacer"; w?: number; h?: number };
@@ -110,7 +111,103 @@ export function builtinObject(name: string): { svg: string; w: number; h: number
   return undefined;
 }
 
-function iconMarkup(name: string, x: number, y: number, size: number, defs: Scene["defs"], out: Out): void {
+// ── Objects that take a colour or a fill level (Oct 19 2026) ───────────
+// The test set's failures: socks that had to be black and white were one
+// yellow-and-blue emoji pair, cups that had to be 1, 1/2 and 3/4 full looked
+// the same, kids that had to differ in height were one size. These are drawn
+// here so a scene can say {"icon": "sock", "color": "black"} or
+// {"icon": "measuring_cup", "fill": 0.75}.
+
+const PAINT: Record<string, [string, string]> = {
+  red: ["#ff7a7e", "#d63a40"], blue: ["#6fb6ff", "#1d7ee6"], green: ["#6fd69a", "#15803d"], yellow: ["#ffd45e", "#c99400"],
+  orange: ["#ffb86b", "#c46b12"], purple: ["#c4a1ff", "#7c4dd6"], pink: ["#ff9ecf", "#d6457f"], black: ["#3a3a42", "#121215"],
+  white: ["#ffffff", "#5b5b66"], gray: ["#c9ccd2", "#6b717b"], grey: ["#c9ccd2", "#6b717b"], brown: ["#c08a5a", "#7a4a22"], sky: ["#bfe0ff", "#3d9cff"],
+};
+
+/** A colour name or hex as a fill and a darker rim. */
+export function paint(color: string | undefined, dflt: string): [string, string] {
+  const c = (color ?? dflt).trim().toLowerCase();
+  if (PAINT[c]) return PAINT[c];
+  if (/^#[0-9a-f]{6}$/.test(c)) return [c, "#1d1d21"];
+  return PAINT[dflt];
+}
+
+const clamp01 = (v: number | undefined, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : d);
+
+/** Objects drawn from parameters: name → a 24×24 body, or undefined when the name is not one of them. */
+function paramObject(rawName: string, opts: { color?: string; fill?: number }): string | undefined {
+  const name = rawName.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/_coins?$/, "");
+  const key = [name, name.replace(/ies$/, "y"), name.replace(/es$/, ""), name.replace(/s$/, ""), name.replace(/ren$/, "")].find((n) => PARAM_OBJECTS[n]);
+  return key ? PARAM_OBJECTS[key](opts) : undefined;
+}
+
+const PARAM_OBJECTS: Record<string, (o: { color?: string; fill?: number }) => string> = {
+  marble: (o) => {
+    const [f, r] = paint(o.color, "blue");
+    return `<circle cx="12" cy="12" r="10.5" fill="${f}" stroke="${r}" stroke-width="1.6"/><ellipse cx="8.3" cy="8" rx="3.2" ry="2.1" fill="#ffffff" opacity="0.75"/>`;
+  },
+  sock: (o) => {
+    const [f, r] = paint(o.color, "blue");
+    return `<path d="M8 2 H15 V12 L19.5 16 C21.5 18 20 22.5 16.5 21.5 L8.5 16.5 C7 15.5 8 13.5 8 12 Z" fill="${f}" stroke="${r === "#5b5b66" ? "#5b5b66" : "#1d1d21"}" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 5 H15" stroke="${r}" stroke-width="1.2"/>`;
+  },
+  block: (o) => {
+    const [f, r] = paint(o.color, "orange");
+    return `<rect x="3" y="3" width="18" height="18" rx="3" fill="${f}" stroke="${r}" stroke-width="1.6"/>`;
+  },
+  cube: (o) => {
+    const [f, r] = paint(o.color, "orange");
+    return `<path d="M4 8 L12 4 L20 8 V17 L12 21 L4 17 Z" fill="${f}" stroke="${r}" stroke-width="1.4" stroke-linejoin="round"/><path d="M4 8 L12 12 L20 8 M12 12 V21" fill="none" stroke="${r}" stroke-width="1.2"/>`;
+  },
+  shirt: (o) => {
+    const [f] = paint(o.color, "blue");
+    return `<path d="M8 3 L12 5.5 L16 3 L21 7 L18.5 11 L17 10 V21 H7 V10 L5.5 11 L3 7 Z" fill="${f}" stroke="#1d1d21" stroke-width="1.3" stroke-linejoin="round"/>`;
+  },
+  pants: (o) => {
+    const [f] = paint(o.color, "blue");
+    return `<path d="M6 3 H18 L19 21 H13.5 L12 10 L10.5 21 H5 Z" fill="${f}" stroke="#1d1d21" stroke-width="1.3" stroke-linejoin="round"/><path d="M6 6 H18" stroke="#1d1d21" stroke-width="1"/>`;
+  },
+  measuring_cup: (o) => {
+    const fl = clamp01(o.fill, 0);
+    const top = 5;
+    const bot = 21;
+    const y = bot - (bot - top) * fl;
+    return `<path d="M5 4 H17 L16 21 H6 Z" fill="#eaf4ff"/>${fl > 0 ? `<path d="M${n1(5 + (y - 4) / 17)} ${n1(y)} H${n1(17 - (y - 4) / 17)} L16 21 H6 Z" fill="#f4ecd8"/>` : ""}<path d="M5 4 H17 L16 21 H6 Z" fill="none" stroke="#1d1d21" stroke-width="1.4" stroke-linejoin="round"/><path d="M17 7 C21 7 21 13 16.5 13" fill="none" stroke="#1d1d21" stroke-width="1.4"/><path d="M8 8.25 H10 M8 12.5 H11 M8 16.75 H10" stroke="#5b5b66" stroke-width="1"/>`;
+  },
+  glass: (o) => {
+    const fl = clamp01(o.fill, 0.5);
+    const y = 21 - 17 * fl;
+    const [f] = paint(o.color, "sky");
+    return `${fl > 0 ? `<path d="M${n1(6 + (y - 4) * 0.06)} ${n1(y)} H${n1(18 - (y - 4) * 0.06)} L17 21 H7 Z" fill="${f}"/>` : ""}<path d="M6 4 H18 L17 21 H7 Z" fill="none" stroke="#1d1d21" stroke-width="1.4" stroke-linejoin="round"/>`;
+  },
+  bucket: (o) => {
+    const fl = clamp01(o.fill, 0);
+    const y = 21 - 14 * fl;
+    const [f] = paint(o.color, "sky");
+    return `<path d="M5 7 C5 1 19 1 19 7" fill="none" stroke="#5b5b66" stroke-width="1.3"/>${fl > 0 ? `<path d="M${n1(4 + (y - 7) * 0.1)} ${n1(y)} H${n1(20 - (y - 7) * 0.1)} L18 21 H6 Z" fill="${f}"/>` : ""}<path d="M4 7 H20 L18 21 H6 Z" fill="none" stroke="#1d1d21" stroke-width="1.4" stroke-linejoin="round"/>`;
+  },
+  kid: (o) => {
+    const [f] = paint(o.color, "blue");
+    return `<circle cx="12" cy="5" r="3.4" fill="#f2c6a0" stroke="#1d1d21" stroke-width="1.2"/><path d="M8 9.5 H16 L17 16 H14.8 L14.5 23 H9.5 L9.2 16 H7 Z" fill="${f}" stroke="#1d1d21" stroke-width="1.2" stroke-linejoin="round"/>`;
+  },
+};
+PARAM_OBJECTS.cup = PARAM_OBJECTS.measuring_cup;
+PARAM_OBJECTS.flour_cup = PARAM_OBJECTS.measuring_cup;
+PARAM_OBJECTS.child = PARAM_OBJECTS.kid;
+PARAM_OBJECTS.student = PARAM_OBJECTS.kid;
+PARAM_OBJECTS.person = PARAM_OBJECTS.kid;
+PARAM_OBJECTS.trousers = PARAM_OBJECTS.pants;
+PARAM_OBJECTS.jeans = PARAM_OBJECTS.pants;
+export const PARAM_OBJECT_NAMES = Object.keys(PARAM_OBJECTS);
+
+function iconMarkup(name: string, x: number, y: number, size: number, defs: Scene["defs"], out: Out, opts: { color?: string; fill?: number } = {}): void {
+  // Objects that take a colour or a fill are drawn from their parameters
+  // whenever one is given, and always for the ones the emoji set lacks.
+  const pbody = opts.color !== undefined || opts.fill !== undefined || /^(socks?|pants|trousers|jeans|glass(es)?|buckets?|kids?|child|children|students?|persons?|cubes?)$/i.test(name.trim()) ? paramObject(name, opts) : undefined;
+  if (pbody) {
+    const s = size / 24;
+    out.svg.push(`<g transform="translate(${n1(x)} ${n1(y)}) scale(${n1(s * 1000) / 1000})">${pbody}</g>`);
+    return;
+  }
   const def = defs?.[name] ?? builtinObject(name);
   if (def) {
     const s = size / Math.max(def.w, def.h);
@@ -209,11 +306,12 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
       // A lone object nobody can draw is left out rather than shown as a dot
       // (Oct 17 2026: "road" beside the car read as a stray circle). Rows of
       // items keep their dots, because there the count is the point.
-      if (!scene.defs?.[name] && !builtinObject(name) && !resolveIconName(name)) {
+      if (!scene.defs?.[name] && !builtinObject(name) && !resolveIconName(name) && !paramObject(name, {})) {
         out.problems.push(`no icon or def named "${name}"`);
         return { w: 0, h: 0, draw: () => {} };
       }
-      return withId({ w: size, h: size, draw: (x, y, o) => iconMarkup(name, x, y, size, scene.defs, o) }, node.id);
+      const opts = node.type === "icon" ? { color: node.color, fill: node.fill } : {};
+      return withId({ w: size, h: size, draw: (x, y, o) => iconMarkup(name, x, y, size, scene.defs, o, opts) }, node.id);
     }
 
     case "items": {
@@ -239,7 +337,7 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
               const cx = x + (i % per) * (size + gap);
               const cy = y + Math.floor(i / per) * (size + gap);
               if (i < lit) o.svg.push(`<circle cx="${n1(cx + size / 2)}" cy="${n1(cy + size / 2)}" r="${n1(size * 0.62)}" fill="${SKY_SOFT}"/>`);
-              iconMarkup(node.icon, cx, cy, size, scene.defs, o);
+              iconMarkup(node.icon, cx, cy, size, scene.defs, o, { color: node.color, fill: node.fill });
               // The last ones are the crossed ones (taken away).
               if (i >= count - crossed) {
                 const p = size * 0.12;
@@ -346,7 +444,9 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
       // One whole is one length, however many pieces it is cut into: a bar of
       // fourths drawn shorter than a bar of eighths, both "1 whole", undid the
       // lesson it was drawn for (Oct 19 2026, raters on the eighths picture).
-      const bw = node.width ?? Math.max(480, parts.length * 44);
+      // `unit` instead draws every unit the same size across bars (a tape
+      // diagram: Lia 1 box, Sam 3 boxes of that size; Oct 19 2026).
+      const bw = node.width ?? (node.unit && node.unit > 0 ? Math.max(40, Math.min(720, total * node.unit)) : Math.max(480, parts.length * 44));
       const bh = 52;
       const top = node.total_label ? label(node.total_label, "m", "ink") : null;
       const h = bh + (top ? top.h + 20 : 0);
@@ -363,8 +463,13 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
             let at = x;
             parts.forEach((p, i) => {
               const pw = (bw * (p.value && p.value > 0 ? p.value : 1)) / total;
-              o.svg.push(`<rect x="${n1(at)}" y="${n1(by)}" width="${n1(pw)}" height="${bh}" fill="${p.shade ? SKY_SOFT : "#ffffff"}" stroke="${COLORS.ink}" stroke-width="${STROKE}"/>`);
-              if (p.shade) o.svg.push(`<rect x="${n1(at + 2)}" y="${n1(by + 2)}" width="${n1(pw - 4)}" height="${bh - 4}" fill="none" stroke="${COLORS.sky}" stroke-width="2"/>`);
+              // `shade` may be part of a piece (0.5 shades its left half: a tip of one and a half tenths).
+              const sh = p.shade === true ? 1 : typeof p.shade === "number" ? Math.max(0, Math.min(1, p.shade)) : 0;
+              o.svg.push(`<rect x="${n1(at)}" y="${n1(by)}" width="${n1(pw)}" height="${bh}" fill="#ffffff" stroke="${COLORS.ink}" stroke-width="${STROKE}"/>`);
+              if (sh > 0) {
+                o.svg.push(`<rect x="${n1(at + 1.25)}" y="${n1(by + 1.25)}" width="${n1(pw * sh - 2.5)}" height="${bh - 2.5}" fill="${SKY_SOFT}"/>`);
+                o.svg.push(`<rect x="${n1(at + 2)}" y="${n1(by + 2)}" width="${n1(Math.max(0, pw * sh - 4))}" height="${bh - 4}" fill="none" stroke="${COLORS.sky}" stroke-width="2"/>`);
+              }
               if (p.label) {
                 const l = label(p.label, pw < 70 ? "s" : "m", "ink");
                 l.draw(at + (pw - l.w) / 2, by + (bh - l.h) / 2, o);
@@ -430,8 +535,11 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
               const rr = pizza ? r - 9 : r;
               const big = a1 - a0 > Math.PI ? 1 : 0;
               const path = slices === 1 ? `M${n1(cx - rr)} ${n1(cy)}a${n1(rr)} ${n1(rr)} 0 1 0 ${n1(rr * 2)} 0a${n1(rr)} ${n1(rr)} 0 1 0 ${n1(-rr * 2)} 0` : `M${n1(cx)} ${n1(cy)}L${n1(cx + rr * Math.cos(a0))} ${n1(cy + rr * Math.sin(a0))}A${n1(rr)} ${n1(rr)} 0 ${big} 1 ${n1(cx + rr * Math.cos(a1))} ${n1(cy + rr * Math.sin(a1))}Z`;
-              const fill = i < shaded ? (pizza ? "#e5484d" : SKY_SOFT) : pizza ? "none" : "#ffffff";
-              o.svg.push(`<path d="${path}" fill="${fill}" fill-opacity="${pizza && i < shaded ? 0.45 : 1}" stroke="${COLORS.ink}" stroke-width="2"/>`);
+              // `colors` paints each part (a spinner's red, blue, green, yellow).
+              const own = node.colors?.[i] ? paint(node.colors[i], "sky")[0] : null;
+              const fill = own ?? (i < shaded ? (pizza ? "#e5484d" : SKY_SOFT) : pizza ? "none" : "#ffffff");
+              o.svg.push(`<path d="${path}" fill="${fill}" fill-opacity="${pizza && i < shaded && !own ? 0.45 : 1}" stroke="${COLORS.ink}" stroke-width="2"/>`);
+              if (node.id) o.parts[`${node.id}.${i + 1}`] = { x: n1(cx + rr * 0.55 * Math.cos((a0 + a1) / 2) - 12), y: n1(cy + rr * 0.55 * Math.sin((a0 + a1) / 2) - 12), w: 24, h: 24 };
               if (pizza && i < shaded) {
                 // Pepperoni on the shaded slice, so it reads as the slice you take.
                 const am = (a0 + a1) / 2;
@@ -440,6 +548,45 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
             }
             o.svg.push(`<circle cx="${n1(cx)}" cy="${n1(cy)}" r="${n1(r)}" fill="none" stroke="${COLORS.ink}" stroke-width="${STROKE}"/>`);
             if (lab) lab.draw(cx - lab.w / 2, y + d + 10, o);
+          },
+        },
+        node.id,
+      );
+    }
+
+    case "lineup": {
+      // Figures standing side by side, each as tall as its value (to scale,
+      // from a common floor), labelled under its feet: heights, a bar chart a
+      // child reads as people (Oct 19 2026, the median-height case).
+      const values = (node.values ?? []).filter((v) => Number.isFinite(v)).slice(0, 12);
+      if (!values.length) {
+        out.problems.push("lineup: no values");
+        return { w: 0, h: 0, draw: () => {} };
+      }
+      const max = Math.max(...values.map((v) => Math.abs(v)), 1e-9);
+      const tallest = 190;
+      const slot = 74;
+      const labs = values.map((v, i) => label(node.labels?.[i] ?? String(v), "s", "ink"));
+      const labH = Math.max(...labs.map((l) => l.h));
+      const w = values.length * slot;
+      const h = tallest + 10 + labH;
+      return withId(
+        {
+          w,
+          h,
+          draw: (x, y, o) => {
+            const floor = y + tallest;
+            o.svg.push(`<path d="M${n1(x - 6)} ${n1(floor)}H${n1(x + w + 6)}" stroke="${COLORS.pencil}" stroke-width="2" stroke-linecap="round"/>`);
+            values.forEach((v, i) => {
+              const hh = (tallest * Math.abs(v)) / max;
+              const cx = x + i * slot + slot / 2;
+              // The figure's own 24-unit box, stretched to its height.
+              const sc = hh / 24;
+              const body = paramObject(node.icon ?? "kid", { color: node.color }) ?? paramObject("kid", { color: node.color })!;
+              o.svg.push(`<g transform="translate(${n1(cx - 12 * sc * 0.75)} ${n1(floor - hh)}) scale(${n1(sc * 0.75 * 1000) / 1000} ${n1(sc * 1000) / 1000})">${body}</g>`);
+              labs[i].draw(cx - labs[i].w / 2, floor + 8, o);
+              if (node.id) o.parts[`${node.id}.${i + 1}`] = { x: n1(cx - slot / 2), y: n1(floor - hh), w: slot, h: n1(hh) };
+            });
           },
         },
         node.id,
@@ -522,7 +669,7 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
                 const ty = top + i * gapPx;
                 const zero = Math.abs(v) < 1e-9;
                 o.svg.push(`<path d="M${n1(ax - (zero ? 10 : 6))} ${n1(ty)}H${n1(ax + (zero ? 10 : 6))}" ${s}/>`);
-                const t = String(v);
+                const t = node.hide?.some((hv) => Math.abs(hv - v) < 1e-9) ? "?" : String(v);
                 o.svg.push(`<text x="${n1(ax - 12 - textWidth(t, FONT_PX.s))}" y="${n1(ty + 5)}" font-family="${FONT}" font-size="${FONT_PX.s}" font-weight="${zero ? 700 : 500}" fill="${COLORS.ink}">${esc(t)}</text>`);
                 if (zero) o.svg.push(`<path d="M${n1(ax + 10)} ${n1(ty)}H${n1(x + w)}" stroke="${COLORS.green}" stroke-width="2" stroke-dasharray="6 5"/>`);
               }
@@ -567,7 +714,7 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
                 const v = min + i * step;
                 const tx = left + i * gapPx;
                 o.svg.push(`<path d="M${n1(tx)} ${n1(ay - 6)}V${n1(ay + 6)}" ${s}/>`);
-                const t = String(v) + (node.unit && i === ticks - 1 ? ` ${node.unit}` : "");
+                const t = (node.hide?.some((hv) => Math.abs(hv - v) < 1e-9) ? "?" : String(v)) + (node.unit && i === ticks - 1 ? ` ${node.unit}` : "");
                 o.svg.push(`<text x="${n1(tx - textWidth(String(v), FONT_PX.s) / 2)}" y="${n1(ay + 26)}" font-family="${FONT}" font-size="${FONT_PX.s}" fill="${COLORS.ink}">${esc(t)}</text>`);
               }
               marks.forEach((m, i) => {

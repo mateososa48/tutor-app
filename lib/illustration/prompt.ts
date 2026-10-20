@@ -11,7 +11,7 @@
 // Pure: the prompt text, the request it is built from, and the label guard.
 
 import { BOARD_ICON_NAMES } from "../board-icon-names.generated";
-import { BUILTIN_NAMES, type Scene, type SceneNode } from "./scene";
+import { BUILTIN_NAMES, PARAM_OBJECT_NAMES, type Scene, type SceneNode } from "./scene";
 
 export type IllustrateRequest = {
   grade: string;
@@ -46,19 +46,20 @@ const SCENE_DOC = `Reply with one JSON scene and nothing else. A layout engine p
   "brackets"?: [{ "over": id or [ids], "side": "top"|"bottom"|"left"|"right", "label"?: string }] }
 A node is one of:
   { "type": "row" | "column", "children": [nodes], "gap"?: px, "id"? }
-  { "type": "items", "icon": name, "count": n, "per_row"?: n, "crossed"?: n (the last n get a red X), "highlight"?: n (the first n get a sky halo), "size"?: "s"|"m"|"l", "id"? }
-  { "type": "icon", "icon": name, "size"?, "id"? }
+  { "type": "items", "icon": name, "count": n, "per_row"?: n, "crossed"?: n (the last n get a red X), "highlight"?: n (the first n get a sky halo), "size"?: "s"|"m"|"l", "color"?: colour, "fill"?: 0-1, "id"? }
+  { "type": "icon", "icon": name, "size"?, "color"?: colour, "fill"?: 0-1, "id"? }
   { "type": "container", "shape": "box"|"jar"|"bag"|"plate"|"circle"|"none", "child": node, "label"?: string, "label_side"?: "top"|"bottom", "id"? }
   { "type": "label", "text": string, "size"?, "tone"?: "ink"|"pencil"|"sky"|"green"|"red", "id"? }
-  { "type": "bar", "parts": [{ "value"?: n, "label"?: string, "shade"?: bool }], "total_label"?: string, "id"? }   // equal parts unless values are given
+  { "type": "bar", "parts": [{ "value"?: n, "label"?: string, "shade"?: bool or 0-1 }], "total_label"?: string, "unit"?: px, "id"? }   // equal parts unless values are given; every bar is one whole of the same length, unless "unit" sets the size of one part so boxes line up across bars (tape diagrams: "Lia" 1 box and "Sam" 3 boxes, both unit 60); "shade": 0.5 shades half a part
   { "type": "grid", "rows": n, "cols": n, "shaded"?: n, "top_label"?: string, "side_label"?: string, "id"? }
-  { "type": "pie", "slices": n, "shaded"?: n, "style"?: "plain"|"pizza", "label"?: string, "id"? }   // exactly equal slices
+  { "type": "pie", "slices": n, "shaded"?: n, "colors"?: [colour per slice], "style"?: "plain"|"pizza", "label"?: string, "id"? }   // exactly equal slices; a spinner is a plain pie with colors
+  { "type": "lineup", "icon"?: "kid", "values": [n, ...], "labels"?: [string, ...], "id"? }   // figures side by side, each as tall as its value, to scale
   { "type": "balance", "left": node, "right": node, "tilt"?: -1|0|1, "id"? }
   { "type": "axis", "min": n, "max": n, "step"?: n, "orientation"?: "horizontal"|"vertical", "unit"?: string, "marks"?: [{ "at": n, "icon"?: name, "label"?: string }], "moves"?: [{ "from": n, "to": n, "label"?: string }], "id"? }   // moves are arrows along the axis
   { "type": "bundles", "bundles": n, "size"?: 10, "loose"?: n, "id"? }   // place value: tied bundles of sticks and loose sticks; parts id.bundle1…, id.loose
   { "type": "spacer", "w"?: px, "h"?: px }
 Give an id to every part the tutor may point at, short and plain ("jar1", "left", "total").
-Objects drawn for you: ${BUILTIN_NAMES.join(" ")}. Emoji icons: ${ICONS}
+Objects drawn for you: ${BUILTIN_NAMES.join(" ")}. Objects that take a "color" (red, blue, green, yellow, orange, purple, pink, black, white, gray, brown): ${PARAM_OBJECT_NAMES.filter((n) => !["cup", "flour_cup", "child", "student", "person", "trousers", "jeans"].includes(n)).join(" ")}; measuring_cup, glass and bucket also take "fill" from 0 (empty) to 1 (full). Use these whenever colour or how full matters. Emoji icons: ${ICONS}
 
 Example (not this lesson): 8 apples shared into 2 baskets, each basket labelled:
 {"root":{"type":"row","gap":40,"children":[{"type":"container","shape":"box","id":"b1","label":"Basket 1","child":{"type":"items","icon":"apple","count":4,"per_row":2}},{"type":"container","shape":"box","id":"b2","label":"Basket 2","child":{"type":"items","icon":"apple","count":4,"per_row":2}}]},"brackets":[{"over":["b1","b2"],"side":"top","label":"8 apples"}]}`;
@@ -149,12 +150,20 @@ export function guardLabels(scene: Scene, seen: string): { scene: Scene; withhel
         return { ...node, total_label: fix(node.total_label), parts: (node.parts ?? []).map((p) => ({ ...p, label: fix(p.label) })) };
       case "grid":
         return { ...node, top_label: fix(node.top_label), side_label: fix(node.side_label) };
-      case "pie":
-        return { ...node, label: fix(node.label) };
       case "balance":
         return { ...node, left: walk(node.left), right: walk(node.right) };
-      case "axis":
-        return { ...node, marks: node.marks?.map((m) => ({ ...m, label: fix(m.label) })), moves: node.moves?.map((m) => ({ ...m, label: fix(m.label) })) };
+      case "axis": {
+        // Where a move lands is the answer to "where do you end up?": its tick
+        // shows "?" unless the student has had that number (Oct 19 2026: the
+        // arrow from 4 down 9 ended on a labelled -5).
+        const hide = [...(node.hide ?? []), ...(node.moves ?? []).map((m) => m.to).filter((v) => Number.isFinite(v) && !known.has(String(v)))];
+        if (hide.length) withheld.push(...hide.filter((v) => !(node.hide ?? []).includes(v)).map(String));
+        return { ...node, hide: hide.length ? [...new Set(hide)] : node.hide, marks: node.marks?.map((m) => ({ ...m, label: fix(m.label) })), moves: node.moves?.map((m) => ({ ...m, label: fix(m.label) })) };
+      }
+      case "lineup":
+        return { ...node, labels: node.labels?.map((l) => fix(l) ?? l) };
+      case "pie":
+        return { ...node, label: fix(node.label) };
       default:
         return node;
     }

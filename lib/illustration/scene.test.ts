@@ -133,3 +133,26 @@ test("two bars cut into different numbers of pieces are the same length", () => 
   ] } });
   assert.equal(out.parts.eighths.w, out.parts.fourths.w);
 });
+
+test("objects take a colour and a fill; a lineup stands to scale; a bar can count in units; hidden ticks read ?", () => {
+  const socks = renderScene({ root: { type: "row", children: [{ type: "items", icon: "socks", count: 2, color: "black", id: "b" }, { type: "items", icon: "sock", count: 1, color: "white", id: "w" }] } });
+  assert.deepEqual(socks.problems, []);
+  assert.equal(count(socks.svg, "#3a3a42"), 2);
+  const cups = renderScene({ root: { type: "row", children: [0.5, 0.75].map((f) => ({ type: "icon" as const, icon: "measuring_cup", fill: f })) } });
+  assert.equal(count(cups.svg, "#f4ecd8"), 2);
+  const kids = renderScene({ root: { type: "lineup", values: [140, 152, 135], id: "k" } });
+  assert.ok(kids.parts["k.2"].h > kids.parts["k.3"].h, "taller value, taller figure");
+  const tape = renderScene({ root: { type: "column", children: [
+    { type: "bar", unit: 60, parts: [{}], id: "lia" },
+    { type: "bar", unit: 60, parts: [{}, {}, {}], id: "sam" },
+  ] } });
+  assert.equal(tape.parts["sam.1"].w, tape.parts["lia.1"].w);
+  const axis = renderScene({ root: { type: "axis", orientation: "vertical", min: -10, max: 10, hide: [-5] } });
+  assert.match(axis.svg, />\?</);
+  assert.doesNotMatch(axis.svg, />-5</);
+});
+
+test("a spinner's parts take their own colours", () => {
+  const out = renderScene({ root: { type: "pie", slices: 4, colors: ["red", "blue", "green", "yellow"], id: "s" } });
+  for (const hex of ["#ff7a7e", "#6fb6ff", "#6fd69a", "#ffd45e"]) assert.match(out.svg, new RegExp(hex));
+});

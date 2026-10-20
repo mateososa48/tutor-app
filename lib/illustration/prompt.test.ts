@@ -34,7 +34,9 @@ test("numbers already on the board or in the lesson stay, fractions and negative
   const axis = out.root as { marks: Array<{ label: string }>; moves: Array<{ label: string }> };
   assert.equal(axis.marks[0].label, "-7");
   assert.equal(axis.moves[0].label, "down 4");
-  assert.deepEqual(withheld, []);
+  // Where the move lands (-11) is the answer: its tick shows "?".
+  assert.deepEqual((out.root as { hide?: number[] }).hide, [-11]);
+  assert.deepEqual(withheld, ["-11"]);
 });
 
 test("model-written objects never get through", () => {

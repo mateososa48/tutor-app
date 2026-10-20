@@ -39,8 +39,10 @@ export function resolveIconName(input: string): BoardIconName | null {
   // last word of a phrase ("red apple", "chocolate chip cookie")
   const last = key.split("_").pop() ?? key;
   if (last !== key) return resolveIconName(last);
-  // a name that contains the word
-  const partial = names.find((n) => n.includes(key) || key.includes(n));
+  // a name that shares a whole word ("ice_cream" for "cream"); never a word
+  // inside another word ("pants" became "ants", Oct 19 2026)
+  const words = key.split("_");
+  const partial = names.find((n) => n.split("_").includes(key) || words.includes(n));
   return (partial as BoardIconName | undefined) ?? null;
 }
 

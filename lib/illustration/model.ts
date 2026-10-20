@@ -31,7 +31,17 @@ export function callCost(model: string, usage: Record<string, unknown> | undefin
   return (n("promptTokenCount") * p.in + (n("candidatesTokenCount") + n("thoughtsTokenCount")) * p.out) / 1e6;
 }
 
-export async function callIllustrator(model: string, user: string, signal?: AbortSignal): Promise<ModelReply | null> {
+/**
+ * One illustrator call. `opts.system` replaces the production system prompt
+ * (experiments); `opts.messages` continues a conversation (the repair turn).
+ */
+export async function callIllustrator(
+  model: string,
+  user: string,
+  signal?: AbortSignal,
+  opts: { system?: string; messages?: Array<{ role: "user" | "assistant"; content: string }>; effort?: "low" | "medium" | "high"; thinking?: boolean } = {},
+): Promise<ModelReply | null> {
+  const system = opts.system ?? ILLUSTRATOR_SYSTEM;
   if (model.startsWith("claude")) {
     const key = process.env.ANTHROPIC_API_KEY;
     if (!key) return null;
@@ -40,11 +50,11 @@ export async function callIllustrator(model: string, user: string, signal?: Abor
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model,
-        max_tokens: 3000,
-        output_config: { effort: "low" },
-        thinking: { type: "disabled" },
-        system: [{ type: "text", text: ILLUSTRATOR_SYSTEM, cache_control: { type: "ephemeral" } }],
-        messages: [{ role: "user", content: user }],
+        max_tokens: opts.thinking ? 10000 : 3000,
+        output_config: { effort: opts.effort ?? "low" },
+        ...(opts.thinking ? {} : { thinking: { type: "disabled" } }),
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        messages: opts.messages ?? [{ role: "user", content: user }],
       }),
       signal,
     });
@@ -59,7 +69,7 @@ export async function callIllustrator(model: string, user: string, signal?: Abor
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: ILLUSTRATOR_SYSTEM }] },
+      systemInstruction: { parts: [{ text: system }] },
       contents: [{ role: "user", parts: [{ text: user }] }],
       generationConfig: { responseMimeType: "application/json", maxOutputTokens: 3000, thinkingConfig: { thinkingLevel: "low" } },
     }),
