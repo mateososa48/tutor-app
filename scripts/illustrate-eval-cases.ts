@@ -52,7 +52,7 @@ const OLD_COUNTS: Record<string, EvalCase["counts"]> = {
   paint: [{ match: "blue|paint|can|bucket", n: 0 }],
 };
 const OLD_FORBID: Record<string, string[]> = {
-  marbles: ["4"], cookies: ["30"], elevator: ["-11", "−11"], discount: ["30", "$30"], tiles: ["12"], balance: ["3"],
+  marbles: ["4"], cookies: ["30"], elevator: ["-11", "−11"], discount: ["30", "$30"], tiles: ["12"], balance: ["x = 3", "x=3"],
   trip: ["50"], bag: ["3/8"], bundles: ["34"], pizza: [], eighths: ["5/8"], thermometer: ["5"], paint: ["6"], chairs: ["48"], coins: ["95"],
 };
 

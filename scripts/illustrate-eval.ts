@@ -49,16 +49,24 @@ export function countObjects(scene: Scene | null | undefined, re: RegExp): numbe
     if (!node) return;
     switch (node.type) {
       case "items":
-        if (re.test(node.icon.toLowerCase().replace(/[\s-]+/g, "_"))) n += Math.max(0, Math.round(node.count));
+        if (re.test(`${node.color ?? ""} ${node.icon}`.toLowerCase().replace(/[\s-]+/g, "_"))) n += Math.max(0, Math.round(node.count));
         break;
       case "icon":
-        if (re.test(node.icon.toLowerCase())) n += 1;
+        if (re.test(`${node.color ?? ""} ${node.icon}`.toLowerCase())) n += 1;
+        break;
+      case "pictograph":
+        for (const r of node.rows ?? []) if (re.test(`${r.color ?? ""} ${r.icon}`.toLowerCase())) n += Math.max(0, Math.round(r.count));
+        break;
+      case "lineup":
+        if (re.test((node.icon ?? "kid").toLowerCase())) n += (node.values ?? []).length;
         break;
       case "row":
       case "column":
         (node.children ?? []).forEach(walk);
         break;
       case "container":
+        // A plate, jar, bag or box drawn as a container counts as one of itself.
+        if (re.test(node.shape)) n += 1;
         walk(node.child);
         break;
       case "balance":
@@ -376,7 +384,7 @@ export function summarize(rows: Row[], arms: string[]): string[] {
 }
 
 function gallery(rows: Row[], out: string, label: string) {
-  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  const esc = (s?: string) => (s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
   const cards = rows
     .map((r) => {
       const png = `${r.arm}.${r.caseId}.s${r.sample}.png`;

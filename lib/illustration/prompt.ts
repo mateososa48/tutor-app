@@ -29,8 +29,8 @@ const DESIGN = `How the picture should be:
 - One idea, the one asked for. Nothing decorative.
 - Quantities exactly as stated: count every object; equal parts are exactly equal.
 - Words are labels of one to four words, never sentences.
-- Never show a result the student has not said yet: no totals, no answers, no "= 4". Label what is given; use "?" for the unknown. The tutor asks for it next.
-- Draw every object the request names, all of them: "12 marbles" means twelve marbles in the picture. If putting them into groups would show the answer, draw them loose beside the empty containers.
+- Never write a result the student has not said yet: no totals, no answers, no "= 4". Label what is given; use "?" for the unknown. The tutor asks for it next.
+- Draw every object the request names, all of them: "12 marbles" means twelve marbles in the picture, placed where the request says. Objects the student can count are not a written answer: if the request puts them into the containers, put them in.
 - Up and down (floors, temperature, height, depth) is a vertical axis with marks and moves, never objects in a row.
 - A pie or a grid stands on its own, never inside a container.
 - Say each thing once: a bracket or an edge label, never both with the same words.
@@ -50,10 +50,11 @@ A node is one of:
   { "type": "icon", "icon": name, "size"?, "color"?: colour, "fill"?: 0-1, "id"? }
   { "type": "container", "shape": "box"|"jar"|"bag"|"plate"|"circle"|"none", "child": node, "label"?: string, "label_side"?: "top"|"bottom", "id"? }
   { "type": "label", "text": string, "size"?, "tone"?: "ink"|"pencil"|"sky"|"green"|"red", "id"? }
-  { "type": "bar", "parts": [{ "value"?: n, "label"?: string, "shade"?: bool or 0-1 }], "total_label"?: string, "unit"?: px, "id"? }   // equal parts unless values are given; every bar is one whole of the same length, unless "unit" sets the size of one part so boxes line up across bars (tape diagrams: "Lia" 1 box and "Sam" 3 boxes, both unit 60); "shade": 0.5 shades half a part
+  { "type": "bar", "parts": [{ "value"?: n, "label"?: string, "shade"?: bool or 0-1 }], "shaded"?: n, "total_label"?: string, "unit"?: px, "id"? }   // equal parts unless values are given; every bar is one whole of the same length, unless "unit" sets the size of one part so boxes line up across bars (tape diagrams: "Lia" 1 box and "Sam" 3 boxes, both unit 60); "shaded": 1.5 shades one and a half parts from the left (use it rather than "shade" on each part); parts id.1, id.2… and id.shaded (the shaded stretch, for a bracket)
   { "type": "grid", "rows": n, "cols": n, "shaded"?: n, "top_label"?: string, "side_label"?: string, "id"? }
   { "type": "pie", "slices": n, "shaded"?: n, "colors"?: [colour per slice], "style"?: "plain"|"pizza", "label"?: string, "id"? }   // exactly equal slices; a spinner is a plain pie with colors
   { "type": "lineup", "icon"?: "kid", "values": [n, ...], "labels"?: [string, ...], "id"? }   // figures side by side, each as tall as its value, to scale
+  { "type": "pictograph", "rows": [{ "label": string, "icon": name, "count": n, "color"?: colour }], "id"? }   // a picture graph, rows lined up on the left; parts id.1, id.2…
   { "type": "balance", "left": node, "right": node, "tilt"?: -1|0|1, "id"? }
   { "type": "axis", "min": n, "max": n, "step"?: n, "orientation"?: "horizontal"|"vertical", "unit"?: string, "marks"?: [{ "at": n, "icon"?: name, "label"?: string }], "moves"?: [{ "from": n, "to": n, "label"?: string }], "id"? }   // moves are arrows along the axis
   { "type": "bundles", "bundles": n, "size"?: 10, "loose"?: n, "id"? }   // place value: tied bundles of sticks and loose sticks; parts id.bundle1…, id.loose
@@ -63,6 +64,15 @@ Objects drawn for you: ${BUILTIN_NAMES.join(" ")}. Objects that take a "color" (
 
 Example (not this lesson): 8 apples shared into 2 baskets, each basket labelled:
 {"root":{"type":"row","gap":40,"children":[{"type":"container","shape":"box","id":"b1","label":"Basket 1","child":{"type":"items","icon":"apple","count":4,"per_row":2}},{"type":"container","shape":"box","id":"b2","label":"Basket 2","child":{"type":"items","icon":"apple","count":4,"per_row":2}}]},"brackets":[{"over":["b1","b2"],"side":"top","label":"8 apples"}]}`;
+
+/**
+ * The system prompt with the icon names either listed in full (the curated
+ * 380, the default) or left to the request, which then lists the icons found
+ * for it in the larger library (lib/illustration/icon-library.ts).
+ */
+export function illustratorSystem(icons: "list" | "request" = "list"): string {
+  return icons === "list" ? ILLUSTRATOR_SYSTEM : ILLUSTRATOR_SYSTEM.replace(/Emoji icons: [^\n]*/, "Other icons: the request lists the icon names found for this picture; use those exact names, or the objects drawn for you above.");
+}
 
 export const ILLUSTRATOR_SYSTEM = `You draw one picture on a math tutor's shared whiteboard, in a live voice lesson with a student in grades 5-12. The tutor has just said "let me draw that" and is talking while you draw, so the picture has to be right the first time.
 

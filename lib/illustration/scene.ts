@@ -18,15 +18,16 @@ export type Tone = "ink" | "pencil" | "sky" | "green" | "red";
 export type Size = "s" | "m" | "l";
 
 export type SceneNode =
-  | { type: "row" | "column"; children: SceneNode[]; gap?: number; align?: "start" | "center" | "end"; id?: string }
+  | { type: "row" | "column"; children: SceneNode[]; gap?: number; align?: "start" | "center" | "end"; nowrap?: boolean; id?: string }
   | { type: "items"; icon: string; count: number; per_row?: number; crossed?: number; highlight?: number; size?: Size; color?: string; fill?: number; id?: string }
   | { type: "icon"; icon: string; size?: Size; color?: string; fill?: number; id?: string }
   | { type: "container"; shape: "box" | "jar" | "bag" | "plate" | "circle" | "none"; child: SceneNode; label?: string; label_side?: "top" | "bottom"; id?: string }
   | { type: "label"; text: string; size?: Size; tone?: Tone; id?: string }
-  | { type: "bar"; parts: Array<{ value?: number; label?: string; shade?: boolean | number }>; width?: number; unit?: number; total_label?: string; id?: string }
+  | { type: "bar"; parts: Array<{ value?: number; label?: string; shade?: boolean | number }>; shaded?: number; width?: number; unit?: number; total_label?: string; id?: string }
   | { type: "grid"; rows: number; cols: number; cell?: number; shaded?: number; top_label?: string; side_label?: string; id?: string }
   | { type: "pie"; slices: number; shaded?: number; colors?: string[]; size?: Size; style?: "plain" | "pizza"; label?: string; id?: string }
   | { type: "lineup"; icon?: string; values: number[]; labels?: string[]; color?: string; id?: string }
+  | { type: "pictograph"; rows: Array<{ label: string; icon: string; count: number; color?: string }>; id?: string }
   | { type: "balance"; left: SceneNode; right: SceneNode; tilt?: -1 | 0 | 1; id?: string }
   | { type: "axis"; min: number; max: number; step?: number; orientation?: "horizontal" | "vertical"; marks?: Array<{ at: number; icon?: string; label?: string; tone?: Tone }>; moves?: Array<{ from: number; to: number; label?: string }>; unit?: string; hide?: number[]; id?: string }
   | { type: "bundles"; bundles: number; size?: number; loose?: number; id?: string }
@@ -71,6 +72,9 @@ const n1 = (v: number) => Math.round(v * 10) / 10;
 // ── Layout ──────────────────────────────────────────────────────────────
 
 type Box = { w: number; h: number; draw: (x: number, y: number, out: Out) => void };
+/** Wider than this, a row of like things wraps (the board shows a picture at most 600px wide). */
+const WRAP_W = 680;
+
 type Out = { svg: string[]; parts: Record<string, Rect>; problems: string[]; /** What arrows and brackets cover, so the picture grows to fit them. */ ext: Rect[] };
 
 // Objects the emoji set lacks, drawn here once (Oct 2026: the bake-off's
@@ -101,6 +105,20 @@ BUILTIN_OBJECTS.penny = { svg: coin(9.2, "#e0a070", "#9a5a2a", "1¢"), w: 24, h:
 BUILTIN_OBJECTS.nickel = { svg: coin(10, "#dcdfe4", "#7c828c", "5¢"), w: 24, h: 24 };
 BUILTIN_OBJECTS.dime = { svg: coin(8.4, "#e3e6ea", "#7c828c", "10¢"), w: 24, h: 24 };
 BUILTIN_OBJECTS.quarter = { svg: coin(11, "#d6dae0", "#6b717b", "25¢"), w: 24, h: 24 };
+// A whole pizza and a whole round cake: the emoji "pizza" is a single slice,
+// so "3 pizzas" read as 3 slices to every judge (Oct 19 2026, 7 pictures).
+BUILTIN_OBJECTS.pizza = {
+  svg: `<circle cx="12" cy="12" r="10.6" fill="#f4b860" stroke="#9a5a12" stroke-width="1.2"/><circle cx="12" cy="12" r="8.4" fill="#fbe3a3"/><circle cx="8.6" cy="8.8" r="1.5" fill="#d64545"/><circle cx="15" cy="9.4" r="1.5" fill="#d64545"/><circle cx="11.6" cy="15.4" r="1.5" fill="#d64545"/><circle cx="15.8" cy="14.6" r="1.2" fill="#d64545"/><circle cx="7.8" cy="13.6" r="1.2" fill="#d64545"/>`,
+  w: 24,
+  h: 24,
+};
+BUILTIN_OBJECTS.whole_pizza = BUILTIN_OBJECTS.pizza;
+BUILTIN_OBJECTS.round_cake = {
+  svg: `<ellipse cx="12" cy="17" rx="10" ry="4" fill="#e9a6c1" stroke="#1d1d21" stroke-width="1.2"/><path d="M2 10 V17 A10 4 0 0 0 22 17 V10" fill="#f7c6d9" stroke="#1d1d21" stroke-width="1.2"/><ellipse cx="12" cy="10" rx="10" ry="4" fill="#fff4f8" stroke="#1d1d21" stroke-width="1.2"/><circle cx="12" cy="9" r="1.3" fill="#d64545"/>`,
+  w: 24,
+  h: 24,
+};
+BUILTIN_OBJECTS.whole_cake = BUILTIN_OBJECTS.round_cake;
 export const BUILTIN_NAMES = Object.keys(BUILTIN_OBJECTS);
 
 /** A built-in object by a loose name: "pennies", "Dime coin", "red marbles". */
@@ -199,6 +217,25 @@ PARAM_OBJECTS.trousers = PARAM_OBJECTS.pants;
 PARAM_OBJECTS.jeans = PARAM_OBJECTS.pants;
 export const PARAM_OBJECT_NAMES = Object.keys(PARAM_OBJECTS);
 
+// A larger icon set the engine may draw from where it is loaded (the server
+// and scripts: lib/illustration/icon-library.ts); the browser has only the
+// curated set. An exact name in the curated set wins, then the larger set's
+// exact name, then the curated set's loose match ("red apple" → apple).
+type IconBody = { body: string; w: number; h: number };
+let ICON_SOURCE: ((name: string) => IconBody | null) | null = null;
+export function setIconSource(fn: ((name: string) => IconBody | null) | null) {
+  ICON_SOURCE = fn;
+}
+function lookupIcon(name: string): IconBody | null {
+  const key = name.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const curated = (BOARD_ICONS as Record<string, IconBody>)[key];
+  if (curated) return curated;
+  const wide = ICON_SOURCE?.(key);
+  if (wide) return wide;
+  const resolved = resolveIconName(name);
+  return resolved ? (BOARD_ICONS as Record<string, IconBody>)[resolved] : null;
+}
+
 function iconMarkup(name: string, x: number, y: number, size: number, defs: Scene["defs"], out: Out, opts: { color?: string; fill?: number } = {}): void {
   // Objects that take a colour or a fill are drawn from their parameters
   // whenever one is given, and always for the ones the emoji set lacks.
@@ -214,8 +251,7 @@ function iconMarkup(name: string, x: number, y: number, size: number, defs: Scen
     out.svg.push(`<g transform="translate(${n1(x + (size - def.w * s) / 2)} ${n1(y + (size - def.h * s) / 2)}) scale(${n1(s * 1000) / 1000})">${def.svg}</g>`);
     return;
   }
-  const resolved = resolveIconName(name);
-  const icon = resolved ? BOARD_ICONS[resolved] : null;
+  const icon = lookupIcon(name);
   if (!icon) {
     out.problems.push(`no icon or def named "${name}"`);
     out.svg.push(`<circle cx="${n1(x + size / 2)}" cy="${n1(y + size / 2)}" r="${n1(size * 0.4)}" fill="${SKY_SOFT}" stroke="${COLORS.sky}" stroke-width="2"/>`);
@@ -306,7 +342,7 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
       // A lone object nobody can draw is left out rather than shown as a dot
       // (Oct 17 2026: "road" beside the car read as a stray circle). Rows of
       // items keep their dots, because there the count is the point.
-      if (!scene.defs?.[name] && !builtinObject(name) && !resolveIconName(name) && !paramObject(name, {})) {
+      if (!scene.defs?.[name] && !builtinObject(name) && !lookupIcon(name) && !paramObject(name, {})) {
         out.problems.push(`no icon or def named "${name}"`);
         return { w: 0, h: 0, draw: () => {} };
       }
@@ -352,8 +388,27 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
 
     case "row":
     case "column": {
-      const kids = (node.children ?? []).map((c) => build(c, scene, out));
       const gap = node.gap ?? 28;
+      // A long row of like things (six boxes of children, eight plates) wraps
+      // onto lines of about equal length instead of shrinking until the faces
+      // inside cannot be told apart (Oct 19 2026, the class-ratio picture: six
+      // groups in one 1270px row, every child the same yellow blob).
+      if (node.type === "row" && !node.nowrap) {
+        const kids0 = node.children ?? [];
+        const sameKind = kids0.length >= 4 && kids0.every((c) => c.type === kids0[0].type && c.type !== "spacer");
+        if (sameKind) {
+          const probe = kids0.map((c) => build(c, scene, { svg: [], parts: {}, problems: [], ext: [] }));
+          const wide = probe.reduce((s, k) => s + k.w, 0) + gap * (kids0.length - 1);
+          if (wide > WRAP_W) {
+            const lines = Math.ceil(wide / WRAP_W);
+            const per = Math.ceil(kids0.length / lines);
+            const rows: SceneNode[] = [];
+            for (let i = 0; i < kids0.length; i += per) rows.push({ type: "row", gap, align: node.align, nowrap: true, children: kids0.slice(i, i + per) });
+            return build({ type: "column", gap: Math.max(gap, 24), children: rows, id: node.id }, scene, out);
+          }
+        }
+      }
+      const kids = (node.children ?? []).map((c) => build(c, scene, out));
       const horiz = node.type === "row";
       const w = horiz ? kids.reduce((s, k) => s + k.w, 0) + gap * Math.max(0, kids.length - 1) : Math.max(0, ...kids.map((k) => k.w));
       const h = horiz ? Math.max(0, ...kids.map((k) => k.h)) : kids.reduce((s, k) => s + k.h, 0) + gap * Math.max(0, kids.length - 1);
@@ -439,7 +494,14 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
     }
 
     case "bar": {
-      const parts = node.parts?.length ? node.parts : [{}];
+      // `shaded: 1.5` fills parts from the left: one whole part and half the
+      // next. Per-part `shade` stays for a gap or an odd pattern; Haiku asked to
+      // shade one and a half marked two parts true and the third 0.5 (Oct 19
+      // 2026, the tip picture, five times in eight), a count it cannot get
+      // wrong this way.
+      const parts = (node.parts?.length ? node.parts : [{}]).map((p, i) =>
+        typeof node.shaded === "number" && node.shaded > 0 ? { ...p, shade: Math.max(0, Math.min(1, node.shaded - i)) || undefined } : p,
+      );
       const total = parts.reduce((s, p) => s + (p.value && p.value > 0 ? p.value : 1), 0);
       // One whole is one length, however many pieces it is cut into: a bar of
       // fourths drawn shorter than a bar of eighths, both "1 whole", undid the
@@ -449,7 +511,13 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
       const bw = node.width ?? (node.unit && node.unit > 0 ? Math.max(40, Math.min(720, total * node.unit)) : Math.max(480, parts.length * 44));
       const bh = 52;
       const top = node.total_label ? label(node.total_label, "m", "ink") : null;
-      const h = bh + (top ? top.h + 20 : 0);
+      const shadeOf = (p: (typeof parts)[number]) => (p.shade === true ? 1 : typeof p.shade === "number" ? Math.max(0, Math.min(1, p.shade)) : 0);
+      // A piece shaded only in part has its edge through the middle of the
+      // piece, right through a centred "$2" (Oct 19 2026, the tip picture), so
+      // such a bar writes its piece labels under the bar instead.
+      const under = parts.some((p) => shadeOf(p) > 0 && shadeOf(p) < 1) && parts.some((p) => p.label);
+      const underH = under ? FONT_PX.s * 1.3 + 8 : 0;
+      const h = bh + (top ? top.h + 20 : 0) + underH;
       return withId(
         {
           w: Math.max(bw, top?.w ?? 0),
@@ -461,22 +529,31 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
               top.draw(x + (bw - top.w) / 2, y, o);
             }
             let at = x;
+            let shadeFrom = -1;
+            let shadeTo = -1;
             parts.forEach((p, i) => {
               const pw = (bw * (p.value && p.value > 0 ? p.value : 1)) / total;
               // `shade` may be part of a piece (0.5 shades its left half: a tip of one and a half tenths).
-              const sh = p.shade === true ? 1 : typeof p.shade === "number" ? Math.max(0, Math.min(1, p.shade)) : 0;
+              const sh = shadeOf(p);
+              if (sh > 0 && (shadeTo < 0 || Math.abs(shadeTo - at) < 0.5)) {
+                if (shadeFrom < 0) shadeFrom = at;
+                shadeTo = at + pw * sh;
+              }
               o.svg.push(`<rect x="${n1(at)}" y="${n1(by)}" width="${n1(pw)}" height="${bh}" fill="#ffffff" stroke="${COLORS.ink}" stroke-width="${STROKE}"/>`);
               if (sh > 0) {
                 o.svg.push(`<rect x="${n1(at + 1.25)}" y="${n1(by + 1.25)}" width="${n1(pw * sh - 2.5)}" height="${bh - 2.5}" fill="${SKY_SOFT}"/>`);
                 o.svg.push(`<rect x="${n1(at + 2)}" y="${n1(by + 2)}" width="${n1(Math.max(0, pw * sh - 4))}" height="${bh - 4}" fill="none" stroke="${COLORS.sky}" stroke-width="2"/>`);
               }
               if (p.label) {
-                const l = label(p.label, pw < 70 ? "s" : "m", "ink");
-                l.draw(at + (pw - l.w) / 2, by + (bh - l.h) / 2, o);
+                const l = label(p.label, under || pw < 70 ? "s" : "m", "ink");
+                l.draw(at + (pw - l.w) / 2, under ? by + bh + 6 : by + (bh - l.h) / 2, o);
               }
               if (node.id) o.parts[`${node.id}.${i + 1}`] = { x: n1(at), y: n1(by), w: n1(pw), h: bh };
               at += pw;
             });
+            // The shaded stretch as one part, so a bracket can name exactly it
+            // (one and a half pieces, not two).
+            if (node.id && shadeFrom >= 0) o.parts[`${node.id}.shaded`] = { x: n1(shadeFrom), y: n1(by), w: n1(shadeTo - shadeFrom), h: bh + underH };
           },
         },
         node.id,
@@ -548,6 +625,38 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
             }
             o.svg.push(`<circle cx="${n1(cx)}" cy="${n1(cy)}" r="${n1(r)}" fill="none" stroke="${COLORS.ink}" stroke-width="${STROKE}"/>`);
             if (lab) lab.draw(cx - lab.w / 2, y + d + 10, o);
+          },
+        },
+        node.id,
+      );
+    }
+
+    case "pictograph": {
+      // A picture graph: one row per category, every row's first icon on the
+      // same line, so lengths compare at a glance (the rows of a hand-built
+      // graph started where their labels ended; Oct 19 2026).
+      const rows = (node.rows ?? []).slice(0, 8);
+      const size = ICON_PX.m;
+      const gap = Math.round(size * 0.2);
+      const labs = rows.map((r) => label(r.label, "m", "ink"));
+      const labW = Math.max(0, ...labs.map((l) => l.w)) + 16;
+      const rowH = size + 12;
+      const maxN = Math.max(1, ...rows.map((r) => Math.min(30, Math.max(0, Math.round(r.count)))));
+      const w = labW + maxN * size + (maxN - 1) * gap;
+      const h = rows.length * rowH - 12;
+      return withId(
+        {
+          w,
+          h,
+          draw: (x, y, o) => {
+            o.svg.push(`<path d="M${n1(x + labW - 8)} ${n1(y - 4)}V${n1(y + h + 4)}" stroke="${COLORS.pencil}" stroke-width="2" stroke-linecap="round"/>`);
+            rows.forEach((r, i) => {
+              const ry = y + i * rowH;
+              labs[i].draw(x + labW - 16 - labs[i].w, ry + (size - labs[i].h) / 2, o);
+              const n = Math.min(30, Math.max(0, Math.round(r.count)));
+              for (let k = 0; k < n; k++) iconMarkup(r.icon, x + labW + k * (size + gap), ry, size, scene.defs, o, { color: r.color });
+              if (node.id) o.parts[`${node.id}.${i + 1}`] = { x: n1(x + labW), y: n1(ry), w: n1(Math.max(size, n * (size + gap) - gap)), h: size };
+            });
           },
         },
         node.id,
@@ -669,7 +778,7 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
                 const ty = top + i * gapPx;
                 const zero = Math.abs(v) < 1e-9;
                 o.svg.push(`<path d="M${n1(ax - (zero ? 10 : 6))} ${n1(ty)}H${n1(ax + (zero ? 10 : 6))}" ${s}/>`);
-                const t = node.hide?.some((hv) => Math.abs(hv - v) < 1e-9) ? "?" : String(v);
+                const t = tickText(node, v);
                 o.svg.push(`<text x="${n1(ax - 12 - textWidth(t, FONT_PX.s))}" y="${n1(ty + 5)}" font-family="${FONT}" font-size="${FONT_PX.s}" font-weight="${zero ? 700 : 500}" fill="${COLORS.ink}">${esc(t)}</text>`);
                 if (zero) o.svg.push(`<path d="M${n1(ax + 10)} ${n1(ty)}H${n1(x + w)}" stroke="${COLORS.green}" stroke-width="2" stroke-dasharray="6 5"/>`);
               }
@@ -714,7 +823,7 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
                 const v = min + i * step;
                 const tx = left + i * gapPx;
                 o.svg.push(`<path d="M${n1(tx)} ${n1(ay - 6)}V${n1(ay + 6)}" ${s}/>`);
-                const t = (node.hide?.some((hv) => Math.abs(hv - v) < 1e-9) ? "?" : String(v)) + (node.unit && i === ticks - 1 ? ` ${node.unit}` : "");
+                const t = tickText(node, v) + (node.unit && i === ticks - 1 && tickText(node, v) ? ` ${node.unit}` : "");
                 o.svg.push(`<text x="${n1(tx - textWidth(String(v), FONT_PX.s) / 2)}" y="${n1(ay + 26)}" font-family="${FONT}" font-size="${FONT_PX.s}" fill="${COLORS.ink}">${esc(t)}</text>`);
               }
               marks.forEach((m, i) => {
@@ -734,6 +843,20 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
   return { w: 0, h: 0, draw: () => {} };
 }
 
+/**
+ * A tick's number. Where a move lands is hidden; a lone "?" between -10 and
+ * -12 named -11 to every judge (Oct 19 2026), so with anything hidden only
+ * landmarks keep their numbers: zero, multiples of 5, the ends, and the marks
+ * and move starts. The student counts from a landmark, which is the skill.
+ */
+function tickText(node: Extract<SceneNode, { type: "axis" }>, v: number): string {
+  const near = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+  if (!node.hide?.length) return String(v);
+  if (node.hide.some((h) => near(h, v))) return "";
+  const landmarks = [0, Math.min(node.min, node.max), Math.max(node.min, node.max), ...(node.marks ?? []).map((m) => m.at), ...(node.moves ?? []).map((m) => m.from)];
+  return landmarks.some((l) => near(l, v)) || near(v % 5, 0) ? String(v) : "";
+}
+
 // ── Arrows and brackets, drawn over the laid-out parts ──────────────────
 
 function center(r: Rect) {
@@ -750,16 +873,58 @@ function edgePoint(r: Rect, toward: { x: number; y: number }, pad = 8) {
   return { x: c.x + dx * s, y: c.y + dy * s };
 }
 
-function drawArrow(a: Rect, b: Rect, text: string | undefined, tone: Tone, out: Out) {
-  const p0 = edgePoint(a, center(b));
-  const p1 = edgePoint(b, center(a));
+/** The side of `r` that faces `o`. */
+function facing(r: Rect, o: Rect): "l" | "r" | "t" | "b" {
+  const c = center(r), d = center(o);
+  const dx = d.x - c.x, dy = d.y - c.y;
+  return Math.abs(dx) * (r.h + o.h) >= Math.abs(dy) * (r.w + o.w) ? (dx > 0 ? "r" : "l") : dy > 0 ? "b" : "t";
+}
+
+/**
+ * Where each arrow leaves and lands. Arrows that share an edge of a part are
+ * spaced along it in the order of their other ends, so they fan out instead of
+ * meeting at one corner (Oct 19 2026, the outfits picture: six arrows from
+ * three shirts to two pants, three heads piled in the gap between the pants).
+ */
+function arrowAnchors(pairs: Array<[Rect, Rect]>): Array<[{ x: number; y: number }, { x: number; y: number }]> {
+  const ends: Array<{ i: number; end: 0 | 1; r: Rect; side: string; other: Rect }> = [];
+  pairs.forEach(([a, b], i) => {
+    ends.push({ i, end: 0, r: a, side: facing(a, b), other: b });
+    ends.push({ i, end: 1, r: b, side: facing(b, a), other: a });
+  });
+  const out = pairs.map(([a, b]) => [edgePoint(a, center(b)), edgePoint(b, center(a))] as [{ x: number; y: number }, { x: number; y: number }]);
+  const groups = new Map<string, typeof ends>();
+  for (const e of ends) {
+    const k = `${e.r.x},${e.r.y},${e.r.w},${e.r.h},${e.side}`;
+    groups.set(k, [...(groups.get(k) ?? []), e]);
+  }
+  for (const g of groups.values()) {
+    if (g.length < 2) continue;
+    const vert = g[0].side === "l" || g[0].side === "r";
+    g.sort((p, q) => (vert ? center(p.other).y - center(q.other).y : center(p.other).x - center(q.other).x));
+    const r = g[0].r;
+    const span = (vert ? r.h : r.w) * 0.7;
+    g.forEach((e, j) => {
+      const t = g.length === 1 ? 0.5 : j / (g.length - 1);
+      const along = (vert ? r.y + r.h / 2 : r.x + r.w / 2) - span / 2 + span * t;
+      const pt = vert ? { x: e.side === "r" ? r.x + r.w + 4 : r.x - 4, y: along } : { x: along, y: e.side === "b" ? r.y + r.h + 4 : r.y - 4 };
+      out[e.i][e.end] = pt;
+    });
+  }
+  return out;
+}
+
+function drawArrow(a: Rect, b: Rect, text: string | undefined, tone: Tone, out: Out, at?: [{ x: number; y: number }, { x: number; y: number }], fan = false) {
+  const p0 = at?.[0] ?? edgePoint(a, center(b));
+  const p1 = at?.[1] ?? edgePoint(b, center(a));
   const mx = (p0.x + p1.x) / 2;
   const my = (p0.y + p1.y) / 2;
   const len = Math.hypot(p1.x - p0.x, p1.y - p0.y) || 1;
   // A gentle bow, the way a hand draws an arrow.
   const nx = -(p1.y - p0.y) / len;
   const ny = (p1.x - p0.x) / len;
-  const bow = Math.min(26, len * 0.14);
+  // Fanned arrows go nearly straight: bowed, they cross each other twice.
+  const bow = fan ? Math.min(8, len * 0.05) : Math.min(26, len * 0.14);
   const qx = mx + nx * bow;
   const qy = my + ny * bow;
   const col = COLORS[tone];
@@ -873,6 +1038,7 @@ export function renderScene(scene: Scene): Rendered {
   const w = Math.ceil(Math.max(body.w, title?.w ?? 0) + M * 2);
   const h = Math.ceil(body.h + titleH + M * 2);
   body.draw(M + (w - M * 2 - body.w) / 2, M + titleH, out);
+  const drawable: Array<{ a: NonNullable<Scene["arrows"]>[number]; from: Rect; to: Rect }> = [];
   for (const a of scene.arrows ?? []) {
     const from = out.parts[a.from];
     const to = out.parts[a.to];
@@ -887,8 +1053,11 @@ export function renderScene(scene: Scene): Rendered {
       out.problems.push(`arrow ${a.from} → ${a.to}: an arrow needs two different parts`);
       continue;
     }
-    drawArrow(from, to, a.label, a.tone ?? "sky", out);
+    drawable.push({ a, from, to });
   }
+  const anchors = arrowAnchors(drawable.map((d) => [d.from, d.to]));
+  const fan = drawable.length >= 3;
+  drawable.forEach((d, i) => drawArrow(d.from, d.to, d.a.label, d.a.tone ?? "sky", out, anchors[i], fan));
   for (const b of scene.brackets ?? []) {
     const ids = Array.isArray(b.over) ? b.over : [b.over];
     const rs = ids.map((id) => out.parts[id]).filter((r): r is Rect => Boolean(r));

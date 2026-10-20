@@ -134,7 +134,7 @@ test("two bars cut into different numbers of pieces are the same length", () => 
   assert.equal(out.parts.eighths.w, out.parts.fourths.w);
 });
 
-test("objects take a colour and a fill; a lineup stands to scale; a bar can count in units; hidden ticks read ?", () => {
+test("objects take a colour and a fill; a lineup stands to scale; a bar can count in units; a hidden tick has no number", () => {
   const socks = renderScene({ root: { type: "row", children: [{ type: "items", icon: "socks", count: 2, color: "black", id: "b" }, { type: "items", icon: "sock", count: 1, color: "white", id: "w" }] } });
   assert.deepEqual(socks.problems, []);
   assert.equal(count(socks.svg, "#3a3a42"), 2);
@@ -147,12 +147,53 @@ test("objects take a colour and a fill; a lineup stands to scale; a bar can coun
     { type: "bar", unit: 60, parts: [{}, {}, {}], id: "sam" },
   ] } });
   assert.equal(tape.parts["sam.1"].w, tape.parts["lia.1"].w);
-  const axis = renderScene({ root: { type: "axis", orientation: "vertical", min: -10, max: 10, hide: [-5] } });
-  assert.match(axis.svg, />\?</);
-  assert.doesNotMatch(axis.svg, />-5</);
+  // With a value hidden only landmarks keep numbers, and the hidden one has none.
+  const axis = renderScene({ root: { type: "axis", orientation: "vertical", min: -12, max: 4, hide: [-11], moves: [{ from: -7, to: -11 }] } });
+  assert.doesNotMatch(axis.svg, />-11</);
+  assert.doesNotMatch(axis.svg, />-9</);
+  assert.match(axis.svg, />-10</);
+  assert.match(axis.svg, />-7</);
+  assert.doesNotMatch(axis.svg, />\?</);
 });
 
 test("a spinner's parts take their own colours", () => {
   const out = renderScene({ root: { type: "pie", slices: 4, colors: ["red", "blue", "green", "yellow"], id: "s" } });
   for (const hex of ["#ff7a7e", "#6fb6ff", "#6fd69a", "#ffd45e"]) assert.match(out.svg, new RegExp(hex));
+});
+
+test("a bar's `shaded` fills from the left, and its shaded stretch is a part", () => {
+  const out = renderScene({ root: { type: "bar", id: "b", shaded: 1.5, parts: Array.from({ length: 10 }, () => ({ label: "$2" })) } });
+  const one = out.parts["b.1"];
+  const s = out.parts["b.shaded"];
+  assert.ok(s, "b.shaded exists");
+  assert.ok(Math.abs(s.w - one.w * 1.5) < 1, `shaded stretch is 1.5 pieces (${s.w} vs ${one.w})`);
+  // A part-shaded piece writes the labels under the bar, not through the shading's edge.
+  const ys = [...out.svg.matchAll(/<text x="[-\d.]+" y="([-\d.]+)"[^>]*>\$2</g)].map((m) => Number(m[1]));
+  assert.equal(ys.length, 10);
+  assert.ok(ys.every((y) => y > one.y + one.h), "labels under the bar");
+});
+
+test("a long row of like boxes wraps onto lines instead of shrinking", () => {
+  const box = (i: number) => ({ type: "container" as const, shape: "box" as const, id: `g${i}`, child: { type: "items" as const, icon: "boy", count: 5 } });
+  const out = renderScene({ root: { type: "row", children: [1, 2, 3, 4, 5, 6].map(box) } });
+  const ys = new Set([1, 2, 3, 4, 5, 6].map((i) => Math.round(out.parts[`g${i}`].y)));
+  assert.ok(ys.size >= 2, "more than one line");
+  assert.ok(out.w < 760, `picture width ${out.w}`);
+});
+
+test("arrows that share an edge fan out along it", () => {
+  const icon = (id: string, icon: string) => ({ type: "icon" as const, icon, id });
+  const scene: Scene = {
+    root: { type: "row", gap: 80, nowrap: true, children: [{ type: "column", gap: 16, children: [icon("s1", "shirt"), icon("s2", "shirt"), icon("s3", "shirt")] }, { type: "column", gap: 16, children: [icon("p1", "pants"), icon("p2", "pants")] }] },
+    arrows: ["s1", "s2", "s3"].flatMap((s) => ["p1", "p2"].map((p) => ({ from: s, to: p }))),
+  };
+  const out = renderScene(scene);
+  const heads = [...out.svg.matchAll(/<path d="M[-\d.]+ [-\d.]+Q[-\d.]+ [-\d.]+ ([-\d.]+) ([-\d.]+)"/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }));
+  assert.equal(heads.length, 6);
+  for (const p of ["p1", "p2"]) {
+    const r = out.parts[p];
+    const on = heads.filter((h) => h.y >= r.y && h.y <= r.y + r.h && Math.abs(h.x - r.x) < 8);
+    assert.equal(on.length, 3, `three heads land on ${p}'s left edge`);
+    assert.equal(new Set(on.map((h) => Math.round(h.y))).size, 3, "at three different heights");
+  }
 });
