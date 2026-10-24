@@ -197,3 +197,18 @@ test("arrows that share an edge fan out along it", () => {
     assert.equal(new Set(on.map((h) => Math.round(h.y))).size, 3, "at three different heights");
   }
 });
+
+test("an object the board has no icon for is written as a tile when the picture refers to it, left out when it is decoration", () => {
+  // Oct 23 2026: "toaster" and "toast" were dropped, and with them the arrow to the toast.
+  const machine: Scene = {
+    root: { type: "row", gap: 40, children: [{ type: "icon", icon: "bread", id: "in" }, { type: "icon", icon: "toaster", id: "machine" }, { type: "icon", icon: "toast", id: "out" }] },
+    arrows: [{ from: "in", to: "machine" }, { from: "machine", to: "out" }],
+  };
+  const out = renderScene(machine);
+  assert.ok(out.parts.machine && out.parts.out, "both kept as parts");
+  assert.ok(!out.problems.some((p) => /no part with that id/.test(p)), out.problems.join("; "));
+  assert.match(out.svg, />toaster</);
+  assert.match(out.svg, />toast</);
+  const road = renderScene({ root: { type: "row", children: [{ type: "icon", icon: "car" }, { type: "icon", icon: "road_surface_xyz" }] } });
+  assert.doesNotMatch(road.svg, /road surface/, "decoration with no id is still left out");
+});

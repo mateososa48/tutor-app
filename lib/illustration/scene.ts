@@ -355,7 +355,19 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
       // items keep their dots, because there the count is the point.
       if (!scene.defs?.[name] && !builtinObject(name) && !lookupIcon(name) && !paramObject(name, {})) {
         out.problems.push(`no icon or def named "${name}"`);
-        return { w: 0, h: 0, draw: () => {} };
+        // One the picture refers to (an arrow's end, a bracket, a part to point
+        // at) is written as its name on a small tile: left out, the toaster
+        // picture lost its toast and the arrow to it (Oct 23 2026). A purely
+        // decorative one is still left out.
+        if (!node.id && !(node as { tile?: boolean }).tile) return { w: 0, h: 0, draw: () => {} };
+        const word = name.replace(/[_-]+/g, " ").trim().slice(0, 18);
+        const px = FONT_PX.s;
+        const w = Math.max(size, textWidth(word, px) + 20);
+        const h = Math.round(size * 0.72);
+        return withId({ w, h, draw: (x, y, o) => {
+          o.svg.push(`<rect x="${n1(x + 1)}" y="${n1(y + 1)}" width="${n1(w - 2)}" height="${n1(h - 2)}" rx="10" fill="#ffffff" stroke="${COLORS.pencil}" stroke-width="2"/>`);
+          o.svg.push(`<text x="${n1(x + w / 2)}" y="${n1(y + h / 2 + px * 0.35)}" text-anchor="middle" font-family="${FONT}" font-size="${px}" font-weight="600" fill="${COLORS.ink}">${esc(word)}</text>`);
+        } }, node.id ?? "");
       }
       const opts = node.type === "icon" ? { color: node.color, fill: node.fill } : {};
       return withId({ w: size, h: size, draw: (x, y, o) => iconMarkup(name, x, y, size, scene.defs, o, opts) }, node.id);
@@ -449,7 +461,10 @@ function build(node: SceneNode, scene: Scene, out: Out): Box {
     }
 
     case "container": {
-      const inner = build(node.child, scene, out);
+      // A container's own object is never decoration: unknown, it is written
+      // on a tile rather than leaving the box empty (the toaster, Oct 23 2026).
+      const child = node.child && (node.child.type === "icon" || node.child.type === "custom") ? { ...node.child, tile: true } : node.child;
+      const inner = build(child as SceneNode, scene, out);
       const pad = node.shape === "none" ? 0 : node.shape === "circle" ? 20 : node.shape === "bag" ? 24 : 16;
       const neck = node.shape === "jar" ? 14 : node.shape === "bag" ? 26 : 0;
       const plate = node.shape === "plate" ? 14 : 0;
