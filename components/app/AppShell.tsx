@@ -30,7 +30,7 @@ export function AppShell({
     <SidebarProvider
       defaultOpen={defaultOpen}
       className="h-svh min-h-0 bg-sidebar"
-      style={{ "--sidebar-width": "244px", "--sidebar-width-icon": "64px" } as CSSProperties}
+      style={{ "--sidebar-width": "228px", "--sidebar-width-icon": "64px" } as CSSProperties}
     >
       <AppSidebar />
       <SidebarInset
