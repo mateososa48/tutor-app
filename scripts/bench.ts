@@ -88,6 +88,9 @@ import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } 
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
 import { readUsage, type TurnUsage } from "../lib/live-turn-metrics";
 import { spokenMath } from "./bench-speech";
+import { BrainTutor, type BrainLiveTurn } from "./bench-brain";
+import { buildBrainInstructions } from "../lib/brain/prompt";
+import { buildTurnNote } from "../lib/brain/note";
 
 // .env.local first: desmosConfigured() and the tool declarations read it at import.
 for (const line of fs.readFileSync(path.join(process.cwd(), ".env.local"), "utf8").split("\n")) {
@@ -624,6 +627,8 @@ class LiveTutor {
 
 // --plan a,b: the models in hedge order; "model@KEY_NAME" puts one on its own key
 // (the same model on two keys hedges the free tier's rate limits).
+// --brain [model]: the LiveKit path's brain (lib/brain, Claude Haiku 5.5 by default) in place of Gemini Live.
+const BRAIN = process.argv.includes("--brain") ? (arg("brain", "") && !arg("brain", "").startsWith("--") ? arg("brain", "") : "claude-haiku-5-5") : "";
 const PLAN_MODELS = arg("plan", "").split(",").map((s) => s.trim()).filter(Boolean);
 const PLAN_TIME_MS = Number(arg("plantime", "3000"));
 // The second model is asked too once the first has not answered by then (lib/hedge).
@@ -785,7 +790,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   // --voice with --plan: the app's spoken path to the planner (lib/gemini-live
   // nextMove): next_move is declared and the prompt leads with its rule.
   const voicePlan = opts.voice && PLAN_MODELS.length > 0;
-  const system = m.prompts.buildGeminiInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true, nextMove: voicePlan } as never) + (promptAdd ? `\n\n${promptAdd}` : "");
+  const system = BRAIN ? buildBrainInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true } as never) + (promptAdd ? `\n\n${promptAdd}` : "") : m.prompts.buildGeminiInstructions(profile as never, [], { session: m.intake.intakeInstructions(intake, files.length), desmos: true, nextMove: voicePlan } as never) + (promptAdd ? `\n\n${promptAdd}` : "");
   // Exactly what the app sends (the Live diet since Sept 25 2026; --fulltools for every declaration).
   const declarations = m.behavior.withToolBehavior([...(opts.fullTools ? [...m.tools.WHITEBOARD_TOOL_DECLARATIONS, ...m.tutorTools.TUTOR_TOOL_DECLARATIONS, ...m.sessionTools.SESSION_TOOL_DECLARATIONS] : m.live.liveToolDeclarations()), ...(voicePlan ? [NEXT_MOVE_DECLARATION] : [])] as never, opts.liveModel, opts.asyncTools);
 
@@ -1096,7 +1101,25 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     return result;
   };
 
-  const live = new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken, lastOfBatch, replyGaveTask) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken, lastOfBatch, replyGaveTask), opts.hold ? (send) => new m.behavior.ResponseHold(send as never, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken)) : undefined);
+  // --brain: what the private note carries for the next line (set by the typed path below).
+  let brainCheck: string | null = null;
+  let brainReminders: Array<string | null> = [];
+  const noteFor = async (line: string) => {
+    const note = buildTurnNote({
+      check: brainCheck,
+      state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
+      board: (await summaryOf(page, true)) ?? "",
+      reminders: brainReminders,
+      memory: m.policy.formatMemory(runtime.policy) || null,
+      leaving: m.policy.detectSignals(line).includes("closing"),
+    });
+    // An answer the app's checker could not read: the brain must check it before it speaks.
+    const forceCheck = turns.length > 0 && !brainCheck && m.policy.looksLikeAnswer(line) && !m.rules.isNonAnswer(line);
+    brainCheck = null;
+    brainReminders = [];
+    return { note, forceCheck };
+  };
+  const live = BRAIN ? (new BrainTutor(system, onTool, noteFor, { model: BRAIN }) as unknown as LiveTutor) : new LiveTutor(opts.liveModel, system, declarations, m.live.CONTEXT_WINDOW_COMPRESSION, onTool, (name, result, spoken, lastOfBatch, replyGaveTask) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken, lastOfBatch, replyGaveTask), opts.hold ? (send) => new m.behavior.ResponseHold(send as never, (name, result, spoken) => m.behavior.toolScheduling(opts.liveModel, name, result, opts.asyncTools, spoken)) : undefined);
   live.onHeard = () => {
     if (!voicePlan) return;
     if (specTimer) clearTimeout(specTimer);
@@ -1176,6 +1199,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       boardCompact: await summaryOf(page, true),
       shot,
       boardShot: tutorView ? `${tag}-t${i + 1}-board.jpg` : null,
+      ...((t as unknown as BrainLiveTurn).brain ? { brain: (t as unknown as BrainLiveTurn).brain } : {}),
     };
     turns.push(turn);
     console.log(`  ${i + 1}. ${c.name}: ${turn.student}\n     tutor: ${turn.tutor || (turn.timedOut ? "(timed out)" : "(silent)")}\n     tools: ${turn.tools.map((x) => `${x.name}${x.ok ? "" : " ✗"}`).join(", ") || "(none)"}${turn.firstAudioMs != null ? ` · first audio ${turn.firstAudioMs} ms` : ""}${turn.promptTokens ? ` · ${turn.promptTokens.toLocaleString()} prompt tokens` : ""}`);
@@ -1254,7 +1278,11 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
         deliver(order?.note ?? null, studentText);
       }
       const context = [pendingAuto, pendingNote].filter(Boolean).join("\n");
-      if (context) live.sendNote(context);
+      if (BRAIN) {
+        brainCheck = pendingAuto;
+        brainReminders = [pendingNote, pictureNote];
+        pictureNote = null;
+      } else if (context) live.sendNote(context);
       pending = live.userTurn([{ text: studentText }]);
       live.noteAppTools(pendingApp.splice(0));
     }
@@ -1268,7 +1296,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     caseId: c.id,
     name: c.name,
     grade: c.grade,
-    liveModel: opts.liveModel,
+    liveModel: BRAIN || opts.liveModel,
     setupMs: live.setupMs,
     wallMs: Date.now() - startedAt,
     closed: live.closed,
@@ -1405,7 +1433,7 @@ async function main() {
     throw new Error(`No dev server at ${base}. Start one (npm run dev -- -p 3300) or pass --base.`);
   }
   fs.mkdirSync(out, { recursive: true });
-  console.log(`bench "${label}" · tutor ${liveModel} (${toolCount} tools, ${asyncTools ? "async" : "sync"}) · prompt ${m.promptName} · student ${studentModel} · judge ${judgeModel} · ${runsN} run${runsN > 1 ? "s" : ""} · board ${base} at ${w}×${h}\n→ ${out}`);
+  console.log(`bench "${label}" · tutor ${BRAIN ? `${BRAIN} (brain, LiveKit path)` : liveModel} (${toolCount} tools, ${asyncTools ? "async" : "sync"}) · prompt ${m.promptName} · student ${studentModel} · judge ${judgeModel} · ${runsN} run${runsN > 1 ? "s" : ""} · board ${base} at ${w}×${h}\n→ ${out}`);
 
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ["--no-sandbox", "--hide-scrollbars"] });
   const runs: CaseRun[] = [];

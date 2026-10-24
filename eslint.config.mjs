@@ -15,6 +15,8 @@ const eslintConfig = defineConfig([
     // Vendored builds (pdf.js worker, Signalsmith Stretch) and Playwright's scratch output.
     "public/vendor/**",
     ".playwright-mcp/**",
+    // The LiveKit voice agent is its own Node package (agent/package.json).
+    "agent/**",
   ]),
 ]);
 

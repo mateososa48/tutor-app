@@ -5,11 +5,15 @@ import type { LiveTutorSession } from "./live-tutor";
 // credits, Gemini Live is the in-code default; set NEXT_PUBLIC_TUTOR_PROVIDER=openai
 // (locally or on Vercel) to make GPT-Live the default again, or add
 // ?provider=openai|gemini to a session URL to switch for one tab.
-export type TutorProvider = "openai" | "gemini";
+// "livekit" (branch `livekit`, ?voice=livekit): speech-to-text, Claude Haiku
+// 5.5 and a voice on a LiveKit agent (agent/main.ts, lib/livekit-tutor.ts).
+export type TutorProvider = "openai" | "gemini" | "livekit";
 
 export function resolveTutorProvider(search: { get(name: string): string | null } | null): TutorProvider {
   const fromUrl = search?.get("provider");
+  if (search?.get("voice") === "livekit" || fromUrl === "livekit") return "livekit";
   if (fromUrl === "gemini" || fromUrl === "openai") return fromUrl;
+  if (process.env.NEXT_PUBLIC_TUTOR_PROVIDER === "livekit") return "livekit";
   return process.env.NEXT_PUBLIC_TUTOR_PROVIDER === "openai" ? "openai" : "gemini";
 }
 

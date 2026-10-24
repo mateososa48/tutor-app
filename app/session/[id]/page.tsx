@@ -27,6 +27,7 @@ import { LiveTutorSession } from "@/lib/live-tutor";
 import type { LiveTutorCallbacks } from "@/lib/live-tutor";
 import { GeminiTutorSession } from "@/lib/gemini-tutor";
 import { resolveLiveModel, resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
+import { LivekitTutorSession } from "@/lib/livekit-tutor";
 import { resolveAsyncTools, resolveLiveVad } from "@/lib/live-tool-behavior";
 import { asksToWait, QUIET_CHECKIN_EVENT, QUIET_HINT, quietStep } from "@/lib/quiet-watch";
 import { useTutorSpeed } from "@/components/session/SpeedControl";
@@ -1147,7 +1148,18 @@ function SessionDetailPage({ id }: { id: string }) {
       },
     };
 
-    const live: TutorClient = provider === "gemini"
+    // Pictures of real things (lib/illustration), drawn through the page's own tool path under the asking call's id.
+    const illustrator = {
+      grade: () => "",
+      board: () => whiteboardRef.current?.getBoardSummary?.(true) ?? "",
+      draw: async (scene: unknown, callId: string) => {
+        const result = await handleToolCall("draw_illustration", { scene }, callId);
+        return result.success ? result.message ?? "Drew the picture." : null;
+      },
+    };
+    const live: TutorClient = provider === "livekit"
+      ? new LivekitTutorSession(callbacks, { runtime: tutorRuntime, illustrator })
+      : provider === "gemini"
       ? new GeminiTutorSession(callbacks, {
           model: liveModel,
           runtime: tutorRuntime,
@@ -1177,7 +1189,8 @@ function SessionDetailPage({ id }: { id: string }) {
       : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;
     live.setSpeechRate?.(speechRateRef.current);
-    recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
+    recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : provider === "livekit" ? "livekit" : "gpt-live-1" });
+    if (process.env.NODE_ENV === "development" && provider === "livekit") (window as unknown as { __livekitTutor?: unknown }).__livekitTutor = live;
 
     // Graphs are drawn by Desmos (a 4.3 MB script): fetch it while the session connects.
     preloadDesmos();

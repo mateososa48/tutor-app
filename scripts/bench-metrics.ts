@@ -56,6 +56,8 @@ export type TurnRecord = {
   boardCompact: string;
   shot: string;
   boardShot: string | null;
+  /** --brain: the brain's own timings and cost for this turn (lib/brain). */
+  brain?: { firstTokenMs: number | null; firstSentenceMs: number | null; ms: number; costUsd: number; model: string; attempt: number; dropped: string[] };
 };
 
 export type Metrics = {
@@ -208,7 +210,7 @@ export function measure(turns: TurnRecord[], c: BenchCase, policy: PolicyFns): M
   const words = turns.reduce((s, t) => s + (t.tutor ? t.tutor.split(/\s+/).length : 0), 0);
   const allTools = turns.flatMap((t) => t.tools);
   const promptTokens = turns.map((t) => t.promptTokens).filter((x): x is number => x != null);
-  const costs = turns.map((t) => (t.usage ? estimateCostUsd(t.usage) : null)).filter((x): x is number => x != null);
+  const costs = turns.map((t) => (t.brain ? t.brain.costUsd : t.usage ? estimateCostUsd(t.usage) : null)).filter((x): x is number => x != null);
   void c;
   return {
     turns: turns.length,
