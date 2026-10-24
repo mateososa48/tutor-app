@@ -21,7 +21,7 @@
 //
 // Flags:
 //   --cases a,b        which students (default: every one in the set)
-//   --set main|heldout|real|pictures|all  the six the redesign reads (default), the four held
+//   --set main|heldout|real|pictures|novices|all  the six the redesign reads (default), the four held
 //                      out for gates (slope, triangle, divide, logs), or all ten
 //   --save-audio       write each turn's speech as <case>-t<N>.wav
 //   --hold             hold early async results until the first sound (ResponseHold; tried and rejected)
@@ -77,7 +77,7 @@ import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
-import { CASES, HELDOUT, PICTURES, REAL, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+import { CASES, HELDOUT, NOVICES, PICTURES, REAL, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { hedged } from "../lib/hedge";
 import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, PLANNER_SYSTEM, illustrationOf, pictureRefusal, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
@@ -1381,7 +1381,7 @@ async function main() {
   const only = arg("cases", "").split(",").map((s) => s.trim()).filter(Boolean);
   // --set main (default: the six the redesign reads), heldout (four it never reads), real (cases from real sessions), or all.
   const set = arg("set", "main");
-  const pool = set === "heldout" ? HELDOUT : set === "real" ? REAL : set === "pictures" ? PICTURES : set === "all" ? [...CASES, ...HELDOUT, ...REAL, ...PICTURES] : CASES;
+  const pool = set === "heldout" ? HELDOUT : set === "real" ? REAL : set === "pictures" ? PICTURES : set === "novices" ? NOVICES : set === "all" ? [...CASES, ...HELDOUT, ...REAL, ...PICTURES, ...NOVICES] : CASES;
   const cases = pool.filter((c) => only.length === 0 || only.includes(c.id));
   if (cases.length === 0) throw new Error(`No case matches ${only.join(",")}. Options: ${pool.map((c) => c.id).join(", ")}`);
   const turnsArg = Number(arg("turns", "0"));

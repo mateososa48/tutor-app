@@ -370,6 +370,95 @@ export const PICTURES: BenchCase[] = [
   },
 ];
 
+// Novices (Oct 24 2026): students with no idea to break, who ask to be
+// taught. Mateo's session that day: "i dont know", "i dont understand", "teach
+// me", and the tutor only ever asked smaller questions or did the procedure
+// step by step; every student above arrives with a wrong idea, so the bench
+// had never asked the tutor to teach something new. The first is built from
+// that session, on his worksheet.
+export const NOVICES: BenchCase[] = [
+  {
+    id: "algebra-sheet",
+    name: "Sam",
+    grade: "9th grade",
+    age: 14,
+    topic: "I need help with the work I just uploaded. I uploaded a picture of it.",
+    minutes: 20,
+    worksheet: { file: "algebra-worksheet.jpg", html: "" },
+    brief:
+      "You are Sam, 14, in 9th grade. Your algebra worksheet is attached: solve 3x + 7 = 22, solve 5(x - 2) = 30, simplify 4a + 3a - 2, factor x^2 + 7x + 12, the slope through (2, 3) and (6, 11), graph y = 2x - 1. You missed the lessons on equations and you honestly do not know what solving an equation means or why you would do anything to both sides. Your arithmetic is fine when someone asks you a plain sum. You type short and lowercase. You want to actually get it, not just get answers.",
+    anchors: [
+      "When the tutor asks which problem, say \"first one\".",
+      "The first time the tutor asks how you would start, or what to do first, say \"i dont know how to do this\".",
+      "If the tutor asks you a small step question (\"what do you get if you subtract 7\") before it has explained what you are doing and why, guess wrong once (\"29?\") and then say \"i dont understand\".",
+      "If you still have no idea what the point is after two or three of the tutor's turns, say \"can you just teach me how this works\".",
+      "Later, on the graphing problem, say \"i dont know how to do that. teach me\".",
+    ],
+    convincedBy:
+      "Being taught: what an equation is and why you do the same thing to both sides (a balance, or another picture that makes it make sense), then one example shown step by step with the reason for each step, then a similar one where you do the steps yourself with help only where you stall. Strings of small questions with no idea behind them leave you lost. For the graph: seeing that the equation is a rule that makes points (x in, y out), working out a few points yourself, plotting them, and seeing they line up.",
+    outcome:
+      "Sam solves a new two-step equation (like 2x + 5 = 17) with no help and says why each step works in his own words (undo it, do the same to both sides to keep it equal); on the graph he finds at least two points from the rule himself and says what the line is.",
+    checks: [
+      "When Sam said he did not know how, did the tutor teach the idea (with a picture, analogy or worked example) instead of only asking smaller questions?",
+      "Did the tutor explain why you do the same thing to both sides, in words or a picture Sam could follow?",
+      "Did Sam do a whole equation himself before the session moved on?",
+      "On the graph, did the tutor build it from points Sam found, rather than drawing the finished line first?",
+      "Did the plan box (if used) hold the lesson's goals, not one problem's steps?",
+    ],
+    turns: 14,
+  },
+  {
+    id: "graph-novice",
+    name: "Zoe",
+    grade: "8th grade",
+    age: 13,
+    topic: "graphing. we have to graph y = 2x - 1 and i dont get graphs at all",
+    minutes: 15,
+    brief:
+      "You are Zoe, 13, in 8th grade. You have to graph y = 2x - 1. You don't know what it means to graph an equation: you think you just draw a line through the middle somewhere. You can substitute a number if someone tells you to (2 times 3 minus 1 is 5) and you know how to find a point like (2, 3) on a grid if you are reminded which number goes across first. You are a bit anxious about graphs and say so.",
+    anchors: [
+      "Right away say \"i dont get graphs at all\" and, the first time you're asked what you know, \"literally nothing lol\".",
+      "If the tutor draws the finished line before you have found any points, say \"ok but how did you know where to put it\".",
+      "When you have found a couple of points, ask \"wait so every point on the line works?\"",
+    ],
+    convincedBy:
+      "Seeing the equation as a rule that turns each x into a y, making a little table of x and y with the tutor (you compute them), putting those points on the grid yourself (the tutor plots what you say), and seeing they line up into a straight line. Then the 2 as \"up 2 for every 1 across\" makes sense.",
+    outcome:
+      "Zoe finds at least three points of y = 2x - 1 herself, sees they line up, and says in her words that the line is all the points that make the rule true (or that each step right goes up 2).",
+    checks: [
+      "Did the tutor build the graph from points Zoe computed instead of drawing the finished line first?",
+      "Did the tutor explain what the graph of an equation is (a rule that makes points), not just the procedure?",
+      "Did Zoe compute the points herself?",
+    ],
+    turns: 12,
+  },
+  {
+    id: "factor-novice",
+    name: "Tomas",
+    grade: "9th grade",
+    age: 14,
+    topic: "factoring. x^2 + 7x + 12. i have no idea what factor even means",
+    minutes: 15,
+    brief:
+      "You are Tomas, 14, in 9th grade. You have to factor x^2 + 7x + 12. You have no idea what factoring means; you have never multiplied two brackets like (x + 3)(x + 4) and would not know how. Your times tables are good. You are a little bored and want the trick, but you will work if it makes sense.",
+    anchors: [
+      "When asked what you know, say \"i have no idea what factor even means\".",
+      "If the tutor asks you to find two numbers before it has shown you why, say \"why would i do that\".",
+      "Once you have seen one worked through, ask to try another one yourself.",
+    ],
+    convincedBy:
+      "Seeing what factoring undoes: multiplying two brackets out (or a rectangle cut into x^2, x's and ones, an area model) on a smaller example worked through with you, so you see where the 7 and the 12 come from; then trying x^2 + 7x + 12 yourself. Being told \"find two numbers that multiply to 12 and add to 7\" with no reason does not convince you.",
+    outcome:
+      "Tomas factors x^2 + 7x + 12 as (x + 3)(x + 4) himself, says why the numbers must multiply to 12 and add to 7, and does one more (like x^2 + 5x + 6) alone.",
+    checks: [
+      "Did the tutor show what factoring undoes (multiplying out, or an area model) before asking for the two numbers?",
+      "Did the tutor work one example with Tomas before giving him x^2 + 7x + 12 to do?",
+      "Did Tomas find the factors himself?",
+    ],
+    turns: 12,
+  },
+];
+
 export const HELDOUT: BenchCase[] = [
   {
     id: "slope",
@@ -520,7 +609,7 @@ const WORKSHEET_HTML = `<!doctype html>
 for (const c of CASES) if (c.worksheet) c.worksheet.html = WORKSHEET_HTML;
 
 export function caseById(id: string): BenchCase | undefined {
-  return CASES.find((c) => c.id === id) ?? HELDOUT.find((c) => c.id === id) ?? REAL.find((c) => c.id === id) ?? PICTURES.find((c) => c.id === id);
+  return CASES.find((c) => c.id === id) ?? HELDOUT.find((c) => c.id === id) ?? REAL.find((c) => c.id === id) ?? PICTURES.find((c) => c.id === id) ?? NOVICES.find((c) => c.id === id);
 }
 
 export function intakeFor(c: BenchCase): SessionIntake {
