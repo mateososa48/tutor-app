@@ -138,7 +138,7 @@ function contentOf(name: string, args: Args): string | null {
     case "add_equation_sequence":
       return splitSteps(str("steps")).map(normalizeLatex).join("\n");
     case "show_example":
-      return [str("problem"), ...splitSteps(str("steps"))].map(normalizeLatex).join("\n");
+      return [str("problem"), ...splitSteps(str("steps")).map(normalizeLatex), ...str("why").split("|")].map((l) => l.trim()).join("\n");
     case "draw_illustration":
       // The scene is an object: the generic picture fingerprint reads only
       // strings, so every illustration had looked like the first one.

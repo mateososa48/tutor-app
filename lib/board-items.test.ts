@@ -236,3 +236,13 @@ test("the short board list keeps a picture's parts whole, so the tutor can point
   assert.match(compact, /\(parts: pizzas, kids, plate1, plate2\)/);
   assert.match(compact, /^b1 \S+ ""3 pizzas shared by 4 kids…/);
 });
+
+test("a target that names a line inside an item finds the item", () => {
+  const items = [
+    { id: "b2", tool: "draw_equation_step", label: "3x + 7 = 22", shapeIds: [], eqItemIds: [], owner: "tutor" as const, createdAt: 0 },
+    { id: "b4", tool: "show_example", label: "Worked the example 2x + 4 = 10", shapeIds: [], eqItemIds: [], owner: "tutor" as const, createdAt: 1, content: "show_example:2x+4=10\n2x=6\nx=3\nsubtract4frombothsides\nsplitinto2groups" },
+  ];
+  assert.equal(resolveItemTarget(items, "subtract 4 from both sides")?.id, "b4");
+  assert.equal(resolveItemTarget(items, "2x = 6")?.id, "b4");
+  assert.equal(resolveItemTarget(items, "3x + 7 = 22")?.id, "b2");
+});

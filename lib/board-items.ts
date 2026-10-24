@@ -142,6 +142,16 @@ export function resolveItemTarget(items: BoardItem[], target: string): BoardItem
       if (tokens.every((tok) => label.includes(tok))) return items[i];
     }
   }
+  // A line inside an item: a step of the worked example, a row of a table
+  // (Oct 24 2026: "point_at 2x / 2 = 6 / 2" and "subtract 4 from both sides"
+  // were refused while the example that holds them was on the board).
+  for (const want of [tm, plain]) {
+    if (want.length < 3) continue;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const c = items[i].content;
+      if (c && normalizeForMatch(latexToPlain(c.slice(c.indexOf(":") + 1))).includes(want)) return items[i];
+    }
+  }
   const words = t.split(/\s+/).filter((w) => w.length > 2);
   if (words.length === 0) return null;
   let best: { item: BoardItem; score: number } | null = null;
