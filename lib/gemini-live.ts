@@ -1,4 +1,5 @@
 import { liveWhiteboardDeclarations, type ToolDeclaration } from "./whiteboard-tools";
+import { SHOW_EXAMPLE_DECLARATION } from "./worked-example";
 import type { UploadedFile } from "./file-processor";
 import { TUTOR_TOOL_DECLARATIONS, previewCheck } from "./tutor-tools";
 import { SESSION_TOOL_DECLARATIONS } from "./session-tools";
@@ -96,6 +97,8 @@ export type PlannerOption = {
   topic: () => string;
   board: () => string;
   grade: () => string;
+  /** What the student is into (onboarding), for the planner's comparisons. */
+  likes?: () => string;
 };
 
 /**
@@ -143,7 +146,7 @@ function decodeBase64Text(base64: string): string {
  * see LIVE_CUT in lib/whiteboard-tools.ts). The benchmark sends the same set.
  */
 export function liveToolDeclarations(): ToolDeclaration[] {
-  return [...liveWhiteboardDeclarations(), ILLUSTRATE_DECLARATION, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS].map((d) => liveDeclarationOf(d as ToolDeclaration));
+  return [...liveWhiteboardDeclarations(), SHOW_EXAMPLE_DECLARATION, ILLUSTRATE_DECLARATION, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS].map((d) => liveDeclarationOf(d as ToolDeclaration));
 }
 
 function liveDeclarationOf(decl: ToolDeclaration): ToolDeclaration {
@@ -910,6 +913,8 @@ export class GeminiLiveSession {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           grade: this.planner.grade(),
+          likes: this.planner.likes?.() ?? "",
+          problem: this.tutorRuntime.policy.pageProblem ?? "",
           topic: this.planner.topic(),
           turns: this.coachHistory,
           line,

@@ -40,15 +40,28 @@ test("the planner's reply becomes one bracketed note: its quote and one allowed 
   assert.equal(parsePlannerOrder('Say: "What is $f(3)$?"')?.say, "What is f(3)?", "no LaTeX in what the tutor will say");
 });
 
-test("the planner's rules put diagnosis first and never let it hand over the answer", () => {
-  assert.match(PLANNER_SYSTEM, /1\. They gave an answer, a rule or a guess WITHOUT saying why: ask how they got it/);
-  assert.match(PLANNER_SYSTEM, /2\. They already said why.*don't ask again/);
-  assert.match(PLANNER_SYSTEM, /The quote never starts with praise/);
+// Oct 24 2026: the rules are keyed to where the student is. A student with no
+// way in is taught (a model, a worked example on other numbers); one with a
+// wrong idea is asked and shown where it breaks; neither is handed their answer.
+test("the planner sorts the student first, teaches a novice, and never hands over the answer", () => {
+  assert.match(PLANNER_SYSTEM, /First decide where the student is/);
+  assert.match(PLANNER_SYSTEM, /A\. No way in yet: "I don't know", "teach me"[^\n]*TEACH/);
+  assert.match(PLANNER_SYSTEM, /show_example\(problem \| steps \| why\)/);
+  assert.match(PLANNER_SYSTEM, /B\. A wrong idea with a reason[^\n]*Make their idea break/);
+  assert.match(PLANNER_SYSTEM, /C\. An answer, rule or guess with no reason[^\n]*ask how they got it/);
+  assert.match(PLANNER_SYSTEM, /Never open with praise/);
   assert.match(PLANNER_SYSTEM, /Board tools you may name: add_student_attempt.*No others\./);
-  assert.match(PLANNER_SYSTEM, /Never: give the answer, a number they should find, or the rule/);
-  assert.match(PLANNER_SYSTEM, /your order agrees with it/);
-  assert.match(PLANNER_SYSTEM, /never ask for add_student_attempt of an answer/);
+  assert.match(PLANNER_SYSTEM, /Never: give the answer to their problem or a number they should find/);
+  assert.match(PLANNER_SYSTEM, /When the checker gave a verdict, agree with it/);
+  assert.match(PLANNER_SYSTEM, /never order add_student_attempt of an answer/);
   assert.match(PLANNER_SYSTEM, /never ask them to write, draw or shade/);
+  assert.match(PLANNER_SYSTEM, /never the finished graph of their problem first/);
+});
+
+test("the planner's prompt carries the teaching model for the problem and what they like", () => {
+  const text = plannerPrompt({ grade: "9th grade", topic: "my worksheet", turns: [], line: "teach me", verdict: null, board: "", state: null, reminders: null, problem: "3x + 7 = 22", likes: "skateboarding" });
+  assert.match(text, /Teaching model for this kind of problem[^\n]*balance/);
+  assert.match(text, /They like: skateboarding/);
 });
 
 test("an order that calls an answer right is dropped unless the checker said correct", () => {

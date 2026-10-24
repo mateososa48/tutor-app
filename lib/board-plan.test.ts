@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { layoutPlanRow, parsePlan, planAfterCorrect, planAfterStart, planNote, planSummary, readPlan, PLAN_LABEL_MAX, type BoardPlan } from "./board-plan";
+import { layoutPlanRow, parsePlan, planIsSolutionSteps, planAfterCorrect, planAfterStart, planNote, planSummary, readPlan, PLAN_LABEL_MAX, type BoardPlan } from "./board-plan";
 
 test("a plan string splits on | into trimmed labels", () => {
   assert.deepEqual(parsePlan("What fractions are | Adding them | Practice"), { steps: ["What fractions are", "Adding them", "Practice"], dropped: 0 });
@@ -134,4 +134,13 @@ test("on a narrow page a step too wide beside the lead starts at the left edge",
 test("no lead: steps start at the left", () => {
   const l = layoutPlanRow([100, 100], { ...ROW, lead: 0, maxW: 500 });
   assert.deepEqual(l.pos, [{ x: 0, y: 0 }, { x: 130, y: 0 }]);
+});
+
+test("planIsSolutionSteps: one problem's steps are refused, lesson goals are not", () => {
+  assert.equal(planIsSolutionSteps(["Subtract 7 from both sides", "Divide both sides by 3", "x = 5"]), true);
+  assert.equal(planIsSolutionSteps(["Add 4 to both sides", "Check it"]), true);
+  assert.equal(planIsSolutionSteps(["Two-step equations", "Equations with brackets", "Graphing a line"]), false);
+  assert.equal(planIsSolutionSteps(["What fractions are", "Adding them", "Practice"]), false);
+  assert.equal(planIsSolutionSteps(["Problem 1", "Problem 2", "Problem 3"]), false);
+  assert.equal(planIsSolutionSteps(["Adding fractions", "Subtracting fractions"]), false);
 });

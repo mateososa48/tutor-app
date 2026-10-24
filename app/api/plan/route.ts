@@ -6,12 +6,13 @@
 // and the tutor goes on with the app's own note.
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { hedged } from "@/lib/hedge";
-import { PLANNER_SYSTEM, illustrationOf, parsePlannerOrder, plannerNote, plannerPrompt, type PlannerTurn } from "@/lib/tutor-planner";
+import { PLANNER_MODELS, planReply } from "@/lib/planner-request";
+import { plannerPrompt, type PlannerTurn } from "@/lib/tutor-planner";
 
 // The small models answer in about 1-2 s; the bigger flash models took 10-37 s
-// under load on Sept 27 2026, too slow for a live turn.
-const MODELS = (process.env.PLANNER_MODELS || "gemini-3.5-flash-lite,gemini-3.1-flash-lite").split(",").map((s) => s.trim()).filter(Boolean);
+// under load on Sept 27 2026, too slow for a live turn. Claude Haiku first when
+// its key is set (lib/planner-request).
+const MODELS = PLANNER_MODELS;
 // The planner with low thinking answers in 0.8-2.5 s, a few calls near 3 s; at
 // 2.4 s a spoken answer lost its order about one time in two (Sept 27 2026).
 const DEADLINE_MS = 3_200;
@@ -64,46 +65,12 @@ export async function POST(req: NextRequest) {
     board: text(body.board, 900),
     state: text(body.state, 300) || null,
     reminders: text(body.reminders, 400) || null,
+    problem: text(body.problem, 200) || null,
+    likes: text(body.likes, 160) || null,
   });
 
-  const started = Date.now();
   const verdict = text(body.verdict, 400) || null;
-  // Why a model gave nothing (429 quota, 503 overload…), for the recording.
-  const failures: string[] = [];
-  const asked = new Set<string>();
-  const done = new Set<string>();
-  const won = await hedged(
-    MODELS,
-    async (model, signal) => {
-      asked.add(model);
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: PLANNER_SYSTEM }] },
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 800, thinkingConfig: { thinkingLevel: "low" } },
-        }),
-        signal,
-      });
-      if (!r.ok) {
-        done.add(model);
-        failures.push(`${model} ${r.status}`);
-        return null;
-      }
-      const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
-      done.add(model);
-      const reply = j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
-      const note = plannerNote(reply, verdict);
-      if (!note) failures.push(`${model} unusable`);
-      // A picture the app draws itself while the tutor talks (lib/illustration).
-      return note ? { note, illustrate: illustrationOf(parsePlannerOrder(reply)?.board) } : null;
-    },
-    { hedgeMs: HEDGE_MS, deadlineMs: DEADLINE_MS },
-  );
-  // A model still out when the deadline came is a timeout (Oct 11 2026: a
-  // session lost every order to the deadline and the record said nothing).
-  for (const m of asked) if (!done.has(m) && m !== won?.model) failures.push(`${m} timeout`);
-  if (won) return NextResponse.json({ note: won.value.note, ...(won.value.illustrate ? { illustrate: won.value.illustrate } : {}), model: won.model, ms: Date.now() - started, ...(failures.length ? { failures } : {}) });
-  return NextResponse.json({ note: null, ms: Date.now() - started, failures });
+  const planned = await planReply(prompt, verdict, { models: MODELS, hedgeMs: HEDGE_MS, deadlineMs: DEADLINE_MS, geminiKey: () => apiKey });
+  if (planned.note) return NextResponse.json({ note: planned.note, ...(planned.illustrate ? { illustrate: planned.illustrate } : {}), model: planned.model, ms: planned.ms, ...(planned.failures.length ? { failures: planned.failures } : {}) });
+  return NextResponse.json({ note: null, ms: planned.ms, failures: planned.failures });
 }

@@ -152,12 +152,17 @@ test("the recorded session's flow: steps keep them on the problem; solved with h
   assert.match(msg(runTutorTool("check_answer", { problem: "20/5", student_answer: 4, skill: "division" }, p, 0)), /Verdict: correct/);
 });
 
-test("two misses in a row: draw this problem as a picture", () => {
+// Oct 24 2026: two misses used to get "draw this problem as a picture, one
+// small question"; a student with no way in is taught (lib/teaching-models).
+test("two misses in a row: teach it, with the model for the problem", () => {
   const p = createPolicy(0);
   noteBoardWrite(p, "start_new_problem", { problem: "Solve $5(x - 2) = 20$" });
   runTutorTool("check_answer", { problem: "5(x - 2) = 20", student_answer: "2", skill: "equations", help_level: "H1" }, p, 0);
   const r = runTutorTool("check_answer", { problem: "5(x - 2) = 20", student_answer: "3", skill: "equations", help_level: "H1" }, p, 0);
-  assert.match(r && r.success ? r.message ?? "" : "", /draw this problem as a picture/);
+  const message = r && r.success ? r.message ?? "" : "";
+  assert.match(message, /step TEACH · next: teach it now/);
+  assert.match(message, /5 equal groups/);
+  assert.match(message, /show_example/);
 });
 
 test("check_answer reads a box on the way through the page's equation", () => {
@@ -720,4 +725,45 @@ test("a reason is how they got it, not their answer: a true reason never makes a
   const own = createPolicy(0);
   noteStudentUtterance(own, "9 minus 8 is 1", 1000);
   assert.match(autoCheck(own, "9 minus 8 is 1", 1000) ?? "", /→ correct/);
+});
+
+test("show_example on their own problem is refused; another problem's results are shown in full", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { problem: "3x + 7 = 22" });
+  const theirs = withholdResult(p, "show_example", { problem: "3x + 7 = 22", steps: "3x = 15 | x = 5", why: "" });
+  assert.match(theirs.refuse ?? "", /their own problem/);
+  const reordered = withholdResult(p, "show_example", { problem: "7 + 3x = 22", steps: "3x = 15", why: "" });
+  assert.ok(reordered.refuse, "the same numbers in another order are still their problem");
+  const other = withholdResult(p, "show_example", { problem: "2x + 3 = 11", steps: "2x = 8 | x = 4", why: "" });
+  assert.equal(other.refuse, undefined);
+  assert.equal(other.args.steps, "2x = 8 | x = 4");
+});
+
+// Oct 24 2026, Mateo's session: "3x = 15" was written as the tutor asked for 15.
+test("a linear step's result waits as '= ?' until they say it", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { problem: "3x + 7 = 22" });
+  const a = withholdResult(p, "draw_equation_step", { latex: "3x = 15", annotation: "subtract 7 from both sides" });
+  assert.equal(a.args.latex, "3x = ?");
+  const q = createPolicy(0);
+  noteBoardWrite(q, "start_new_problem", { problem: "5(x - 2) = 30" });
+  assert.equal(withholdResult(q, "draw_equation_step", { latex: "x - 2 = 6" }).args.latex, "x - 2 = ?");
+  noteStudentUtterance(q, "6", 1000);
+  assert.equal(withholdResult(q, "draw_equation_step", { latex: "x - 2 = 6" }).args.latex, "x - 2 = 6", "said, so it goes up");
+  assert.equal(withholdResult(q, "draw_equation_step", { latex: "5(x - 2) = 30" }).args.latex, "5(x - 2) = 30", "the problem as given");
+  const r = createPolicy(0);
+  noteBoardWrite(r, "start_new_problem", { problem: "y = 2x - 1" });
+  assert.equal(withholdResult(r, "draw_equation_step", { latex: "2x = y + 1" }).args.latex, "2x = y + 1", "an expression, not a value");
+});
+
+// Oct 24 2026: "so its 3 times 5 + 7 so its 15 plus 7 and that is 22" checks
+// x = 5 in 3x + 7 = 22; it was read as x = 22 and called wrong.
+test("putting the solution back in is checked as that solution", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { problem: "3x + 7 = 22" });
+  noteStudentUtterance(p, "so its 3 times 5 + 7 so its 15 plus 7 and that is 22", 1000);
+  const note = autoCheck(p, "so its 3 times 5 + 7 so its 15 plus 7 and that is 22", 1000);
+  assert.match(note ?? "", /→ correct/);
+  const r = runTutorTool("check_answer", { problem: "6 + 2 = 8", student_answer: "8", skill: "two-step equations" }, createPolicy(0), 0);
+  assert.match(r && r.success ? r.message ?? "" : "", /Verdict: correct/);
 });

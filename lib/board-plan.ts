@@ -187,3 +187,15 @@ export function layoutPlanRow(widths: number[], o: PlanRowOptions): PlanRowLayou
   const lines = line + 1;
   return { pos, dots, w: Math.ceil(right), h: lines * o.lineH + (lines - 1) * o.lineGap, lines };
 }
+
+/**
+ * Steps that are one problem's solution, not the lesson's goals (Oct 24 2026:
+ * mid-problem the tutor wrote "Subtract 7 from both sides | Divide both sides
+ * by 3" into the plan box, and it stayed up, ticked, through the next three
+ * problems). An operation on numbers, or anything "both sides", is a step of a
+ * problem; "Adding fractions" or "Two-step equations" is a goal.
+ */
+export function planIsSolutionSteps(steps: readonly string[]): boolean {
+  const step = /\bboth sides\b|^\s*(?:subtract|add|divide|multiply|plug|substitute|move|isolate|distribute|combine|cancel|take away|times)\b[^|]*\d|^\s*(?:x|y|[a-z])\s*=\s*-?\d/i;
+  return steps.filter((s) => step.test(s)).length >= Math.max(1, Math.ceil(steps.length / 2));
+}

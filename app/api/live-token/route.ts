@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sanitizeOnboarding } from "@/lib/onboarding";
 import { GoogleGenAI } from "@google/genai";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -97,8 +98,10 @@ export async function POST(req: NextRequest) {
     voice: geminiVoiceFor(row?.voiceName),
     greeting: intake ? "" : buildGreetingLine(profile, 0),
     resume: buildResumeLine(profile),
-    // The planner plans for this student's grade (lib/tutor-planner).
+    // The planner plans for this student's grade (lib/tutor-planner), and
+    // builds its comparisons from what they like (Oct 24 2026).
     grade: row?.gradeLevel ?? "",
+    likes: sanitizeOnboarding(row?.onboarding)?.interests?.join(", ") ?? "",
   };
   if (configOnly) return NextResponse.json(config);
 

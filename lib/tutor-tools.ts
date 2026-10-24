@@ -10,8 +10,9 @@
 // the GPT-Live session route add it next to the whiteboard tools.
 
 import type { ToolCallResult } from "./live-types";
+import { isTheirProblem, THEIR_PROBLEM } from "./worked-example";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer, checkBlankInPage, prepareExpression, questionMath, sameExpression, sharingProblem, spokenExpression, spokenToDigits, verbTask, withKnownRules, type CheckVerdict } from "./answer-check";
+import { checkAnswer, checkBlankInPage, finalValue, prepareExpression, questionMath, sameExpression, sharingProblem, spokenExpression, spokenToDigits, verbTask, withKnownRules, type CheckVerdict } from "./answer-check";
 import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import { latexToPlain } from "./latex-plain";
@@ -431,7 +432,13 @@ function withholdCaptions(policy: TutorPolicy, args: Record<string, unknown>): {
 // step's result on the right. In a lesson the student says each step, so a
 // right side they have not said goes up as "= ?" (Oct 6 2026: "du = 2x dx" and
 // "du = 3x^2 dx" went up as the tutor asked "what is du?", twice in one session).
-const STEP_LINE = /^\s*(d?[a-z]|[a-z]'\s*\(\s*[a-z]\s*\)|\\frac\{d[a-z]?\}\{d[a-z]\}|d[a-z]\s*\/\s*d[a-z])\s*=\s*([^=?]+?)\s*$/i;
+// Oct 24 2026: "3x = 15" went up as the tutor asked "what is 22 minus 7?", and
+// "x - 2 = 6" as it asked what dividing by 5 gives. A linear left side (3x,
+// x - 2, 2x + 1) is a step's target too, when its right side is a number.
+const STEP_LHS = String.raw`d?[a-z]|[a-z]'\s*\(\s*[a-z]\s*\)|\\frac\{d[a-z]?\}\{d[a-z]\}|d[a-z]\s*\/\s*d[a-z]|-?\d+(?:\.\d+)?\s*[a-z](?:\s*[-+]\s*\d+(?:\.\d+)?)?|[a-z]\s*[-+]\s*\d+(?:\.\d+)?`;
+const STEP_LINE = new RegExp(String.raw`^\s*(${STEP_LHS})\s*=\s*([^=?]+?)\s*$`, "i");
+const OWN_ASK = new RegExp(String.raw`^\s*(${STEP_LHS})\s*=\s*\?\s*$`, "i");
+const LINEAR_LHS = /^-?\d|[-+]/;
 
 /** Does any sentence of `lines` say this value (whole, or after "is", "=", "equal to")? */
 function saysExpression(lines: string[], rhs: string): boolean {
@@ -462,6 +469,8 @@ function withholdStep(policy: TutorPolicy, latex: string): { latex: string; note
   // "y = 2x + 1" is a function as given, not a step: a lone letter is a step's
   // target only for a value (x = 6) or a substitution (u, v, w = …).
   if (/^[a-z]$/i.test(m[1]) && !/^[uvw]$/i.test(m[1]) && /[a-z]/i.test(rhs.replace(/\\[a-z]+/gi, ""))) return null;
+  // A linear left side is a step only toward a value ("3x = 15"), not an expression.
+  if (LINEAR_LHS.test(m[1].trim()) && !/^-?\d+(?:\.\d+)?$/.test(rhs)) return null;
   // Already asked, already theirs, said aloud by the tutor in this reply
   // ("so if we set u equal to x squared plus one": nothing left to give away),
   // or part of the problem as given.
@@ -546,6 +555,9 @@ function answerGuard(policy: TutorPolicy, name: string, args: Record<string, unk
 }
 
 export function withholdResult(policy: TutorPolicy, name: string, args: Record<string, unknown>): ShapedCall {
+  // A worked example is a different problem: its results are the point, and
+  // their own problem is never worked as the "example" (Oct 24 2026).
+  if (name === "show_example") return typeof args.problem === "string" && isTheirProblem(args.problem, policy.pageProblem) ? { args, note: null, refuse: THEIR_PROBLEM } : { args, note: null };
   if (policy.boardHelp >= 5) return { args, note: null };
   const guarded = answerGuard(policy, name, args);
   if (guarded) {
@@ -569,7 +581,7 @@ export function withholdResult(policy: TutorPolicy, name: string, args: Record<s
   }
   // A "= ?" step line the tutor wrote itself is tracked the same way, so its
   // full line replaces it (Oct 7 2026: "du/dx = ?" stayed beside "du/dx = 2x").
-  const own = /^\s*(d?[a-z]|[a-z]'\s*\(\s*[a-z]\s*\)|\\frac\{d[a-z]?\}\{d[a-z]\}|d[a-z]\s*\/\s*d[a-z])\s*=\s*\?\s*$/i.exec(latex);
+  const own = OWN_ASK.exec(latex);
   if (own) {
     const key = stepKey(own[1]);
     if (!policy.withheld.some((w) => w.lhs === key)) policy.withheld.push({ lhs: key, latex: "", rhs: "", item: null });
@@ -653,6 +665,11 @@ function answerCandidates(policy: TutorPolicy, text: string): { t: string; candi
     const said = new Set([...policy.lastTutorNumbers, ...numbersIn(spokenToDigits(t))]);
     return numbersIn(problem).every((n) => said.has(n));
   };
+  // Checking their solution by putting it back in: "so its 3 times 5 + 7 so
+  // its 15 plus 7 and that is 22" ends on the equation's 22, and the 5 is what
+  // they are checking (Oct 24 2026: read as x = 22 and called wrong).
+  const sub = page ? substitutionCheck(page, t) : null;
+  if (sub) candidates.push(sub);
   const order = policy.spokenFresh ? [policy.lastSpokenQuestion, policy.lastAsked, page] : [policy.lastAsked, policy.lastSpokenQuestion, page];
   for (const c of order) if (c && c.trim() && live(c)) for (const a of answers) candidates.push({ problem: withKnownRules(c, policy.functionRules), answer: a });
   // Their own arithmetic ("9 minus 8 is 1") only when the question can't be
@@ -661,6 +678,25 @@ function answerCandidates(policy: TutorPolicy, text: string): { t: string; candi
   const own = ownClaim(beforeReason(t));
   if (own) candidates.push(own);
   return { t, candidates };
+}
+
+/** A line that puts a value back into the page's equation and lands on its other side: the value is the answer. */
+function substitutionCheck(page: string, line: string): { problem: string; answer: string } | null {
+  if (!/=/.test(page) || !/[a-z]/i.test(page.replace(/\\[a-z]+/gi, ""))) return null;
+  const said = numbersIn(spokenToDigits(line));
+  const end = finalValue(line);
+  if (said.length < 2 || !end) return null;
+  const sides = page.split("=").map((side) => numbersIn(side));
+  if (!sides.some((nums) => nums.length === 1 && nums[0] === end)) return null;
+  for (const n of said) {
+    if (n === end) continue;
+    try {
+      if (checkAnswer(page, n).verdict === "correct") return { problem: page, answer: n };
+    } catch {
+      // not readable: try the next number
+    }
+  }
+  return null;
 }
 
 /**
@@ -705,7 +741,7 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
     // What the board gave them on this problem, not a guess: an answer found
     // with no picture or shown step is found alone (Sept 26 2026: the old
     // floor of H1 meant no auto-checked answer ever counted toward ALONE or UP).
-    const help = policy.boardHelp;
+    const help = Math.max(policy.boardHelp, policy.exampleHelp);
     const step = stepOfPage(policy.pageProblem, problem, answer);
     recordAttempt(policy, { skill, result: attemptFromVerdict(check.verdict), help, auto: true, problem, step }, now);
     noteAnswerChecked(policy);
@@ -801,11 +837,14 @@ export function runTutorTool(
   const skill = typeof args.skill === "string" && args.skill.trim() ? args.skill : policy.currentSkill ?? "unnamed skill";
   // The board's own help counts too: an answer found by counting the slices
   // the tutor just drew is not an answer found alone.
-  const help = Math.max(parseHelpLevel(args.help_level) ?? suggestHelp(policy)?.level ?? 1, policy.boardHelp);
+  const help = Math.max(parseHelpLevel(args.help_level) ?? suggestHelp(policy)?.level ?? 1, policy.boardHelp, policy.exampleHelp);
   const result = attemptFromVerdict(check.verdict, typeof args.kind === "string" ? args.kind : undefined);
   const step = stepOfPage(policy.pageProblem, problem, answer);
   if (!reused) recordAttempt(policy, { skill, result, help, callId, problem, step }, now);
-  if (!step && result !== "unchecked") policy.boardHelp = 0;
+  if (!step && result !== "unchecked") {
+    policy.boardHelp = 0;
+    policy.exampleHelp = 0;
+  }
   // Their working, said out loud, belongs on the board as lines.
   const working = spokenWorking(policy.lastUtterance);
   noteAnswerChecked(policy);

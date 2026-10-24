@@ -79,8 +79,8 @@ import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
 import { CASES, HELDOUT, NOVICES, PICTURES, REAL, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
-import { hedged } from "../lib/hedge";
-import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, PLANNER_SYSTEM, illustrationOf, pictureRefusal, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
+import { planReply } from "../lib/planner-request";
+import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, PLANNER_SYSTEM, pictureRefusal, plannerPrompt, sameLine } from "../lib/tutor-planner";
 import { illustrate as illustrateScene } from "../lib/illustration/request";
 import { ILLUSTRATE_NOTHING, ILLUSTRATE_PENDING, ILLUSTRATE_WAIT_MS, PictureMemory, alreadyDrawn, illustrateFailed, illustrateRequest } from "../lib/illustration/tool";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
@@ -638,7 +638,7 @@ const PLAN_KEY = arg("plankey", "") || arg("textkey", "");
 // the illustration A/B, Oct 2026); everything else identical.
 const ILLUSTRATOR = arg("illustrator", "claude-haiku-5-5");
 const NO_PICTURES = process.argv.includes("--nopictures");
-const PICTURE_RULE = / For a picture of real things[^\n]*?keep their own tools\./;
+const PICTURE_RULE = /\n- illustrate\(what to draw[^\n]*/;
 const PICTURE_TOOL = /, illustrate, /;
 if (!PICTURE_RULE.test(PLANNER_SYSTEM) || !PICTURE_TOOL.test(PLANNER_SYSTEM)) throw new Error("bench: the planner's illustrate rule moved; update PICTURE_RULE");
 const PLANNER = NO_PICTURES ? PLANNER_SYSTEM.replace(PICTURE_RULE, "").replace(PICTURE_TOOL, ", ") : PLANNER_SYSTEM;
@@ -647,26 +647,19 @@ type Picture = { what: string; notice: string };
 
 /** The planner's order for this reply, or null when no model answered usably in time. */
 async function planOrder(text: string, verdict: string | null = null): Promise<{ note: string; model: string; illustrate: Picture | null } | null> {
-  const won = await hedged(
-    PLAN_MODELS,
-    async (spec, signal) => {
-      const [model, keyName] = spec.split("@");
-      const key = keyName ? readGeminiKey(keyName) : PLAN_KEY ? readGeminiKey(PLAN_KEY) : KEY;
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST",
-        headers: { "x-goog-api-key": key, "content-type": "application/json" },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: PLANNER }] }, contents: [{ role: "user", parts: [{ text }] }], generationConfig: { maxOutputTokens: 800, temperature: 0.3, thinkingConfig: { thinkingLevel: "low" } } }),
-        signal,
-      });
-      if (!r.ok) return null;
-      const j = (await r.json()) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean }> } }> };
-      const reply = j.candidates?.[0]?.content?.parts?.filter((p) => !p.thought).map((p) => p.text ?? "").join("") ?? "";
-      const note = plannerNote(reply, verdict);
-      return note ? { note, illustrate: illustrationOf(parsePlannerOrder(reply)?.board) } : null;
+  // The app's own call (lib/planner-request): Claude Haiku first when its key is
+  // set, then the Gemini planners; "model@KEY_NAME" puts a model on another key.
+  const planned = await planReply(text, verdict, {
+    models: PLAN_MODELS,
+    system: PLANNER,
+    hedgeMs: PLAN_HEDGE_MS,
+    deadlineMs: PLAN_TIME_MS,
+    geminiKey: (spec) => {
+      const keyName = spec.split("@")[1];
+      return keyName ? readGeminiKey(keyName) : PLAN_KEY ? readGeminiKey(PLAN_KEY) : KEY;
     },
-    { hedgeMs: PLAN_HEDGE_MS, deadlineMs: PLAN_TIME_MS },
-  );
-  return won ? { note: won.value.note, model: won.model, illustrate: won.value.illustrate } : null;
+  });
+  return planned.note ? { note: planned.note, model: planned.model, illustrate: planned.illustrate } : null;
 }
 
 // ── Text models (the student, and any judge that is not Gemini) ────────────
@@ -935,6 +928,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       board: turns.at(-1)?.boardCompact ?? "",
       state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
       reminders: [voiceNote, pictureNote].filter(Boolean).join(" ") || null,
+      problem: runtime.policy.pageProblem,
     }), verdict).then((r) => {
       if (r?.note) voiceNote = null;
       if (r?.note) pictureNote = null;
@@ -1245,6 +1239,7 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
           board: turn.boardCompact,
           state: m.policy.formatTutorState(runtime.policy, Date.now()) || null,
           reminders: [pendingNote, pictureNote].filter(Boolean).join(" ") || null,
+          problem: runtime.policy.pageProblem,
         }), pendingAuto);
         pendingPlanMs = Date.now() - t0;
         pendingPlanModel = order?.model ?? null;

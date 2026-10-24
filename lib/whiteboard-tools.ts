@@ -463,11 +463,11 @@ const ALL_TOOL_DECLARATIONS = [
   {
     name: "set_plan",
     description:
-      "The session plan in a box on the board, once, after the opening: 2-4 short steps. Later step=N moves on (earlier steps done); a step also turns green when a checked answer finishes a problem in it.",
+      "The lesson's plan in a box: this session's 2-4 goals ('Two-step equations | Brackets | Graphing a line'), set once after the opening, never one problem's steps. Later step=N moves on; a checked answer that finishes a problem ticks its step.",
     parameters: {
       type: "object",
       properties: {
-        steps: { type: "string", description: "2-4 steps split by ' | ': 'What fractions are | Adding them | Practice'." },
+        steps: { type: "string", description: "2-4 goals split by ' | ', never solution steps." },
         step: { type: "number", description: "Now on step N (1-based)." },
       },
     },

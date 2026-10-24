@@ -10,7 +10,9 @@ const PROFILE: StudentProfile = { displayName: "Sofia", gradeLevel: "7th grade",
 test("the Live prompt is a third of the old one and names only tools a Live session declares", () => {
   const text = buildLiveInstructions(PROFILE, ["mixes up numerator and denominator"], { desmos: true });
   // The old Gemini prompt measured 20,662 (Sept 25 2026); 3.8 skims a rulebook.
-  assert.ok(text.length < 9000, `Live prompt is ${text.length} characters`);
+  // 9,500 since Oct 24 2026: teaching a student with no way in (the lesson's
+  // first case, show_example, graphs from points) paid for most of itself.
+  assert.ok(text.length < 9500, `Live prompt is ${text.length} characters`);
   const declared = new Set(liveToolDeclarations().map((d) => d.name));
   const named = new Set([...text.matchAll(/\b([a-z]+(?:_[a-z]+)+)\b/g)].map((m) => m[1]).filter((n) => /^(add|draw|start|set|point|circle|cross|erase|look|remember|check|highlight)_/.test(n)));
   for (const n of named) assert.ok(declared.has(n), `${n} is named in the Live prompt but not declared to a Live session`);
@@ -35,7 +37,10 @@ test("the Live prompt is a third of the old one and names only tools a Live sess
     const spoken = line.slice("Return: ".length).split(" · ").filter((p) => p.startsWith('"'));
     assert.ok(spoken.length <= 1, `example splits its reply around a call: ${line.slice(0, 60)}`);
   }
-  assert.match(text, /If they've already said their idea/);
+  assert.match(text, /No way in yet/);
+  assert.match(text, /show_example/);
+  assert.match(text, /never one problem's steps/);
+  assert.match(text, /Never put up the finished graph of their problem first/);
   assert.match(text, /named Sofia/);
   assert.match(text, /mixes up numerator and denominator/);
   assert.doesNotMatch(text, /# Backchannel policy|# Delegation policy|area between curves/);
@@ -58,5 +63,5 @@ test("a session with the planner on the spoken path tells the tutor to call next
   assert.match(on, /# How a turn goes\n0\. Each time the student says something, call next_move before any words/);
   assert.equal((on.match(/^Return: next_move\(\) · /gm) ?? []).length, (off.match(/^Return: /gm) ?? []).length, "every example turn opens with next_move");
   assert.doesNotMatch(off, /next_move/);
-  assert.ok(on.length < 9_300, `prompt ${on.length}`);
+  assert.ok(on.length < 9_700, `prompt ${on.length}`);
 });

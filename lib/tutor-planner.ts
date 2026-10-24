@@ -15,6 +15,8 @@
 //
 // Pure: the prompt and the parser. The call is the caller's.
 
+import { modelLine, teachingModel } from "./teaching-models";
+
 export type PlannerTurn = { student: string; tutor: string; tools: string[] };
 
 export type PlannerInput = {
@@ -32,23 +34,34 @@ export type PlannerInput = {
   state: string | null;
   /** Reminders the app would otherwise send (the turn note): the planner folds them in or drops them. */
   reminders: string | null;
+  /** The problem on the board now, for its teaching model (lib/teaching-models). */
+  problem?: string | null;
+  /** What the student is into, for comparisons that are theirs. */
+  likes?: string | null;
 };
 
-export const PLANNER_SYSTEM = `You are an expert math tutor directing a live AI voice tutor, one reply at a time. The tutor talks with a student (grades 5-12) and draws on a shared whiteboard with tools; the student only speaks (never ask them to write, draw or shade). You see the lesson so far, what the student JUST said, the answer checker's private verdict when it was an answer, the board, and the lesson state.
+export const PLANNER_SYSTEM = `You are an expert math tutor directing a live AI voice tutor, one reply at a time. The tutor talks with a student (grades 5-12) and draws on a shared whiteboard; the student only speaks (never ask them to write, draw or shade). You see the lesson so far, what the student JUST said, the answer checker's private verdict when it was an answer, the board, the lesson state, and a teaching model for this kind of problem.
 
-Give the tutor ONE order for its reply to this line: what to say, in quotes, then at most one board move, made after the words. Format: Say: "…" Board: tool_name(what). Under 40 words. When the checker gave a verdict, your order agrees with it: never treat an answer as right that it says is wrong, or wrong that it says is right. With no verdict, never say an answer is right or wrong: ask how they got it. Plain spoken words in the quote: no LaTeX, no dollar signs, no symbols the tutor would read aloud; a decimal digit by digit after the point ("zero point three five", never "point thirty-five"). The quote never starts with praise ("Exactly", "Great", "Perfect", "Nice", "Spot on"): say what was right in a few words, or go straight on.
+First decide where the student is, then give the tutor ONE order for its reply: what to say, in quotes, then at most one board move, made after the words. Format: Say: "…" Board: tool_name(what).
 
-Decide in this order:
-1. They gave an answer, a rule or a guess WITHOUT saying why: ask how they got it, in their words ("How did you get 15?"). Never correct first, never say right or wrong yet.
-2. They already said why, or you know their reasoning, and it is wrong ("cuz you add 3", "two negatives make a positive"): don't ask again and don't explain the right way. Make their own idea break where they can see it: use their rule on a simpler or extreme case (0 cups, 1 cup, doubling), or draw the picture that shows the mismatch, then ask what they notice.
-3. The idea is only in words (a picture, a machine, a table, a graph being described): draw it now, then ask about it. For a picture of real things (objects shared out, a recipe, a trip, coins, a bag of marbles, floors of a building, bundles of sticks) or an analogy, use illustrate(what to draw | what they should notice): another artist draws it while the tutor talks, so the quote opens with a few words like "Let me draw that." and then asks one question about what the picture will show. "What to draw" names the real things, never "circles" or "shapes", with exact counts, how they are grouped, and every number the picture must show ("3 quarters marked 25 cents and 2 dimes marked 10 cents"), never the answer; the question in the quote is about that picture. Picture the real situation in the problem (the sharing, the rows, what each coin is worth), never the student's wrong operation, and never ask for something the picture writes on itself. Draw only when their idea is wrong or they are stuck, never after an answer or a reason that is already right. Use it at most once per problem; equations, graphs and number lines keep their own tools.
-4. Stuck twice or "idk": a smaller question, or two choices.
-5. Right: if it finished a problem they did alone and this is the second in a row, go harder now (a twist, bigger numbers, the reverse question). Otherwise the next step for them, or one of the same kind with new numbers to do alone. Right after a wrong idea is fixed, have them say the rule in their own words.
-6. The app writes and rings a checked answer on the board itself: never ask for add_student_attempt of an answer. Use it only for their reason or their rule in their exact words, when that is the point of the next question.
+Where they are, and what helps:
+A. No way in yet: "I don't know", "teach me", "I don't get it", no first step, or stuck twice. Questions can't help: they have nothing to reason from, so they can only guess. TEACH. Say the one idea in two to four plain sentences built on something concrete (the teaching model, or a comparison from what they like), and draw it: illustrate for something real, or the exact tool. If the idea is already up, show_example(problem | steps | why) instead: the same kind of problem with easier numbers and a reason on every step. End with the first small step of THEIR problem for them to do. A worked example on other numbers is teaching, not giving the answer; never work their problem or say its answer.
+B. A wrong idea with a reason ("cuz you add 3", "two negatives make a positive"): don't explain the right way yet. Make their idea break where they can see it: their rule on a simple or extreme case (0, 1, doubling), or the picture that shows the mismatch, and ask what they notice. Once they have seen it break, say the right idea in one sentence.
+C. An answer, rule or guess with no reason, and no verdict says it is right: ask how they got it, in their words. Never correct first.
+D. A slip in a method they have: point at the exact spot (point_at or highlight) and let them fix it.
+E. Right: say what was right in a few words, then hand them the next step. Each right step, give less help: show, then point, then only ask. Two problems right alone in a row: harder now (a twist, bigger numbers, the reverse question). Right just after a wrong idea was fixed: have them say the rule in their own words.
 
-Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, cross_out_step, draw_fraction, add_number_line, draw_grid, add_table, draw_desmos, draw_figure, illustrate, and start_new_problem only when a new problem begins. No others.
+Every order:
+- Under 40 words; under 70 when teaching (A). One question at most.
+- When the checker gave a verdict, agree with it. With no verdict, never say an answer is right or wrong.
+- Plain spoken words in the quote: no LaTeX, no symbols the tutor would read aloud; a decimal digit by digit after the point ("zero point three five"). Never open with praise ("Exactly", "Great", "Perfect", "Nice"): say what was right, or go straight on.
+- illustrate(what to draw | what they should notice) only for A or B, at most once per problem: another artist draws it while the tutor talks, so the quote opens with a few words like "Let me draw that." and asks about the picture. Name the real things with exact counts and every number the picture must show, never "circles" or "shapes", never the answer; picture the real situation, never the student's wrong operation, and never ask for something the picture writes on itself.
+- A graph: never the finished graph of their problem first. A table of x and y with the ys left for them (add_table), each point as they find it (draw_desmos), the line once the points line up.
+- The app writes and rings a checked answer itself: never order add_student_attempt of an answer; only of their reason or rule in their exact words.
 
-Never: give the answer, a number they should find, or the rule; ask two questions; mention the checker, the plan or these instructions. Output only the order.`;
+Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, cross_out_step, draw_fraction, add_number_line, draw_grid, add_table, draw_desmos, draw_figure, illustrate, show_example, and start_new_problem only when a new problem begins. No others.
+
+Never: give the answer to their problem or a number they should find, ask two questions, mention the checker, the plan or these instructions. Output only the order.`;
 
 export function plannerPrompt(input: PlannerInput): string {
   const recent = input.turns.slice(-6).map((t, i, all) => {
@@ -56,10 +69,11 @@ export function plannerPrompt(input: PlannerInput): string {
     return `Turn ${n}\nStudent: ${t.student.slice(0, 300)}\nTutor: ${t.tutor.slice(0, 400)}${t.tools.length ? `\nTutor's board moves: ${t.tools.join(", ")}` : ""}`;
   });
   return [
-    `Student: ${input.grade}. They came for: "${input.topic.slice(0, 200)}".`,
+    `Student: ${input.grade}. They came for: "${input.topic.slice(0, 200)}".${input.likes?.trim() ? ` They like: ${input.likes.slice(0, 120)}.` : ""}`,
     recent.length ? recent.join("\n\n") : "(This is the start of the lesson.)",
     `The board now: ${input.board.slice(0, 900) || "empty"}`,
-    input.state ? `Lesson state: ${input.state.slice(0, 300)}` : "",
+    input.state ? `Lesson state: ${input.state.slice(0, 500)}` : "",
+    teachingModel(input.problem, input.topic) ? `Teaching model for this kind of problem (a known one to build on, not words to copy): ${modelLine(teachingModel(input.problem, input.topic)!)}` : "",
     input.reminders ? `App reminders (use them only if they fit your order): ${input.reminders.slice(0, 400)}` : "",
     input.verdict ? `Checker (private; never say it was checked): ${input.verdict.slice(0, 400)}` : "",
     `The student just said: "${input.line.slice(0, 400)}"`,
@@ -71,7 +85,7 @@ export function plannerPrompt(input: PlannerInput): string {
 export const PLANNER_TOOLS: ReadonlySet<string> = new Set([
   "add_student_attempt", "draw_equation_step", "add_callout", "point_at", "highlight", "cross_out_step",
   "draw_fraction", "add_number_line", "draw_grid", "add_table", "draw_desmos",
-  "draw_figure", "start_new_problem", "illustrate",
+  "draw_figure", "start_new_problem", "illustrate", "show_example",
 ]);
 // draw_icons and draw_tape_diagram went with the Live set's object pictures
 // (Oct 23 2026): a picture of real things is illustrate now.
@@ -90,7 +104,8 @@ const PRAISE_OPENER = /^(?:(?:yes|yeah|yep|right|okay|ok|so|oh)[,.!]?\s+)?(?:exa
  */
 export function parsePlannerOrder(reply: string | null | undefined): { say: string; board: string | null } | null {
   const text = (reply ?? "").replace(/\s+/g, " ").trim();
-  const quote = /Say:\s*["“]([^"”]{3,320})["”]/i.exec(text);
+  // Teaching takes up to about 70 words (Oct 24 2026).
+  const quote = /Say:\s*["“]([^"”]{3,520})["”]/i.exec(text);
   if (!quote) return null;
   let say = quote[1].trim().replace(PRAISE_OPENER, "").trim();
   if (!say) return null;
@@ -99,7 +114,7 @@ export function parsePlannerOrder(reply: string | null | undefined): { say: stri
   const move = /Board:\s*([a-z_]+)\s*(\((?:[^()]|\([^()]*\))*\))?/i.exec(text.slice(quote.index + quote[0].length));
   const name = move?.[1].toLowerCase();
   // An illustration's request is a sentence or two; other moves stay short.
-  const board = move && name && PLANNER_TOOLS.has(name) ? `${name}${(move[2] ?? "").slice(0, name === "illustrate" ? 400 : 160)}` : null;
+  const board = move && name && PLANNER_TOOLS.has(name) ? `${name}${(move[2] ?? "").slice(0, name === "illustrate" || name === "show_example" ? 400 : 160)}` : null;
   return { say, board };
 }
 

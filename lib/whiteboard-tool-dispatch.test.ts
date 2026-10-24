@@ -187,3 +187,34 @@ test("a new problem kept beside fresh work is headed by the problem when its tit
   assert.match(msg(r), /"0.6 vs 0.45" opened as a section/);
   assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["section", "callout"], "the problem is the heading, not a second line");
 });
+
+// Oct 24 2026: the plan box held "Subtract 7 from both sides | Divide both sides by 3".
+test("set_plan refuses one problem's solution steps and says what the box is for", () => {
+  const f = fakeBoard();
+  const r = dispatchWhiteboardTool("set_plan", { steps: "Subtract 7 from both sides | Divide both sides by 3" }, { whiteboard: f.board });
+  assert.equal(r.success, false);
+  assert.match(r.error ?? "", /steps of one problem/);
+  assert.match(r.error ?? "", /lesson's 2-4 goals/);
+  assert.equal(f.plan(), null);
+  assert.equal(dispatchWhiteboardTool("set_plan", { steps: "Two-step equations | Equations with brackets | Graphing a line" }, { whiteboard: f.board }).success, true);
+});
+
+// Oct 24 2026: a worked example on other numbers, beside their problem.
+test("show_example writes the example as one block, every step with its reason", () => {
+  const seq: Array<{ steps: string[]; notes: string[]; title?: string }> = [];
+  const board = {
+    beginItem: (tool: string) => ({ tool, shapes: new Set<string>(), eqs: new Set<string>() }),
+    endItem: () => "b4",
+    withDirectMeta: <T,>(_meta: unknown, fn: () => T) => fn(),
+    takeNotes: () => [],
+    itemsSnapshot: () => [],
+    addEquationSequence: (steps: string[], notes: string[], title?: string) => { seq.push({ steps, notes, title }); },
+  } as unknown as WhiteboardHandle;
+  const r = dispatchWhiteboardTool("show_example", { problem: "2x + 3 = 11", steps: "2x = 8 | x = 4", why: "take 3 off both sides | split 8 into 2 equal groups" }, { whiteboard: board });
+  assert.equal(r.success, true, msg(r));
+  assert.match(msg(r), /Worked the example 2x \+ 3 = 11 beside their problem, 2 steps with reasons/);
+  assert.match(msg(r), /\(item b4\)/);
+  assert.deepEqual(seq[0], { steps: ["2x + 3 = 11", "2x = 8", "x = 4"], notes: ["", "take 3 off both sides", "split 8 into 2 equal groups"], title: "Example" });
+  const tooLong = dispatchWhiteboardTool("show_example", { problem: "x + 1 = 2", steps: "a | b | c | d | e | f", why: "" }, { whiteboard: board });
+  assert.equal(tooLong.success, false);
+});

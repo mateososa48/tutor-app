@@ -13,7 +13,7 @@ import { TutorRuntime } from "./tutor-runtime";
 // draws; the prompt and voice come from /api/live-token.
 
 // `grade` is the profile's, for the planner (lib/tutor-planner reads it).
-type GeminiConfig = { instructions: string; voice: string; grade?: string };
+type GeminiConfig = { instructions: string; voice: string; grade?: string; likes?: string };
 
 // Gemini sends a turn's audio and its transcript faster than real time, so
 // the caption is revealed in step with playback instead of all at once.
@@ -130,7 +130,7 @@ export class GeminiTutorSession {
   private planner(config: GeminiConfig) {
     const planner = this.options.planner;
     if (!planner) return undefined;
-    return { ...planner, grade: () => planner.grade() || config.grade || "" };
+    return { ...planner, grade: () => planner.grade() || config.grade || "", likes: () => planner.likes?.() || config.likes || "" };
   }
 
   async start(opts: LiveTutorStartOptions): Promise<void> {

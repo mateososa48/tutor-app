@@ -202,7 +202,7 @@ const PAGE_INSET = { top: 68, right: 36, bottom: 56, left: 36 };
 // The voice dock and its pills cover the bottom-right corner.
 const DOCK_BLOCK = { w: 384, h: 282 };
 const PLACE_SKIP = new Set(["start_new_problem", "start_board_section", "clear_whiteboard"]);
-const AREA_RIGHT_TOOLS = new Set(["add_function_graph", "add_coordinate_axes", "plot_points", "draw_desmos"]);
+const AREA_RIGHT_TOOLS = new Set(["add_function_graph", "add_coordinate_axes", "plot_points", "draw_desmos", "show_example"]);
 const EQUATION_TOOLS = new Set(["draw_equation_step", "add_equation_sequence"]);
 // Pictures sit beside the words they illustrate.
 const PICTURE_TOOLS = new Set([

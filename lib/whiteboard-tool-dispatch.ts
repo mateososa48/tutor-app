@@ -1,6 +1,6 @@
 import { parseScene, renderScene, type Scene } from "@/lib/illustration/scene";
 import type { WhiteboardHandle } from "@/components/TldrawCore";
-import { parsePlan, planSummary, PLAN_MAX_STEPS, validStep } from "@/lib/board-plan";
+import { parsePlan, planIsSolutionSteps, planSummary, PLAN_MAX_STEPS, validStep } from "@/lib/board-plan";
 import {
   clamp,
   type IconArrange,
@@ -41,6 +41,7 @@ import {
   withoutPraise,
 } from "@/lib/board-content-rules";
 import { parsePlace, type PlaceRequest } from "@/lib/board-layout";
+import { exampleWritten, parseExample } from "@/lib/worked-example";
 import { ensureRelation, graphLatexProblem, toDesmosLatex } from "@/lib/desmos-graph";
 import { buildDataPlot, type DataKind, type FitKind } from "@/lib/desmos-data";
 import { figureModel } from "@/lib/desmos-figure";
@@ -136,6 +137,8 @@ function contentOf(name: string, args: Args): string | null {
       return splitLatexLines(str("latex")).map(normalizeLatex).join("\n");
     case "add_equation_sequence":
       return splitSteps(str("steps")).map(normalizeLatex).join("\n");
+    case "show_example":
+      return [str("problem"), ...splitSteps(str("steps"))].map(normalizeLatex).join("\n");
     case "draw_illustration":
       // The scene is an object: the generic picture fingerprint reads only
       // strings, so every illustration had looked like the first one.
@@ -253,6 +256,7 @@ export function dispatchWhiteboardTool(
     const rawSteps = Array.isArray(args.steps) ? args.steps : typeof args.steps === "string" && args.steps.trim() ? args.steps : null;
     let parsed = rawSteps ? parsePlan(rawSteps) : null;
     if (rawSteps && !parsed) return fail(`"steps" has no steps in it: give 2-4 short steps separated by " | " ('What fractions are | Adding them | Practice').`);
+    if (parsed && planIsSolutionSteps(parsed.steps)) return fail(`Not written: those are the steps of one problem. The plan box holds this lesson's 2-4 goals ('Two-step equations | Equations with brackets | Graphing a line'); say a problem's steps as you work them, on the board as lines.`);
     const notes: string[] = [];
     // The same plan sent again (Sept 25 2026: 3.8 re-sent `steps` on every
     // call, and the box was rewritten each time) only moves the step.
@@ -383,6 +387,19 @@ function dispatchInner(
         board.addEquationSequence(steps, splitSlots(annotations.value), title.value, pickColumn(column.value)),
       );
       return ok(`Wrote ${steps.length} equation lines: ${steps.map(latexToPlain).join(" / ")}.`);
+    }
+
+    // Oct 24 2026: one block, its own item (not an equation line, so the
+    // student's next line goes under their own problem, not under this).
+    case "show_example": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const example = parseExample(args);
+      if ("error" in example) return fail(example.error);
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: `Example: ${latexToPlain(example.problem)}` }, () =>
+        board.addEquationSequence([example.problem, ...example.steps], ["", ...example.why], "Example", "right"),
+      );
+      return ok(exampleWritten(example));
     }
 
     case "draw_equation_step": {

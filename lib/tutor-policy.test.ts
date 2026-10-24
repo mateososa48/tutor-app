@@ -82,7 +82,7 @@ test("misses in a row raise the suggested help", () => {
   assert.match(line, /skill "adding fractions": 0 of 3 right/);
   assert.match(line, /3 misses in a row \(last: guess\)/);
   assert.match(line, /suggested help H4/);
-  assert.match(line, /down: shrink the step/);
+  assert.match(line, /down: show_example of this kind/);
   assert.match(line, /14 min in/);
   assert.ok(line.length < 400, `line too long: ${line.length}`);
 });
@@ -354,7 +354,7 @@ test("before any answer is checked, the state line says the session is still ope
   noteStudentUtterance(p, "I need help with: fractions", 0);
   noteBoardWrite(p, "start_new_problem", { title: "Fractions" });
   const line = takeStateUpdate(p, 1000);
-  assert.match(line, /step OPEN · next: no teaching yet: ask what exactly they want/);
+  assert.match(line, /step OPEN · next: one question to see where they are/);
   noteStudentUtterance(p, "the whole idea", 2000);
   noteStudentUtterance(p, "idk", 3000);
   noteStudentUtterance(p, "a piece of a number", 4000);
@@ -373,7 +373,7 @@ test("the opening asks about the idea the student already gave", () => {
   const q = createPolicy(0);
   noteStudentUtterance(q, "I need help with: ratios", 0);
   noteStudentUtterance(q, "the whole idea", 0);
-  assert.match(formatTutorState(q, 0), /no teaching yet: ask what exactly they want/);
+  assert.match(formatTutorState(q, 0), /step OPEN · next: find out what they need/);
 });
 
 test("a new problem after a checked right answer checks the plan's step off, once", () => {
@@ -536,4 +536,65 @@ test("answers the checker could not read are not counted in the score", () => {
   recordAttempt(p, { skill: "adding fractions", result: "correct", help: 1 }, T0);
   recordAttempt(p, { skill: "adding fractions", result: "unchecked", help: 1 }, T0 + 1000);
   assert.match(formatTutorState(p, T0 + 2000), /1 of 1 right/);
+});
+
+// ── Teaching a student with no way in (Oct 24 2026) ─────────────────────
+// Mateo's worksheet session: "i dont know", "i dont understamd", "teach me",
+// answered with smaller and smaller questions.
+test("'teach me' and 'I don't understand' are a request to be taught", () => {
+  for (const line of ["i dont know how to do that. teach me", "i dont understamd", "can you explain how", "how do you solve these", "i never learned this", "im lost"]) {
+    assert.ok(detectSignals(line).includes("teach"), line);
+  }
+  for (const line of ["5", "we can divide by 5 first", "i think its 8", "i know how"]) {
+    assert.ok(!detectSignals(line).includes("teach"), line);
+  }
+});
+
+test("asked to be taught, the state line teaches with the problem's model, ahead of any cue", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Two-step equations", problem: "3x + 7 = 22" });
+  noteStudentUtterance(p, "i dont know how to do this. teach me", 1000);
+  const line = formatTutorState(p, 2000);
+  assert.match(line, /step TEACH · next: teach it now, no more questions first: an equation is a balance/);
+  assert.match(line, /show_example/);
+  assert.match(line, /first step of theirs/);
+  assert.doesNotMatch(line, /make it smaller|two choices/);
+});
+
+test("'I don't know' before any step of the problem teaches; after a step it shows that one step", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Two-step equations", problem: "3x + 7 = 22" });
+  noteStudentUtterance(p, "i dont know", 1000);
+  assert.equal(flowStep(p)?.step, "teach");
+  const q = createPolicy(0);
+  noteBoardWrite(q, "start_new_problem", { title: "Two-step equations", problem: "3x + 7 = 22" });
+  recordAttempt(q, { skill: "two-step equations", result: "correct", help: 1, problem: "22 - 7", step: true }, 1000);
+  noteStudentUtterance(q, "idk", 2000);
+  assert.notEqual(flowStep(q)?.step, "teach");
+  assert.ok(cues(q).some((c) => /do this one step for them, say why it works/.test(c)));
+});
+
+test("once the example is up, being stuck goes back to it, and their answer counts as helped", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Two-step equations", problem: "3x + 7 = 22" });
+  noteStudentUtterance(p, "teach me", 1000);
+  noteBoardWrite(p, "show_example", { problem: "2x + 3 = 11", steps: "2x = 8 | x = 4", why: "take 3 off both sides | split into 2 equal groups" });
+  assert.equal(p.exampleShown, true);
+  assert.equal(p.exampleHelp, 5);
+  assert.ok(!p.boardNumbers.includes("11"), "the example's numbers are not this problem's givens");
+  assert.equal(p.boardHelp < 4, true, "their own results stay theirs");
+  noteStudentUtterance(p, "i still dont get it", 2000);
+  assert.match(flowStep(p)?.next ?? "", /the example is up: point at its matching line/);
+  noteBoardWrite(p, "start_new_problem", { title: "Next", problem: "4x - 1 = 11" });
+  assert.equal(p.exampleShown, false, "a new problem starts without an example");
+});
+
+test("picking a problem or reading it back is not an answer to check", () => {
+  for (const line of ["first one", "number 2", "the last one", "lets do number 3", "problem 4"]) assert.equal(looksLikeAnswer(line), false, line);
+  assert.equal(looksLikeAnswer("5"), true);
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { problem: "y = 2x - 1" });
+  noteStudentUtterance(p, "y equals 2x -1", 1000);
+  assert.equal(p.pendingAnswer, null);
+  noteStudentUtterance(p, "its 5(x-2)=30", 1000);
 });

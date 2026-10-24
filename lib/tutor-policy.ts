@@ -14,6 +14,7 @@
 // one-line note that the next board result carries once (boardResultExtras).
 
 import { clockCue, clockLabel } from "./session-clock";
+import { teachingModel } from "./teaching-models";
 import { isNonAnswer } from "./board-content-rules";
 import { functionRulesIn, finalValue, checkAnswer, spokenToDigits } from "./answer-check";
 
@@ -29,7 +30,7 @@ export const ATTEMPT_RESULTS: AttemptResult[] = ["correct", "slip", "misconcepti
 /** `problem`: the problem as checked, so "right on different problems" can be told from the same one twice. */
 /** `step`: a step inside the problem on the board ("25 - 7" while solving 3x + 7 = 25), not the problem itself. */
 export type Attempt = { skill: string; result: AttemptResult; help: number; at: number; note?: string; callId?: string; auto?: boolean; problem?: string; step?: boolean };
-export type StudentSignal = "frustrated" | "confused" | "idk" | "bored" | "unsure" | "closing";
+export type StudentSignal = "frustrated" | "confused" | "idk" | "teach" | "bored" | "unsure" | "closing";
 
 export type SessionFile = { label: string; name: string; pages: number };
 
@@ -86,6 +87,9 @@ export type TutorPolicy = {
    * by counting slices it had just drawn "H1", and the flow jumped to "no hints".
    */
   boardHelp: number;
+  /** A worked example (show_example) is up for this problem: their next answer had H5 help, though the board still keeps their own results theirs. */
+  exampleHelp: number;
+  exampleShown: boolean;
   /** The student's last whole utterance, for their spoken working. */
   lastUtterance: string;
   /** The student asked to see it on the board ("show it on the board"). */
@@ -195,6 +199,8 @@ export function createPolicy(now: number): TutorPolicy {
     pageSkill: null,
     memorySent: "",
     boardHelp: 0,
+    exampleHelp: 0,
+    exampleShown: false,
     lastUtterance: "",
     boardAsk: null,
     lastAsked: null,
@@ -259,6 +265,19 @@ const SIGNAL_PATTERNS: Record<StudentSignal, RegExp[]> = {
     /^wait,? what\b/i,
   ],
   idk: [/\bi (don'?t|do not|dunno) know\b/i, /\bidk\b/i, /\bno idea\b/i, /\bdunno\b/i],
+  // Oct 24 2026: "teach me", "i dont know how to do this", "i dont understamd"
+  // (typed, typo and all) were answered with smaller and smaller questions.
+  // A student who says they have no way in is asking to be taught.
+  teach: [
+    /\bteach me\b/i,
+    /\bshow me how\b/i,
+    /\b(?:i )?(?:don'?t|dont|do not|never) (?:know|knew|learn(?:ed|t)?|get) how\b/i,
+    /\bi (?:still )?(?:don'?t|dont|do not) (?:understa\w*|get (?:it|this|any of (?:it|this)))\b/i,
+    /\bhow (?:do|would|am) (?:you|i|we) (?:supposed to )?(?:do|solve|start|graph|find)\b/i,
+    /\b(?:can you |please )?explain (?:it|this|how|that)\b/i,
+    /\bi(?:'?m| am) (?:so |totally |completely )?lost\b/i,
+    /\bnever (?:learned|done|seen) (?:this|these|it)\b/i,
+  ],
   bored: [/(^|[^t] )(too |so |super )?easy\b/i, /\bboring\b/i, /\bcan we (be done|stop|finish)\b/i, /\bi already (know|did) (this|these|that)\b/i, /^\s*whatever\b/i],
   unsure: [/\bi think\b\W*$/i, /\bmaybe\b/i, /\bnot sure\b/i, /\bprobably (wrong|not)\b/i, /\bis (it|that) right\b/i, /^[^?]{0,24}\d[^?]{0,12}\?\s*$/],
   closing: [/\b(bye|goodbye|see you|gotta go|got to go|have to go|i'?m done for today|that'?s all for today|that'?s it for today|let'?s stop here)\b/i],
@@ -288,6 +307,7 @@ const ASKS_OR_STATES =
 // A proposed move ("subtract 3?", "divide by 2") is not a value to check.
 const STEP_VERB = /^(add|subtract|take away|multiply|divide|distribute|move|plug|put|cross|flip|combine|square|isolate|simplify|factor|expand)\b/i;
 const HAS_VALUE_EQUATION = /\b[a-z]\s*=\s*-?\s*[\d(½⅓¼¾]/i;
+const PICKS_PROBLEM = /^(?:(?:let'?s do|do|start with|i want|can we do)\s+)?(?:the\s+)?(?:(?:first|second|third|fourth|fifth|sixth|last|next|other)\s+(?:one|problem|question)|(?:number|problem|question|no\.?|#)\s*\d+|(?:one|problem|question)\s+(?:number\s+)?\d+)[\s.!?]*$/i;
 // A problem being posed, anywhere in the line: "…legs 6 and 8, find the hypotenuse".
 const POSES_PROBLEM = /\b(find|solve|calculate|work out|how (?:do|many|much|far|long|high|can)|what(?:'s|s| is| are| would| does)|is there|are there|can you|help me)\b/i;
 
@@ -296,6 +316,9 @@ export function looksLikeAnswer(text: string): boolean {
   const t = text.trim().replace(FILLER, "").trim();
   if (!t) return false;
   if (t.split(/\s+/).length > 14) return false;
+  // Picking a problem off a sheet ("first one", "number 2", "the last one")
+  // is not an answer (Oct 24 2026: each got "[Unchecked answer … call check_answer]").
+  if (PICKS_PROBLEM.test(t)) return false;
   if (HAS_VALUE_EQUATION.test(t)) return true;
   if (ASKS_OR_STATES.test(t) || POSES_PROBLEM.test(t)) return false;
   if (STEP_VERB.test(t) && !t.includes("=")) return false;
@@ -331,6 +354,8 @@ export function spokenMath(text: string): string | null {
   return null;
 }
 
+const compact = (text: string) => spokenToDigits(text.toLowerCase()).replace(/\bequals\b/g, "=").replace(/[\s$\\{}]/g, "");
+
 export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.now()): void {
   const t = text.trim();
   if (!t) return;
@@ -350,7 +375,8 @@ export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.no
     p.signalTurn[s] = p.studentTurns;
     p.signalQuote[s] = t.length > 48 ? `${t.slice(0, 45)}…` : t;
   }
-  if (looksLikeAnswer(t)) {
+  const restates = Boolean(p.pageProblem) && compact(t.replace(/^(?:it'?s|its|it is|the problem is|we have)\s+/i, "")) === compact(spokenToDigits(p.pageProblem ?? ""));
+  if (looksLikeAnswer(t) && !restates) {
     p.pendingAnswer = t.length > 80 ? `${t.slice(0, 77)}…` : t;
     p.answerNudged = false;
   }
@@ -488,8 +514,10 @@ export function cues(p: TutorPolicy): string[] {
   const last = p.attempts.at(-1);
   const frustrated = active(p, "frustrated");
   if (frustrated) out.push(`down: sounds frustrated ("${p.signalQuote.frustrated}"), make the next step small enough to win`);
-  else if (p.missesInRow >= 3) out.push("down: shrink the step or show a worked example");
-  if (active(p, "idk") && !frustrated) out.push("said they don't know: make it smaller or offer two choices");
+  else if (p.missesInRow >= 3) out.push(p.exampleShown ? "down: do this step for them with its reason, then the next is theirs" : "down: show_example of this kind, then their next step");
+  // Mid-problem, after a step they did: show this one step with its reason.
+  // (Before any step, or asked to be taught, the flow teaches instead.)
+  if (active(p, "idk") && !frustrated && !needsTeaching(p)) out.push(p.exampleShown ? "said they don't know: point at the matching line of the example and ask for the same move" : "said they don't know: do this one step for them, say why it works, then the next step is theirs");
   if (active(p, "confused") && !frustrated && p.missesInRow < 2) out.push("confused but still trying: give it a moment before stepping in");
   if (!frustrated && p.missesInRow === 0 && (active(p, "bored") || p.quickCorrect >= 2)) out.push("up: give a harder problem");
   if (active(p, "unsure") && last?.result === "correct") out.push("unsure but right: have them check it themselves");
@@ -506,7 +534,7 @@ export function cues(p: TutorPolicy): string[] {
 // bar for "understood for today" (the tutoring review): two right with no
 // help on different problems, plus a reason in the student's own words.
 
-export type FlowStep = "open" | "probe" | "show" | "together" | "alone" | "why" | "up";
+export type FlowStep = "open" | "probe" | "teach" | "show" | "together" | "alone" | "why" | "up";
 
 /** Different problems solved right with no help on the current skill. */
 export function aloneRight(p: TutorPolicy): number {
@@ -525,13 +553,46 @@ export function aloneRight(p: TutorPolicy): number {
 // Two misses (or two "I don't know"s) in a row: a picture of this problem.
 const SHOW_NEXT = "draw this problem as a picture (tape diagram, area model or number line), point at what answers it, one small question";
 
+// ── Teaching a student who has no way in (Oct 24 2026) ────────────────────
+// Mateo said "i dont know", "i dont understand" and "teach me" through a whole
+// worksheet and got smaller and smaller questions, then an answer. Questions
+// only work for a student who has something to reason from; a novice can only
+// guess at them. For a novice the evidence is the other way round: show and
+// explain first, with a concrete model and a worked example on a parallel
+// problem, then hand their own problem back step by step (expertise reversal,
+// Kalyuga 2003; explicit instruction beats unguided discovery, Alfieri 2011;
+// the IES algebra guide's worked examples; concreteness fading, Fyfe 2014).
+// "Teach me" is honoured at once: refusing it is how Khanmigo lost most of
+// the middle schoolers who tried it.
+
+/** They have no way in yet: asked to be taught, "I don't know" before any step of this problem, or two stalls in a row. */
+export function needsTeaching(p: TutorPolicy): boolean {
+  if (p.exampleShown) return false;
+  if (active(p, "teach")) return true;
+  if (!p.pageProblem) return false;
+  if (active(p, "idk") && p.pageRightAnswers === 0) return true;
+  return p.missesInRow >= 2;
+}
+
+function teachOrder(p: TutorPolicy): string {
+  const model = teachingModel(p.pageProblem, p.currentSkill ?? p.pageSkill);
+  const idea = model ? `${model.idea}. Say that in two or three plain sentences while you draw it: ${model.draw}` : "say the one idea behind it in two or three plain sentences while you draw it (illustrate an everyday picture of it, or the exact tool)";
+  const careful = model?.breaks ? ` (careful: ${model.breaks})` : "";
+  return `teach it now, no more questions first: ${idea}${careful}; then show_example: a problem like theirs with easier numbers, why on every step; then ask them for the first step of theirs`;
+}
+
+const AFTER_EXAMPLE = "the example is up: point at its matching line, say why that move works in other words, then ask them to make the same move on theirs";
+
 export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | null {
+  if (needsTeaching(p)) return { step: "teach", next: teachOrder(p) };
+  // Taught, and still stuck: back to the example, not a new question.
+  if (p.exampleShown && (active(p, "idk") || active(p, "teach") || active(p, "confused"))) return { step: "together", next: AFTER_EXAMPLE };
   // Mid-problem: the last thing checked was a step of the problem on the
   // board (Sept 22 2026: "25 - 7 = 18" was taken for a solved problem, and
   // the tutor jumped to a harder one with a student who had solved nothing).
   const recent = [...p.attempts].reverse().find((a) => a.result !== "unchecked");
   if (recent?.step) {
-    if (p.missesInRow >= 2) return { step: "show", next: SHOW_NEXT };
+    if (p.missesInRow >= 2) return { step: "show", next: AFTER_EXAMPLE };
     // Three steps right in a row with no help: they have the procedure (Sept 26
     // 2026: every step of a quadratic was its own turn for a student who knew it).
     const tail = [...p.attempts].reverse();
@@ -549,13 +610,15 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
       // you already know" right after saying it): ask about that instead.
       if (p.openingReason) return { step: "open", next: `they already said their idea ("${p.openingReason}"): say it back in their words and ask where it came from, no "what do you know"; then one small show-me problem on it` };
       if (p.openingQuestion) return { step: "open", next: `they came with a question ("${p.openingQuestion}"): no "a sheet or the idea?"; ask what they think it means now, then answer exactly that question on the board (if it is "why X and not Y", show where Y breaks), then one small example they work` };
-      return { step: "open", next: "no teaching yet: ask what exactly they want (a sheet, or the whole idea), then what they already know and where it stops making sense; one question a turn; then the plan in one breath and one small show-me problem" };
+      return { step: "open", next: p.pageProblem
+        ? "one question to see where they are: what they'd try first on it. If they don't know how, you teach it next (no second question). Then the lesson's goals in one breath (set_plan)"
+        : "find out what they need (a problem on a sheet, or the idea) and what they'd try first; if they don't know how, you teach it next, no second question. Then the lesson's goals in one breath (set_plan)" };
     }
     return null;
   }
   const onSkill = p.attempts.filter((a) => a.skill === p.currentSkill && !a.step && a.result !== "unchecked");
   const last = onSkill.at(-1);
-  if (!last) return p.missesInRow >= 2 ? { step: "show", next: SHOW_NEXT } : { step: "probe", next: "before teaching: what they already know about it and which part doesn't make sense (unless they said), then their first move on it" };
+  if (!last) return { step: "probe", next: "one probe: their first move on it. If they can't make one, teach it (don't ask again)" };
   if (p.wantsAlone) return { step: "alone", next: "they asked to try one on their own: start_new_problem with one of the same kind and new numbers now, ask, and only listen; step in only if they are stuck twice" };
   const alone = aloneRight(p);
   const reason = p.reasonSkill === p.currentSkill;
@@ -571,8 +634,8 @@ export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | nul
     if (last.help >= 3 || missedFirst) return { step: "together", next: "that one needed help: another of the same kind together, they do each step and you help only where they stall (write each line as they say it). start_new_problem, write it, and ask for their first step" };
     return { step: "alone", next: "one of the same kind with new numbers; they do it and you only listen. start_new_problem, write it, and ask" };
   }
-  if (p.missesInRow >= 2) return { step: "show", next: SHOW_NEXT };
-  if (last.result === "misconception") return { step: "together", next: "show where the idea breaks (a picture or a simpler case), let them notice, then a similar one together" };
+  if (p.missesInRow >= 2) return { step: "show", next: p.exampleShown ? AFTER_EXAMPLE : SHOW_NEXT };
+  if (last.result === "misconception") return { step: "together", next: "show where the idea breaks (a picture or a simpler case), let them notice, then say the right idea in one plain sentence, then a similar one together" };
   if (onSkill.some((a) => a.result === "correct")) return { step: "together", next: "one step back: a smaller version together, then alone again" };
   return { step: "together", next: "point at the exact spot and let them fix it" };
 }
@@ -587,7 +650,8 @@ export function formatTutorState(p: TutorPolicy, now: number): string {
   const all = cues(p).filter((c) => !(c.startsWith("up:") && flow?.step === "up"));
   // A student who is frustrated or lost outranks the flow's move; "up" never
   // does, because ALONE, WHY and UP already say how to raise the bar.
-  const lead = all.find((c) => /^(down:|said they don't know|confused)/.test(c));
+  // Teaching outranks them all: the student has no way in yet.
+  const lead = flow?.step === "teach" ? undefined : all.find((c) => /^(down:|said they don't know|confused)/.test(c));
   const rest = all.filter((c) => c !== lead);
   const next = lead ?? flow?.next;
   // One more cue at most, after the move: a review that is due or a check they
@@ -766,7 +830,8 @@ export function noteTutorTurn(p: TutorPolicy, text: string, drew: boolean, marke
 export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<string, unknown>): void {
   p.unwrittenMath = null;
   p.drawCount += 1;
-  if (args && name !== "start_new_problem") for (const v of Object.values(args)) if (typeof v === "string" || typeof v === "number") for (const n of numbersIn(String(v))) if (!p.boardNumbers.includes(n)) p.boardNumbers.push(n);
+  // A worked example's numbers are another problem's, not given on this one.
+  if (args && name !== "start_new_problem" && name !== "show_example") for (const v of Object.values(args)) if (typeof v === "string" || typeof v === "number") for (const n of numbersIn(String(v))) if (!p.boardNumbers.includes(n)) p.boardNumbers.push(n);
   if (name === "set_plan") {
     p.planSet = true;
     const steps = typeof args?.steps === "string" ? args.steps.split("|").filter((s) => s.trim()).length : 0;
@@ -799,6 +864,8 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.withheld = [];
     p.pageSkill = null;
     p.boardHelp = 0;
+    p.exampleHelp = 0;
+    p.exampleShown = false;
     return;
   }
   // No page yet, and the first typeset line is math: that line is the problem
@@ -808,9 +875,14 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
   if (!p.pageProblem && name === "draw_equation_step" && typeof args?.latex === "string" && !/\?/.test(args.latex) && /\d|\\(?:int|frac|sqrt)|[a-z]\s*[\^(=]/i.test(args.latex)) {
     p.pageProblem = args.latex.trim().slice(0, 200);
     p.boardHelp = 0;
+    p.exampleHelp = 0;
+    p.exampleShown = false;
     return;
   }
-  if (name === "write_example" || name === "add_worked_example_box") p.boardHelp = Math.max(p.boardHelp, 5);
+  if (name === "show_example") {
+    p.exampleShown = true;
+    p.exampleHelp = 5;
+  } else if (name === "write_example" || name === "add_worked_example_box") p.boardHelp = Math.max(p.boardHelp, 5);
   else if (name && PICTURE_TOOLS.has(name) && p.pageProblem) p.boardHelp = Math.max(p.boardHelp, name === "draw_fraction" && args?.common_denominator !== undefined ? 4 : 3);
 }
 
@@ -1057,9 +1129,11 @@ export function turnNote(p: TutorPolicy, tutorText: string, drew: boolean, marke
     p.pictureNudged = true;
     orders.push("three turns on this problem and no picture of it: draw the thing it is about (a table, a number line, a grid, bars, a graph, the shape) and point at it as you talk");
   }
-  if (pageMath && !p.planSet && !p.planNudged && p.studentTurns >= 3) {
+  // Only near the start: mid-problem, "the plan" read as that problem's steps
+  // and went into the box (Oct 24 2026).
+  if (!p.planSet && !p.planNudged && p.studentTurns >= 2 && p.studentTurns <= 4) {
     p.planNudged = true;
-    orders.push("no plan yet: say the plan in one breath and write it (set_plan, 2 or 3 steps)");
+    orders.push("no plan yet: say this lesson's 2 or 3 goals in one breath and write them (set_plan: topics or problems, never one problem's steps)");
   }
   if (p.praiseOpener) {
     orders.push(`you said "${p.praiseOpener}": next time say what was right, or just go on`);

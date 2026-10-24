@@ -680,7 +680,10 @@ function checkEquation(left: string, right: string, problem: string, answer: str
   if (!R.ok) return cannot(`the right side of "${problem}" has ${R.reason}.`);
   if (L.variable && R.variable && L.variable !== R.variable) return cannot(`"${problem}" has more than one letter.`);
   const variable = L.variable ?? R.variable;
-  if (!variable) return cannot(`"${problem}" has no letter to solve for; pass the expression to work out instead.`);
+  // "6 + 2 = 8" or "3(5) + 7 = 22" with "8" or "22" (Oct 24 2026: both came
+  // back unreadable and the tutor went silent): arithmetic with its result
+  // written down asks for the left side's value.
+  if (!variable) return checkExpression(left, answer);
   const fl = createMathEvaluator(L.text);
   const fr = createMathEvaluator(R.text);
   if (!fl || !fr) return cannot(`couldn't read "${problem}".`);
