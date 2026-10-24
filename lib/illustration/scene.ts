@@ -130,6 +130,18 @@ BUILTIN_OBJECTS.round_cake = {
   h: 24,
 };
 BUILTIN_OBJECTS.whole_cake = BUILTIN_OBJECTS.round_cake;
+// A brownie and half of one (Oct 23 2026: the emoji set has none, and the
+// bench's brownie pictures came out as dots or as cookies).
+BUILTIN_OBJECTS.brownie = {
+  svg: `<rect x="3" y="5" width="18" height="15" rx="2.5" fill="#7a4a2a" stroke="#3d2414" stroke-width="1.3"/><path d="M4.5 9.5 C8 8.2 11 10.6 14 9.2 C16.5 8.1 18.5 9.4 19.5 9" fill="none" stroke="#9a6440" stroke-width="1.3" stroke-linecap="round"/><path d="M7 14 L9.5 15.5 M13 13.5 L15.5 12.5 M10 18 L12.5 17.2" stroke="#4e2c17" stroke-width="1" stroke-linecap="round"/>`,
+  w: 24,
+  h: 24,
+};
+BUILTIN_OBJECTS.half_brownie = {
+  svg: `<rect x="7.5" y="5" width="9" height="15" rx="2" fill="#7a4a2a" stroke="#3d2414" stroke-width="1.3"/><path d="M8.5 9.5 C10.5 8.6 13 10.2 15.5 9.2" fill="none" stroke="#9a6440" stroke-width="1.3" stroke-linecap="round"/><path d="M10 14.5 L12 15.6 M11 18 L13.5 17.2" stroke="#4e2c17" stroke-width="1" stroke-linecap="round"/>`,
+  w: 24,
+  h: 24,
+};
 export const BUILTIN_NAMES = Object.keys(BUILTIN_OBJECTS);
 
 /** A built-in object by a loose name: "pennies", "Dime coin", "red marbles". */

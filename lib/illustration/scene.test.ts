@@ -212,3 +212,12 @@ test("an object the board has no icon for is written as a tile when the picture 
   const road = renderScene({ root: { type: "row", children: [{ type: "icon", icon: "car" }, { type: "icon", icon: "road_surface_xyz" }] } });
   assert.doesNotMatch(road.svg, /road surface/, "decoration with no id is still left out");
 });
+
+test("brownies and half brownies are built-in objects, by loose names too", () => {
+  // Oct 23 2026: the emoji set has no brownie; bench pictures drew them as dots or cookies.
+  for (const name of ["brownie", "brownies", "Brownies", "half brownie", "half_brownie"]) {
+    const out = renderScene({ root: { type: "icon", icon: name, id: "b" } });
+    assert.deepEqual(out.problems, [], name);
+    assert.match(out.svg, /#7a4a2a/, name);
+  }
+});
