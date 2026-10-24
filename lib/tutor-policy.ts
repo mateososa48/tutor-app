@@ -90,6 +90,8 @@ export type TutorPolicy = {
   /** A worked example (show_example) is up for this problem: their next answer had H5 help, though the board still keeps their own results theirs. */
   exampleHelp: number;
   exampleShown: boolean;
+  /** Points shown on a graph of this page so far: the page's line waits until two have been up (Oct 24 2026). */
+  linePoints: number;
   /** The student's last whole utterance, for their spoken working. */
   lastUtterance: string;
   /** The student asked to see it on the board ("show it on the board"). */
@@ -201,6 +203,7 @@ export function createPolicy(now: number): TutorPolicy {
     boardHelp: 0,
     exampleHelp: 0,
     exampleShown: false,
+    linePoints: 0,
     lastUtterance: "",
     boardAsk: null,
     lastAsked: null,
@@ -872,6 +875,7 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.boardHelp = 0;
     p.exampleHelp = 0;
     p.exampleShown = false;
+    p.linePoints = 0;
     return;
   }
   // No page yet, and the first typeset line is math: that line is the problem
@@ -885,6 +889,7 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.exampleShown = false;
     return;
   }
+  if (name === "draw_desmos" && args) p.linePoints = Math.max(p.linePoints, graphPoints(args));
   if (name === "show_example") {
     p.exampleShown = true;
     p.exampleHelp = 5;
@@ -893,6 +898,13 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
 }
 
 /** A highlight, ring or point: pointing at the spot is H2 help. */
+/** How many points a draw_desmos call shows: its labelled points and its lone (a, b) expressions. */
+export function graphPoints(args: Record<string, unknown>): number {
+  const labelled = typeof args.points === "string" ? (args.points.match(/\(\s*-?[\d.]+\s*,\s*-?[\d.]+\s*\)/g) ?? []).length : 0;
+  const lone = typeof args.expressions === "string" ? args.expressions.split(";").filter((e) => /^\s*\[?\s*\(\s*-?[\d.]+\s*,\s*-?[\d.]+\s*\)/.test(e)).reduce((n, e) => n + (e.match(/\(\s*-?[\d.]+\s*,\s*-?[\d.]+\s*\)/g) ?? []).length, 0) : 0;
+  return labelled + lone;
+}
+
 export function noteBoardMark(p: TutorPolicy): void {
   p.boardHelp = Math.max(p.boardHelp, 2);
 }

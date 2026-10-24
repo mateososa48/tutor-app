@@ -554,6 +554,70 @@ function answerGuard(policy: TutorPolicy, name: string, args: Record<string, unk
   return { args: out, note: `Wrote "?" where ${changed} was: it answers the question on the table, and that is theirs to say. Ask for it.` };
 }
 
+/** The page's own expression (no "="), when the board's problem is one to rewrite (factor, simplify, expand). */
+function pageExpression(policy: TutorPolicy): string | null {
+  const page = policy.pageProblem?.replace(/^\s*(?:factor|simplify|expand)\s*:?\s*/i, "").replace(/\$/g, "").trim();
+  if (!page || page.includes("=") || !/[a-z]/i.test(page.replace(/\\[a-z]+/gi, ""))) return null;
+  return prepareExpression(page).ok ? page : null;
+}
+
+function withholdRewrite(policy: TutorPolicy, latex: string): string | null {
+  const page = pageExpression(policy);
+  if (!page) return null;
+  const last = (latex.split("=").at(-1) ?? "").trim();
+  const squash = (t: string) => t.replace(/[\s{}]|\\left|\\right/g, "").toLowerCase();
+  if (!last || squash(last) === squash(page) || /\?/.test(last) || !prepareExpression(last).ok) return null;
+  try {
+    if (!sameExpression(last, page) || studentSaid(policy, last)) return null;
+  } catch {
+    return null;
+  }
+  const asked = `${page} = ?`;
+  policy.lastAsked = asked;
+  return asked;
+}
+
+/** An area model whose sides multiply out to the page's expression: the sides are the answer, so the numbers go up as "?". */
+function withholdSides(policy: TutorPolicy, args: Record<string, unknown>): ShapedCall | null {
+  const page = pageExpression(policy);
+  if (!page || policy.boardHelp >= 4 || typeof args.row_labels !== "string" || typeof args.column_labels !== "string") return null;
+  const side = (s: string) => s.split("|").map((x) => x.trim()).filter(Boolean);
+  const rows = side(args.row_labels);
+  const cols = side(args.column_labels);
+  if (!rows.length || !cols.length) return null;
+  try {
+    if (!sameExpression(`(${rows.join("+")})(${cols.join("+")})`, page)) return null;
+  } catch {
+    return null;
+  }
+  const hide = (labels: string[]) => labels.map((l) => (/^[-+]?\s*\d/.test(l) ? "?" : l)).join(" | ");
+  const out: Record<string, unknown> = { ...args, row_labels: hide(rows), column_labels: hide(cols) };
+  if (typeof out.title === "string") out.title = out.title.replace(/\([^()]*\d[^()]*\)/g, "(x + ?)");
+  return { args: out, note: "The sides went up as ?: they multiply out to the problem, so they are its answer, and theirs to find." };
+}
+
+// A line to graph goes up after its points (Oct 24 2026: on "graph y = 2x - 1"
+// the tutor drew the finished line in the same call that first showed the
+// points, in both novice runs, so the student never saw them line up).
+function withholdLine(policy: TutorPolicy, args: Record<string, unknown>): ShapedCall | null {
+  const m = /^\s*y\s*=\s*(.+)$/i.exec((policy.pageProblem ?? "").replace(/\$/g, ""));
+  if (!m || !/x/i.test(m[1]) || policy.linePoints >= 2 || policy.boardHelp >= 4 || typeof args.expressions !== "string") return null;
+  const items = args.expressions.split(";").map((e) => e.trim()).filter(Boolean);
+  const isLine = (e: string) => {
+    const r = /^\s*y\s*=\s*(.+)$/i.exec(e);
+    try {
+      return Boolean(r && sameExpression(r[1], m[1]));
+    } catch {
+      return false;
+    }
+  };
+  if (!items.some(isLine)) return null;
+  const rest = items.filter((e) => !isLine(e));
+  const note = "The line waits: it goes up once their points are on the graph and they have seen them line up. Ask what they notice about the points, then draw the line.";
+  if (!rest.length && !(typeof args.points === "string" && args.points.trim())) return { args, note: null, refuse: `Not drawn: ${note} Put up the table (add_table) first and plot each point they find.` };
+  return { args: { ...args, expressions: rest.join("; ") }, note };
+}
+
 export function withholdResult(policy: TutorPolicy, name: string, args: Record<string, unknown>): ShapedCall {
   // A worked example is a different problem: its results are the point, and
   // their own problem is never worked as the "example" (Oct 24 2026).
@@ -572,8 +636,21 @@ export function withholdResult(policy: TutorPolicy, name: string, args: Record<s
     const captions = withholdCaptions(policy, args);
     if (captions.note) return captions;
   }
+  if (name === "add_area_model") {
+    const sides = withholdSides(policy, args);
+    if (sides) return sides;
+  }
+  if (name === "draw_desmos") {
+    const line = withholdLine(policy, args);
+    if (line) return line;
+  }
   if (name !== "draw_equation_step" || typeof args.latex !== "string") return { args, note: null };
   const latex = args.latex.trim();
+  // The page's expression in another form (its factorization) is the answer
+  // to a "factor this" page (Oct 24 2026: "(x + 3)(x + 4)" went up before
+  // Tomas said it, three times in one session).
+  const rewritten = policy.boardHelp < 4 ? withholdRewrite(policy, latex) : null;
+  if (rewritten) return { args: { ...args, latex: rewritten }, note: `Wrote it as "${latexToPlain(rewritten)}": that form is the answer, and theirs to say. Ask for it.` };
   // A shown step (H4) or worked example (H5) keeps its results.
   if (policy.boardHelp < 4) {
     const step = withholdStep(policy, latex);

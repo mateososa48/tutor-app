@@ -767,3 +767,34 @@ test("putting the solution back in is checked as that solution", () => {
   const r = runTutorTool("check_answer", { problem: "6 + 2 = 8", student_answer: "8", skill: "two-step equations" }, createPolicy(0), 0);
   assert.match(r && r.success ? r.message ?? "" : "", /Verdict: correct/);
 });
+
+// Oct 24 2026: "(x + 3)(x + 4)" went up before Tomas said it, and an area
+// model's sides were labelled with the answer.
+test("on a factor page, the factored form and the area model's sides wait for the student", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Factoring", problem: "x^2 + 7x + 12" });
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "(x + 3)(x + 4)" }).args.latex, "x^2 + 7x + 12 = ?");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "x^2 + 7x + 12 = (x+3)(x+4)" }).args.latex, "x^2 + 7x + 12 = ?");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "3 \\times 4 = 12" }).args.latex, "3 \\times 4 = 12", "not the page's expression");
+  const area = withholdResult(p, "add_area_model", { title: "(x + 3)(x + 4)", row_labels: "x | 3", column_labels: "x | 4", cells: "x^2 | 4x | 3x | 12" });
+  assert.equal(area.args.row_labels, "x | ?");
+  assert.equal(area.args.column_labels, "x | ?");
+  const example = withholdResult(p, "add_area_model", { title: "(x + 2)(x + 3)", row_labels: "x | 2", column_labels: "x | 3", cells: "x^2 | 3x | 2x | 6" });
+  assert.equal(example.args.row_labels, "x | 2", "a smaller example keeps its sides");
+  noteStudentUtterance(p, "(x + 3)(x + 4)", 1000);
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "(x + 3)(x + 4)" }).args.latex, "(x + 3)(x + 4)", "said, so it goes up");
+});
+
+test("on a graph-this-line page, the line waits until two points have been up", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Graphing", problem: "y = 2x - 1" });
+  const first = withholdResult(p, "draw_desmos", { expressions: "(0, -1); (1, 1); y = 2x - 1" });
+  assert.equal(first.args.expressions, "(0, -1); (1, 1)");
+  assert.match(first.note ?? "", /The line waits/);
+  assert.ok(withholdResult(p, "draw_desmos", { expressions: "y = 2x - 1" }).refuse, "the finished line alone is refused");
+  noteBoardWrite(p, "draw_desmos", first.args);
+  assert.equal(withholdResult(p, "draw_desmos", { expressions: "(0, -1); (1, 1); (2, 3); y = 2x - 1" }).args.expressions, "(0, -1); (1, 1); (2, 3); y = 2x - 1", "after the points, the line");
+  const q = createPolicy(0);
+  noteBoardWrite(q, "start_new_problem", { title: "Slope", problem: "find the slope through (2, 3) and (6, 11)" });
+  assert.equal(withholdResult(q, "draw_desmos", { expressions: "y = 2x - 1" }).args.expressions, "y = 2x - 1", "only on a graph-this-line page");
+});

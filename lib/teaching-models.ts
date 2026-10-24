@@ -67,10 +67,10 @@ const BANK: Entry[] = [
   {
     id: "factoring",
     match: /\b(factor|x\^?2|x²|quadratic)/i,
-    idea: "factoring is finding the sides of a rectangle when you know its area",
-    draw: "add_area_model with x and a number on each side, the parts of the area inside",
-    steps: "the two numbers multiply to the last term and add to the middle one; read the sides off the rectangle",
-    breaks: "negative terms and a leading number above 1: move to the generic box early",
+    idea: "factoring is multiplying backwards: finding the two brackets whose rectangle has this area",
+    draw: "add_area_model of a smaller one first, (x + 2)(x + 3), with every piece filled in (x², 2x, 3x, 6) so they see the corner pieces multiply and the two strips add; then their rectangle with the sides as ?",
+    steps: "multiply out the small one together; they say where its 6 and its 5x came from; only then their numbers, which they find",
+    breaks: "never give the multiply-and-add rule before they have seen it in the picture, and never label the sides of their own rectangle: those are the answer",
   },
   {
     id: "fractions",
