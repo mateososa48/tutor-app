@@ -798,3 +798,18 @@ test("on a graph-this-line page, the line waits until two points have been up", 
   noteBoardWrite(q, "start_new_problem", { title: "Slope", problem: "find the slope through (2, 3) and (6, 11)" });
   assert.equal(withholdResult(q, "draw_desmos", { expressions: "y = 2x - 1" }).args.expressions, "y = 2x - 1", "only on a graph-this-line page");
 });
+
+// Oct 24 2026 (nv-3): neither tutor called start_new_problem, so the guards
+// had no problem to compare with and the answer went up.
+test("the student's own statement of the problem guards the board when the tutor never opened it", () => {
+  const p = createPolicy(0);
+  noteStudentUtterance(p, "I need help with: factoring. x^2 + 7x + 12. i have no idea what factor even means", 0);
+  assert.equal(p.statedProblem, "x^2 + 7x + 12");
+  assert.equal(withholdResult(p, "draw_equation_step", { latex: "(x + 3)(x + 4) = x^2 + 7x + 12" }).args.latex, "x^2 + 7x + 12 = ?");
+  const q = createPolicy(0);
+  noteStudentUtterance(q, "I need help with: graphing. we have to graph y = 2x - 1 and i dont get graphs at all", 0);
+  assert.equal(q.statedProblem, "y = 2x - 1");
+  assert.equal(withholdResult(q, "draw_desmos", { expressions: "y = 2x - 1", points: "(0,-1), (1,1), (2,3)" }).args.expressions, "");
+  noteBoardWrite(q, "draw_equation_step", { latex: "y = 2(0) - 1 = -1" });
+  assert.equal(q.pageProblem, "y = 2x - 1", "the student's problem, not the tutor's first step");
+});

@@ -556,7 +556,7 @@ function answerGuard(policy: TutorPolicy, name: string, args: Record<string, unk
 
 /** The page's own expression (no "="), when the board's problem is one to rewrite (factor, simplify, expand). */
 function pageExpression(policy: TutorPolicy): string | null {
-  const page = policy.pageProblem?.replace(/^\s*(?:factor|simplify|expand)\s*:?\s*/i, "").replace(/\$/g, "").trim();
+  const page = (policy.pageProblem ?? policy.statedProblem)?.replace(/^\s*(?:factor|simplify|expand)\s*:?\s*/i, "").replace(/\$/g, "").trim();
   if (!page || page.includes("=") || !/[a-z]/i.test(page.replace(/\\[a-z]+/gi, ""))) return null;
   return prepareExpression(page).ok ? page : null;
 }
@@ -564,14 +564,20 @@ function pageExpression(policy: TutorPolicy): string | null {
 function withholdRewrite(policy: TutorPolicy, latex: string): string | null {
   const page = pageExpression(policy);
   if (!page) return null;
-  const last = (latex.split("=").at(-1) ?? "").trim();
   const squash = (t: string) => t.replace(/[\s{}]|\\left|\\right/g, "").toLowerCase();
-  if (!last || squash(last) === squash(page) || /\?/.test(last) || !prepareExpression(last).ok) return null;
-  try {
-    if (!sameExpression(last, page) || studentSaid(policy, last)) return null;
-  } catch {
-    return null;
-  }
+  if (/\?/.test(latex)) return null;
+  // Either side: "(x + 3)(x + 4)" alone, "x^2 + 7x + 12 = (x+3)(x+4)", or the other way round.
+  const rewrite = latex.split("=").map((side) => side.trim()).find((side) => {
+    if (!side || squash(side) === squash(page) || !prepareExpression(side).ok) return false;
+    try {
+      // Said in this form, not just something equal to it: the problem itself is equal to its factorization.
+      const said = policy.saidLines.some((line) => squash(spokenExpression(spokenToDigits(line.toLowerCase()))).includes(squash(side)));
+      return sameExpression(side, page) && !said;
+    } catch {
+      return false;
+    }
+  });
+  if (!rewrite) return null;
   const asked = `${page} = ?`;
   policy.lastAsked = asked;
   return asked;
@@ -600,7 +606,7 @@ function withholdSides(policy: TutorPolicy, args: Record<string, unknown>): Shap
 // the tutor drew the finished line in the same call that first showed the
 // points, in both novice runs, so the student never saw them line up).
 function withholdLine(policy: TutorPolicy, args: Record<string, unknown>): ShapedCall | null {
-  const m = /^\s*y\s*=\s*(.+)$/i.exec((policy.pageProblem ?? "").replace(/\$/g, ""));
+  const m = /^\s*y\s*=\s*(.+)$/i.exec((policy.pageProblem ?? policy.statedProblem ?? "").replace(/\$/g, ""));
   if (!m || !/x/i.test(m[1]) || policy.linePoints >= 2 || policy.boardHelp >= 4 || typeof args.expressions !== "string") return null;
   const items = args.expressions.split(";").map((e) => e.trim()).filter(Boolean);
   const isLine = (e: string) => {

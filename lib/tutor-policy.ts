@@ -92,6 +92,8 @@ export type TutorPolicy = {
   exampleShown: boolean;
   /** Points shown on a graph of this page so far: the page's line waits until two have been up (Oct 24 2026). */
   linePoints: number;
+  /** The problem the student stated in their own words ("graph y = 2x - 1"), for a session the tutor never opens with start_new_problem. */
+  statedProblem: string | null;
   /** The student's last whole utterance, for their spoken working. */
   lastUtterance: string;
   /** The student asked to see it on the board ("show it on the board"). */
@@ -204,6 +206,7 @@ export function createPolicy(now: number): TutorPolicy {
     exampleHelp: 0,
     exampleShown: false,
     linePoints: 0,
+    statedProblem: null,
     lastUtterance: "",
     boardAsk: null,
     lastAsked: null,
@@ -362,6 +365,17 @@ export function spokenMath(text: string): string | null {
 
 const compact = (text: string) => spokenToDigits(text.toLowerCase()).replace(/\bequals\b/g, "=").replace(/[\s$\\{}]/g, "");
 
+// "graph y = 2x - 1", "factor x^2 + 7x + 12", "solve 3x + 7 = 22": a run of
+// math with a letter in it, an operation, and (for an equation) a number side.
+const STATED = /(?:\b[a-z]\s*=\s*)?-?\(?\d*\s*[a-z](?:\s*\^\s*\d|²)?(?:\s*[-+*/]\s*\(?\d*(?:\.\d+)?(?:\s*[a-z](?![a-z]))?(?:\s*\^\s*\d|²)?\)?)+(?:\s*=\s*-?\d+(?:\.\d+)?)?/gi;
+
+/** The problem in a student's line, or null. Pure. */
+export function statedMath(text: string): string | null {
+  const found = [...text.matchAll(STATED)].map((m) => m[0].trim()).filter((m) => /\d/.test(m) && /[a-z]/i.test(m) && /[-+*/=]/.test(m));
+  const best = found.sort((a, b) => b.length - a.length)[0];
+  return best && best.length >= 5 ? best : null;
+}
+
 export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.now()): void {
   const t = text.trim();
   if (!t) return;
@@ -369,6 +383,7 @@ export function noteStudentUtterance(p: TutorPolicy, text: string, now = Date.no
   p.lastUtterance = t;
   for (const n of numbersIn(t)) if (!p.saidNumbers.includes(n)) p.saidNumbers.push(n);
   p.saidLines = [...p.saidLines, t].slice(-6);
+  if (!p.pageProblem) p.statedProblem = statedMath(t) ?? p.statedProblem;
   // The value this line ends on: its one number, or its worked answer's last.
   const values = numbersIn(spokenToDigits(t));
   p.lastStudentValue = values.length === 1 ? values[0] : finalValue(t);
@@ -883,7 +898,10 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
   // sat on one order for the whole session). Pictures drawn before it were
   // about the idea, not help on this problem.
   if (!p.pageProblem && name === "draw_equation_step" && typeof args?.latex === "string" && !/\?/.test(args.latex) && /\d|\\(?:int|frac|sqrt)|[a-z]\s*[\^(=]/i.test(args.latex)) {
-    p.pageProblem = args.latex.trim().slice(0, 200);
+    // The student's own statement of it, when they gave one: the tutor's first
+    // line may be a step or a rewrite of it (Oct 24 2026: "(x + 3)(x + 4) =
+    // x^2 + 7x + 12" became the problem and nothing was held back).
+    p.pageProblem = (p.statedProblem ?? args.latex.trim()).slice(0, 200);
     p.boardHelp = 0;
     p.exampleHelp = 0;
     p.exampleShown = false;
