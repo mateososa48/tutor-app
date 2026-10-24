@@ -176,6 +176,24 @@ function looksLikeMath(text: string): boolean {
   return words.length <= 3;
 }
 
+const GROWING = new Set(["draw_desmos", "add_function_graph", "add_table"]);
+
+/** The items on this page that a new graph or table grows out of: same tool, and everything they held is in the new one. */
+export function supersededBy(name: string, content: string, items: Array<{ id: string; tool: string; owner: string; content?: string }>): string[] {
+  if (!GROWING.has(name)) return [];
+  const pageStart = items.map((i) => i.tool).lastIndexOf("start_new_problem");
+  const body = (c: string) => c.slice(c.indexOf(":") + 1);
+  const pieces = (c: string) => body(c).split(/[|;&]|(?<=\))\s*,|=(?=\()/).map((x) => x.replace(/^(?:expressions|points|rows|columns|cells)=/, "")).filter((x) => x && !/^settings=|^(?:x|y)_?(?:min|max)=/.test(x));
+  const next = new Set(pieces(content));
+  const columns = (c: string) => /columns=([^&]*)/.exec(body(c))?.[1] ?? null;
+  return items.slice(pageStart + 1).filter((it) => {
+    if (it.tool !== name || it.owner !== "tutor" || !it.content || it.content === content) return false;
+    if (name === "add_table") return columns(it.content) !== null && columns(it.content) === columns(content);
+    const old = pieces(it.content);
+    return old.length > 0 && old.every((x) => next.has(x));
+  }).map((it) => it.id);
+}
+
 export function dispatchWhiteboardTool(
   name: string,
   args: Args,
@@ -301,15 +319,22 @@ export function dispatchWhiteboardTool(
       return ok(`Already on the board as ${twin}${shown ? ` (${shown.label})` : ""}, so it was not written again; pointing at it instead${notes.length ? `; ${notes.join("; ")}` : ""}.`);
     }
   }
+  // A graph or a table that grows (another point, a ? filled in) replaces the
+  // one before it on this page instead of stacking a copy under it (Oct 24
+  // 2026: five Desmos graphs of one line, four copies of one x|y table).
+  const older = board && token?.content && board.itemsSnapshot ? supersededBy(name, token.content, board.itemsSnapshot()) : [];
   const result = dispatchInner(name, args, ctx);
   if (!board || !token) return result;
+  const replaced = result.success && older.length && board.withDirectMeta({ owner: "tutor" }, () => board.eraseItems(older)).length
+    ? `in place of ${older.join(", ")} (the same ${name === "add_table" ? "table" : "graph"} with less on it)`
+    : null;
   // A follow-up ("Next, write the problem…") comes after the item id, and is
   // never part of the item's label.
   const [said, next] = (result.success ? result.message ?? "Done" : "").split(NEXT);
   const itemId = board.endItem(token, result.success ? said : null);
   // What placement or a mark noticed: "stayed on this page: there was room",
   // "b2 is on page 1, so the board turns there to show it".
-  const notes = board.takeNotes?.() ?? [];
+  const notes = [...(replaced ? [replaced] : []), ...(board.takeNotes?.() ?? [])];
   if (!result.success) return result;
   if (!itemId && notes.length === 0 && !next) return result;
   let message = said.replace(/[.]\s*$/, "");

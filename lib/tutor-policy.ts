@@ -517,7 +517,7 @@ export function cues(p: TutorPolicy): string[] {
   else if (p.missesInRow >= 3) out.push(p.exampleShown ? "down: do this step for them with its reason, then the next is theirs" : "down: show_example of this kind, then their next step");
   // Mid-problem, after a step they did: show this one step with its reason.
   // (Before any step, or asked to be taught, the flow teaches instead.)
-  if (active(p, "idk") && !frustrated && !needsTeaching(p)) out.push(p.exampleShown ? "said they don't know: point at the matching line of the example and ask for the same move" : "said they don't know: do this one step for them, say why it works, then the next step is theirs");
+  if (active(p, "idk") && !frustrated && !needsTeaching(p)) out.push(p.exampleShown ? "said they don't know: say which line of the example matches, point at it, and ask for the same move" : "said they don't know: say this one step and why it works, write it, then the next step is theirs");
   if (active(p, "confused") && !frustrated && p.missesInRow < 2) out.push("confused but still trying: give it a moment before stepping in");
   if (!frustrated && p.missesInRow === 0 && (active(p, "bored") || p.quickCorrect >= 2)) out.push("up: give a harder problem");
   if (active(p, "unsure") && last?.result === "correct") out.push("unsure but right: have them check it themselves");
@@ -576,12 +576,15 @@ export function needsTeaching(p: TutorPolicy): boolean {
 
 function teachOrder(p: TutorPolicy): string {
   const model = teachingModel(p.pageProblem, p.currentSkill ?? p.pageSkill);
-  const idea = model ? `${model.idea}. Say that in two or three plain sentences while you draw it: ${model.draw}` : "say the one idea behind it in two or three plain sentences while you draw it (illustrate an everyday picture of it, or the exact tool)";
+  // Words first, then the drawing (Oct 24 2026: an order that opened "point
+  // at…" or "draw…" got the drawing call first, which ends 3.8's reply before
+  // it speaks, and the student sat in silence until the nudge).
+  const idea = model ? `say this first, in two or three plain sentences: ${model.idea}; then draw it: ${model.draw}` : "say the one idea behind it first, in two or three plain sentences; then draw it (illustrate an everyday picture of it, or the exact tool)";
   const careful = model?.breaks ? ` (careful: ${model.breaks})` : "";
   return `teach it now, no more questions first: ${idea}${careful}; then show_example: a problem like theirs with easier numbers, why on every step; then ask them for the first step of theirs`;
 }
 
-const AFTER_EXAMPLE = "the example is up: point at its matching line, say why that move works in other words, then ask them to make the same move on theirs";
+const AFTER_EXAMPLE = "the example is up: say which of its lines matches where they are and why that move works, in other words, then point at it and ask them to make the same move on theirs";
 
 export function flowStep(p: TutorPolicy): { step: FlowStep; next: string } | null {
   if (needsTeaching(p)) return { step: "teach", next: teachOrder(p) };

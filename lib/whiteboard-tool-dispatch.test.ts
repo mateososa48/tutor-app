@@ -1,7 +1,8 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import type { WhiteboardHandle } from "@/components/TldrawCore";
-import { dispatchWhiteboardTool } from "./whiteboard-tool-dispatch";
+import { dispatchWhiteboardTool, supersededBy } from "./whiteboard-tool-dispatch";
+import { contentFingerprint, pictureContent } from "./board-content-rules";
 import { planAfterStart, type BoardPlan } from "./board-plan";
 
 const msg = (r: ReturnType<typeof dispatchWhiteboardTool>) => (r.success ? r.message ?? "" : r.error);
@@ -217,4 +218,20 @@ test("show_example writes the example as one block, every step with its reason",
   assert.deepEqual(seq[0], { steps: ["2x + 3 = 11", "2x = 8", "x = 4"], notes: ["", "take 3 off both sides", "split 8 into 2 equal groups"], title: "Example" });
   const tooLong = dispatchWhiteboardTool("show_example", { problem: "x + 1 = 2", steps: "a | b | c | d | e | f", why: "" }, { whiteboard: board });
   assert.equal(tooLong.success, false);
+});
+
+// Oct 24 2026: five Desmos graphs of one line, four copies of one table.
+test("a graph or table that grows replaces the one before it on this page", () => {
+  const fp = (tool: string, args: Record<string, unknown>) => contentFingerprint(tool, pictureContent(args));
+  const items = [
+    { id: "b1", tool: "start_new_problem", owner: "tutor" },
+    { id: "b2", tool: "draw_desmos", owner: "tutor", content: fp("draw_desmos", { expressions: "(0, -1)" }) },
+    { id: "b3", tool: "add_table", owner: "tutor", content: fp("add_table", { columns: "x | y", rows: "0 | ? | 1 | ?" }) },
+  ];
+  assert.deepEqual(supersededBy("draw_desmos", fp("draw_desmos", { expressions: "(0, -1) | (1, 1)" }), items), ["b2"]);
+  assert.deepEqual(supersededBy("draw_desmos", fp("draw_desmos", { expressions: "y = x^2" }), items), [], "another graph stays");
+  assert.deepEqual(supersededBy("add_table", fp("add_table", { columns: "x | y", rows: "0 | -1 | 1 | ?" }), items), ["b3"]);
+  assert.deepEqual(supersededBy("add_table", fp("add_table", { columns: "in | out", rows: "1 | 2" }), items), []);
+  const older = [{ id: "b9", tool: "draw_desmos", owner: "tutor", content: fp("draw_desmos", { expressions: "(0, -1)" }) }, ...items.slice(0, 1)];
+  assert.deepEqual(supersededBy("draw_desmos", fp("draw_desmos", { expressions: "(0, -1) | (1, 1)" }), older), [], "a graph on an earlier page is left alone");
 });

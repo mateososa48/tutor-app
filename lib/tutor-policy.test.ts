@@ -555,7 +555,7 @@ test("asked to be taught, the state line teaches with the problem's model, ahead
   noteBoardWrite(p, "start_new_problem", { title: "Two-step equations", problem: "3x + 7 = 22" });
   noteStudentUtterance(p, "i dont know how to do this. teach me", 1000);
   const line = formatTutorState(p, 2000);
-  assert.match(line, /step TEACH · next: teach it now, no more questions first: an equation is a balance/);
+  assert.match(line, /step TEACH · next: teach it now, no more questions first: say this first, in two or three plain sentences: an equation is a balance/);
   assert.match(line, /show_example/);
   assert.match(line, /first step of theirs/);
   assert.doesNotMatch(line, /make it smaller|two choices/);
@@ -571,7 +571,7 @@ test("'I don't know' before any step of the problem teaches; after a step it sho
   recordAttempt(q, { skill: "two-step equations", result: "correct", help: 1, problem: "22 - 7", step: true }, 1000);
   noteStudentUtterance(q, "idk", 2000);
   assert.notEqual(flowStep(q)?.step, "teach");
-  assert.ok(cues(q).some((c) => /do this one step for them, say why it works/.test(c)));
+  assert.ok(cues(q).some((c) => /say this one step and why it works/.test(c)));
 });
 
 test("once the example is up, being stuck goes back to it, and their answer counts as helped", () => {
@@ -584,7 +584,7 @@ test("once the example is up, being stuck goes back to it, and their answer coun
   assert.ok(!p.boardNumbers.includes("11"), "the example's numbers are not this problem's givens");
   assert.equal(p.boardHelp < 4, true, "their own results stay theirs");
   noteStudentUtterance(p, "i still dont get it", 2000);
-  assert.match(flowStep(p)?.next ?? "", /the example is up: point at its matching line/);
+  assert.match(flowStep(p)?.next ?? "", /the example is up: say which of its lines matches/);
   noteBoardWrite(p, "start_new_problem", { title: "Next", problem: "4x - 1 = 11" });
   assert.equal(p.exampleShown, false, "a new problem starts without an example");
 });
