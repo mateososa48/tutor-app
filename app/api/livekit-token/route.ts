@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { AccessToken } from "livekit-server-sdk";
+import { AccessToken, AgentDispatchClient, RoomAgentDispatch, RoomConfiguration } from "livekit-server-sdk";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
@@ -25,6 +25,12 @@ export const dynamic = "force-dynamic";
 const LIVEKIT_URL = process.env.LIVEKIT_URL || "ws://127.0.0.1:7880";
 const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || (process.env.NODE_ENV === "development" ? "devkey" : "");
 const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || (process.env.NODE_ENV === "development" ? "secret" : "");
+const AGENT_NAME = process.env.LIVEKIT_AGENT_NAME || "chalk-tutor";
+
+/** A room's name carries its owner, so only they can send a new agent into it. */
+function roomOwner(room: string): string | null {
+  return /^chalk-([a-z0-9]{1,12})-[a-z0-9]{8}$/i.exec(room)?.[1] ?? null;
+}
 
 function readIntake(value: unknown): SessionIntake | null {
   if (!value || typeof value !== "object") return null;
@@ -43,6 +49,16 @@ export async function POST(req: NextRequest) {
   if (!session?.user?.id) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET) {
     return NextResponse.json({ error: "misconfigured", detail: "LIVEKIT_API_KEY and LIVEKIT_API_SECRET are not set" }, { status: 500 });
+  }
+
+  // The room's agent died mid-lesson: send a new one in (the page hands it the conversation so far).
+  const peek = (await req.clone().json().catch(() => null)) as { redispatch?: unknown } | null;
+  if (typeof peek?.redispatch === "string") {
+    const room = peek.redispatch;
+    if (roomOwner(room) !== session.user.id.replace(/[^a-z0-9]/gi, "").slice(0, 12)) return NextResponse.json({ error: "not your room" }, { status: 403 });
+    const dispatch = new AgentDispatchClient(LIVEKIT_URL.replace(/^ws/, "http"), LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
+    await dispatch.createDispatch(room, AGENT_NAME);
+    return NextResponse.json({ ok: true });
   }
 
   let intake: SessionIntake | null = null;
@@ -80,11 +96,13 @@ export async function POST(req: NextRequest) {
     session: intake ? intakeInstructions(intake, fileCount) : undefined,
   });
 
-  const room = `chalk-${randomUUID().slice(0, 8)}`;
+  const room = `chalk-${session.user.id.replace(/[^a-z0-9]/gi, "").slice(0, 12)}-${randomUUID().replace(/-/g, "").slice(0, 8)}`;
   const identity = `student-${session.user.id.slice(0, 12)}-${randomUUID().slice(0, 4)}`;
   // Short-lived: long enough for a lesson and a reconnect, never reusable for another room.
   const token = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, { identity, name: profile?.displayName ?? "Student", ttl: "2h" });
   token.addGrant({ room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true });
+  // The tutor agent joins the room when it is created.
+  token.roomConfig = new RoomConfiguration({ agents: [new RoomAgentDispatch({ agentName: AGENT_NAME })] });
 
   return NextResponse.json({
     url: LIVEKIT_URL,

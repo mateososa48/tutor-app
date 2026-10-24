@@ -122,6 +122,7 @@ export class BrainTutor {
         {
           allowed: this.allowed,
           forceCheck,
+          line,
           onText: (text) => {
             turn.raw += text;
             for (const s of sentences.push(text)) say(s);

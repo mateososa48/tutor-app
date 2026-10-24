@@ -236,6 +236,7 @@ class ChalkTutor extends voice.Agent {
             {
               allowed: agent.allowed,
               forceCheck,
+              line,
               onText: (t) => sentences.push(t).forEach(emit),
               onBoard: sendBoard,
               check: async (args, id) => {
@@ -398,4 +399,6 @@ export default defineAgent({
   },
 });
 
-cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url) }));
+// Explicit dispatch by name: /api/livekit-token puts this agent in each new
+// room, and can send a fresh one into a room whose agent died.
+cli.runApp(new ServerOptions({ agent: fileURLToPath(import.meta.url), agentName: process.env.LIVEKIT_AGENT_NAME || "chalk-tutor" }));

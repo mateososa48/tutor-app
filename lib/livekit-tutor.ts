@@ -72,6 +72,9 @@ export class LivekitTutorSession {
   private tutorQuietSince = 0;
   private tutorSounding = false;
   private typedAt = 0;
+  /** The conversation so far, for an agent that has to take over mid-lesson. */
+  private readonly history: Array<{ role: "tutor" | "student"; text: string }> = [];
+  private recovering = false;
   /** Every measured gap (ms) from the student's last word (or a typed line) to the tutor's first sound. */
   readonly gaps: Array<{ ms: number; via: "voice" | "typed"; at: number }> = [];
 
@@ -88,7 +91,12 @@ export class LivekitTutorSession {
     return "livekit";
   }
 
+  /** The last debug events, for the voice test to read (they are also recorded with the session). */
+  readonly events: Array<{ at: number; message: string; payload?: Record<string, unknown> }> = [];
+
   private debug(kind: string, message: string, payload?: Record<string, unknown>) {
+    this.events.push({ at: Date.now(), message, payload });
+    if (this.events.length > 200) this.events.shift();
     this.callbacks.onDebugEvent?.({ kind, message, payload } as never);
   }
 
@@ -177,12 +185,18 @@ export class LivekitTutorSession {
   private registerRpc(room: Room) {
     const lp = room.localParticipant;
     lp.registerRpcMethod("chalk.hello", async (data: RpcInvocationData) => {
+      // A new agent counts its turns from 1 again: forget the old one's cancelled turns.
+      if (data.callerIdentity !== this.agentIdentity) this.cancelled.clear();
       void this.sendConfig(data.callerIdentity);
       return "ok";
     });
     lp.registerRpcMethod("chalk.ready", async (data: RpcInvocationData) => {
       this.agentIdentity = data.callerIdentity;
       this.debug("connection", "livekit_agent_ready", { agent: data.callerIdentity });
+      if (this.recovering) {
+        this.recovering = false;
+        this.callbacks.onConnected({ resumed: true, expiresAt: null });
+      }
       const opening = this.opening;
       this.opening = null;
       if (opening) void this.say(opening, true);
@@ -219,6 +233,7 @@ export class LivekitTutorSession {
       const d = JSON.parse(data.payload) as { turnId: number; said: string; moves: string[]; firstSentenceMs: number | null; brainFirstTokenMs: number | null; noteMs: number; steps: number; usd: number };
       this.debug("pacing", "livekit_turn_done", d);
       if (d.turnId === this.currentTurn) this.finishTutorTurn(d.said);
+      if (d.said) this.history.push({ role: "tutor", text: d.said });
       return "ok";
     });
   }
@@ -232,6 +247,7 @@ export class LivekitTutorSession {
     const text = line.trim();
     if (text && text !== this.lastStudentLine) {
       this.lastStudentLine = text;
+      this.history.push({ role: "student", text });
       this.runtime.noteStudentUtterance(text);
       if (!typed) this.callbacks.onTranscript({ role: "student", text, id: this.nextId("student"), at: Date.now() });
     }
@@ -451,8 +467,32 @@ export class LivekitTutorSession {
       if (!this.ended) this.callbacks.onDisconnected("room_closed");
     });
     room.on(RoomEvent.ParticipantDisconnected, (p: RemoteParticipant) => {
-      if (p.kind === ParticipantKind.AGENT && !this.ended) this.callbacks.onError("The voice agent left. Is `npm run livekit` still running?");
+      if (p.kind === ParticipantKind.AGENT && !this.ended) void this.recoverAgent();
     });
+  }
+
+  /** The agent died mid-lesson: ask for a new one and hand it the conversation so far. */
+  private async recoverAgent() {
+    if (this.recovering || !this.config) return;
+    this.recovering = true;
+    this.agentIdentity = null;
+    this.callbacks.onReconnecting(1);
+    this.debug("connection", "livekit_agent_lost", {});
+    const last = this.history.slice(-8).map((t) => `${t.role === "tutor" ? "Tutor" : "Student"}: ${t.text}`).join("\n");
+    this.opening = `(The call dropped on your side for a few seconds and you're back. Where you were:\n${last || "(nothing yet)"}\nSay sorry for the drop in a few words, then pick up from there: if the student's last line was never answered, answer it.)`;
+    try {
+      const r = await fetch("/api/livekit-token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redispatch: this.config.room }) });
+      if (!r.ok) throw new Error(String(r.status));
+    } catch (err) {
+      this.callbacks.onError("The tutor's connection could not be restored. Try again.");
+      this.debug("error", "livekit_redispatch_failed", { error: String(err).slice(0, 120) });
+      return;
+    }
+    // The new agent says chalk.hello, gets the config, then chalk.ready sends the opening above.
+    setTimeout(() => {
+      if (!this.ended && !this.agentIdentity) this.callbacks.onError("The tutor's connection could not be restored. Try again.");
+      this.recovering = false;
+    }, 20000);
   }
 
   /** A line for the agent to answer as if the student said it (typed, or the opening). */

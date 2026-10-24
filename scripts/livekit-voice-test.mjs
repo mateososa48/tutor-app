@@ -36,6 +36,7 @@ for (let at = 20; at * 1000 < total; at += 20) {
 }
 await new Promise((r) => setTimeout(r, Math.max(0, total - (Date.now() - t0))));
 const gaps = await page.evaluate(() => window.__livekitTutor?.gaps ?? null);
+const events = await page.evaluate(() => (window.__livekitTutor?.events ?? []).filter((e) => !/livekit_tool$|agent_state|livekit_note/.test(e.message)).map((e) => `${new Date(e.at).toISOString().slice(11, 19)} ${e.message} ${JSON.stringify(e.payload ?? {}).slice(0, 120)}`));
 await page.screenshot({ path: `${OUT}/final.png` });
-console.log(JSON.stringify({ url: page.url(), gaps, errors: errors.slice(0, 12) }, null, 1));
+console.log(JSON.stringify({ url: page.url(), gaps, events, errors: errors.slice(0, 12) }, null, 1));
 await browser.close();

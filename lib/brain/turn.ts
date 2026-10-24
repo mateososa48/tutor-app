@@ -18,6 +18,7 @@
 // reply does not judge, and the check's own ~1 s when it does.
 import type { ToolCallResult } from "../live-types";
 import { streamBrain, type BrainRequest, type BrainUsage, type Message } from "./haiku";
+import { decimalWords, fractionWords, numberWords } from "./speech";
 
 export type BoardCall = { id: string; name: string; args: Record<string, unknown> };
 
@@ -30,6 +31,10 @@ export type TurnHooks = {
   allowed: Set<string>;
   /** The line is an answer the app's checker could not read: check it alongside the reply. */
   forceCheck?: boolean;
+  /** The student's line: a check whose answer they never said is dropped. */
+  line?: string;
+  /** A short prompt for the check instead of the whole lesson. Tried Oct 24 2026: no faster, and it lost the problem (cannot_check on 4 of 5 lines), so nothing passes it. */
+  checkContext?: { tutor: string; board: string; line: string };
 };
 
 export type TurnResult = {
@@ -76,7 +81,23 @@ export function contradicts(judgement: "affirm" | "deny", verdict: "correct" | "
 }
 
 // The checker reads digits and symbols; a problem written with words ("5 cups at 6 each") comes back cannot_check.
-export const CHECK_ORDER = "[Check the answer in their line: problem as plain math in digits and symbols only, the exact question they answered ('12 / 2', '5 * 6', '-7 - 4', '0.5 > 0.35', '2x + 3 = 11', 'f(4) where f(x) = 3x - 1'), never words or units; student_answer the same way ('6', '30', 'x = 4').]";
+export const CHECK_ORDER = "[Check the answer in their line: problem as plain math in digits and symbols only, the exact question they answered ('12 / 2', '5 * 6', '-7 - 4', '0.5 > 0.35', '2x + 3 = 11', 'f(4) where f(x) = 3x - 1'), never words or units, and in the same units as their answer (dollars stay dollars: 85 * 0.85 for 72.25, not 0.85 * 0.85); student_answer exactly the number they said ('6', '72.25', 'x = 4').]";
+
+const CHECK_SYSTEM = "You turn a student's spoken answer in a math lesson into a call to the answer checker: the exact question they answered, as plain math, and their answer. Nothing else.";
+
+/** Every number in the answer appears in the line, as digits or as words ("2/9" or "two ninths"). */
+export function saidIn(answer: string, line: string): boolean {
+  const nums = answer.match(/-?\d+(?:\.\d+)?(?:\/\d+)?/g) ?? [];
+  if (!nums.length) return /[a-z]/i.test(answer) && line.toLowerCase().includes(answer.toLowerCase().trim());
+  const said = line.toLowerCase().replace(/[−–]/g, "-");
+  return nums.every((n) => {
+    const plain = n.replace(/^-/, "");
+    if (new RegExp(`(^|[^\\d.])${plain.replace(/[.]/g, "\\.")}(?![\\d])`).test(said)) return true;
+    const [a, b] = plain.split("/");
+    const words = b ? fractionWords(Number(a), Number(b)) : plain.includes(".") ? decimalWords(plain) : numberWords(Number(plain));
+    return said.includes(words) || said.includes(words.replace(/-/g, " "));
+  });
+}
 
 const SENTENCE = /^([\s\S]*?[.!?])(?=\s|$)/;
 
@@ -100,11 +121,24 @@ export async function runBrainTurn(req: BrainRequest, hooks: TurnHooks): Promise
     check = new Promise<string | null>((r) => (resolve = r));
     void (async () => {
       try {
+        const cx = hooks.checkContext;
         const last = req.messages[req.messages.length - 1];
-        const messages: Message[] = [...req.messages.slice(0, -1), { role: last.role, content: [...last.content, { type: "text", text: CHECK_ORDER }] }];
-        for await (const ev of streamBrain({ ...req, messages, forceTool: "check_answer", maxTokens: 300, hedgeMs: undefined })) {
+        const small = cx
+          ? { system: CHECK_SYSTEM, tools: req.tools.filter((t) => t.name === "check_answer"), messages: [{ role: "user" as const, content: [{ type: "text" as const, text: `Tutor said: "${cx.tutor.slice(-600)}"\nBoard: ${cx.board.slice(0, 900) || "empty"}\nStudent answered: "${cx.line.slice(0, 400)}"\n${CHECK_ORDER}` }] }] }
+          : { messages: [...req.messages.slice(0, -1), { role: last.role, content: [...last.content, { type: "text" as const, text: CHECK_ORDER }] }] };
+        for await (const ev of streamBrain({ ...req, ...small, forceTool: "check_answer", maxTokens: 300, hedgeMs: undefined })) {
           if (ev.type === "tool" && ev.name === "check_answer") {
-            const r = await hooks.check(ev.args, ev.id);
+            // The check is the brain's reading of their line, not their words: it never writes
+            // "working" in their hand (Oct 24 2026: "You said 0.85³ = 0.45", which Ethan never said).
+            const { working: _w, ...args } = ev.args;
+            void _w;
+            // A check of an answer they never said is the brain's guess, not their attempt
+            // (Oct 24 2026: "can we do number 8?" was checked as "-4 + 9 = 5" and ringed in her hand).
+            if (hooks.line && !saidIn(String(args.student_answer ?? ""), hooks.line)) {
+              resolve(null);
+              continue;
+            }
+            const r = await hooks.check(args, ev.id);
             out.verdict = r.success ? r.message ?? null : null;
             resolve(out.verdict);
           }
@@ -224,7 +258,10 @@ export async function runBrainTurn(req: BrainRequest, hooks: TurnHooks): Promise
     const last = req.messages[req.messages.length - 1];
     const withVerdict: Message[] = [
       ...req.messages.slice(0, -1),
-      { role: last.role, content: [...last.content, { type: "text", text: `[Checker on this line: ${out.verdict ?? "unknown"}. Your reply must agree with it.]` }] },
+      // The check is the brain's own reading of the problem, so it can be wrong too (it once
+      // turned a right 72.25 into 0.85 * 0.85): never call the answer right, and never
+      // call it wrong on this alone either; ask how they got it.
+      { role: last.role, content: [...last.content, { type: "text", text: `[The answer checker read this as: ${(out.verdict ?? "unknown").slice(0, 300)}. It disagrees with what you were about to say. Don't say right or wrong: ask how they got it, in a few words.]` }] },
     ];
     await runReply(withVerdict, false);
   }
