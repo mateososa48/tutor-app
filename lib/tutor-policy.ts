@@ -284,7 +284,10 @@ const SIGNAL_PATTERNS: Record<StudentSignal, RegExp[]> = {
 };
 
 export function detectSignals(text: string): StudentSignal[] {
-  const t = text.trim();
+  // The intake's own line ends "Please teach me in English." (lib/session-intake):
+  // that is the language, not a request to be taught (Oct 24 2026: every
+  // session opened in TEACH before the student had said a word).
+  const t = text.replace(/\s*Please teach me in [^.]{1,40}\.\s*$/i, "").trim();
   if (!t) return [];
   const found = (Object.keys(SIGNAL_PATTERNS) as StudentSignal[]).filter((s) => SIGNAL_PATTERNS[s].some((re) => re.test(t)));
   // "not easy" / "isn't easy" is not boredom.

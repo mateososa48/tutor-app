@@ -545,7 +545,7 @@ test("'teach me' and 'I don't understand' are a request to be taught", () => {
   for (const line of ["i dont know how to do that. teach me", "i dont understamd", "can you explain how", "how do you solve these", "i never learned this", "im lost"]) {
     assert.ok(detectSignals(line).includes("teach"), line);
   }
-  for (const line of ["5", "we can divide by 5 first", "i think its 8", "i know how"]) {
+  for (const line of ["5", "we can divide by 5 first", "i think its 8", "i know how", "I need help with the work I just uploaded. I uploaded a picture of it. Please teach me in English."]) {
     assert.ok(!detectSignals(line).includes("teach"), line);
   }
 });
