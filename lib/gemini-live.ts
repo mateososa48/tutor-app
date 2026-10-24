@@ -10,7 +10,7 @@ import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, finishReplyNote, too
 import { givesTask } from "./tutor-policy";
 import type { CoachTurn } from "./tutor-coach";
 import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, pictureRefusal, sameLine } from "./tutor-planner";
-import { ILLUSTRATE_DECLARATION, ILLUSTRATE_NOTHING, ILLUSTRATE_PENDING, ILLUSTRATE_WAIT_MS, illustrateFailed, illustrateRequest } from "./illustration/tool";
+import { ILLUSTRATE_DECLARATION, ILLUSTRATE_NOTHING, ILLUSTRATE_PENDING, ILLUSTRATE_WAIT_MS, PictureMemory, alreadyDrawn, illustrateFailed, illustrateRequest } from "./illustration/tool";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
@@ -317,6 +317,8 @@ export class GeminiLiveSession {
   private readonly illustrator: IllustratorOption | undefined;
   /** Illustrations still being asked for, by the call that asked: a cancelled call stops its picture. */
   private readonly illustrations = new Map<string, AbortController>();
+  /** Pictures drawn this session: one still on the board is pointed at, not drawn again. */
+  private readonly pictureMemory = new PictureMemory();
   /** How long an illustrate call waits for its picture (a field so a test can shorten it). */
   private illustrateWaitMs = ILLUSTRATE_WAIT_MS;
   /** The student line (inputSeq) the planner already gave an order for, and that order: planned once per line. */
@@ -845,6 +847,11 @@ export class GeminiLiveSession {
     const started = Date.now();
     const ill = this.illustrator;
     if (!ill) return { ok: false, why: "this session can't draw pictures" };
+    const same = this.pictureMemory.find(pic.what, ill.board());
+    if (same) {
+      this.debug("board", "illustration_already_up", { callId, what: pic.what, item: same.item });
+      return { ok: true, message: alreadyDrawn(same.item, same.message) };
+    }
     this.debug("board", "illustration_requested", { callId, what: pic.what, notice: pic.notice });
     const conversation = [
       ...this.coachHistory.slice(-3).flatMap((t) => [
@@ -868,6 +875,7 @@ export class GeminiLiveSession {
         const message = await ill.draw(j.scene, callId);
         this.debug("board", "illustration_drawn", { callId, ms: Date.now() - started, model: j.model, parts: j.parts, withheld: j.withheld, problems: j.problems, cost: j.cost, result: message });
         if (message) {
+          this.pictureMemory.remember(pic.what, message);
           // A picture is help on this problem, and the "no picture yet" reminder is answered.
           this.tutorRuntime.noteBoardWrite("draw_illustration");
           this.turnDrew = true;

@@ -10,6 +10,7 @@ type Drawn = { scene: unknown; callId: string };
 type Reply = { status?: number; body?: unknown; delayMs?: number };
 
 function harness(reply: Reply | ((url: string, init: RequestInit) => Reply)) {
+  const boardNow = { text: 'b1 heading "Sharing"' };
   const drawn: Drawn[] = [];
   const events: Array<{ message: string; payload?: Record<string, unknown> }> = [];
   const requests: Array<Record<string, unknown>> = [];
@@ -32,10 +33,10 @@ function harness(reply: Reply | ((url: string, init: RequestInit) => Reply)) {
       voiceName: "Puck",
       illustrator: {
         grade: () => "5th grade",
-        board: () => "b1 heading \"Sharing\"",
+        board: () => boardNow.text,
         draw: async (scene, callId) => {
           drawn.push({ scene, callId });
-          return `Drew the picture (item b2, parts: j1, j2, j3)\n[Board: b1 heading; b2 picture]`;
+          return `Drew "Coins" (parts: j1, j2, j3) (item b2)\n[Board: b1 heading; b2 picture]`;
         },
       },
     },
@@ -51,7 +52,7 @@ function harness(reply: Reply | ((url: string, init: RequestInit) => Reply)) {
     illustrateWaitMs: number;
     newStudentInput: (kind: "text" | "voice") => void;
   };
-  return { s, drawn, events, requests };
+  return { s, drawn, events, requests, boardNow };
 }
 
 const SCENE = { root: { type: "row", children: [{ type: "container", shape: "jar", id: "j1" }] } };
@@ -135,4 +136,20 @@ test("the planner's picture goes through the same path, and a failed one tells t
   await wait(40);
   assert.match(bad.s.pendingTurnNote ?? "", /could not be drawn/);
   assert.equal(bad.s.pictureOut, null);
+});
+
+test("a picture still on the board is pointed at, not drawn again; once it is gone it can be drawn", async () => {
+  const h = harness({ body: { scene: SCENE } });
+  await h.s.illustrateTool("first", { what: "3 dimes marked 10 cents and 4 nickels marked 5 cents" });
+  h.boardNow.text = 'b1 heading "Coins"; b2 illustration ""3 dimes and 4 nickels" (parts: j1, j2, j3)"';
+  h.s.newStudentInput("text");
+  const again = await h.s.illustrateTool("second", { what: "3 dimes (10 cents) and 4 nickels (5 cents)" });
+  assert.equal(again.success, true);
+  assert.match(again.message ?? "", /already on the board as b2/);
+  assert.equal(h.drawn.length, 1, "no second copy");
+  assert.equal(h.requests.length, 1, "the illustrator was not even asked");
+  h.boardNow.text = 'b5 heading "Next problem"';
+  h.s.newStudentInput("text");
+  await h.s.illustrateTool("third", { what: "3 dimes and 4 nickels" });
+  assert.equal(h.drawn.length, 2, "erased or turned away: drawn again");
 });

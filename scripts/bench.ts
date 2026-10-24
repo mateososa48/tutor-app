@@ -81,11 +81,8 @@ import { CASES, HELDOUT, PICTURES, REAL, caseById, intakeFor, studentPrompt, stu
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { hedged } from "../lib/hedge";
 import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, PLANNER_SYSTEM, illustrationOf, pictureRefusal, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
-import { callCost, callIllustrator } from "../lib/illustration/model";
-import { guardLabels, illustratorPrompt } from "../lib/illustration/prompt";
-import { pictureKind, recipeFor } from "../lib/illustration/recipes";
-import { parseScene } from "../lib/illustration/scene";
-import { ILLUSTRATE_NOTHING, ILLUSTRATE_PENDING, ILLUSTRATE_WAIT_MS, illustrateFailed, illustrateRequest } from "../lib/illustration/tool";
+import { illustrate as illustrateScene } from "../lib/illustration/request";
+import { ILLUSTRATE_NOTHING, ILLUSTRATE_PENDING, ILLUSTRATE_WAIT_MS, PictureMemory, alreadyDrawn, illustrateFailed, illustrateRequest } from "../lib/illustration/tool";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
@@ -884,25 +881,30 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
   };
   // As lib/gemini-live: the scene goes through the answer guard (shapeBoardCall)
   // and is drawn under the asking call's id; a drawn picture is board help.
+  const pictureMemory = new PictureMemory();
   const drawPicture = async (pic: Picture, line: string, callId: string): Promise<{ ok: true; message: string } | { ok: false; why: string }> => {
+    // As lib/gemini-live: a picture still on the board is pointed at, not drawn again.
+    const same = pictureMemory.find(pic.what, (await summaryOf(page, true)) ?? "");
+    if (same) return { ok: true, message: alreadyDrawn(same.item, same.message) };
     const t0 = Date.now();
     // The line being answered too, as lib/gemini-live sends it (it is not a turn yet).
     const conversation = [...turns.slice(-3).flatMap((x) => [{ who: "student" as const, text: x.student }, { who: "tutor" as const, text: x.tutor }]), { who: "student" as const, text: line }].filter((l) => l.text);
     const board = turns.at(-1)?.boardCompact ?? "";
     let rec: ToolRecord;
     try {
-      // As /api/illustrate: the recipe for the picture's kind after the request.
-      const reply = await callIllustrator(ILLUSTRATOR, [illustratorPrompt({ grade: c.grade, what: pic.what, notice: pic.notice, conversation, board }), recipeFor(pictureKind(pic.what, pic.notice))].filter(Boolean).join("\n\n"));
-      const scene = reply ? parseScene(reply.text) : null;
-      if (!scene) throw new Error(reply ? "unreadable scene" : "no illustrator key");
-      const guarded = guardLabels(scene, [conversation.map((l) => l.text).join(" "), board, pic.what, pic.notice].join(" "));
+      // Exactly what /api/illustrate does (lib/illustration/request.ts): the
+      // recipe, the hedge to Gemini, the label guard and the render check.
+      const drawn = await illustrateScene({ grade: c.grade, what: pic.what, notice: pic.notice, conversation, board }, ILLUSTRATOR === "claude-haiku-5-5" ? {} : { models: [ILLUSTRATOR] });
+      if (!drawn.ok) throw new Error(drawn.failures.join("; ") || "no picture came back");
+      const guarded = { scene: drawn.scene, withheld: drawn.withheld };
       const shaped = runtime.shapeBoardCall("draw_illustration", { scene: guarded.scene }) as { args: Record<string, unknown>; note: string | null };
       const r = (await page.evaluate(({ name, args, callId }) => (window as BoardWindow).__chalkDispatch?.(name, args, callId) ?? { success: false, error: "no dispatcher" }, { name: "draw_illustration", args: shaped.args, callId })) as ToolCallResult;
       if (r.success) runtime.noteBoardWrite("draw_illustration");
+      if (r.success) pictureMemory.remember(pic.what, r.message ?? "");
       const compact = r.success ? await summaryOf(page, true) : "";
       if (compact) lastSummary = compact;
       const message = r.success ? `${r.message ?? "Drew the picture."}${shaped.note ? ` ${shaped.note}` : ""}${compact ? `\n[Board: ${compact}]` : ""}` : "";
-      rec = { name: "draw_illustration", args: { what: pic.what, notice: pic.notice, model: ILLUSTRATOR, ms: Date.now() - t0, withheld: guarded.withheld, guarded: shaped.note, cost: callCost(ILLUSTRATOR, reply!.usage) }, callId, atMs: 0, beforeSpeech: false, ok: r.success, result: r.success ? r.message ?? "Done" : `Error: ${r.error}`, durationMs: Date.now() - t0, by: "app" };
+      rec = { name: "draw_illustration", args: { what: pic.what, notice: pic.notice, model: drawn.model, ms: Date.now() - t0, withheld: guarded.withheld, guarded: shaped.note, cost: drawn.cost, failures: drawn.failures }, callId, atMs: 0, beforeSpeech: false, ok: r.success, result: r.success ? r.message ?? "Done" : `Error: ${r.error}`, durationMs: Date.now() - t0, by: "app" };
       if (live.active) live.noteAppTools([rec]);
       else pendingApp.push(rec);
       scheduleFrame(900);

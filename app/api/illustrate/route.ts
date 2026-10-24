@@ -7,21 +7,12 @@
 //
 // Haiku 5.5 answered in 1.3 s at the median and 2.4 s at worst on 45 calls
 // (Oct 17 2026, scripts/illustrate-measure.ts), at about $0.0002 a picture.
-// Gemini 3.8 Flash is asked too if Haiku has not answered by HEDGE_MS.
+// Gemini 3.8 Flash is asked too if Haiku has not answered in 3.5 s.
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { hedged } from "@/lib/hedge";
-import { callCost, callIllustrator } from "@/lib/illustration/model";
-import { guardLabels, illustratorPrompt, partNames } from "@/lib/illustration/prompt";
-import { pictureKind, recipeFor } from "@/lib/illustration/recipes";
-import { parseScene, renderScene } from "@/lib/illustration/scene";
+import { illustrate } from "@/lib/illustration/request";
 
-const MODELS = (process.env.ILLUSTRATOR_MODELS || "claude-haiku-5-5,gemini-3.8-flash").split(",").map((s) => s.trim()).filter(Boolean);
-// The tutor is talking meanwhile; a picture that comes after its question is
-// still useful, but one that comes a whole turn late is confusing.
-const DEADLINE_MS = 7_000;
-const HEDGE_MS = 3_500;
-// At most one picture a problem is asked for; this only stops a runaway client.
+// At most one picture a reply is asked for; this only stops a runaway client.
 const PER_MINUTE = 10;
 const recent = new Map<string, number[]>();
 
@@ -53,45 +44,11 @@ export async function POST(req: NextRequest) {
     .map((l) => (l && typeof l === "object" ? (l as Record<string, unknown>) : {}))
     .filter((l) => l.who === "student" || l.who === "tutor")
     .map((l) => ({ who: l.who as "student" | "tutor", text: text(l.text, 300) }));
-  const request = { grade: text(body.grade, 40), what, notice: text(body.notice, 300), conversation, board: text(body.board, 900) };
-  // The recipe for this kind of picture rides at the end of the request, so the
-  // system prompt stays cached (Oct 19 2026: held-out cases, blind-judged,
-  // 3.75 without recipes, 4.32 with; a check-and-fix pass on top added nothing).
-  const prompt = [illustratorPrompt(request), recipeFor(pictureKind(request.what, request.notice))].filter(Boolean).join("\n\n");
-  // Everything the student has had: numbers in it may be labelled, others not.
-  const seen = [conversation.map((l) => l.text).join(" "), request.board, request.what, request.notice].join(" ");
-
-  const started = Date.now();
-  const failures: string[] = [];
-  const won = await hedged(
-    MODELS,
-    async (model, signal) => {
-      try {
-        const reply = await callIllustrator(model, prompt, signal);
-        if (!reply) {
-          failures.push(`${model} no key`);
-          return null;
-        }
-        const scene = parseScene(reply.text);
-        if (!scene) {
-          failures.push(`${model} unreadable`);
-          return null;
-        }
-        const guarded = guardLabels(scene, seen);
-        const drawn = renderScene(guarded.scene);
-        // A scene that lays out to nothing is no picture at all.
-        if (!drawn.w || !drawn.h || !Object.keys(drawn.parts).length && drawn.problems.length) {
-          failures.push(`${model} empty`);
-          return null;
-        }
-        return { scene: guarded.scene, parts: partNames(drawn.parts), withheld: guarded.withheld, problems: drawn.problems, cost: callCost(model, reply.usage) };
-      } catch (err) {
-        if (!signal.aborted) failures.push(String((err as Error).message).slice(0, 80));
-        return null;
-      }
-    },
-    { hedgeMs: HEDGE_MS, deadlineMs: DEADLINE_MS },
-  );
-  if (!won) return NextResponse.json({ scene: null, ms: Date.now() - started, failures });
-  return NextResponse.json({ ...won.value, model: won.model, ms: Date.now() - started, ...(failures.length ? { failures } : {}) });
+  // The request, the recipe, the hedge, the label guard and the render check
+  // live in lib/illustration/request.ts, which the bench calls too.
+  const r = await illustrate({ grade: text(body.grade, 40), what, notice: text(body.notice, 300), conversation, board: text(body.board, 900) });
+  if (!r.ok) return NextResponse.json({ scene: null, ms: r.ms, failures: r.failures });
+  const { ok: _ok, failures, ...picture } = r;
+  void _ok;
+  return NextResponse.json({ ...picture, ...(failures.length ? { failures } : {}) });
 }

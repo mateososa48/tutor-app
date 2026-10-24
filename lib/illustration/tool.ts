@@ -30,7 +30,7 @@ export const ILLUSTRATE_DECLARATION: ToolDeclaration = {
       what: {
         type: "string",
         description:
-          "The real things, with exact counts, how they are grouped, and every number the picture should show ('12 marbles shared into 3 jars, one jar per friend'; '3 quarters marked 25 cents and 2 dimes marked 10 cents'). Never the answer they are about to find, never 'circles' or 'shapes'.",
+          "The whole scene as it should look: the real things, exact counts, how they are grouped, and every number to show ('12 marbles shared into 3 jars, one jar per friend'; '5 brownies on 2 plates, 2 on each, the fifth cut in half with one half on each plate'), never a change like 'cut the last one in half'. Never the answer they are about to find, never 'circles' or 'shapes'.",
       },
       notice: {
         type: "string",
@@ -65,3 +65,53 @@ export function illustrateFailed(why: string): string {
 }
 
 export const ILLUSTRATE_NOTHING = "Say what to draw: the real things with their counts ('12 marbles shared into 3 jars').";
+
+// ── One picture of one thing ────────────────────────────────────────────
+// Oct 23 2026, bench: the same coins were drawn twice on consecutive turns
+// ("3 dimes marked 10 cents and 4 nickels marked 5 cents", then again), once by
+// the planner's order and once by the tutor. A picture still on the board is
+// pointed at, not drawn again.
+
+const STOP = new Set("a an and the of in on with each for to into per one all its their them they marked labelled labeled showing show drawn picture same".split(" "));
+
+/** The words that say what a picture is: its counts and its things. */
+export function pictureWords(what: string): Set<string> {
+  const words = what.toLowerCase().replace(/[^a-z0-9.\s]/g, " ").split(/\s+/).filter((w) => w && !STOP.has(w) && (w.length > 2 || /\d/.test(w)));
+  return new Set(words.map((w) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)));
+}
+
+/** Whether two requests ask for the same picture (most of their counts and things shared). */
+export function samePicture(a: string, b: string): boolean {
+  const x = pictureWords(a), y = pictureWords(b);
+  if (!x.size || !y.size) return false;
+  // Other counts are another picture (5 brownies is not 7 brownies).
+  const nums = (s: Set<string>) => [...s].filter((w) => /\d/.test(w)).sort().join(",");
+  if (nums(x) !== nums(y)) return false;
+  let shared = 0;
+  for (const w of x) if (y.has(w)) shared += 1;
+  return shared / (x.size + y.size - shared) >= 0.5;
+}
+
+/** The pictures drawn this session, by request, so one still on the board is not drawn again. */
+export class PictureMemory {
+  private drawn: Array<{ what: string; item: string; message: string }> = [];
+
+  /** Note a drawn picture by the item id its result names ("(item b4)"). */
+  remember(what: string, message: string): void {
+    const item = /\(item (b\d+)\)/.exec(message)?.[1];
+    if (item) this.drawn = [...this.drawn.filter((d) => d.item !== item), { what, item, message }].slice(-8);
+  }
+
+  /** The same picture, when it is still on the board (its id is in the board list). */
+  find(what: string, board: string): { item: string; message: string } | null {
+    for (const d of [...this.drawn].reverse()) {
+      if (samePicture(d.what, what) && new RegExp(`(^|[\\s;:"(])${d.item}\\b`).test(board)) return { item: d.item, message: d.message };
+    }
+    return null;
+  }
+}
+
+export function alreadyDrawn(item: string, message: string): string {
+  const parts = /\(parts: ([^)]*)\)/.exec(message)?.[1];
+  return `That picture is already on the board as ${item}${parts ? ` (parts: ${parts})` : ""}. Point at it or its parts instead of drawing it again.`;
+}
