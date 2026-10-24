@@ -92,7 +92,7 @@ test("start_new_problem writes the problem, typeset, and the first question in o
   assert.deepEqual(f.log.map((l) => l.split(":")[0]), ["title", "eq", "eq", "callout"]);
   assert.match(f.log[1], /2x\^\{?2\}?/);
   assert.match(msg(r), /The problem is up, typeset/);
-  assert.match(msg(r), /Next: ask what they already know about this kind of problem/);
+  assert.match(msg(r), /Next: ask what they'd try first; if they don't know how, teach it \(show_example\)/);
   const bare = dispatchWhiteboardTool("start_new_problem", { title: "Fractions" }, { whiteboard: f.board });
   assert.match(msg(bare), /Write the problem exactly as given \(problem=, typeset\), then ask what they already know/);
 });

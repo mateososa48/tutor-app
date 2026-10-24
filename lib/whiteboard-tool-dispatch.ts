@@ -245,7 +245,7 @@ export function dispatchWhiteboardTool(
       const r = dispatchWhiteboardTool("add_callout", { text: ask }, ctx);
       parts.push(r.success ? plain(r.message) : `The question was not written: ${r.error}`);
     }
-    parts.push(written.length ? "Next: ask what they already know about this kind of problem." : "Next: write the problem exactly as given (problem=, typeset), then ask.");
+    parts.push(written.length ? "Next: ask what they'd try first; if they don't know how, teach it (show_example)." : "Next: write the problem exactly as given (problem=, typeset), then ask.");
     return ok(parts.join(" "));
   }
   // The session plan (Sept 24 2026): a box at the top right, not an item.

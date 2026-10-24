@@ -1701,6 +1701,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     } else if (request?.kind === "area") {
       hint = { kind: "area", area: request.area };
       named = true;
+    } else if (item.tool === "show_example" && layoutScreen(editor).w < NARROW_BOARD) {
+      // A phone sees only the left of the page: the example goes under the
+      // work, where it can be read with the problem (Oct 24 2026).
+      const lastWords = [...others].reverse().find((i) => !isHeadingItem(i));
+      const r = lastWords ? inSection(rectOf(editor, lastWords)) : null;
+      if (r) hint = { kind: "below", anchor: r };
     } else if (AREA_RIGHT_TOOLS.has(item.tool)) {
       hint = { kind: "area", area: "right" };
     } else if (EQUATION_TOOLS.has(item.tool)) {
@@ -3642,8 +3648,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const PAD_Y = 9;
       const maxW = 360;
       const measured = measureText(editor, text, "sans", "s", maxW - PAD_X * 2);
-      const w = Math.min(maxW, Math.ceil(measured.w) + PAD_X * 2 + 6);
-      const h = Math.ceil(measured.h) + PAD_Y * 2;
+      // Room for the text shape's own slack, and the height measured at the
+      // width it is drawn at (Oct 24 2026: "What would you try first?" wrapped
+      // to a second line that hung below its tag).
+      const w = Math.min(maxW, Math.ceil(measured.w) + PAD_X * 2 + 18);
+      const h = Math.ceil(measureText(editor, text, "sans", "s", w - PAD_X * 2).h) + PAD_Y * 2;
       const x = colX(col);
       const y = colY(col).current;
       // A pale sky chip with no outline (Oct 14 2026: the bordered box was the
