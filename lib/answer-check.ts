@@ -1061,6 +1061,21 @@ export function verbTask(problem: string): string | null {
   return null;
 }
 
+// "12 cookies shared by 3 friends", "3 pizzas are split equally among 4 kids",
+// "share 20 stickers between 5 kids": a sharing story is a division (Oct 23
+// 2026: unread, so a wrong "9 each" was never checked and the student's reason,
+// 12 − 3 = 9, was judged instead and called right).
+const SHARED = /(\d+(?:\.\d+)?)\s+(?:[a-z]+\s+){0,3}?(?:are\s+|is\s+|were\s+|get\s+)?(?:shared|split|divided|handed out|given out)\s+(?:out\s+)?(?:equally\s+|evenly\s+)?(?:by|among|amongst|between|with|to|into)\s+(\d+(?:\.\d+)?)\b/i;
+const SHARE = /\bshare\s+(\d+(?:\.\d+)?)\s+(?:[a-z]+\s+){0,3}?(?:equally\s+|evenly\s+)?(?:among|amongst|between|with|by)\s+(\d+(?:\.\d+)?)\b/i;
+
+export function sharingProblem(problem: string): string | null {
+  const text = spokenToDigits(problem.replace(/\$/g, ""));
+  // A problem already in math ("12 / 3", "x shared…" in an equation) is read as math.
+  if (/[=+*/^×÷\\]/.test(text)) return null;
+  const m = SHARED.exec(text) ?? SHARE.exec(text);
+  return m && Number(m[2]) > 0 ? `${m[1]} / ${m[2]}` : null;
+}
+
 function readProblem(problem: string): string | AnswerCheck {
   // "Now, for the second year, what's 15% of 17000?": the question is what
   // follows its last "what's" (Sept 26 2026: Ethan's right 2550 went unchecked).
@@ -1079,8 +1094,9 @@ function readProblem(problem: string): string | AnswerCheck {
     const call = BARE_FUNCTION_CALL.exec(problem);
     if (call) return cannot(`"${call[0].trim()}" needs the rule ${call[1]} follows: put it in the problem (problem="${call[0].trim()} where ${call[1]}(x) = …").`);
   }
-  let s = stripUnitWords(substituted ?? problem);
-  const led = QUESTION_LEAD.test(s) || cut;
+  const shared = sharingProblem(substituted ?? problem);
+  let s = shared ?? stripUnitWords(substituted ?? problem);
+  const led = !shared && (QUESTION_LEAD.test(s) || cut);
   if (led) s = s.replace(QUESTION_LEAD, "");
   // With an "=" a "?" is a box ("3/4 = 6/?"); without one it is a question mark.
   if (!s.includes("=")) s = s.replace(/\s*\?+\s*$/, "");

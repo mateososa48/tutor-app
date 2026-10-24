@@ -183,8 +183,13 @@ export type BoardSummaryExtras = {
 };
 
 function shortLabel(label: string, words = 6): string {
-  const w = label.replace(/\s+/g, " ").trim().split(" ");
-  return w.length > words ? `${w.slice(0, words).join(" ")}…` : w.join(" ");
+  // A picture's parts are what the tutor points at ("point_at j2"): they stay
+  // whole however long the title is.
+  const parts = /\s*(\(parts: [^)]*\))\s*$/.exec(label);
+  const main = parts ? label.slice(0, parts.index) : label;
+  const w = main.replace(/\s+/g, " ").trim().split(" ");
+  const short = w.length > words ? `${w.slice(0, words).join(" ")}…` : w.join(" ");
+  return parts ? `${short} ${parts[1]}` : short;
 }
 
 export function formatBoardItems(items: BoardItem[], title?: string, limit = 10, extras?: BoardSummaryExtras): string {

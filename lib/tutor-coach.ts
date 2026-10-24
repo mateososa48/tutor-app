@@ -41,7 +41,7 @@ What to look for, in this order:
 5. The student has it: one of the same kind with new numbers, alone; after two alone, harder.
 6. The tutor asked two things, or ended with nothing for the student to do: one question.
 
-Rules for the order: never give the answer or any number the student should find; never praise; do not repeat the lesson state; speak to the tutor ("Ask…", "Draw…", "Point at…"); name a tool only when it helps (add_table, add_number_line, draw_grid, draw_tape_diagram, draw_desmos, point_at, highlight). Output only the order or none.`;
+Rules for the order: never give the answer or any number the student should find; never praise; do not repeat the lesson state; speak to the tutor ("Ask…", "Draw…", "Point at…"); name a tool only when it helps (add_table, add_number_line, draw_grid, illustrate, draw_desmos, point_at, highlight). Output only the order or none.`;
 
 export function coachPrompt(input: CoachInput): string {
   const turns = input.turns.slice(-8).map((t, i, all) => {

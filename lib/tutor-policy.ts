@@ -824,7 +824,7 @@ export function noteBoardMark(p: TutorPolicy): void {
 const PICTURE_TOOLS = new Set([
   "draw_fraction", "add_number_line", "draw_figure", "draw_angle", "draw_array", "add_area_model", "draw_bar_chart",
   "draw_tape_diagram", "draw_grid", "draw_transversal", "draw_icons", "draw_sketch", "add_function_graph", "draw_desmos",
-  "draw_data_plot", "write_vertical", "draw_long_division", "draw_balance", "plot_points",
+  "draw_data_plot", "write_vertical", "draw_long_division", "draw_balance", "plot_points", "draw_illustration",
 ]);
 
 // "show it on the board", "can you draw it", "write it down" (Sept 23 2026:

@@ -1049,8 +1049,9 @@ function dispatchInner(
 
     case "draw_illustration": {
       // An illustration from a scene the illustrator wrote (lib/illustration).
-      // Not offered to the Live model: the app draws these from the planner's
-      // orders (Oct 2026). The scene comes as an object or as its JSON.
+      // Not offered to the Live model: the app draws these for its illustrate
+      // calls and the planner's orders (Oct 2026). The scene comes as an object
+      // or as its JSON.
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;
       if (!board.drawIllustration) return fail("This board can't draw illustrations.");
@@ -1061,7 +1062,8 @@ function dispatchInner(
       // The part names go in the label the board summary shows, so the tutor
       // and the planner can point at "jar2" without having drawn it.
       const partList = Object.keys(renderScene(scene).parts).filter((k) => !k.includes(".")).slice(0, 8);
-      const name = `${caption || scene.title || "illustration"}${partList.length ? ` (parts: ${partList.join(", ")})` : ""}`;
+      const title = caption || scene.title || "illustration";
+      const name = `${title}${partList.length ? ` (parts: ${partList.join(", ")})` : ""}`;
       let drawn: ReturnType<NonNullable<typeof board.drawIllustration>> = null;
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: name }, () => {
         drawn = board.drawIllustration!(scene);
@@ -1069,7 +1071,9 @@ function dispatchInner(
       const done = drawn as { parts: string[]; problems: string[] } | null;
       if (!done) return fail("The illustration came out empty.");
       const parts = done.parts.filter((p) => !p.includes("."));
-      return ok(`Drew the picture "${name}"${parts.length ? ` (parts: ${parts.slice(0, 8).join(", ")})` : ""}.${done.problems.length ? ` Not drawn: ${done.problems.slice(0, 3).join("; ")}.` : ""}`);
+      // Its parts once, in the result and so in the board list's label (Oct 23
+      // 2026: they were written twice, and the short list cut both off).
+      return ok(`Drew "${title}"${parts.length ? ` (parts: ${parts.slice(0, 8).join(", ")})` : ""}.${done.problems.length ? ` Not drawn: ${done.problems.slice(0, 3).join("; ")}.` : ""}`);
     }
 
     case "write_vertical": {

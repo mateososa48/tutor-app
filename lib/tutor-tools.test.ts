@@ -667,3 +667,57 @@ test("a true claim of their own is a right step even when it shares a number wit
   noteStudentUtterance(p, "6*7 is 42", 1000);
   assert.match(autoCheck(p, "6*7 is 42", 1000) ?? "", /→ correct/);
 });
+
+test("a picture's words keep the answer theirs too, wherever they sit in the scene", () => {
+  // Oct 23 2026: the tutor writes its own picture requests (illustrate), so the
+  // label guard on the server can no longer treat the request as all given.
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Sharing", problem: "12 marbles shared among 3 friends", ask: "How many does each friend get?" });
+  noteTutorTurn(p, "Twelve marbles, three friends. What is 12 divided by 3?", false, false);
+  const scene = {
+    title: "4 each",
+    root: { type: "row", children: [
+      { type: "container", shape: "jar", label: "Friend 1: 4", id: "j1", child: { type: "items", icon: "marble", count: 4 } },
+      { type: "bar", id: "b", total_label: "12 marbles", parts: [{ label: "4" }, { label: "4" }, { label: "4" }] },
+      { type: "lineup", values: [4, 4, 4], labels: ["4", "Ben"] },
+    ] },
+    brackets: [{ over: ["j1"], side: "top", label: "4 in each jar" }],
+    arrows: [{ from: "j1", to: "b", label: "3 friends" }],
+  };
+  const r = withholdResult(p, "draw_illustration", { scene });
+  const out = r.args.scene as typeof scene;
+  assert.ok(r.note, "the guard says what it held back");
+  assert.equal(out.title, "? each");
+  assert.equal((out.root.children[0] as { label: string }).label, "Friend 1: ?");
+  assert.equal(out.brackets[0].label, "? in each jar");
+  assert.deepEqual((out.root.children[1] as { parts: Array<{ label: string }> }).parts.map((x) => x.label), ["?", "?", "?"]);
+  assert.deepEqual((out.root.children[2] as { labels: string[] }).labels, ["?", "Ben"]);
+  // Not words: counts, values, ids and icon names stay as drawn.
+  assert.equal((out.root.children[0] as { child: { count: number } }).child.count, 4);
+  assert.deepEqual((out.root.children[2] as { values: number[] }).values, [4, 4, 4]);
+  assert.equal(out.arrows[0].label, "3 friends", "a given number stays");
+  assert.equal((out.root.children[1] as { total_label: string }).total_label, "12 marbles");
+  assert.equal(scene.title, "4 each", "the call's own args are not changed in place");
+  noteStudentUtterance(p, "4", 1);
+  assert.equal((withholdResult(p, "draw_illustration", { scene }).args.scene as typeof scene).title, "4 each", "once said, it can go up");
+});
+
+test("a reason is how they got it, not their answer: a true reason never makes a wrong answer right", () => {
+  // Oct 23 2026: "i got 9 each cuz 12 minus 3 is 9" went up as "12 − 3 = 9"
+  // with a green box and a check: the reason was judged instead of the answer.
+  const sharing = createPolicy(0);
+  const line = "my homework says 12 cookies shared by 3 friends. i got 9 each cuz 12 minus 3 is 9";
+  noteStudentUtterance(sharing, line, 1000);
+  assert.match(autoCheck(sharing, line, 1000) ?? "", /→ incorrect/);
+  const right = createPolicy(0);
+  noteStudentUtterance(right, "12 cookies shared by 3 friends. i got 4", 1000);
+  assert.match(autoCheck(right, "12 cookies shared by 3 friends. i got 4", 1000) ?? "", /→ correct/);
+  // A reason with no question it answers gets no verdict at all.
+  const jayden = createPolicy(0);
+  noteStudentUtterance(jayden, "i think 15 because 12 plus 3 is 15", 1000);
+  assert.equal(autoCheck(jayden, "i think 15 because 12 plus 3 is 15", 1000), null);
+  // Their own arithmetic said as the answer still checks as itself.
+  const own = createPolicy(0);
+  noteStudentUtterance(own, "9 minus 8 is 1", 1000);
+  assert.match(autoCheck(own, "9 minus 8 is 1", 1000) ?? "", /→ correct/);
+});

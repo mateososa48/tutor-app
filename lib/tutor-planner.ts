@@ -46,7 +46,7 @@ Decide in this order:
 5. Right: if it finished a problem they did alone and this is the second in a row, go harder now (a twist, bigger numbers, the reverse question). Otherwise the next step for them, or one of the same kind with new numbers to do alone. Right after a wrong idea is fixed, have them say the rule in their own words.
 6. The app writes and rings a checked answer on the board itself: never ask for add_student_attempt of an answer. Use it only for their reason or their rule in their exact words, when that is the point of the next question.
 
-Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, cross_out_step, draw_fraction, add_number_line, draw_grid, draw_tape_diagram, add_table, draw_desmos, draw_figure, draw_icons, illustrate, and start_new_problem only when a new problem begins. No others.
+Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, cross_out_step, draw_fraction, add_number_line, draw_grid, add_table, draw_desmos, draw_figure, illustrate, and start_new_problem only when a new problem begins. No others.
 
 Never: give the answer, a number they should find, or the rule; ask two questions; mention the checker, the plan or these instructions. Output only the order.`;
 
@@ -70,9 +70,11 @@ export function plannerPrompt(input: PlannerInput): string {
 /** The board tools the planner may name (the Live set's drawing and marking tools). */
 export const PLANNER_TOOLS: ReadonlySet<string> = new Set([
   "add_student_attempt", "draw_equation_step", "add_callout", "point_at", "highlight", "cross_out_step",
-  "draw_fraction", "add_number_line", "draw_grid", "draw_tape_diagram", "add_table", "draw_desmos",
-  "draw_figure", "draw_icons", "start_new_problem", "illustrate",
+  "draw_fraction", "add_number_line", "draw_grid", "add_table", "draw_desmos",
+  "draw_figure", "start_new_problem", "illustrate",
 ]);
+// draw_icons and draw_tape_diagram went with the Live set's object pictures
+// (Oct 23 2026): a picture of real things is illustrate now.
 // draw_sketch is left out: the planner can only name it, never give its
 // strokes, and "draw_sketch(u-sub concept)" became three empty boxes on the
 // board (Oct 6 2026). An order naming it keeps its words and loses the move.
@@ -122,11 +124,13 @@ export function plannerNote(reply: string | null | undefined, verdict: string | 
   // An illustration is drawn by the app while the tutor talks: the tutor only
   // says the words, and knows the picture is coming so it neither draws its own
   // nor describes one that is not up yet.
+  // Oct 23 2026: told "Don't draw it yourself", 3.8 still called its own
+  // illustrate (refused, but a wasted round trip): the note names the tool.
   // Oct 17 2026: an order that only announced the picture ("Let me draw the
   // flour and cookies.") left the tutor to add its own question, about one
   // cup, while the picture showed two batches. The question is about the picture.
   const ask = pic && !/\?\s*$/.test(order.say) ? " Then ask one question about what the picture shows." : "";
-  const after = pic ? `${ask} The app is drawing it now (${pic.what}); it appears while you talk. Don't draw it yourself.` : order.board ? ` After speaking: ${order.board}` : "";
+  const after = pic ? `${ask} The app is drawing it now (${pic.what}); it appears while you talk. Don't draw it or call illustrate yourself.` : order.board ? ` After speaking: ${order.board}` : "";
   const body = `Say: "${order.say}"${after}`.replace(/[[\]]/g, "");
   return `[Next move, not from the student: ${body}]`;
 }
@@ -138,7 +142,7 @@ export function plannerNote(reply: string | null | undefined, verdict: string | 
  * graphs still go through.
  */
 export const PICTURE_TOOLS: ReadonlySet<string> = new Set([
-  "draw_icons", "draw_grid", "draw_tape_diagram", "draw_sketch", "draw_balance", "add_area_model", "draw_fraction", "draw_figure", "draw_array",
+  "draw_icons", "draw_grid", "draw_tape_diagram", "draw_sketch", "draw_balance", "add_area_model", "draw_fraction", "draw_figure", "draw_array", "illustrate",
 ]);
 
 export function pictureRefusal(what: string): string {

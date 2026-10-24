@@ -11,7 +11,7 @@
 
 import type { ToolCallResult } from "./live-types";
 import type { OpenAIFunctionTool } from "./whiteboard-tools";
-import { checkAnswer, checkBlankInPage, prepareExpression, questionMath, sameExpression, spokenExpression, spokenToDigits, verbTask, withKnownRules, type CheckVerdict } from "./answer-check";
+import { checkAnswer, checkBlankInPage, prepareExpression, questionMath, sameExpression, sharingProblem, spokenExpression, spokenToDigits, verbTask, withKnownRules, type CheckVerdict } from "./answer-check";
 import { isNonAnswer } from "./board-content-rules";
 import { detectUnknown, problemMath, pureArithmetic } from "./board-grammar";
 import { latexToPlain } from "./latex-plain";
@@ -238,6 +238,20 @@ const REPORTED = /^(.*?\d.*?)[,.;]?\s+(?:and\s+|but\s+)?i\s+(?:put|got|said|wrot
 // these by ear). A chained claim ("3 + 1 is 4 over 4 which is 1") is left
 // alone: "is 4/4" could be (3 + 1)/4 as easily as 4/4.
 const CLAIM = /(-?\d[\d.\/]*(?:\s*[-+*/^]\s*-?\d[\d.\/]*)+)\s*(?:is|=|equals|makes|gives)\s*(-?\d[\d.\/]*)(.*)$/i;
+
+/**
+ * The part of a line before its reason. A true claim given as the reason for
+ * an answer ("i got 9 each cuz 12 minus 3 is 9") is how they got it, not the
+ * answer: judged on its own it was called right, and "12 − 3 = 9" went up with
+ * a green box and a check (Oct 23 2026, a sharing problem the checker could
+ * not read; Jayden's "15 cuz 12 plus 3 is 15" was the same).
+ */
+// "i got 9 each", "i said 9", "i put 9", "i think it's 9", "everyone gets 9"
+const GOT = /\b(?:got|get|gets|said|put|answered|think it'?s|thought it was|it'?s)\s+(-?\d[\d.\/]*)/i;
+
+function beforeReason(text: string): string {
+  return text.split(/\s+(?:because|cause|'cause|cuz|coz|since|bc)\b/i)[0];
+}
 
 function ownClaim(text: string): { problem: string; answer: string } | null {
   const m = CLAIM.exec(spokenToDigits(text.replace(/[?!]+/g, " ")));
@@ -483,6 +497,17 @@ export function filledSteps(policy: TutorPolicy): Array<{ item: string; latex: s
 const GUARDED_KEYS = new Set(["text", "annotation", "annotations", "label", "caption", "second_label", "cells", "rows", "body", "ask", "total", "points"]);
 const NUMBER_TOKEN = /(?<![\w.\/])-?\d+(?:\.\d+)?(?:\s*\/\s*\d+)?(?![\w.\/]*\d)/g;
 
+// The words in an illustration's scene (lib/illustration/scene.ts): everything
+// written on the picture. Icon names, ids, colours and counts are not words.
+const SCENE_TEXT_KEYS = new Set(["title", "text", "label", "total_label", "top_label", "side_label", "labels"]);
+
+function guardScene(node: unknown, guard: (s: string) => string, key = ""): unknown {
+  if (typeof node === "string") return SCENE_TEXT_KEYS.has(key) ? guard(node) : node;
+  if (Array.isArray(node)) return node.map((v) => guardScene(v, guard, key === "labels" ? "labels" : ""));
+  if (node && typeof node === "object") return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, guardScene(v, guard, k)]));
+  return node;
+}
+
 function answerGuard(policy: TutorPolicy, name: string, args: Record<string, unknown>): ShapedCall | null {
   if (args.__guarded || name === "add_student_attempt" || name === "set_plan" || policy.boardHelp >= 4) return null;
   const page = policy.pageProblem && /[\d=+\-−×÷*/^\\<>]/.test(policy.pageProblem) ? policy.pageProblem : null;
@@ -498,19 +523,23 @@ function answerGuard(policy: TutorPolicy, name: string, args: Record<string, unk
     }
   });
   let changed: string | null = null;
-  const out: Record<string, unknown> = { ...args };
-  for (const [key, value] of Object.entries(args)) {
-    if (!GUARDED_KEYS.has(key) || typeof value !== "string") continue;
-    // A new problem's own text is its givens.
-    if (name === "start_new_problem" && key !== "ask") continue;
-    const next = value.replace(NUMBER_TOKEN, (token) => {
+  const guard = (value: string) =>
+    value.replace(NUMBER_TOKEN, (token) => {
       const plain = token.replace(/\s+/g, "");
       if (given.has(plain) || numbersIn(plain).every((n) => given.has(n))) return token;
       if (!answers(plain)) return token;
       changed = plain;
       return "?";
     });
-    out[key] = next;
+  const out: Record<string, unknown> = { ...args };
+  // A picture's words are its labels, titles and captions, wherever they sit in
+  // the scene (Oct 23 2026: the tutor writes its own picture requests now).
+  if (name === "draw_illustration" && args.scene && typeof args.scene === "object") out.scene = guardScene(args.scene, guard);
+  for (const [key, value] of Object.entries(args)) {
+    if (!GUARDED_KEYS.has(key) || typeof value !== "string") continue;
+    // A new problem's own text is its givens.
+    if (name === "start_new_problem" && key !== "ask") continue;
+    out[key] = guard(value);
   }
   if (!changed) return null;
   return { args: out, note: `Wrote "?" where ${changed} was: it answers the question on the table, and that is theirs to say. Ask for it.` };
@@ -605,6 +634,11 @@ function answerCandidates(policy: TutorPolicy, text: string): { t: string; candi
   // answer they reported, because nothing checked it).
   const reported = REPORTED.exec(spokenToDigits(t, { the: true }));
   if (reported && /\d/.test(reported[1]) && /\d|\b(?:same|equal)\b/i.test(reported[2])) candidates.push({ problem: reported[1].replace(/^(?:it (?:was|asked|said)|the (?:problem|question) (?:was|said|asked)|like)\s+/i, "").trim(), answer: reported[2] });
+  // "12 cookies shared by 3 friends. i got 9 each cuz…": a sharing story and
+  // their answer to it in one line (Oct 23 2026).
+  const story = whole.split(/(?<=[.?!])\s+/).find((c) => sharingProblem(c));
+  const got = story ? GOT.exec(spokenToDigits(beforeReason(whole.slice(whole.indexOf(story) + story.length)), { the: true })) : null;
+  if (story && got) candidates.push({ problem: story.replace(/^(?:my homework says|it says|the problem (?:says|is)|it'?s)\s+/i, "").replace(/[.?!]+$/, "").trim(), answer: got[1] });
   // A question held from before counts only while it is still the one on the
   // table: its numbers were said in the tutor's last turn, or the student says
   // them (Sept 27 2026: Sofia's "negative eleven" answered "…where do you land?"
@@ -624,7 +658,7 @@ function answerCandidates(policy: TutorPolicy, text: string): { t: string; candi
   // Their own arithmetic ("9 minus 8 is 1") only when the question can't be
   // read: checked first, "3 times 4 is 12, so h(4) is 12" was called right by
   // its first step while the answer to h(x) = 3x - 1 was wrong.
-  const own = ownClaim(t);
+  const own = ownClaim(beforeReason(t));
   if (own) candidates.push(own);
   return { t, candidates };
 }
@@ -655,7 +689,7 @@ export function autoCheck(policy: TutorPolicy, text: string, now: number): strin
     // Their own whole claim about other numbers answers an earlier question,
     // not this one (Oct 13 2026: "6*7 is 42", typed after the tutor had moved
     // on to "47 - 42 = ?", was called wrong against 47 - 42).
-    const own = check.verdict !== "correct" ? ownClaim(t) : null;
+    const own = check.verdict !== "correct" ? ownClaim(beforeReason(t)) : null;
     if (own) {
       const theirs = numbersIn(own.problem), asked = numbersIn(problem);
       const mine = checkAnswer(own.problem, own.answer);

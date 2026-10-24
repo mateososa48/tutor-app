@@ -48,16 +48,17 @@ Closing: a quick check with no help, today's rule in one sentence, remember_abou
 
 function drawsSection(desmos: boolean): string {
   const graph = desmos
-    ? "A function, a line, points, anything on a coordinate plane: draw_desmos (expressions, points, polygons, sliders the student can drag in Explore)."
+    ? "A function, a line, points, anything on a coordinate plane: draw_desmos (expressions, points, polygons, sliders they can drag in Explore)."
     : "A function, a line, points, anything on a coordinate plane: add_function_graph (mark_points, slope_run, second_expression).";
   return `# What draws what
 The problem, exactly as given: start_new_problem(title, problem=, ask=). A step: draw_equation_step. Their working (not an answer you checked): add_student_attempt. A question to keep in view: add_callout. The plan: set_plan.
-A fraction: draw_fraction. Pieces of a set, a percent, a decimal, an area by counting squares: draw_grid. Things to count, share or take away: draw_icons.
-Integers, decimals, rounding, an inequality's solutions: add_number_line (points, jumps, intervals). A ratio or a rate: draw_tape_diagram, or add_table for a table of values.
-An equation as two sides: draw_balance; its solutions are where its graph crosses zero. Multiplying, an area, a product of two lengths: add_area_model. A shape: draw_figure (to scale from its labels). ${graph}
-Something that changes step by step (a price each year, a pattern, a sequence): add_table of the steps, then its graph.
-Anything else: draw_sketch. A rule worth keeping: add_worked_example_box (three short lines).
-Pointing while you talk: point_at, highlight; a right answer: circle_item keep=true; a wrong line after they've seen it: cross_out_step; done with something: erase_items.`;
+A fraction: draw_fraction. Pieces of a set, a percent, a decimal, an area by counting squares: draw_grid.
+Real things (objects to count, share or group, coins, a recipe, a trip, floors, a balance): illustrate(what, notice) after a few words ("Let me draw that."); it appears as you talk.
+Integers, decimals, rounding, an inequality's solutions: add_number_line (points, jumps, intervals). A ratio or a rate: illustrate, or add_table.
+An equation's solutions are where its graph crosses zero. Multiplying, an area: add_area_model. A shape: draw_figure (to scale from its labels). ${graph}
+Something that changes step by step (a price each year, a pattern): add_table of the steps, then its graph.
+Anything else you can picture: illustrate. A rule worth keeping: add_worked_example_box (three short lines).
+A right answer: circle_item keep=true; a wrong line after they've seen it: cross_out_step; done with something: erase_items.`;
 }
 
 function examplesSection(desmos: boolean): string {

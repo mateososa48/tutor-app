@@ -1,5 +1,5 @@
 import type { LiveVadConfig } from "./live-tool-behavior";
-import { DEFAULT_LIVE_MODEL, GeminiLiveSession, type PlannerOption } from "./gemini-live";
+import { DEFAULT_LIVE_MODEL, GeminiLiveSession, type IllustratorOption, type PlannerOption } from "./gemini-live";
 import { joinTranscript } from "./live-events";
 import { AudioCapture, AudioPlayer, micProblem, quietFrame } from "./audio";
 import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
@@ -74,7 +74,7 @@ export class GeminiTutorSession {
 
   readonly boardFrames = "auto" as const;
 
-  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption } = {}) {}
+  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption; illustrator?: IllustratorOption } = {}) {}
 
   /** The Live model this session runs, for the recording and the QA chip. */
   get model(): string {
@@ -117,6 +117,13 @@ export class GeminiTutorSession {
     this.speaking = next;
     this.callbacks.onSpeakingChange(next);
     if (next) this.callbacks.onActivity("idle");
+  }
+
+  /** The illustrator with the grade from the profile when the page has none. */
+  private illustrator(config: GeminiConfig) {
+    const ill = this.options.illustrator;
+    if (!ill) return undefined;
+    return { ...ill, grade: () => ill.grade() || config.grade || "" };
   }
 
   /** The planner option with the grade from the profile when the page has none. */
@@ -250,7 +257,7 @@ export class GeminiTutorSession {
         },
         onDebugEvent: (event) => this.callbacks.onDebugEvent?.(event),
       },
-      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools, vad: this.options.vad, coach: this.options.coach, planner: this.planner(config) },
+      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools, vad: this.options.vad, coach: this.options.coach, planner: this.planner(config), illustrator: this.illustrator(config) },
     );
     this.session = session;
 

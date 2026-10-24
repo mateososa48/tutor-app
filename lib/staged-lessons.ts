@@ -72,10 +72,10 @@ export const STAGED_LESSONS: readonly StagedLesson[] = [
     label: "Solving equations",
     blurb: "Getting x on its own, two steps",
     skillKey: "equations.two-step",
-    opening: "Draw it as a tape first (three x's and a 7 make 19), so undoing in the right order is obvious rather than memorised.",
+    opening: "Draw it as a balance first (three bags of x and 7 blocks against 19 blocks), so undoing in the right order is obvious rather than memorised.",
     problems: ["3x + 7 = 19", "5x − 4 = 21", "x/2 + 6 = 10"],
     watchFor: "undoing the multiply before the add, or changing only one side.",
-    board: "draw_tape_diagram for the first one, then draw_equation_step lines with a short annotation for each move.",
+    board: "illustrate the balance for the first one, then draw_equation_step lines with a short annotation for each move.",
   },
   {
     key: "slope",
@@ -97,7 +97,7 @@ export const STAGED_LESSONS: readonly StagedLesson[] = [
     opening: "Write both quantities as a small table, then find what one row was multiplied by.",
     problems: ["3 pens cost $2. What do 12 cost?", "2 cups of flour makes 12 cookies. How much for 30?", "Scale 5 : 3 up to 20 : ?"],
     watchFor: "adding the difference instead of multiplying: treating 3 to 12 as plus 9 rather than times 4.",
-    board: "add_table with the two rows, then draw_tape_diagram if the scaling is still not landing.",
+    board: "add_table with the two rows, then illustrate the batches side by side if the scaling is still not landing.",
   },
   {
     key: "decimals",
@@ -108,7 +108,7 @@ export const STAGED_LESSONS: readonly StagedLesson[] = [
     opening: "Estimate first. About how big should the answer be? That is what catches a misplaced point.",
     problems: ["3.6 × 2.5", "0.4 × 0.7", "7.2 ÷ 0.9"],
     watchFor: "expecting multiplication to make it bigger, so 0.4 × 0.7 looks wrong when it is right.",
-    board: "write_vertical for the first, then draw_grid to show why 0.4 × 0.7 shrinks.",
+    board: "draw_equation_step for the estimate and then the product, then draw_grid (shade_rows and shade_columns) to show why 0.4 × 0.7 shrinks.",
   },
   {
     key: "expressions",
@@ -141,7 +141,7 @@ export const STAGED_LESSONS: readonly StagedLesson[] = [
     opening: "Break it into an area model before the stacked method, so the partial products mean something.",
     problems: ["24 × 17", "6 × 48", "35 × 12"],
     watchFor: "losing the place value in the second partial product, so 24 × 17 comes out near 100 short.",
-    board: "add_area_model split into tens and ones, then write_vertical beside it.",
+    board: "add_area_model split into tens and ones, then draw_equation_step adding the partial products beside it.",
   },
 ];
 

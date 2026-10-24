@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkAnswer, verbTask, inlineFunctions, finalValue, substituteFunctionEval, stripUnitWords, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, spokenToDigits } from "./answer-check";
+import { checkAnswer, verbTask, inlineFunctions, finalValue, substituteFunctionEval, stripUnitWords, checkBlankInPage, formatNumber, prepareExpression, solveOneVariable, sharingProblem, spokenToDigits } from "./answer-check";
 
 const verdict = (problem: string, answer: string) => checkAnswer(problem, answer).verdict;
 
@@ -487,4 +487,18 @@ test("a step asked as a wrapped task is read, and a remainder answer to a non-di
   assert.equal(checkAnswer("Subtract forty-two from forty-seven and tell me what you get.", "5").verdict, "correct");
   assert.equal(checkAnswer("what do you get when you multiply six by seven?", "42").verdict, "correct");
   assert.equal(checkAnswer("9 \\times 7 = ?", "13 r 8").verdict, "cannot_check");
+});
+
+test("a sharing story is a division", () => {
+  // Oct 23 2026: unread, so a wrong "9 each" for 12 cookies and 3 friends was never checked.
+  assert.equal(checkAnswer("12 cookies shared by 3 friends", "9").verdict, "incorrect");
+  assert.equal(checkAnswer("12 cookies shared by 3 friends", "4").verdict, "correct");
+  assert.equal(checkAnswer("share 20 stickers among 4 kids", "5").verdict, "correct");
+  assert.equal(checkAnswer("3 pizzas are shared equally by 4 kids, how much does each get", "3/4").verdict, "correct");
+  assert.equal(checkAnswer("3 pizzas split between 4 kids", "0.75").verdict, "correct");
+  assert.equal(checkAnswer("twelve marbles shared among three friends", "4").verdict, "correct");
+  // Already math: read as math, not as a story.
+  assert.equal(checkAnswer("12 / 3", "4").verdict, "correct");
+  assert.equal(sharingProblem("x shared by 3 = 12"), null);
+  assert.equal(sharingProblem("what is 12 times 3"), null);
 });

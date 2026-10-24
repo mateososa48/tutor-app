@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SKILL_CATALOG } from "./skill-catalog";
 import { gradeNumber, lessonByKey, lessonPlan, lessonTopic, lessonsForGrade, STAGED_LESSONS } from "./staged-lessons";
-import { WHITEBOARD_TOOL_DECLARATIONS } from "./whiteboard-tools";
+import { liveToolDeclarations } from "./gemini-live";
 
 test("every lesson is staged: a skill in the catalog, three problems, a mistake and a board move", () => {
   const keys = new Set(SKILL_CATALOG.map((s) => s.key));
@@ -23,11 +23,13 @@ test("every lesson is staged: a skill in the catalog, three problems, a mistake 
 });
 
 test("every lesson's board move names a real tool, and names no tool that does not exist", () => {
-  const declared = new Set(WHITEBOARD_TOOL_DECLARATIONS.map((t) => t.name));
+  // The tools a Live session is given (Oct 23 2026: two lessons still named
+  // draw_tape_diagram after it left the Live set; this test read the full set).
+  const declared = new Set(liveToolDeclarations().map((t) => t.name));
   for (const lesson of STAGED_LESSONS) {
     // Anything shaped like one of our tool names has to be one. Parameter
     // names (common_denominator) do not start with a tool's verb.
-    const named = lesson.board.match(/\b(?:draw|add|write|plot)_[a-z_]+\b/g) ?? [];
+    const named = lesson.board.match(/\b(?:(?:draw|add|write|plot)_[a-z_]+|illustrate)\b/g) ?? [];
     assert.ok(named.length > 0, `${lesson.key} names no tool: "${lesson.board}"`);
     for (const tool of named) {
       assert.ok(declared.has(tool), `${lesson.key} names ${tool}, which is not a declared tool`);

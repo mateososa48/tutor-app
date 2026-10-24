@@ -10,6 +10,7 @@ import { BLOCKING_TOOLS, CHECK_AFTER_REPLY_NOTE, ReplyGate, finishReplyNote, too
 import { givesTask } from "./tutor-policy";
 import type { CoachTurn } from "./tutor-coach";
 import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, pictureRefusal, sameLine } from "./tutor-planner";
+import { ILLUSTRATE_DECLARATION, ILLUSTRATE_NOTHING, ILLUSTRATE_PENDING, ILLUSTRATE_WAIT_MS, illustrateFailed, illustrateRequest } from "./illustration/tool";
 import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics";
 
 // The Live models this account can open (checked against the API, Sept 17
@@ -90,16 +91,24 @@ type GeminiContentPart =
   | { text: string }
   | { inlineData: { mimeType: string; data: string } };
 
-/**
- * The planner on each student line (?plan=1). `draw` puts an illustration the
- * planner ordered on the board (the page dispatches draw_illustration); it
- * resolves to the tool's result message, or null when nothing was drawn.
- */
+/** The planner on each student line (?plan=1). */
 export type PlannerOption = {
   topic: () => string;
   board: () => string;
   grade: () => string;
-  draw?: (scene: unknown) => Promise<string | null>;
+};
+
+/**
+ * Pictures of real things (lib/illustration): the tutor's own illustrate calls
+ * and the planner's illustrate orders are both asked of /api/illustrate and put
+ * on the board by `draw` (the page dispatches draw_illustration under the call's
+ * own id, so a cancelled call takes its picture back). `draw` resolves to the
+ * board's result message, or null when nothing was drawn.
+ */
+export type IllustratorOption = {
+  draw: (scene: unknown, callId: string) => Promise<string | null>;
+  grade: () => string;
+  board: () => string;
 };
 
 /** What the planner is told when the student brought their own work. */
@@ -134,7 +143,7 @@ function decodeBase64Text(base64: string): string {
  * see LIVE_CUT in lib/whiteboard-tools.ts). The benchmark sends the same set.
  */
 export function liveToolDeclarations(): ToolDeclaration[] {
-  return [...liveWhiteboardDeclarations(), ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS].map((d) => liveDeclarationOf(d as ToolDeclaration));
+  return [...liveWhiteboardDeclarations(), ILLUSTRATE_DECLARATION, ...TUTOR_TOOL_DECLARATIONS, ...SESSION_TOOL_DECLARATIONS].map((d) => liveDeclarationOf(d as ToolDeclaration));
 }
 
 function liveDeclarationOf(decl: ToolDeclaration): ToolDeclaration {
@@ -304,6 +313,12 @@ export class GeminiLiveSession {
   private readonly pictures = new Map<string, { what: string; notice: string; line: string }>();
   /** The picture the app is drawing for this reply, until the student's next line. */
   private pictureOut: string | null = null;
+  /** Pictures for the board (lib/illustration), when the page can draw them. */
+  private readonly illustrator: IllustratorOption | undefined;
+  /** Illustrations still being asked for, by the call that asked: a cancelled call stops its picture. */
+  private readonly illustrations = new Map<string, AbortController>();
+  /** How long an illustrate call waits for its picture (a field so a test can shorten it). */
+  private illustrateWaitMs = ILLUSTRATE_WAIT_MS;
   /** The student line (inputSeq) the planner already gave an order for, and that order: planned once per line. */
   private plannedFor = -1;
   private plannedOrder: string | null = null;
@@ -345,9 +360,10 @@ export class GeminiLiveSession {
   private inputSeq = 0;
   private lastInputAt = 0;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption }) {
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption; illustrator?: IllustratorOption }) {
     this.coach = options.coach;
     this.planner = options.planner;
+    this.illustrator = options.illustrator;
     this.callbacks = callbacks;
     this.systemInstruction = options.systemInstruction;
     this.voiceName = options.voiceName;
@@ -772,46 +788,100 @@ export class GeminiLiveSession {
   private deliverOrder(order: string | null) {
     const pic = order ? this.pictures.get(order) : undefined;
     this.pictures.clear();
-    if (!pic) return;
+    if (!pic || !this.illustrator) return;
     this.pictureOut = pic.what;
-    void this.illustrate(pic);
+    void this.drawPicture(pic, `planner-picture-${Date.now()}`).then((r) => {
+      if (!r.ok) this.pictureFailed(pic.what, r.why);
+    });
   }
 
-  /** Ask /api/illustrate for the scene and put it on the board; a failure becomes a note for the next turn. */
-  private async illustrate(pic: { what: string; notice: string; line: string }) {
+  /**
+   * illustrate(what, notice): the tutor's own picture. It waits for the
+   * picture (ILLUSTRATE_WAIT_MS at most) so its result can name the parts to
+   * point at; one still on its way lands when it comes. One picture a reply:
+   * while one is out (the planner's or its own), another is refused.
+   */
+  private async illustrateTool(id: string, args: Record<string, unknown>): Promise<ToolCallResult> {
+    const req = illustrateRequest(args);
+    if (!req) return { success: false, error: ILLUSTRATE_NOTHING };
+    if (!this.illustrator) return { success: false, error: illustrateFailed("this session can't draw pictures") };
+    if (this.pictureOut) return { success: true, message: pictureRefusal(this.pictureOut) };
+    this.pictureOut = req.what;
+    const controller = new AbortController();
+    this.illustrations.set(id, controller);
+    const job = this.drawPicture({ ...req, line: this.lastStudentLine }, id, controller.signal).finally(() => this.illustrations.delete(id));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const waited = await Promise.race([job, new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), this.illustrateWaitMs); })]);
+    if (timer) clearTimeout(timer);
+    if (!waited) {
+      this.debug("board", "illustration_pending", { id, what: req.what });
+      void job.then((r) => {
+        if (!r.ok && !controller.signal.aborted) this.pictureFailed(req.what, r.why);
+      });
+      return { success: true, message: ILLUSTRATE_PENDING };
+    }
+    if (waited.ok) {
+      this.turnTools.push("illustrate");
+      // The memory, a changed [Tutor state] and any nudges ride on it, as on any board result.
+      const extra = this.tutorRuntime.boardResultExtras(Date.now());
+      const at = waited.message.lastIndexOf("\n[Board: ");
+      const message = !extra ? waited.message : at >= 0 ? `${waited.message.slice(0, at)} ${extra}${waited.message.slice(at)}` : `${waited.message} ${extra}`;
+      return { success: true, message };
+    }
+    if (this.pictureOut === req.what) this.pictureOut = null;
+    return { success: false, error: illustrateFailed(waited.why) };
+  }
+
+  /** A picture that was promised and never came: the next turn knows. */
+  private pictureFailed(what: string, why: string) {
+    if (this.pictureOut === what) this.pictureOut = null;
+    if (why === "cancelled") return;
+    const note = `The picture you said you'd draw (${what.slice(0, 80)}) could not be drawn. Say so in a few words and go on without it.`;
+    this.pendingTurnNote = [this.pendingTurnNote, note].filter(Boolean).join(" ");
+  }
+
+  /** Ask /api/illustrate for the scene and put it on the board under `callId`. */
+  private async drawPicture(pic: { what: string; notice: string; line: string }, callId: string, signal?: AbortSignal): Promise<{ ok: true; message: string } | { ok: false; why: string }> {
     const started = Date.now();
-    const draw = this.planner?.draw;
-    if (!draw) return;
-    this.debug("board", "illustration_requested", { what: pic.what, notice: pic.notice });
+    const ill = this.illustrator;
+    if (!ill) return { ok: false, why: "this session can't draw pictures" };
+    this.debug("board", "illustration_requested", { callId, what: pic.what, notice: pic.notice });
     const conversation = [
       ...this.coachHistory.slice(-3).flatMap((t) => [
         ...(t.student ? [{ who: "student" as const, text: t.student }] : []),
         ...(t.tutor ? [{ who: "tutor" as const, text: t.tutor }] : []),
       ]),
-      ...(this.coachHistory.at(-1)?.student === pic.line ? [] : [{ who: "student" as const, text: pic.line }]),
+      ...(!pic.line || this.coachHistory.at(-1)?.student === pic.line ? [] : [{ who: "student" as const, text: pic.line }]),
     ];
-    let failed = "no picture came back";
+    let why = "no picture came back";
     try {
       const r = await fetch("/api/illustrate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ grade: this.planner!.grade(), what: pic.what, notice: pic.notice, conversation, board: this.planner!.board() }),
+        body: JSON.stringify({ grade: ill.grade(), what: pic.what, notice: pic.notice, conversation, board: ill.board() }),
+        signal,
       });
       const j = r.ok ? ((await r.json()) as { scene?: unknown; parts?: string[]; withheld?: string[]; problems?: string[]; model?: string; cost?: number | null; failures?: string[] }) : null;
-      if (j?.scene && !this.manualDisconnect) {
-        const message = await draw(j.scene);
-        this.debug("board", "illustration_drawn", { ms: Date.now() - started, model: j.model, parts: j.parts, withheld: j.withheld, problems: j.problems, cost: j.cost, result: message });
-        if (message) return;
-        failed = "the board refused it";
-      } else if (j?.failures?.length) failed = j.failures.join("; ");
-      else if (!r.ok) failed = `status ${r.status}`;
+      // Taken back while it was being drawn (the student spoke over it), or the lesson ended.
+      if (signal?.aborted || this.cancelledCalls.has(callId) || this.manualDisconnect) why = "cancelled";
+      else if (j?.scene) {
+        const message = await ill.draw(j.scene, callId);
+        this.debug("board", "illustration_drawn", { callId, ms: Date.now() - started, model: j.model, parts: j.parts, withheld: j.withheld, problems: j.problems, cost: j.cost, result: message });
+        if (message) {
+          // A picture is help on this problem, and the "no picture yet" reminder is answered.
+          this.tutorRuntime.noteBoardWrite("draw_illustration");
+          this.turnDrew = true;
+          return { ok: true, message };
+        }
+        why = "the board refused it";
+      } else if (j?.failures?.length) why = j.failures.join("; ");
+      else if (r.status === 429) why = "too many pictures in a minute";
+      else if (!r.ok) why = `status ${r.status}`;
     } catch {
-      failed = "the request failed";
+      why = signal?.aborted ? "cancelled" : "the request failed";
     }
-    this.debug("board", "illustration_failed", { ms: Date.now() - started, why: failed });
-    // The tutor said it would draw: the next turn knows it didn't happen.
-    const note = `The picture you said you'd draw (${pic.what.slice(0, 80)}) could not be drawn. Say so in a few words and go on without it.`;
-    this.pendingTurnNote = [this.pendingTurnNote, note].filter(Boolean).join(" ");
+    this.debug("board", "illustration_failed", { callId, ms: Date.now() - started, why });
+    return { ok: false, why };
   }
 
   /** The planner's order for the tutor's reply to this line (/api/plan), or null when none came in time. */
@@ -846,7 +916,7 @@ export class GeminiLiveSession {
       });
       const j = r.ok ? ((await r.json()) as { note?: string | null; illustrate?: { what: string; notice: string }; model?: string; failures?: string[] }) : null;
       const note = j?.note ?? null;
-      if (note && j?.illustrate?.what && this.planner?.draw) this.pictures.set(note, { ...j.illustrate, line });
+      if (note && j?.illustrate?.what && this.illustrator) this.pictures.set(note, { ...j.illustrate, line });
       // The planner read the late turn note: its order stands in for it.
       if (note && reminders && reminders === this.lateTurnNote) this.lateTurnNote = null;
       this.debug("pacing", "planner", { note, model: j?.model, ms: Date.now() - started, ...(r.ok ? {} : { status: r.status }), ...(j?.failures?.length ? { failures: j.failures } : {}) });
@@ -1463,6 +1533,7 @@ export class GeminiLiveSession {
   private cancelToolCalls(ids: string[]) {
     for (const id of ids) {
       this.cancelledCalls.add(id);
+      this.illustrations.get(id)?.abort();
       const attemptRemoved = this.tutorRuntime.cancelToolCall(id);
       this.debug("tool", "tool_call_cancelled", { id, attemptRemoved });
     }
@@ -1481,7 +1552,7 @@ export class GeminiLiveSession {
     let result: ToolCallResult;
     try {
       this.flushStudentUtterance();
-      const tutorTool = name === "next_move" ? await this.nextMove() : this.tutorRuntime.runTool(name, args, Date.now(), id);
+      const tutorTool = name === "next_move" ? await this.nextMove() : name === "illustrate" ? await this.illustrateTool(id, args) : this.tutorRuntime.runTool(name, args, Date.now(), id);
       if (tutorTool) {
         // App-owned: check_answer, answered with the [Tutor state] line.
         result = tutorTool;

@@ -732,6 +732,11 @@ export const LIVE_CUT: ReadonlySet<string> = new Set([
   "look_at_board",
   "erase_older",
   "add_text_note",
+  // Oct 23 2026: pictures of real things are `illustrate` now (lib/illustration/tool.ts).
+  "draw_icons",
+  "draw_sketch",
+  "draw_tape_diagram",
+  "draw_balance",
 ]);
 
 export type ToolDeclaration = { name: string; description: string; parameters: { type: string; properties?: Record<string, unknown>; required?: string[] } };

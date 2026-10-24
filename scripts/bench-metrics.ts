@@ -141,6 +141,8 @@ export const PICTURE_TOOLS = new Set<string>([
   "draw_balance", "draw_bar_chart", "add_coordinate_axes", "plot_points", "add_function_graph",
   "draw_tape_diagram", "draw_grid", "write_vertical", "draw_long_division", "draw_transversal",
   "draw_icons", "draw_sketch", "add_table", "draw_desmos", "draw_data_plot",
+  // Pictures of real things (lib/illustration): the tutor's ask, and the app's drawing of it or of the planner's.
+  "illustrate", "draw_illustration",
 ]);
 
 // The same claim the board eval counts (scripts/board-eval.ts), plus "this

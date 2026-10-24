@@ -260,6 +260,116 @@ export const REAL: BenchCase[] = [
   },
 ];
 
+// Pictures of real things (Oct 23 2026): four younger students whose wrong
+// idea a picture of the real situation breaks (sharing with a remainder, coins,
+// a temperature change, equal groups), for the A/B of the tutor's own
+// illustrate tool against the old object-picture tools. The six main students
+// are mostly abstract topics, where such a picture is rarely the expert move
+// (one picture in 84 turns, Oct 17). Topics and numbers differ from every case
+// the illustrator's prompt, recipes or tests were tuned on.
+export const PICTURES: BenchCase[] = [
+  {
+    id: "brownies",
+    name: "Leo",
+    grade: "4th grade",
+    age: 9,
+    topic: "fractions i think. sharing stuff that doesnt go even",
+    minutes: 15,
+    brief:
+      "You are Leo, 9, in 4th grade. Your homework asked: 5 brownies are shared equally by 2 kids, how much does each kid get? You think it doesn't work: each kid gets 2 and the last brownie is left over, so you'd throw it away or give it to the teacher. Cutting a brownie doesn't occur to you because the worksheet says \"how much\" and you think the answer has to be a whole number. You talk in short bursts, a bit silly, and you like food examples.",
+    anchors: [
+      "As soon as the tutor asks what you need, say the brownie problem: 5 brownies shared by 2 kids, how much each, and that you think \"it doesnt work, theres one left over\".",
+      "The first time the tutor asks what to do with the extra one, say \"throw it away?\" or \"give it to the teacher\".",
+      "If the tutor just tells you to cut it in half without showing you, say \"but then its not a whole brownie\".",
+      "Once you get it, say it in your own words (\"2 and a half each\") and ask about 7 brownies for 2 kids.",
+    ],
+    convincedBy:
+      "Seeing the 5 brownies and the 2 kids (or plates) drawn, with the last brownie cut into two halves, one half for each kid. A picture of the actual sharing does it; being told \"it's 2.5\" or \"divide 5 by 2\" does not.",
+    outcome: "Leo says each kid gets 2 and a half brownies (or 2 1/2, or 5/2) and why the extra one gets cut, and gets 7 brownies for 2 kids himself.",
+    checks: [
+      "Did the tutor show the brownies being shared (a picture of the brownies and the two kids or plates) rather than only telling Leo to divide?",
+      "Did the tutor take Leo's \"throw it away\" idea seriously and let the picture answer it?",
+      "Did the tutor avoid saying 2 and a half before Leo did?",
+    ],
+    turns: 10,
+  },
+  {
+    id: "coins",
+    name: "Nia",
+    grade: "4th grade",
+    age: 9,
+    topic: "money. which is more",
+    minutes: 15,
+    brief:
+      "You are Nia, 9, in 4th grade. The question was: which is more money, 3 dimes or 4 nickels? You said 4 nickels, because 4 is more than 3. You count coins, not their values; you also think a nickel is worth more than a dime because it is bigger. You know a dime is 10 cents if someone asks you directly, but you don't use it. You are polite and a little unsure, and you say \"um\" a lot.",
+    anchors: [
+      "As soon as the tutor asks what you need, say the coin question: which is more, 3 dimes or 4 nickels, and that you said 4 nickels \"cuz 4 is more than 3\".",
+      "If the tutor asks which coin is bigger, say the nickel is bigger, so it should be worth more.",
+      "If the tutor asks how much one dime is worth, say 10 cents.",
+      "Once you get it, check yourself: \"so 2 quarters is more than 5 dimes?\" and work it out out loud.",
+    ],
+    convincedBy:
+      "Seeing the coins drawn with their values on them, and counting the cents up (10, 20, 30 against 5, 10, 15, 20). Being told \"a dime is worth more\" does not convince you on its own; counting the money does.",
+    outcome: "Nia says 3 dimes is more (30 cents against 20 cents) because each dime is worth 10 cents, and compares a new pair of coin groups herself.",
+    checks: [
+      "Did the tutor find out Nia was counting coins rather than adding their values before correcting her?",
+      "Did the tutor show the coins with their values (a picture of the coins) rather than only state the rule?",
+      "Did Nia count the money herself rather than being told the totals?",
+    ],
+    turns: 10,
+  },
+  {
+    id: "colder",
+    name: "Omar",
+    grade: "6th grade",
+    age: 11,
+    topic: "negative numbers. temperature questions",
+    minutes: 15,
+    brief:
+      "You are Omar, 11, in 6th grade. The question: it was -4 degrees in the morning and it got 6 degrees colder. What is the temperature now? You said 2, because 6 minus 4 is 2. You treat the minus sign as decoration and subtract the smaller number from the bigger one. You are confident and a bit quick; you like weather and snow days.",
+    anchors: [
+      "As soon as the tutor asks what you need, say the temperature question and that you got 2 \"cuz 6 minus 4\".",
+      "If the tutor asks whether getting colder makes the number bigger or smaller, say \"smaller... but 2 is smaller than 6\".",
+      "If the tutor only tells you the rule (\"add the negatives\"), say \"but how is it -10, thats a lot\".",
+      "Once you get it, ask: \"so if it was -3 and got 5 colder its -8?\"",
+    ],
+    convincedBy:
+      "Seeing a thermometer (or a vertical number line) with -4 marked and the drop of 6 degrees going down 6 ticks from there. Counting down the ticks yourself. A rule alone does not convince you.",
+    outcome: "Omar says the temperature is -10 degrees and why (colder means lower on the thermometer, 6 more steps down from -4), and gets -3 and 5 colder himself.",
+    checks: [
+      "Did the tutor draw the temperature (a thermometer or a vertical line) with the start and the drop rather than only state a rule?",
+      "Did the tutor let Omar count down the ticks himself rather than say -10 first?",
+      "Did the tutor work on Omar's own problem (-4 and 6 colder)?",
+    ],
+    turns: 10,
+  },
+  {
+    id: "apples",
+    name: "Ivy",
+    grade: "3rd grade",
+    age: 8,
+    topic: "times. the word problems",
+    minutes: 15,
+    brief:
+      "You are Ivy, 8, in 3rd grade. The question: there are 4 bags with 6 apples in each bag. How many apples are there? You said 10, because 4 and 6 are in the question and you add numbers you see. You can count fine and you know 6 + 6 = 12. Times tables confuse you; you have not connected them to groups. You are cheerful and literal.",
+    anchors: [
+      "As soon as the tutor asks what you need, say the apple question and that you said 10 \"cuz 4 plus 6\".",
+      "If the tutor asks what times means, say \"idk\".",
+      "If the tutor asks how many apples are in two bags, work it out (12) and say it.",
+      "Once you get it, say \"so its 6 plus 6 plus 6 plus 6\" and then the total.",
+    ],
+    convincedBy:
+      "Seeing the 4 bags drawn with 6 apples in each, and counting or adding them bag by bag. Hearing \"4 times 6\" without the picture does not help you.",
+    outcome: "Ivy says there are 24 apples because there are 4 bags of 6 (6 + 6 + 6 + 6, or 4 groups of 6), and does another equal-groups question herself.",
+    checks: [
+      "Did the tutor draw the bags of apples rather than only say \"4 times 6\"?",
+      "Did Ivy find the total herself (adding the bags or counting) rather than being told 24?",
+      "Did the tutor ask how Ivy got 10 before correcting her?",
+    ],
+    turns: 10,
+  },
+];
+
 export const HELDOUT: BenchCase[] = [
   {
     id: "slope",
@@ -410,7 +520,7 @@ const WORKSHEET_HTML = `<!doctype html>
 for (const c of CASES) if (c.worksheet) c.worksheet.html = WORKSHEET_HTML;
 
 export function caseById(id: string): BenchCase | undefined {
-  return CASES.find((c) => c.id === id) ?? HELDOUT.find((c) => c.id === id) ?? REAL.find((c) => c.id === id);
+  return CASES.find((c) => c.id === id) ?? HELDOUT.find((c) => c.id === id) ?? REAL.find((c) => c.id === id) ?? PICTURES.find((c) => c.id === id);
 }
 
 export function intakeFor(c: BenchCase): SessionIntake {

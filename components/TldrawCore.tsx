@@ -147,6 +147,8 @@ const RIGHT_X = 640;
 const START_Y = 108;
 // A viewport this narrow (a phone) sees only the left of the page.
 const NARROW_BOARD = 640;
+/** How much of a phone's board the dock, the pet and one of its bubbles cover, from the bottom. */
+const PHONE_COVERED = 330;
 // The page heading's height with its rule, where a phone's plan box starts.
 const HEADING_H = 72;
 const ROW_GAP = 16;
@@ -2080,7 +2082,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           const screen = editor.getViewportScreenBounds();
           // A row read from the page's left edge sits at the readable 0.8, so
           // the long rows under a short one fit too (at 1 they ran off the right).
-          const camera = planCamera(f, { w: screen.w, h: screen.h }, { inset: isPage || tightZoom !== null ? 0 : fromStart ? 16 : 48, maxZoom: fromStart ? 0.8 : 1, minZoom: isPage ? 0.1 : (tightZoom ?? 0.8), anchor: fromStart ? "start" : "center" });
+          // On a phone the dock, the pet and its words cover the bottom of the
+          // board (about 330px of a 390 x 844 screen): new work is framed in the
+          // part above them (Oct 23 2026: a picture's bottom row sat under the
+          // tutor's bubble).
+          const covered = screen.w < NARROW_BOARD ? Math.min(PHONE_COVERED, screen.h * 0.45) : 0;
+          const camera = planCamera(f, { w: screen.w, h: Math.max(240, screen.h - covered) }, { inset: isPage || tightZoom !== null ? 0 : fromStart ? 16 : 48, maxZoom: fromStart ? 0.8 : 1, minZoom: isPage ? 0.1 : (tightZoom ?? 0.8), anchor: fromStart ? "start" : "center" });
           editor.setCamera(camera, { animation: { duration: 320 } });
         } catch {
           // Editor may be mid-teardown; a missed camera move is harmless.

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { LIVE_CUT, WHITEBOARD_FUNCTION_TOOLS, WHITEBOARD_TOOL_DECLARATIONS, firstSentence, liveWhiteboardDeclarations } from "./whiteboard-tools";
 import { liveToolDeclarations } from "./gemini-live";
+import { REPLACED_BY_ILLUSTRATE } from "./illustration/tool";
 
 test("every whiteboard tool converts to a valid Responses function tool", () => {
   assert.equal(WHITEBOARD_FUNCTION_TOOLS.length, WHITEBOARD_TOOL_DECLARATIONS.length);
@@ -75,8 +76,15 @@ test("the Live set leaves out the tools nobody calls, keeps the ones a lesson ne
     assert.ok(!names.has(cut), `${cut} should not be declared to a Live session`);
     assert.ok(full.has(cut), `${cut} must stay in the full set for GPT-Live and replays`);
   }
-  for (const keep of ["start_new_problem", "draw_equation_step", "add_student_attempt", "draw_fraction", "add_number_line", "draw_figure", "draw_balance", "add_area_model", "add_table", "draw_tape_diagram", "draw_grid", "draw_icons", "draw_sketch", "point_at", "highlight", "circle_item", "erase_items", "add_callout", "set_plan", "remember_about_student"]) {
+  for (const keep of ["start_new_problem", "draw_equation_step", "add_student_attempt", "draw_fraction", "add_number_line", "draw_figure", "add_area_model", "add_table", "draw_grid", "point_at", "highlight", "circle_item", "erase_items", "add_callout", "set_plan", "remember_about_student"]) {
     assert.ok(names.has(keep), `${keep} should be declared to a Live session`);
+  }
+  // Oct 23 2026: pictures of real things are the illustrator's (lib/illustration/tool.ts).
+  const session = new Set(liveToolDeclarations().map((d) => d.name));
+  assert.ok(session.has("illustrate"), "illustrate is declared to a Live session");
+  for (const gone of REPLACED_BY_ILLUSTRATE) {
+    assert.ok(LIVE_CUT.has(gone) && !session.has(gone), `${gone} is replaced by illustrate`);
+    assert.ok(full.has(gone), `${gone} stays in the full set for GPT-Live and replays`);
   }
   for (const d of live) {
     assert.ok(!("place" in (d.parameters.properties ?? {})), `${d.name} still offers place to a Live session`);

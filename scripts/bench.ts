@@ -21,7 +21,7 @@
 //
 // Flags:
 //   --cases a,b        which students (default: every one in the set)
-//   --set main|heldout|real|all  the six the redesign reads (default), the four held
+//   --set main|heldout|real|pictures|all  the six the redesign reads (default), the four held
 //                      out for gates (slope, triangle, divide, logs), or all ten
 //   --save-audio       write each turn's speech as <case>-t<N>.wav
 //   --hold             hold early async results until the first sound (ResponseHold; tried and rejected)
@@ -77,7 +77,7 @@ import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import { GoogleGenAI } from "@google/genai";
-import { CASES, HELDOUT, REAL, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+import { CASES, HELDOUT, PICTURES, REAL, caseById, intakeFor, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
 import { COACH_SYSTEM, coachNote, coachPrompt } from "../lib/tutor-coach";
 import { hedged } from "../lib/hedge";
 import { NEXT_MOVE_DECLARATION, PICTURE_TOOLS, PLANNER_SYSTEM, illustrationOf, pictureRefusal, parsePlannerOrder, plannerNote, plannerPrompt, sameLine } from "../lib/tutor-planner";
@@ -85,6 +85,7 @@ import { callCost, callIllustrator } from "../lib/illustration/model";
 import { guardLabels, illustratorPrompt } from "../lib/illustration/prompt";
 import { pictureKind, recipeFor } from "../lib/illustration/recipes";
 import { parseScene } from "../lib/illustration/scene";
+import { ILLUSTRATE_NOTHING, ILLUSTRATE_PENDING, ILLUSTRATE_WAIT_MS, illustrateFailed, illustrateRequest } from "../lib/illustration/tool";
 import { arg, readGeminiKey, withRetry } from "./eval-tools";
 import { measure, setToolRole, type CaseRun, type ToolRecord, type TurnRecord } from "./bench-metrics";
 import { judgeCase, judgeInputMarkdown, type Judgement } from "./bench-judge";
@@ -875,9 +876,15 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
     pictures.clear();
     if (!pic) return;
     pictureOut = pic.what;
-    void drawPicture(pic, line);
+    void drawPicture(pic, line, `planner-picture-${Date.now()}`).then((r) => {
+      if (r.ok) return;
+      if (pictureOut === pic.what) pictureOut = null;
+      pictureNote = `The picture you said you'd draw (${pic.what.slice(0, 80)}) could not be drawn. Say so in a few words and go on without it.`;
+    });
   };
-  const drawPicture = async (pic: Picture, line: string) => {
+  // As lib/gemini-live: the scene goes through the answer guard (shapeBoardCall)
+  // and is drawn under the asking call's id; a drawn picture is board help.
+  const drawPicture = async (pic: Picture, line: string, callId: string): Promise<{ ok: true; message: string } | { ok: false; why: string }> => {
     const t0 = Date.now();
     // The line being answered too, as lib/gemini-live sends it (it is not a turn yet).
     const conversation = [...turns.slice(-3).flatMap((x) => [{ who: "student" as const, text: x.student }, { who: "tutor" as const, text: x.tutor }]), { who: "student" as const, text: line }].filter((l) => l.text);
@@ -889,15 +896,23 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       const scene = reply ? parseScene(reply.text) : null;
       if (!scene) throw new Error(reply ? "unreadable scene" : "no illustrator key");
       const guarded = guardLabels(scene, [conversation.map((l) => l.text).join(" "), board, pic.what, pic.notice].join(" "));
-      const r = (await page.evaluate(({ name, args }) => (window as BoardWindow).__chalkDispatch?.(name, args, `appi${Date.now()}`) ?? { success: false, error: "no dispatcher" }, { name: "draw_illustration", args: { scene: guarded.scene } })) as ToolCallResult;
-      rec = { name: "draw_illustration", args: { what: pic.what, notice: pic.notice, model: ILLUSTRATOR, ms: Date.now() - t0, withheld: guarded.withheld, cost: callCost(ILLUSTRATOR, reply!.usage) }, callId: "app-picture", atMs: 0, beforeSpeech: false, ok: r.success, result: r.success ? r.message ?? "Done" : `Error: ${r.error}`, durationMs: Date.now() - t0, by: "app" };
+      const shaped = runtime.shapeBoardCall("draw_illustration", { scene: guarded.scene }) as { args: Record<string, unknown>; note: string | null };
+      const r = (await page.evaluate(({ name, args, callId }) => (window as BoardWindow).__chalkDispatch?.(name, args, callId) ?? { success: false, error: "no dispatcher" }, { name: "draw_illustration", args: shaped.args, callId })) as ToolCallResult;
+      if (r.success) runtime.noteBoardWrite("draw_illustration");
+      const compact = r.success ? await summaryOf(page, true) : "";
+      if (compact) lastSummary = compact;
+      const message = r.success ? `${r.message ?? "Drew the picture."}${shaped.note ? ` ${shaped.note}` : ""}${compact ? `\n[Board: ${compact}]` : ""}` : "";
+      rec = { name: "draw_illustration", args: { what: pic.what, notice: pic.notice, model: ILLUSTRATOR, ms: Date.now() - t0, withheld: guarded.withheld, guarded: shaped.note, cost: callCost(ILLUSTRATOR, reply!.usage) }, callId, atMs: 0, beforeSpeech: false, ok: r.success, result: r.success ? r.message ?? "Done" : `Error: ${r.error}`, durationMs: Date.now() - t0, by: "app" };
+      if (live.active) live.noteAppTools([rec]);
+      else pendingApp.push(rec);
+      scheduleFrame(900);
+      return r.success ? { ok: true, message } : { ok: false, why: r.error ?? "the board refused it" };
     } catch (err) {
-      rec = { name: "draw_illustration", args: { what: pic.what, notice: pic.notice, model: ILLUSTRATOR }, callId: "app-picture", atMs: 0, beforeSpeech: false, ok: false, result: `Error: ${(err as Error).message}`, durationMs: Date.now() - t0, by: "app" };
+      rec = { name: "draw_illustration", args: { what: pic.what, notice: pic.notice, model: ILLUSTRATOR }, callId, atMs: 0, beforeSpeech: false, ok: false, result: `Error: ${(err as Error).message}`, durationMs: Date.now() - t0, by: "app" };
+      if (live.active) live.noteAppTools([rec]);
+      else pendingApp.push(rec);
+      return { ok: false, why: (err as Error).message };
     }
-    if (!rec.ok) pictureNote = `The picture you said you'd draw (${pic.what.slice(0, 80)}) could not be drawn. Say so in a few words and go on without it.`;
-    if (live.active) live.noteAppTools([rec]);
-    else pendingApp.push(rec);
-    scheduleFrame(900);
   };
 
   // The spoken path's planner, as lib/gemini-live runs it: one plan per student
@@ -987,6 +1002,29 @@ async function runCase(m: Modules, c: BenchCase, opts: { browser: Browser; base:
       return { success: true, message: [verdict, order ?? "No move came back in time: answer what they just said yourself, with one question."].filter(Boolean).join("\n") };
     }
     if (pictureOut && PICTURE_TOOLS.has(name)) return { success: true, message: pictureRefusal(pictureOut) };
+    // The tutor's own picture (lib/illustration/tool.ts), as lib/gemini-live runs it.
+    if (name === "illustrate") {
+      const req = illustrateRequest(args);
+      if (!req) return { success: false, error: ILLUSTRATE_NOTHING };
+      pictureOut = req.what;
+      const job = drawPicture(req, live.lastLine, callId);
+      const waited = await Promise.race([job, new Promise<null>((r) => setTimeout(() => r(null), ILLUSTRATE_WAIT_MS))]);
+      if (!waited) {
+        void job.then((r) => {
+          if (r.ok) return;
+          if (pictureOut === req.what) pictureOut = null;
+          pictureNote = `The picture you said you'd draw (${req.what.slice(0, 80)}) could not be drawn. Say so in a few words and go on without it.`;
+        });
+        return { success: true, message: ILLUSTRATE_PENDING };
+      }
+      if (!waited.ok) {
+        if (pictureOut === req.what) pictureOut = null;
+        return { success: false, error: illustrateFailed(waited.why) };
+      }
+      const extra = runtime.boardResultExtras(Date.now());
+      const at = waited.message.lastIndexOf("\n[Board: ");
+      return { success: true, message: !extra ? waited.message : at >= 0 ? `${waited.message.slice(0, at)} ${extra}${waited.message.slice(at)}` : `${waited.message} ${extra}` };
+    }
     const tutor = runtime.runTool(name, args, now, callId);
     if (tutor && name === "check_answer" && voicePlan && turns.length && !live.spokeNow && tutor.success && plannedFor !== lineSeq) {
       const early = takeSpec(voiceLine());
@@ -1341,7 +1379,7 @@ async function main() {
   const only = arg("cases", "").split(",").map((s) => s.trim()).filter(Boolean);
   // --set main (default: the six the redesign reads), heldout (four it never reads), real (cases from real sessions), or all.
   const set = arg("set", "main");
-  const pool = set === "heldout" ? HELDOUT : set === "real" ? REAL : set === "all" ? [...CASES, ...HELDOUT, ...REAL] : CASES;
+  const pool = set === "heldout" ? HELDOUT : set === "real" ? REAL : set === "pictures" ? PICTURES : set === "all" ? [...CASES, ...HELDOUT, ...REAL, ...PICTURES] : CASES;
   const cases = pool.filter((c) => only.length === 0 || only.includes(c.id));
   if (cases.length === 0) throw new Error(`No case matches ${only.join(",")}. Options: ${pool.map((c) => c.id).join(", ")}`);
   const turnsArg = Number(arg("turns", "0"));

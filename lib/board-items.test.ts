@@ -226,3 +226,13 @@ test("a strike runs just past the words, rising a little, never a ruler line pas
   assert.ok(pts[0].y > pts[pts.length - 1].y, "rises left to right");
   for (const p of pts) assert.ok(p.y > b.y + b.h * 0.3 && p.y < b.y + b.h * 0.8, "stays through the middle of the words");
 });
+
+test("the short board list keeps a picture's parts whole, so the tutor can point at them", () => {
+  // Oct 23 2026: "b1 illustration "the picture "3 pizzas shared by…"" lost the parts.
+  const label = itemLabelFrom('Drew "3 pizzas shared by 4 kids at a long table" (parts: pizzas, kids, plate1, plate2).', "picture");
+  assert.equal(label, '"3 pizzas shared by 4 kids at a long table" (parts: pizzas, kids, plate1, plate2)');
+  const items: BoardItem[] = [{ id: "b1", tool: "draw_illustration", label, owner: "tutor", createdAt: 0 } as BoardItem];
+  const compact = formatBoardItems(items, undefined, 10, { compact: true });
+  assert.match(compact, /\(parts: pizzas, kids, plate1, plate2\)/);
+  assert.match(compact, /^b1 \S+ ""3 pizzas shared by 4 kids…/);
+});
