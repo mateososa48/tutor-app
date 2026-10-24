@@ -7,7 +7,7 @@ import { TopBar } from "@/components/app/TopBar";
 import { SessionIntakeDialog } from "@/components/app/SessionIntakeDialog";
 import { createSession } from "@/lib/sessions";
 import { intakeTitle, storeIntake, type SessionIntake } from "@/lib/session-intake";
-import { lessonsForGrade } from "@/lib/staged-lessons";
+import { lessonByKey, lessonsForGrade, lessonTopic } from "@/lib/staged-lessons";
 import type { UploadedFile } from "@/lib/file-processor";
 
 // "New session" lands here. It asks what the student needs before the board
@@ -36,7 +36,9 @@ export default function NewSessionClient() {
     searchParams.get("mock") === "1" || searchParams.get("debug") === "1" || searchParams.get("qa") === "1";
   const ready = searchParams.get("ready") === "1";
   // /session?topic=… opens the intake with the text box filled in.
-  const initialTopic = (searchParams.get("topic") ?? "").slice(0, 200);
+  // /session?lesson=key (from Practice) opens it on that staged lesson's first problem, plan attached.
+  const lesson = lessonByKey(searchParams.get("lesson"));
+  const initialTopic = lesson ? lessonTopic(lesson) : (searchParams.get("topic") ?? "").slice(0, 200);
 
   const go = async (intake: SessionIntake | null, files: UploadedFile[]) => {
     if (startedRef.current) return;
@@ -118,6 +120,7 @@ export default function NewSessionClient() {
       {showIntake && (
         <SessionIntakeDialog
           initialTopic={initialTopic}
+          initialLessonKey={lesson?.key}
           lessons={lessonsForGrade(profile?.gradeLevel)}
           starting={starting}
           error={error}

@@ -1,3 +1,4 @@
+import { readPrefs } from "./app-prefs";
 import type SignalsmithStretch from "signalsmith-stretch";
 import type { StretchNode } from "signalsmith-stretch";
 
@@ -103,8 +104,12 @@ export class AudioCapture {
   }
 
   async start(existingStream?: MediaStream) {
+    // The microphone picked in Settings, if any; "ideal" falls back to the
+    // default when that device is gone (unplugged headset).
+    const deviceId = readPrefs().micDeviceId;
     this.stream = existingStream ?? await navigator.mediaDevices.getUserMedia({
       audio: {
+        ...(deviceId ? { deviceId: { ideal: deviceId } } : {}),
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,

@@ -8,6 +8,7 @@ import type { WhiteboardHandle, WhiteboardSnapshot } from "@/components/Whiteboa
 import TutorDebugPanel from "@/components/TutorDebugPanel";
 import type { TutorDebugEvent } from "@/components/TutorDebugPanel";
 import { AppShell } from "@/components/app/AppShell";
+import { readPrefs } from "@/lib/app-prefs";
 import { TopBar } from "@/components/app/TopBar";
 import { SessionChip, type LiveState } from "@/components/session/SessionChip";
 import { VoiceDock, type DockActivity } from "@/components/session/VoiceDock";
@@ -377,6 +378,15 @@ function SessionDetailPage({ id }: { id: string }) {
       if (learningRecorderRef.current === learningRecorder) learningRecorderRef.current = null;
     };
   }, [id, tutorRuntime]);
+
+  // Settings can start a session with the mic off or the transcript open
+  // (lib/app-prefs.ts, this device). Applied after mount: the server cannot read them.
+  useEffect(() => {
+    const prefs = readPrefs();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- browser-only preferences, read once
+    if (prefs.startMuted) setIsMuted(true);
+    if (prefs.transcriptOpen) setTranscriptOpen(true);
+  }, []);
 
   // Mute: disable the mic track locally and tell the Live session.
   useEffect(() => {

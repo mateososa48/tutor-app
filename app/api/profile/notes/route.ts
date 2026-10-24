@@ -65,14 +65,33 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ notes });
 }
 
-export async function DELETE() {
+// DELETE with { note } forgets that one note (Your tutor, Oct 2026); with no
+// body it forgets them all.
+export async function DELETE(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  let one: string | null = null;
+  try {
+    const body = (await req.json()) as { note?: unknown };
+    one = typeof body.note === "string" ? body.note : null;
+  } catch {
+    one = null;
+  }
+
+  let notes: string[] = [];
+  if (one !== null) {
+    const [row] = await db
+      .select({ tutorNotes: userProfiles.tutorNotes })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, session.user.id))
+      .limit(1);
+    notes = readNotes(row?.tutorNotes).filter((n) => n !== one);
+  }
   await db
     .update(userProfiles)
-    .set({ tutorNotes: [], updatedAt: new Date() })
+    .set({ tutorNotes: notes, updatedAt: new Date() })
     .where(eq(userProfiles.userId, session.user.id));
-  return NextResponse.json({ notes: [] });
+  return NextResponse.json({ notes });
 }

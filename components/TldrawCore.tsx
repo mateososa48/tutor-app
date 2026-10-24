@@ -3,6 +3,7 @@
 // tldraw/katex CSS are imported in app/globals.css so they load with the page,
 // not behind the dynamic chunk.
 
+import { PACE_FACTOR, readPrefs } from "@/lib/app-prefs";
 import {
   forwardRef,
   useImperativeHandle,
@@ -1513,7 +1514,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     }
     if (inputs.length === 0) return;
     // Unhurried, unless tool calls are piling up behind this one.
-    const steps = planReveal(inputs, 28, REVEAL_CAP_MS, catchUpPace(revealQueueRef.current.length));
+    // The student's writing speed (Settings) scales the hand; catching up still speeds it.
+    const steps = planReveal(inputs, 28, REVEAL_CAP_MS * PACE_FACTOR[readPrefs().writingPace], catchUpPace(revealQueueRef.current.length) * PACE_FACTOR[readPrefs().writingPace]);
     editor.run(() => {
       if (hide.length > 0) editor.updateShapes(hide.map((h) => ({ id: h.id, type: h.type, opacity: 0 })) as unknown as Parameters<Editor["updateShapes"]>[0]);
       const maths = hide.filter((h) => h.type === "math" || h.type === "graph" || h.type === "illustration");
