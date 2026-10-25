@@ -50,6 +50,7 @@ import { TAG_FONT_PX, TAG_H, TAG_PAD_X, TAG_TAIL, TagShapeUtil } from "@/compone
 import { ConfettiLayer, type ConfettiBurst } from "@/components/board/ConfettiLayer";
 import { ILLUSTRATION_PAD, IllustrationShapeUtil } from "@/components/board/IllustrationShape";
 import { matchPart } from "@/lib/illustration/part-match";
+import { findPart } from "@/lib/board-plane";
 import type { Annotation } from "@/lib/board-annotate";
 import { renderScene, type Scene } from "@/lib/illustration/scene";
 import { BoardStrip } from "@/components/board/BoardStrip";
@@ -405,6 +406,12 @@ export interface WhiteboardHandle {
   drawGrid(opts: GridDrawing): void;
   /** An illustration from a scene (lib/illustration/scene.ts): laid out, drawn, its parts kept for pointing. */
   drawIllustration?(scene: Scene, opts?: { column?: "left" | "right" }): { w: number; h: number; parts: string[]; problems: string[] } | null;
+  /** A graph or a table drawn from its spec (lib/board-plane.ts, lib/board-table.ts), its parts kept for marks. */
+  drawPicture?(kind: "plane" | "table", spec: object, out: { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string> }, opts?: { reserveH?: number }): void;
+  /** The newest graph or table on this board (or the one `target` names), and its spec. */
+  findPicture?(kind: "plane" | "table", target?: string): { item: BoardItem; spec: object } | null;
+  /** Edit a graph or table in place: the new drawing replaces the old, only its `data-fresh` pieces drawn in. */
+  editPicture?(itemId: string, spec: object, out: { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string> }, label: string, content: string | null): BoardItem | null;
   writeVertical(opts: VerticalDrawing): void;
   drawLongDivision(opts: LongDivisionDrawing): void;
   drawTransversal(opts: TransversalDrawing): void;
@@ -2899,26 +2906,54 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     // newest illustration that has it. Null when it names no part.
     const illustrationPart = (editor: Editor, target: string): { item: BoardItem; rect: Rect } | null => {
       const t = target.trim();
-      const m = /^(?:item\s+)?(b\d+)\s*[.:\s]\s*([A-Za-z_][\w.-]*)$/i.exec(t);
+      const m = /^(?:item\s+)?(b\d+)\s*[.:\s]\s*(\S.*)$/i.exec(t);
       const named = m ? [resolveItemTarget(itemsRef.current, m[1])].filter((x): x is BoardItem => Boolean(x)) : [...itemsRef.current].reverse();
       const want = (m ? m[2] : t).toLowerCase();
       for (const item of named) {
         for (const sid of item.shapeIds) {
           const shape = editor.getShape(sid as TLShapeId);
           if (shape?.type !== "illustration") continue;
-          let parsed: { scale?: number; pad?: number; rects?: Record<string, Rect> } = {};
+          let parsed: { scale?: number; pad?: number; rects?: Record<string, Rect>; aliases?: Record<string, string> } = {};
           try {
             parsed = JSON.parse(String((shape.props as { parts?: string }).parts ?? "{}"));
           } catch {}
           const rects = parsed.rects ?? {};
           // By its id or by the words for it ("right pan" for "right_pan" or "r").
-          const key = matchPart(Object.keys(rects), want);
+          // A graph's or table's own names first ("(1, 1)", "y = 2x - 1", "x = 2"), then by words.
+          const key = (parsed.aliases ? findPart(rects, parsed.aliases, m ? m[2] : t) : null) ?? (/^[A-Za-z_][\w.-]*$|\s/.test(want) ? matchPart(Object.keys(rects), want) : null);
           const page = editor.getShapePageBounds(shape.id);
           if (!key || !page) continue;
           const k = parsed.scale ?? 1;
           const pad = parsed.pad ?? 0;
           const r = rects[key];
           return { item, rect: { x: page.x + pad + r.x * k, y: page.y + pad + r.y * k, w: r.w * k, h: r.h * k } };
+        }
+      }
+      return null;
+    };
+
+    // A table cell by what it says ("3", "−1"): the newest cell that reads so.
+    const tableCell = (editor: Editor, item: BoardItem, text: string): { item: BoardItem; rect: Rect } | null => {
+      const want = text.replace(/\s+/g, "").replace(/[\u2212–—]/g, "-").toLowerCase();
+      for (const sid of item.shapeIds) {
+        const shape = editor.getShape(sid as TLShapeId);
+        if (shape?.type !== "illustration") continue;
+        const props = shape.props as { scene?: string; parts?: string };
+        let spec: { kind?: string; rows?: string[][] } = {};
+        let parsed: { pad?: number; rects?: Record<string, Rect> } = {};
+        try {
+          spec = JSON.parse(String(props.scene));
+          parsed = JSON.parse(String(props.parts));
+        } catch {}
+        if (spec.kind !== "table" || !spec.rows) continue;
+        const page = editor.getShapePageBounds(shape.id);
+        for (let r = spec.rows.length - 1; r >= 0; r--) {
+          const c = spec.rows[r].findIndex((cell) => cell.replace(/\s+/g, "").replace(/[\u2212–—]/g, "-").toLowerCase() === want);
+          const rect = c >= 0 ? parsed.rects?.[`r${r + 1}c${c + 1}`] : undefined;
+          if (rect && page) {
+            const pad = parsed.pad ?? 0;
+            return { item, rect: { x: page.x + pad + rect.x + 8, y: page.y + pad + rect.y + 6, w: rect.w - 16, h: rect.h - 12 } };
+          }
         }
       }
       return null;
@@ -4116,6 +4151,85 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return { w, h, parts: Object.keys(out.parts), problems: out.problems };
     },
 
+    drawPicture(kind: "plane" | "table", spec: object, out: { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string> }, opts: { reserveH?: number } = {}) {
+      const editor = editorRef.current;
+      if (!editor) return;
+      // A graph sits on the same white card as a picture; a table draws its own frame.
+      const pad = kind === "plane" ? 10 : 0;
+      const w = Math.round(out.w) + pad * 2;
+      const h = Math.round(out.h) + pad * 2;
+      const x = colX("left");
+      const y = colY("left").current;
+      editor.createShape({
+        id: createShapeId(),
+        type: "illustration",
+        x,
+        y,
+        props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: 1, pad, rects: out.parts, aliases: out.aliases }), scene: JSON.stringify(spec), reveal: 1 },
+        // Room kept under a table for the rows it will grow (endItem reads it).
+        meta: { ...currentMeta(), ...(opts.reserveH ? { reserveH: opts.reserveH } : {}) },
+      } as unknown as Parameters<Editor["createShape"]>[0]);
+      colY("left").current += h + ROW_GAP;
+    },
+
+    findPicture(kind: "plane" | "table", target?: string) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const named = target ? resolveItemTarget(itemsRef.current, target.replace(/[.:\s].*$/, "")) : null;
+      const pool = named ? [named] : [...itemsRef.current].reverse();
+      for (const item of pool) {
+        for (const sid of item.shapeIds) {
+          const shape = editor.getShape(sid as TLShapeId);
+          if (shape?.type !== "illustration" || (shape.meta as { archived?: unknown }).archived) continue;
+          try {
+            const spec = JSON.parse(String((shape.props as { scene?: string }).scene ?? "")) as { kind?: string };
+            if (spec?.kind === kind) return { item, spec };
+          } catch {}
+        }
+      }
+      return null;
+    },
+
+    editPicture(itemId: string, spec: object, out: { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string> }, label: string, content: string | null) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const item = itemsRef.current.find((i) => i.id === itemId);
+      if (!item) return null;
+      const shape = item.shapeIds.map((sid) => editor.getShape(sid as TLShapeId)).find((sh) => sh?.type === "illustration");
+      if (!shape) return null;
+      const pad = (() => {
+        try {
+          return Number((JSON.parse(String((shape.props as { parts?: string }).parts)) as { pad?: number }).pad ?? 0);
+        } catch {
+          return 0;
+        }
+      })();
+      const w = Math.round(out.w) + pad * 2;
+      const h = Math.round(out.h) + pad * 2;
+      const fresh = out.svg.includes("data-fresh");
+      const reduce = instantRef.current || prefersReducedMotion();
+      editor.run(() => {
+        editor.updateShape({
+          id: shape.id,
+          type: "illustration",
+          props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: 1, pad, rects: out.parts, aliases: out.aliases }), scene: JSON.stringify(spec), reveal: fresh && !reduce ? 0 : 1 },
+        } as unknown as Parameters<Editor["updateShape"]>[0]);
+      }, { history: "ignore" });
+      item.label = itemLabelFrom(label, item.tool.replaceAll("_", " "));
+      if (content) item.content = content;
+      // It may have grown: what it covers now is what layout keeps clear.
+      const b = editor.getShapePageBounds(shape.id);
+      const held = placedRectsRef.current.get(item.id);
+      if (b) placedRectsRef.current.set(item.id, held ? { x: held.x, y: held.y, w: Math.max(held.w, b.x + b.w - held.x), h: Math.max(held.h, b.y + b.h - held.y) } : { x: b.x, y: b.y, w: b.w, h: b.h });
+      notePage(editor, item);
+      // Only what is new is written in, in its turn behind the writing queue.
+      if (fresh && !reduce && b) {
+        const steps = planReveal([{ id: shape.id, kind: "eq", x: b.x, y: b.y, chars: 40 }], 28, REVEAL_CAP_MS, catchUpPace(revealQueueRef.current.length));
+        enqueue({ kind: "reveal", steps, restAt: { x: b.x, y: b.y, w: b.w, h: b.h } });
+      } else if (b) focusOn(editor, b.x, b.y, b.w, b.h);
+      return item;
+    },
+
     drawGrid(opts: GridDrawing) {
       const editor = editorRef.current;
       if (!editor) return;
@@ -5105,6 +5219,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         const heading = previous && previous.id === currentSectionRef.current?.headingId ? previous : null;
         placed = placeItem(editor, item, request, heading ? (size) => rehomeSection(editor, heading, size) : undefined);
       }
+      // A table keeps room under it for the rows it will grow (drawPicture).
+      const reserve = Math.max(0, ...shapeIds.map((sid) => Number((editor.getShape(sid as TLShapeId)?.meta as { reserveH?: unknown } | undefined)?.reserveH ?? 0)));
+      if (placed && reserve > 0) placed = { ...placed, h: placed.h + reserve };
       if (placed) placedRectsRef.current.set(id, placed);
       // Tools still draw at the old column cursors; placement moves the result.
       leftY.current = START_Y;
@@ -5259,7 +5376,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const write = (host: BoardItem, text: string, x: number, y: number, done: () => void, size: TLDefaultSizeStyle = SIZE) => {
         const id = createShapeId();
         const lineH = FONT_PX[size] * LINE_HEIGHT;
-        const full = text.replace(/(^|[\s(])-(?=\d)/g, "$1\u2212");
+        // A real minus, joined to its number ("- 7" was written with a hyphen and a gap).
+        const full = text.replace(/(^|[\s(])-\s*(?=\d)/g, "$1\u2212");
         editor.run(() => {
           editor.createShape({
             id,
@@ -5462,7 +5580,9 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
             return variants.some((v) => plain.includes(v));
           })
         : undefined;
-      const part: "text" | "item" = holder ? "text" : "item";
+      // A graph's point or line, a table's cell, named by its words: "(1, 1)", "y = 2x - 1", "3".
+      const pictureHit = text && text.trim() ? illustrationPart(editor, `${item.id}.${text.trim()}`) ?? tableCell(editor, item, text) : null;
+      const part: "text" | "item" = holder || pictureHit ? "text" : "item";
       const textual = own.every((sid) => {
         const type = editor.getShape(sid as TLShapeId)?.type;
         return type === "math" || type === "text";
@@ -5484,6 +5604,11 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         // Words on a Desmos graph (a labelled point, "rise 4"): a dab on the
         // point or the label. A graph's only DOM text is its credit, so a
         // graph never falls back to measuring text.
+        if (pictureHit) {
+          const r = (text ? illustrationPart(editor, `${item.id}.${text.trim()}`) ?? tableCell(editor, item, text) : null)?.rect ?? pictureHit.rect;
+          runHighlights(editor, item.id, how === "underline" ? swipes([r]) : markerSwipes([r]), meta);
+          return;
+        }
         const holderShape = holder ? editor.getShape(holder as TLShapeId) : undefined;
         const onGraph = holderShape?.type === "graph";
         if (holderShape && onGraph && variants) {

@@ -42,17 +42,17 @@ Find where they are with one question (what they'd try first), then teach to wha
 - Right: say what was right in a few words; the next step is theirs. Each right step, help less: show, then point, then just listen. Two right alone with a reason: harder now, without asking.
 A worksheet: ask which one first (an attached sheet is already in front of you), then start_new_problem with it exactly as printed.
 The plan (set_plan) is the lesson's 2-4 goals, once near the start ("Two-step equations | Brackets | Graphing a line"), never one problem's steps.
-A graph is a rule that makes points: add_table (x = 0, 1, 2; y = ?), they find each y and say where its point goes, then you plot it (PLOT_TOOL, one graph that grows), and only when the points line up, the line through them. Never put up the finished graph of their problem first.
+A graph is a rule that makes points: add_table (x = 0, 1, 2; y = ?), they find each y and say where its point goes, then you plot it (graph: one graph that grows), and only when the points line up, the line; then mark on it (circle_item a point, arrows "right 1, up 2"). Never put up the finished graph of their problem first.
 Closing: a quick check alone, today's idea in one sentence, remember_about_student. If they want to leave, let them, warmly.`;
 
 function lessonSection(desmos: boolean): string {
-  return LESSON_TEXT.replace("PLOT_TOOL", desmos ? "draw_desmos" : "add_function_graph mark_points");
+  void desmos;
+  return LESSON_TEXT;
 }
 
 function drawsSection(desmos: boolean): string {
-  const graph = desmos
-    ? "A function, a line, points, anything on a coordinate plane: draw_desmos (expressions, points, polygons, sliders they can drag in Explore)."
-    : "A function, a line, points, anything on a coordinate plane: add_function_graph (mark_points, slope_run, second_expression).";
+  void desmos;
+  const graph = "Anything on a coordinate plane: graph (points, lines, arrows; call it again to add to the same one).";
   return `# What draws what
 The problem, exactly as given: start_new_problem(title, problem=, ask=). A step: draw_equation_step, after annotate on the line above ("-22" under each side). Their working (not an answer you checked): add_student_attempt. A question to keep in view: add_callout. A method they don't have: show_example.
 A fraction: draw_fraction. Pieces of a set, a percent, a decimal, an area by counting squares: draw_grid.
@@ -64,7 +64,8 @@ A right answer: circle_item keep=true; a wrong line after they've seen it: cross
 }
 
 function examplesSection(desmos: boolean): string {
-  const graph = desmos ? `draw_desmos(expressions="y = 3x - 1")` : `add_function_graph(expression="3x - 1")`;
+  void desmos;
+  const graph = `graph(lines="y = 3x - 1")`;
   return `# Three turns
 Student: "find the mean of 4, 8 and 9. i dont know how to do that"
 Return: "The mean is what everyone gets if you pool it all and share it out evenly. Picture three friends with 4, 8 and 9 stickers: they pile them up, then split the pile three ways. Here's one with smaller numbers. Now yours: how many stickers are in the pile?" · illustrate(what="3 friends holding 4, 8 and 9 stickers in stacks", notice="the stacks are uneven") · show_example(problem="mean of 2, 3 and 7", steps="2 + 3 + 7 = 12 | 12 ÷ 3 = 4", why="pool them | share by how many")

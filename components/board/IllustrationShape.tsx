@@ -136,7 +136,8 @@ function IllustrationBody({ shape }: { shape: TLIllustrationShape }) {
           border: card ? `1.5px solid ${CARD_BORDER}` : undefined,
           borderRadius: card ? CARD_RADIUS : undefined,
           // The card itself comes in first, quickly; the picture draws on it.
-          opacity: reveal >= 1 ? 1 : Math.min(1, reveal * 8),
+          // An edit draws on a card that is already there.
+          opacity: reveal >= 1 || svg.includes("data-fresh") ? 1 : Math.min(1, reveal * 8),
         }}
       >
         <div ref={host} dangerouslySetInnerHTML={{ __html: fitted(svg, w - pad * 2, h - pad * 2) }} />

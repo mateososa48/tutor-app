@@ -319,7 +319,8 @@ const ASKS_OR_STATES =
 // A proposed move ("subtract 3?", "divide by 2") is not a value to check.
 const STEP_VERB = /^(add|subtract|take away|multiply|divide|distribute|move|plug|put|cross|flip|combine|square|isolate|simplify|factor|expand)\b/i;
 const HAS_VALUE_EQUATION = /\b[a-z]\s*=\s*-?\s*[\d(½⅓¼¾]/i;
-const PICKS_PROBLEM = /^(?:(?:let'?s do|do|start with|i want|can we do)\s+)?(?:the\s+)?(?:(?:first|second|third|fourth|fifth|sixth|last|next|other)\s+(?:one|problem|question)|(?:number|problem|question|no\.?|#)\s*\d+|(?:one|problem|question)\s+(?:number\s+)?\d+)[\s.!?]*$/i;
+// Oct 25 2026: "Ahm, let's start with number one." and "let's do the last one" were still nagged.
+const PICKS_PROBLEM = /^(?:(?:a+h*m+|u+m+|u+h+|h+m+|okay|ok|so|yeah|alright)[\s,.]+)*(?:(?:let'?s|lets|can we|i want to|i'?ll|we can)\s+)?(?:(?:do|start with|start on|begin with|go with|try|pick|work on)\s+)?(?:the\s+)?(?:(?:first|second|third|fourth|fifth|sixth|last|next|other)\s+(?:one|problem|question)|(?:number|problem|question|no\.?|#)\s*(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)|(?:one|problem|question)\s+(?:number\s+)?\d+)[\s.!?]*$/i;
 // A problem being posed, anywhere in the line: "…legs 6 and 8, find the hypotenuse".
 const POSES_PROBLEM = /\b(find|solve|calculate|work out|how (?:do|many|much|far|long|high|can)|what(?:'s|s| is| are| would| does)|is there|are there|can you|help me)\b/i;
 
@@ -915,6 +916,8 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     return;
   }
   if (name === "draw_desmos" && args) p.linePoints = Math.max(p.linePoints, graphPoints(args));
+  // A graph grows a point at a time: they add up (Oct 25 2026).
+  if (name === "graph" && args) p.linePoints += graphPoints(args);
   // Taught: a picture or an example went up while the lesson said TEACH. The
   // state stops saying "teach it now" until they are stuck again (Oct 24 2026:
   // it said so for three turns after the balance, while the student answered).
@@ -942,7 +945,7 @@ export function noteBoardMark(p: TutorPolicy): void {
 // drew is not solving it alone.
 const PICTURE_TOOLS = new Set([
   "draw_fraction", "add_number_line", "draw_figure", "draw_angle", "draw_array", "add_area_model", "draw_bar_chart",
-  "draw_tape_diagram", "draw_grid", "draw_transversal", "draw_icons", "draw_sketch", "add_function_graph", "draw_desmos",
+  "draw_tape_diagram", "draw_grid", "draw_transversal", "draw_icons", "draw_sketch", "add_function_graph", "draw_desmos", "graph",
   "draw_data_plot", "write_vertical", "draw_long_division", "draw_balance", "plot_points", "draw_illustration",
 ]);
 

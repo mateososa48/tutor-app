@@ -502,3 +502,17 @@ test("a sharing story is a division", () => {
   assert.equal(sharingProblem("x shared by 3 = 12"), null);
   assert.equal(sharingProblem("what is 12 times 3"), null);
 });
+
+// Oct 25 2026, session nbrkrj: a right step "3x = 15" (spoken "so it's 15 3x
+// = 15") was read as x = 15 and called wrong; "y = 2x - 1 where x = 2" was
+// "more than one equals sign".
+test("a line of working is checked as a step: right steps keep the solution, wrong ones say what they give", () => {
+  assert.equal(checkAnswer("3x + 7 = 22", "3x = 15").verdict, "partial");
+  assert.equal(checkAnswer("3x + 7 = 22", "Okay, so it's 15 3x = 15.").verdict, "partial");
+  const wrong = checkAnswer("3x + 7 = 22", "3x = 22");
+  assert.equal(wrong.verdict, "incorrect");
+  assert.match(wrong.message, /would make x = 22\/3/);
+  assert.equal(checkAnswer("3x + 7 = 22", "x = 5").verdict, "correct");
+  assert.equal(checkAnswer("y = 2x - 1 where x = 2", "3").verdict, "correct");
+  assert.equal(checkAnswer("y = 2x - 1, x = 2", "4").verdict, "incorrect");
+});

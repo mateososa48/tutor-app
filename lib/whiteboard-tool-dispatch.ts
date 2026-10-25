@@ -1,3 +1,5 @@
+import { buildPlane, describePlane, renderPlane, type PlaneSpec } from "./board-plane";
+import { describeTable, mergeTable, parseTable, renderTable, sameColumns, type TableSpec } from "./board-table";
 import { describeAnnotations, parseAnnotations } from "./board-annotate";
 import { parseScene, renderScene, type Scene } from "@/lib/illustration/scene";
 import type { WhiteboardHandle } from "@/components/TldrawCore";
@@ -195,6 +197,42 @@ export function supersededBy(name: string, content: string, items: Array<{ id: s
   }).map((it) => it.id);
 }
 
+const TABLE_HINT = "Fill a ? by calling add_table again with the same columns (it edits this table); ring a cell with circle_item(target=\"@ID@.r2c2\") or swipe it with highlight(target=\"@ID@\", text=\"3\").";
+const GRAPH_HINT = "Call graph again to add to this same graph (same scale); ring a point with circle_item(target=\"@ID@.P2\"), swipe a line with highlight(target=\"@ID@\", text=\"y = 2x - 1\"), show a step with arrows=\"(0, -1) to (1, -1): right 1\".";
+
+function planeInput(args: Args) {
+  const n = (k: string) => (typeof args[k] === "number" && Number.isFinite(args[k]) ? (args[k] as number) : undefined);
+  return { points: args.points, lines: args.lines ?? args.expressions, arrows: args.arrows, caption: args.label, view: { xMin: n("x_min"), xMax: n("x_max"), yMin: n("y_min"), yMax: n("y_max") } };
+}
+
+/** An edit to a graph or table already up, or null to draw a new one. */
+function editPictureTool(name: "add_table" | "graph", args: Args, board: WhiteboardHandle): ToolCallResult | null {
+  const target = typeof args.target === "string" && args.target.trim() ? args.target.trim() : undefined;
+  if (name === "graph") {
+    if (args.new_graph === true) return null;
+    const found = board.findPicture!("plane", target);
+    if (!found) return target ? fail(`No graph matches "${target}". Leave target out to start one.`) : null;
+    const built = buildPlane(found.spec as PlaneSpec, planeInput(args));
+    if ("error" in built) return fail(built.error);
+    if (built.fresh.size === 0 && !built.rescaled) return ok(`Already on graph ${found.item.id}: ${describePlane(built.spec)}. Nothing new to draw; mark what is there instead.`);
+    const out = renderPlane(built.spec, built.fresh);
+    const label = `graph: ${describePlane(built.spec)}`;
+    const item = board.withDirectMeta({ owner: "tutor" }, () => board.editPicture!(found.item.id, built.spec, out, label, null));
+    if (!item) return null;
+    return ok(`Added ${built.added.join(", ") || "to it"} on graph ${item.id}${built.rescaled ? " (the view widened to hold it)" : ""}, same scale. Now: ${describePlane(built.spec)}. ${GRAPH_HINT.replaceAll("@ID@", item.id)}`);
+  }
+  const next = parseTable(args.columns, args.rows, args.title);
+  if ("error" in next) return fail(next.error);
+  const found = board.findPicture!("table", target);
+  if (!found || (!target && !sameColumns(found.spec as TableSpec, next))) return target && !found ? fail(`No table matches "${target}".`) : null;
+  const merged = mergeTable(found.spec as TableSpec, next);
+  if (merged.changed === 0) return ok(`Table ${found.item.id} already shows that: ${describeTable(merged.spec)}. Mark a cell instead.`);
+  const out = renderTable(merged.spec, merged.fresh);
+  const item = board.withDirectMeta({ owner: "tutor" }, () => board.editPicture!(found.item.id, merged.spec, out, `table ${describeTable(merged.spec)}`, null));
+  if (!item) return null;
+  return ok(`Filled in table ${item.id} in place: ${describeTable(merged.spec)}. ${TABLE_HINT.replaceAll("@ID@", item.id)}`);
+}
+
 export function dispatchWhiteboardTool(
   name: string,
   args: Args,
@@ -269,6 +307,13 @@ export function dispatchWhiteboardTool(
   }
   // The session plan (Sept 24 2026): a box at the top right, not an item.
   // Steps once after the opening, then `step` to move on.
+  // A graph or a table that is already on this board grows in place (Oct 25
+  // 2026: each new row erased the table and drew it again, and the line went
+  // on a second graph at another scale beside the points).
+  if ((name === "add_table" || name === "graph") && ctx.whiteboard?.findPicture && ctx.whiteboard.editPicture) {
+    const edited = editPictureTool(name, args, ctx.whiteboard);
+    if (edited) return edited;
+  }
   if (name === "set_plan") {
     const board = ctx.whiteboard;
     if (!board?.setPlan) return fail("This board cannot show a plan.");
@@ -341,7 +386,7 @@ export function dispatchWhiteboardTool(
   let message = said.replace(/[.]\s*$/, "");
   if (itemId) message += ` (item ${itemId})`;
   if (notes.length > 0) message += `; ${notes.join("; ")}`;
-  if (next) message += `. ${next}`;
+  if (next) message += `. ${itemId ? next.replaceAll("@ID@", itemId) : next}`;
   return { success: true, message };
 }
 
@@ -849,6 +894,14 @@ function dispatchInner(
       if (isToolError(rows)) return rows;
       const title = opt(args, "title"); if (title.error) return title.error;
       const column = opt(args, "column"); if (column.error) return column.error;
+      if (board.drawPicture) {
+        const spec = parseTable(columns, rows, title.value);
+        if ("error" in spec) return fail(spec.error);
+        const out = renderTable(spec);
+        // Room under it for three more rows: it grows as they fill it in.
+        board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title.value }, () => board.drawPicture!("table", spec, out, { reserveH: spec.rows.length < 6 ? 120 : 0 }));
+        return ok(`Table ${describeTable(spec)}${NEXT}${TABLE_HINT}`);
+      }
       board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: title.value }, () =>
         board.addTable(columns, rows, title.value, pickColumn(column.value)),
       );
@@ -934,6 +987,19 @@ function dispatchInner(
         extraExpressions.length ? `also ${extraExpressions.join("; ")}` : "",
       ].filter(Boolean).join("; ");
       return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}${extra ? `; ${extra}` : ""}.`);
+    }
+
+    // A coordinate plane that grows (lib/board-plane.ts): empty, points, lines, arrows.
+    case "graph": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      if (!board.drawPicture) return fail("This board cannot draw a graph.");
+      const built = buildPlane(null, planeInput(args));
+      if ("error" in built) return fail(built.error);
+      const out = renderPlane(built.spec);
+      const label = typeof args.label === "string" ? args.label : "graph";
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label }, () => board.drawPicture!("plane", built.spec, out));
+      return ok(`Graph: ${describePlane(built.spec)}${NEXT}${GRAPH_HINT}`);
     }
 
     case "draw_desmos": {

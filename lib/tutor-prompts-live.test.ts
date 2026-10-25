@@ -46,15 +46,17 @@ test("the Live prompt is a third of the old one and names only tools a Live sess
   assert.doesNotMatch(text, /# Backchannel policy|# Delegation policy|area between curves/);
 });
 
-test("the Live prompt takes the session block and routes graphs by Desmos", () => {
+test("the Live prompt takes the session block and routes every coordinate plane to graph", () => {
   const session = intakeInstructions({ topic: "decimals", language: "en", fileNames: [], minutes: 15 }, 0);
   const withSession = buildLiveInstructions(PROFILE, [], { desmos: true, session });
   assert.ok(withSession.includes("# This session"));
   assert.ok(withSession.indexOf("# This session") < withSession.indexOf("# Now you're live"), "the session block sits before the closing line");
-  assert.match(buildLiveInstructions(PROFILE, [], { desmos: true }), /draw_desmos/);
-  const noDesmos = buildLiveInstructions(PROFILE, [], { desmos: false });
-  assert.doesNotMatch(noDesmos, /draw_desmos/);
-  assert.match(noDesmos, /add_function_graph/);
+  // Oct 25 2026: one plane that grows (lib/board-plane.ts), Desmos key or not.
+  for (const desmos of [true, false]) {
+    const prompt = buildLiveInstructions(PROFILE, [], { desmos });
+    assert.doesNotMatch(prompt, /draw_desmos|add_function_graph/);
+    assert.match(prompt, /coordinate plane: graph \(/);
+  }
 });
 
 test("a session with the planner on the spoken path tells the tutor to call next_move first", () => {

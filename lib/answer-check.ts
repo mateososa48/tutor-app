@@ -339,6 +339,13 @@ export function stripUnitWords(problem: string): string {
 
 /** "f(3) where f(x) = 2x + 1" as the arithmetic "2(3) + 1", or null when it is not that shape. */
 export function substituteFunctionEval(problem: string): string | null {
+  // "y = 2x - 1 where x = 2", "y = 2x - 1, x = 2", "y = 3x when x is 4"
+  // (Oct 25 2026: a right 3 came back "more than one equals sign").
+  const given = /^\s*y\s*=\s*(.+?)\s*(?:,|;|\bwhere\b|\bwhen\b|\bif\b|\bfor\b|\bat\b|\bwith\b)+\s*([a-z])\s*(?:=|is)\s*([-−]?\d+(?:\.\d+)?(?:\/\d+)?)\s*[?.]?\s*$/i.exec(problem.replace(/\$/g, ""));
+  if (given) {
+    const re = new RegExp(`(?<![a-z])${given[2]}(?![a-z])`, "gi");
+    if (re.test(given[1])) return given[1].replace(re, `(${given[3].replace("−", "-")})`);
+  }
   const m = FUNCTION_EVAL_FIRST.exec(problem);
   const [value, variable, body] = m ? [m[2], m[3], m[4]] : (() => { const l = FUNCTION_EVAL_LAST.exec(problem); return l ? [l[4], l[2], l[3]] : ["", "", ""]; })();
   if (!body) return null;
@@ -481,6 +488,13 @@ export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck
       if (again.verdict !== "cannot_check") verdict = again;
     }
   }
+  // A line of working ("3x = 15" for 3x + 7 = 22) is a step, judged by
+  // whether it keeps the problem's solution (Oct 25 2026: a right "3x = 15"
+  // was read as x = 15 and called wrong, and written in their hand).
+  if (verdict.verdict !== "correct") {
+    const step = checkStep(problem, studentAnswer);
+    if (step) return step;
+  }
   if (verdict.verdict !== "incorrect") return verdict;
   // "3 + 1 / 4" is how a model types "three plus one, over four": read as
   // written it is 3.25, so a right 1 would be called wrong (Sept 27 2026: the
@@ -494,6 +508,70 @@ export function checkAnswer(problem: string, studentAnswer: string): AnswerCheck
     return cannot(`"${flat}" reads as ${top} with only the last number over ${bottom}. If the fraction bar covers all of ${top}, call check_answer again with problem="(${top}) / ${bottom}".`);
   }
   return verdict;
+}
+
+// The equation in a spoken line: from the "=", outward, the tokens that are
+// math (numbers, one letter, a number with one letter, operators), stopping
+// at the first word ("so it's 15 3x = 15." → "15 3x = 15").
+function mathAroundEquals(text: string): string | null {
+  const parts = text.split("=");
+  if (parts.length !== 2) return null;
+  const token = /^(?:[-−]?\d*\.?\d+[a-z]?|[a-z]|[-−+*/^×÷()]+|[-−]?\d*[a-z]\^\d+)$/i;
+  const pieces = (t: string) => t.replace(/([-−+*/^×÷()])/g, " $1 ").split(/\s+/).filter(Boolean);
+  const left: string[] = [];
+  for (const t of pieces(parts[0]).reverse()) {
+    if (!token.test(t)) break;
+    left.unshift(t);
+  }
+  const right: string[] = [];
+  for (const t of pieces(parts[1].replace(/[.?!,;]+\s*$/, ""))) {
+    if (!token.test(t)) break;
+    right.push(t);
+  }
+  return left.length && right.length ? `${left.join(" ")} = ${right.join(" ")}`.replace(/\s+([*/^])\s+/g, "$1") : null;
+}
+
+// The solutions of "lhs = rhs" in its one letter, or null.
+function equationSolutions(eq: string): { letter: string; roots: number[] } | null {
+  const sides = eq.split("=");
+  if (sides.length !== 2) return null;
+  const L = prepareExpression(sides[0]);
+  const R = prepareExpression(sides[1]);
+  if (!L.ok || !R.ok) return null;
+  const letter = L.variable ?? R.variable;
+  if (!letter || (L.variable && R.variable && L.variable !== R.variable)) return null;
+  const fl = createMathEvaluator(L.text);
+  const fr = createMathEvaluator(R.text);
+  if (!fl || !fr) return null;
+  const roots = solveOneVariable((x) => fl(x) - fr(x));
+  return roots && roots.length ? { letter, roots } : null;
+}
+
+/**
+ * A step of working on an equation: "3x = 15" (or "15 3x = 15", as speech
+ * runs a number into it) for 3x + 7 = 22. Same solutions as the problem: a
+ * right step, "partial" because the letter is not alone yet. Other solutions:
+ * a wrong step, with the value it would give. Null when either is not an
+ * equation in one letter, or the answer is "x = number" (the checker's own
+ * case).
+ */
+export function checkStep(problem: string, answer: string): AnswerCheck | null {
+  const page = unTextLatex(problem ?? "").replace(/\$/g, "").trim();
+  // The equation they said, without the words and numbers around it.
+  const said = mathAroundEquals(spokenToDigits((answer ?? "").toLowerCase()));
+  if (!said || !/=/.test(page) || !/[a-z]/i.test(said)) return null;
+  let line = said;
+  if (/^\s*[a-z]\s*=\s*[-−]?[\d./]+\s*$/i.test(line)) return null;
+  // "15 3x = 15": a number said before the line ran into it.
+  const lead = /^([-−]?\d+(?:\.\d+)?)\s+(\d*\s*[a-z].*)$/i.exec(line);
+  if (lead) line = lead[2];
+  const p = equationSolutions(page);
+  const a = equationSolutions(line);
+  if (!p || !a || p.letter !== a.letter) return null;
+  const same = p.roots.length === a.roots.length && p.roots.every((r, i) => near(r, a.roots[i], 1e-7));
+  const value = (rs: number[]) => rs.map(formatNumber).join(" or ");
+  if (same) return { verdict: "partial", message: `Right step: "${line}" keeps the solution of ${page}, but ${p.letter} is not alone yet (for you only: ${p.letter} = ${value(p.roots)}). Say that step works and ask for the next move.` };
+  return { verdict: "incorrect", message: `Incorrect step: "${line}" would make ${p.letter} = ${value(a.roots)}, but ${page} needs ${p.letter} = ${value(p.roots)} (for you only). Ask how they got that line; don't say the answer.` };
 }
 
 /**

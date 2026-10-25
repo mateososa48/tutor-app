@@ -235,7 +235,11 @@ export function findDuplicate(tool: string, fingerprint: string, items: Fingerpr
   }
   if (EQUATION_TOOLS.has(tool)) {
     const newest = [...since].reverse().find((i) => EQUATION_TOOLS.has(i.tool));
-    return newest?.content === fingerprint ? newest.id : null;
+    if (newest?.content === fingerprint) return newest.id;
+    // Their line, already up in their hand, is not typeset again under it
+    // (Oct 25 2026: "2(0) − 1 = −1" twice, three times over, in one session).
+    const body = (fp: string) => fp.slice(fp.indexOf(":") + 1);
+    return since.find((i) => i.tool === "add_student_attempt" && i.content && body(i.content) === body(fingerprint))?.id ?? null;
   }
   const pictures = since.filter((i) => !TEXT_TOOLS.has(i.tool) && !EQUATION_TOOLS.has(i.tool) && i.content).slice(-6);
   return pictures.find((i) => i.content === fingerprint)?.id ?? null;

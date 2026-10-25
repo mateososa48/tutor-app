@@ -155,3 +155,12 @@ test("a question tag that only repeats the problem is noise; a short question is
 test("LaTeX's \\mid splits a problem into lines", () => {
   assert.deepEqual(splitSteps("2 \\text{ cups} = 12 \\text{ cookies} \\mid 1 \\text{ cup} = ?"), ["2 \\text{ cups} = 12 \\text{ cookies}", "1 \\text{ cup} = ?"]);
 });
+
+test("a typeset line that repeats their answer line is a duplicate of it", () => {
+  const items = [
+    { id: "b1", tool: "start_new_problem" },
+    { id: "b2", tool: "add_student_attempt", content: contentFingerprint("add_student_attempt", "2(0) − 1 = −1") },
+  ];
+  assert.equal(findDuplicate("draw_equation_step", contentFingerprint("draw_equation_step", "2(0) - 1 = -1"), items), "b2");
+  assert.equal(findDuplicate("draw_equation_step", contentFingerprint("draw_equation_step", "2(1) - 1 = 1"), items), null);
+});

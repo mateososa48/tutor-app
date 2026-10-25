@@ -86,7 +86,7 @@ export const STAGED_LESSONS: readonly StagedLesson[] = [
     opening: "Plot the two points and draw the triangle between them before writing any formula.",
     problems: ["The slope between (1, 2) and (4, 8)", "The slope of y = −2x + 5", "The slope of the line through (0, 3) and (5, 3)"],
     watchFor: "run over rise instead of rise over run, and calling a flat line's slope undefined.",
-    board: "draw_desmos with both points and a rise-over-run triangle between them.",
+    board: "graph with both points, then arrows for the run and the rise between them.",
   },
   {
     key: "ratios",
@@ -130,7 +130,7 @@ export const STAGED_LESSONS: readonly StagedLesson[] = [
     opening: "Graph it first. Seeing the curve cross twice is what makes two answers feel necessary.",
     problems: ["x² − 5x + 6 = 0", "x² − 9 = 0", "x² + 2x − 8 = 0"],
     watchFor: "giving one answer where there are two, and sign slips when factoring.",
-    board: "draw_desmos of the parabola with both roots marked where it crosses.",
+    board: "graph of the parabola with both roots marked as points where it crosses.",
   },
   {
     key: "multiplying",

@@ -54,7 +54,10 @@ function attr(el: Element, name: string): string | null {
 
 /** The pieces of the picture inside `host`, in drawing order. */
 export function drawPlan(host: Element): DrawItem[] {
-  const els = Array.from(host.querySelectorAll(SHAPES)) as SVGElement[];
+  // An edit (a graph or table that grew) draws in only what is new: the
+  // pieces under `data-fresh` (lib/board-plane.ts, lib/board-table.ts).
+  const fresh = host.querySelectorAll("[data-fresh]").length > 0;
+  const els = Array.from(host.querySelectorAll(fresh ? SHAPES.split(",").map((t) => `[data-fresh] ${t}`).join(",") : SHAPES)) as SVGElement[];
   return els.map((el, i) => {
     const stroke = attr(el, "stroke");
     const tag = el.tagName.toLowerCase();

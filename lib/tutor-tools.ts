@@ -607,8 +607,10 @@ function withholdSides(policy: TutorPolicy, args: Record<string, unknown>): Shap
 // points, in both novice runs, so the student never saw them line up).
 function withholdLine(policy: TutorPolicy, args: Record<string, unknown>): ShapedCall | null {
   const m = /^\s*y\s*=\s*(.+)$/i.exec((policy.pageProblem ?? policy.statedProblem ?? "").replace(/\$/g, ""));
-  if (!m || !/x/i.test(m[1]) || policy.linePoints >= 2 || policy.boardHelp >= 4 || typeof args.expressions !== "string") return null;
-  const items = args.expressions.split(";").map((e) => e.trim()).filter(Boolean);
+  const field = typeof args.lines === "string" ? "lines" : "expressions";
+  const given = args[field];
+  if (!m || !/x/i.test(m[1]) || policy.linePoints >= 2 || policy.boardHelp >= 4 || typeof given !== "string") return null;
+  const items = given.split(";").map((e) => e.trim()).filter(Boolean);
   const isLine = (e: string) => {
     const r = /^\s*y\s*=\s*(.+)$/i.exec(e);
     try {
@@ -621,7 +623,7 @@ function withholdLine(policy: TutorPolicy, args: Record<string, unknown>): Shape
   const rest = items.filter((e) => !isLine(e));
   const note = "The line waits: it goes up once their points are on the graph and they have seen them line up. Ask what they notice about the points, then draw the line.";
   if (!rest.length && !(typeof args.points === "string" && args.points.trim())) return { args, note: null, refuse: `Not drawn: ${note} Put up the table (add_table) first and plot each point they find.` };
-  return { args: { ...args, expressions: rest.join("; ") }, note };
+  return { args: { ...args, [field]: rest.join("; ") }, note };
 }
 
 export function withholdResult(policy: TutorPolicy, name: string, args: Record<string, unknown>): ShapedCall {
@@ -646,7 +648,7 @@ export function withholdResult(policy: TutorPolicy, name: string, args: Record<s
     const sides = withholdSides(policy, args);
     if (sides) return sides;
   }
-  if (name === "draw_desmos") {
+  if (name === "draw_desmos" || name === "graph") {
     const line = withholdLine(policy, args);
     if (line) return line;
   }

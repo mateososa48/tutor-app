@@ -29,7 +29,7 @@ test("every lesson's board move names a real tool, and names no tool that does n
   for (const lesson of STAGED_LESSONS) {
     // Anything shaped like one of our tool names has to be one. Parameter
     // names (common_denominator) do not start with a tool's verb.
-    const named = lesson.board.match(/\b(?:(?:draw|add|write|plot)_[a-z_]+|illustrate)\b/g) ?? [];
+    const named = lesson.board.match(/\b(?:(?:draw|add|write|plot)_[a-z_]+|illustrate|graph(?= )|graph$)\b/g) ?? [];
     assert.ok(named.length > 0, `${lesson.key} names no tool: "${lesson.board}"`);
     for (const tool of named) {
       assert.ok(declared.has(tool), `${lesson.key} names ${tool}, which is not a declared tool`);

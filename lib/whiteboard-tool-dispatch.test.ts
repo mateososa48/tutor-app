@@ -69,6 +69,45 @@ test("annotate writes the tutor's notes on a line, and refuses marks it cannot r
   assert.match(msg(dispatchWhiteboardTool("annotate", { target: "b9", marks: "right: note" }, { whiteboard: f.board })), /Nothing on the board matches "b9"/);
 });
 
+// Oct 25 2026, session nbrkrj: each new row erased the table and drew it
+// again, and the line went on a second graph at another scale.
+test("a table or a graph called again is edited in place, and keeps its id", () => {
+  const f = fakeBoard();
+  const pictures: Array<{ id: string; kind: string; spec: object; fresh?: boolean }> = [];
+  let n = 0;
+  Object.assign(f.board as unknown as Record<string, unknown>, {
+    drawPicture: (kind: string, spec: object) => pictures.push({ id: `b${++n}`, kind, spec }),
+    findPicture: (kind: string) => {
+      const p = [...pictures].reverse().find((x) => x.kind === kind);
+      return p ? { item: { id: p.id, label: kind }, spec: p.spec } : null;
+    },
+    editPicture: (id: string, spec: object, out: { svg: string }) => {
+      const p = pictures.find((x) => x.id === id)!;
+      p.spec = spec;
+      p.fresh = out.svg.includes("data-fresh");
+      return { id, label: "edited" };
+    },
+  });
+  const ctx = { whiteboard: f.board };
+  assert.equal(dispatchWhiteboardTool("add_table", { columns: "x | y", rows: "0 | ?; 1 | ?" }, ctx).success, true);
+  const fill = dispatchWhiteboardTool("add_table", { columns: "x | y", rows: "0 | -1" }, ctx);
+  assert.match(msg(fill), /Filled in table b1 in place: x \| y: 0 \| −1; 1 \| \?/);
+  assert.equal(pictures.length, 1);
+  assert.equal(pictures[0].fresh, true);
+  // Another table, other columns: a new one.
+  dispatchWhiteboardTool("add_table", { columns: "cups | cookies", rows: "1 | 6" }, ctx);
+  assert.equal(pictures.length, 2);
+  assert.equal(dispatchWhiteboardTool("graph", { points: "(0, -1); (1, 1)" }, ctx).success, true);
+  const view = JSON.stringify((pictures[2].spec as { x: number[] }).x);
+  const line = dispatchWhiteboardTool("graph", { lines: "y = 2x - 1" }, ctx);
+  assert.match(msg(line), /Added L1 y = 2x − 1 on graph b3, same scale/);
+  assert.equal(pictures.length, 3);
+  assert.equal(JSON.stringify((pictures[2].spec as { x: number[] }).x), view);
+  assert.match(msg(dispatchWhiteboardTool("graph", { points: "(1, 1)" }, ctx)), /Nothing new to draw/);
+  assert.equal(dispatchWhiteboardTool("graph", { new_graph: true }, ctx).success, true);
+  assert.equal(pictures.length, 4);
+});
+
 // The dispatcher reaches tldraw (through the board's colours), whose React
 // scheduler holds a MessagePort open: let it go, or the run never exits.
 after(() => {

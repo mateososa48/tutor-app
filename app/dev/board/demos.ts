@@ -403,6 +403,24 @@ const answers: DemoCall[] = [
   { name: "circle_item", args: { target: "6 × 7 = 42", keep: true } },
 ];
 
+// A real table that fills in, and one graph that grows (Oct 25 2026): the
+// calls of session nbrkrj (y = 2x - 1), made the new way.
+const playground: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Graphing y = 2x - 1", problem: "y = 2x - 1" } },
+  { name: "add_table", args: { title: "Table of values", columns: "x | y", rows: "0 | ?; 1 | ?; 2 | ?" } },
+  { name: "add_table", args: { title: "Table of values", columns: "x | y", rows: "0 | -1" } },
+  { name: "graph", args: { points: "(0, -1)" } },
+  { name: "add_table", args: { title: "Table of values", columns: "x | y", rows: "0 | -1; 1 | 1; 2 | ?" } },
+  { name: "graph", args: { points: "(0, -1); (1, 1)" } },
+  { name: "add_table", args: { title: "Table of values", columns: "x | y", rows: "2 | 3" } },
+  { name: "graph", args: { points: "(2, 3)" } },
+  { name: "highlight", args: { target: "b3", text: "3" } },
+  { name: "graph", args: { lines: "y = 2x - 1" } },
+  { name: "graph", args: { arrows: "(0, -1) to (1, -1): right 1; (1, -1) to (1, 1): up 2" } },
+  { name: "circle_item", args: { target: "b4.(1, 1)", keep: true } },
+  { name: "highlight", args: { target: "b4", text: "y = 2x - 1" } },
+];
+
 // The tutor's handwriting on a line (Oct 24 2026): what is done to both
 // sides, written under each, the way a tutor works a step on a whiteboard.
 const notes: DemoCall[] = [
@@ -426,4 +444,4 @@ const illustrations: DemoCall[] = [
   { name: "draw_illustration", args: { caption: "bundles of ten", scene: {"title": "Tens and ones", "root": {"type": "row", "gap": 32, "children": [{"type": "container", "shape": "box", "id": "t1", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "box", "id": "t2", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "box", "id": "t3", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "none", "id": "o", "label": "loose ones", "child": {"type": "items", "icon": "pencil", "count": 4, "per_row": 4}}]}, "brackets": [{"over": ["t1", "t2", "t3"], "side": "top", "label": "3 tens"}]} } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { notes, illustrations, turn, answers, fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { playground, notes, illustrations, turn, answers, fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };

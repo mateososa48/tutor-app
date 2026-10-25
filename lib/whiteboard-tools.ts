@@ -20,6 +20,7 @@ export type WhiteboardToolName =
   | "draw_balance"
   | "draw_bar_chart"
   | "add_table"
+  | "graph"
   | "plot_points"
   | "add_worked_example_box"
   | "add_function_graph"
@@ -331,16 +332,37 @@ const ALL_TOOL_DECLARATIONS = [
   {
     name: "add_table",
     description:
-      "A table for comparing values or laying out cases: input/output tables, unit conversions, before/after, ratio tables, place value.",
+      "A real table that you fill in as you go: call it again with the same columns and it edits the table on the board in place (a ? cell gets its value, a new row is added). For input/output tables, ratio tables, unit conversions, before/after.",
     parameters: {
       type: "object",
       properties: {
-        columns: { type: "string", description: "Pipe-separated headers, e.g. 'x | y | y = x²'. 320 chars max." },
-        rows: { type: "string", description: "Rows separated by newlines or ';', cells by '|'. E.g. '-2 | -1 | 4; -1 | 0 | 1'. 1600 chars max." },
+        columns: { type: "string", description: "Pipe-separated headers, e.g. 'x | y'. 320 chars max." },
+        rows: { type: "string", description: "Rows separated by ';', cells by '|'; '?' leaves a cell for them. E.g. '0 | ?; 1 | ?; 2 | ?'. 1600 chars max." },
+        target: { type: "string", description: "The table to edit ('b4'), when there is more than one." },
         title: { type: "string", description: "Optional caption. 160 chars max." },
         place: PLACE,
       },
       required: ["columns", "rows"],
+    },
+  },
+  {
+    name: "graph",
+    description:
+      "A coordinate plane that stays on the board and grows: call it again to add points, lines or arrows to the same graph at the same scale; with nothing, an empty plane. Its parts are P1, P2… for points and L1… for lines, to ring or swipe.",
+    parameters: {
+      type: "object",
+      properties: {
+        points: { type: "string", description: "Points, e.g. '(0, -1); (1, 1); A(2, 3)'." },
+        lines: { type: "string", description: "Lines, e.g. 'y = 2x - 1; x = 3; through (0, -1) and (2, 3)'." },
+        arrows: { type: "string", description: "Arrows for a step, e.g. '(0, -1) to (1, -1): right 1; (1, -1) to (1, 1): up 2'." },
+        target: { type: "string", description: "The graph to add to ('b7'), when there is more than one." },
+        new_graph: { type: "boolean", description: "true starts a second graph instead of adding to the one up." },
+        x_min: { type: "number", description: "Optional view." },
+        x_max: { type: "number", description: "Optional view." },
+        y_min: { type: "number", description: "Optional view." },
+        y_max: { type: "number", description: "Optional view." },
+        label: { type: "string", description: "Optional caption." },
+      },
     },
   },
   {
@@ -753,6 +775,10 @@ export const LIVE_CUT: ReadonlySet<string> = new Set([
   "draw_sketch",
   "draw_tape_diagram",
   "draw_balance",
+  // Oct 25 2026: coordinate planes are `graph` now (lib/board-plane.ts): one
+  // plane that grows at one scale and whose points and lines can be marked.
+  "draw_desmos",
+  "add_function_graph",
 ]);
 
 export type ToolDeclaration = { name: string; description: string; parameters: { type: string; properties?: Record<string, unknown>; required?: string[] } };
