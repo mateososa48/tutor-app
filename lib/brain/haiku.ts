@@ -129,7 +129,8 @@ async function open(req: BrainRequest, signal: AbortSignal): Promise<ReadableStr
       max_tokens: req.maxTokens ?? 1200,
       stream: true,
       output_config: { effort: "low" },
-      thinking: { type: "disabled" },
+      // Sonnet 5.5 refuses "disabled" and turns thinking off with "between_tools" (its 400, Oct 24 2026).
+      thinking: { type: /^claude-sonnet/.test(req.model ?? BRAIN_MODEL) ? "between_tools" : "disabled" },
       system: [{ type: "text", text: req.system, cache_control: { type: "ephemeral" } }],
       tools: req.tools,
       ...(req.forceTool ? { tool_choice: { type: "tool", name: req.forceTool } } : {}),
