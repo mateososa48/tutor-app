@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "LIVEKIT_URL=${LIVEKIT_URL:-ws://127.0.0.1:7880} LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey} LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret} tsx --env-file=../.env.local main.ts dev",
+    "dev": "tsx --env-file=../.env.local main.ts dev",
     "download-files": "LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret tsx --env-file=../.env.local main.ts download-files",
     "voice": "tsx kokoro-server.ts",
-    "test": "tsx --test *.test.ts"
+    "test": "tsx --test *.test.ts",
+    "start": "tsx --env-file=../.env.local main.ts start",
+    "dev:local": "LIVEKIT_URL=ws://127.0.0.1:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret tsx --env-file=../.env.local main.ts dev"
   },
   "dependencies": {
     "@livekit/agents": "1.9.4",
