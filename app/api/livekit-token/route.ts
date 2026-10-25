@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { AccessToken, AgentDispatchClient, RoomAgentDispatch, RoomConfiguration } from "livekit-server-sdk";
+import { labFromRequest } from "@/lib/voice-lab";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db/client";
 import { userProfiles } from "@/lib/db/schema";
@@ -64,9 +65,11 @@ export async function POST(req: NextRequest) {
   let intake: SessionIntake | null = null;
   let fileCount = 0;
   let ttsModel: string | null = null;
+  let lab: ReturnType<typeof labFromRequest> = { stt: null, turns: null, wait: null, brain: null, tts: null };
   try {
-    const body = (await req.json()) as { intake?: unknown; fileCount?: unknown; tts?: unknown };
-    if (typeof body?.tts === "string" && /^(kokoro|[a-z0-9-]+\/[a-z0-9.-]+)$/.test(body.tts)) ttsModel = body.tts === "kokoro" ? "kokoro" : `gateway:${body.tts}`;
+    const body = (await req.json()) as { intake?: unknown; fileCount?: unknown } & Record<string, unknown>;
+    lab = labFromRequest(body ?? {});
+    if (lab.tts) ttsModel = lab.tts === "kokoro" ? "kokoro" : `gateway:${lab.tts}`;
     intake = readIntake(body?.intake);
     fileCount = typeof body?.fileCount === "number" ? Math.max(0, Math.min(20, Math.floor(body.fileCount))) : 0;
   } catch {
@@ -111,6 +114,10 @@ export async function POST(req: NextRequest) {
     instructions,
     ttsModel,
     voice: null,
+    stt: lab.stt,
+    turns: lab.turns,
+    wait: lab.wait,
+    brain: lab.brain,
     grade: row?.gradeLevel ?? "",
   });
 }

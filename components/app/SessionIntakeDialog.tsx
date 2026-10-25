@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
@@ -20,6 +20,8 @@ import { useReduce } from "@/lib/reduced-motion";
 import { TopicTiles } from "@/components/onboarding/TopicTiles";
 import { lessonTopic, type StagedLesson } from "@/lib/staged-lessons";
 import { cn } from "@/lib/utils";
+import { VoiceLabPanel } from "@/components/app/VoiceLabPanel";
+import { labEnabled } from "@/lib/voice-lab";
 
 // Two questions and nothing else: what they're stuck on, and a photo if they
 // have one, through the session screen's own upload box (`FilesPanel`). The
@@ -52,6 +54,12 @@ export function SessionIntakeDialog({
   /** Lessons to offer when the box is empty (lib/staged-lessons.ts, picked for the grade). */
   lessons?: readonly StagedLesson[];
 }) {
+  // The voice lab: decided in the browser (it reads the query), so it never mismatches the server render.
+  const [showLab, setShowLab] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the query is only known in the browser
+    setShowLab(labEnabled(new URLSearchParams(window.location.search)));
+  }, []);
   // Length and language start where Settings and Your tutor set them on this device.
   const [intake, setIntake] = useState<SessionIntake>(() => ({
     ...EMPTY_INTAKE,
@@ -118,7 +126,7 @@ export function SessionIntakeDialog({
             dragging && "ring-2 ring-(--lp-sky)",
           )}
         >
-          <div className="px-6 pt-6">
+          <div className="max-h-[calc(100dvh-10rem)] overflow-y-auto px-6 pt-6">
             <Dialog.Title className="lp-display m-0 text-[22px] leading-tight text-(--lp-ink)">
               What are we working on?
             </Dialog.Title>
@@ -180,6 +188,9 @@ export function SessionIntakeDialog({
                 hint="Or drop them on this window."
               />
             </div>
+
+            {/* Preview builds, development and ?lab=1: which voice stack the session runs on. */}
+            {showLab && <VoiceLabPanel />}
 
             {(dropError || error) && (
               <p className="m-0 mt-2 text-[12.5px] text-(--danger)">{dropError ?? error}</p>

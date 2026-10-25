@@ -32,7 +32,7 @@ import { isNonAnswer } from "./board-content-rules";
 import { ILLUSTRATE_NOTHING, ILLUSTRATE_PENDING, ILLUSTRATE_WAIT_MS, PictureMemory, alreadyDrawn, illustrateFailed, illustrateRequest } from "./illustration/tool";
 import type { IllustratorOption } from "./gemini-live";
 
-type LivekitConfig = { url: string; token: string; room: string; instructions: string; ttsModel: string | null; voice: string | null; grade: string };
+type LivekitConfig = { url: string; token: string; room: string; instructions: string; ttsModel: string | null; voice: string | null; grade: string; stt: string | null; turns: string | null; wait: string | null; brain: string | null };
 
 // A board move longer than this is dropped: the lesson goes on without it.
 const TOOL_TIMEOUT_MS = 6000;
@@ -118,7 +118,11 @@ export class LivekitTutorSession {
     const res = await fetch("/api/livekit-token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ intake: active?.intake, fileCount: active?.fileCount ?? opts.files.length, tts: new URLSearchParams(window.location.search).get("tts") ?? undefined }),
+      // The voice lab's picks (lib/voice-lab.ts) ride on the session URL.
+      body: JSON.stringify((() => {
+        const q = new URLSearchParams(window.location.search);
+        return { intake: active?.intake, fileCount: active?.fileCount ?? opts.files.length, tts: q.get("tts") ?? undefined, stt: q.get("stt") ?? undefined, turns: q.get("turns") ?? undefined, wait: q.get("wait") ?? undefined, brain: q.get("brain") ?? undefined };
+      })()),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
@@ -165,8 +169,8 @@ export class LivekitTutorSession {
     this.agentIdentity = agent;
     // Worksheets first (the agent attaches them to the opening), then the config.
     await this.sendPictures(agent, this.files);
-    await room.localParticipant.sendText(JSON.stringify({ instructions: c.instructions, ttsModel: c.ttsModel ?? undefined, voice: c.voice ?? undefined }), { topic: "chalk.config", destinationIdentities: [agent] });
-    this.debug("connection", "livekit_config_sent", { chars: c.instructions.length, files: this.files.length });
+    await room.localParticipant.sendText(JSON.stringify({ instructions: c.instructions, ttsModel: c.ttsModel ?? undefined, voice: c.voice ?? undefined, stt: c.stt ?? undefined, turns: c.turns ?? undefined, wait: c.wait ?? undefined, brain: c.brain ?? undefined }), { topic: "chalk.config", destinationIdentities: [agent] });
+    this.debug("connection", "livekit_config_sent", { chars: c.instructions.length, files: this.files.length, stt: c.stt, turns: c.turns, brain: c.brain, tts: c.ttsModel });
   }
 
   /** Worksheet pictures as byte streams (a PDF goes as its rendered pages). */

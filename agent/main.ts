@@ -39,8 +39,8 @@ import { KokoroTTS } from "./kokoro-tts";
 import { STT as GeminiSTT, endOfSpeech } from "./gemini-stt";
 
 const STT_KIND = process.env.LIVEKIT_STT || (process.env.ASSEMBLYAI_API_KEY ? "assemblyai" : "gemini");
-// gateway:<model> or kokoro. MAI-Voice 2.1 Flash was the fastest gateway voice (0.75 s a sentence, Oct 24 2026).
-const TTS_KIND = process.env.LIVEKIT_TTS || "gateway:microsoft/mai-voice-2.1-flash";
+// gateway:<model> or kokoro. Grok TTS: Mateo asked for a random pick from the blind audition (voice A, Oct 24 2026); MAI-Voice 2.1 Flash was the fastest (0.75 s a sentence).
+const TTS_KIND = process.env.LIVEKIT_TTS || "gateway:spacexai/grok-tts";
 const BRAIN_MODEL = process.env.LIVEKIT_BRAIN || "claude-haiku-5-5";
 // Haiku answers in ~0.6 s warm with a slow tail past 1.2 s: a second request at 0.9 s cuts the tail for ~$0.0002.
 const HEDGE_MS = Number(process.env.LIVEKIT_HEDGE_MS || 900);
@@ -63,7 +63,7 @@ class BrainSlot extends llm.LLM {
 const log = (...a: unknown[]) => console.log(`[chalk ${new Date().toISOString().slice(11, 23)}]`, ...a);
 
 type Rpc = (method: string, payload: unknown, timeoutMs?: number) => Promise<string>;
-type Config = { instructions: string; ttsModel?: string; voice?: string; speed?: number };
+type Config = { instructions: string; ttsModel?: string; voice?: string; speed?: number; stt?: "assemblyai" | "gemini"; turns?: "livekit" | "assemblyai"; wait?: "patient" | "quick"; brain?: string };
 
 /** The brain's history out of the framework's chat context (which holds what was actually said, cut where an interruption stopped it). */
 function historyOf(chatCtx: llm.ChatContext, movesByReply: Map<string, string[]>, openingImages: BrainImage[]): { turns: BrainTurn[]; line: string } {
@@ -101,8 +101,12 @@ class ChalkTutor extends voice.Agent {
   /** Stops the reply in progress (set while one runs). */
   private abortCurrent: (() => void) | null = null;
 
+  /** The lab's brain, else the environment's. */
+  readonly brainModel: string;
+
   constructor(private readonly config: Config, private readonly rpc: Rpc) {
     super({ instructions: config.instructions });
+    this.brainModel = config.brain || BRAIN_MODEL;
   }
 
   /** A typed line (or the opening) is about to be answered: the browser already has it in the transcript. */
@@ -119,7 +123,7 @@ class ChalkTutor extends voice.Agent {
   async warm(): Promise<void> {
     const t0 = Date.now();
     try {
-      for await (const ev of streamBrain({ system: this.config.instructions, tools: this.tools, messages: [{ role: "user", content: [{ type: "text", text: "(warm-up: reply with one word)" }] }], maxTokens: 5, model: BRAIN_MODEL })) {
+      for await (const ev of streamBrain({ system: this.config.instructions, tools: this.tools, messages: [{ role: "user", content: [{ type: "text", text: "(warm-up: reply with one word)" }] }], maxTokens: 5, model: this.brainModel })) {
         if (ev.type === "done") this.spend.brainUsd += brainCost(ev.usage);
       }
       log(`brain warm in ${Date.now() - t0} ms`);
@@ -231,7 +235,7 @@ class ChalkTutor extends voice.Agent {
               messages: brainMessages(turns, line, note, { lineImages: images }),
               signal: abort.signal,
               hedgeMs: HEDGE_MS,
-              model: BRAIN_MODEL,
+              model: agent.brainModel,
             },
             {
               allowed: agent.allowed,
@@ -323,8 +327,16 @@ export default defineAgent({
     }
     log(`config: ${config.instructions.length} chars of instructions`);
 
-    const stt = STT_KIND === "assemblyai"
-      ? new assemblyai.STT({ apiKey: process.env.ASSEMBLYAI_API_KEY })
+    // The voice lab's picks (lib/voice-lab.ts), else the environment's defaults.
+    const sttKind = config.stt === "assemblyai" && !process.env.ASSEMBLYAI_API_KEY ? "gemini" : (config.stt ?? STT_KIND);
+    const assemblyTurns = sttKind === "assemblyai" && config.turns === "assemblyai";
+    // Kids pause mid-thought ("like... one half plus... one third"): at 0.5 s of silence
+    // (and AssemblyAI's own 0.1 s) both turn-enders cut that line into three (Oct 24 2026).
+    const patient = (config.wait ?? "patient") === "patient";
+    const stt = sttKind === "assemblyai"
+      // Universal-3.6 Pro heard 52 of 52 maths keys right and finalized 0.45 s after the
+      // speech (median), against gemini-3.8-live's 48 of 52 and 1.23 s (agent/stt-compare.ts, Oct 24 2026).
+      ? new assemblyai.STT({ apiKey: process.env.ASSEMBLYAI_API_KEY, speechModel: "universal-3-6-pro", ...(assemblyTurns ? (patient ? { minTurnSilence: 900, maxTurnSilence: 2400 } : { minTurnSilence: 300, maxTurnSilence: 1500 }) : {}), keytermsPrompt: ["remainder", "squared", "cubed", "f of x", "x", "y", "fraction", "numerator", "denominator", "negative", "decimal", "percent"] })
       : new GeminiSTT({ apiKey: GEMINI_KEY });
     const ttsSpec = config.ttsModel || TTS_KIND;
     const tts = ttsSpec === "kokoro"
@@ -333,8 +345,10 @@ export default defineAgent({
 
     // The end-of-turn model hears how a sentence ends ("0.35?" still going,
     // "so it's 0.35." done), on this machine; the text model is the fallback.
+    // Or AssemblyAI's own end of turn, from the words and the pause (lab: turns=assemblyai).
     let turnDetection: voice.AgentSessionOptions["turnDetection"] = undefined;
-    try {
+    if (assemblyTurns) turnDetection = "stt";
+    else try {
       turnDetection = new inference.TurnDetector({ version: "v1-mini" });
     } catch (err) {
       log("audio turn detector unavailable:", String(err).slice(0, 160));
@@ -357,7 +371,8 @@ export default defineAgent({
       turnHandling: {
         preemptiveGeneration: { enabled: false },
         // A kid pausing mid-thought ("six... remainder... five") is not done.
-        endpointing: { minDelay: 500, maxDelay: Number(process.env.LIVEKIT_MAX_ENDPOINT_MS || 2500) },
+        // With AssemblyAI ending the turn its own silence rule applies; LiveKit's delay would be added on top.
+        endpointing: { minDelay: assemblyTurns ? 0 : patient ? 900 : 500, maxDelay: Number(process.env.LIVEKIT_MAX_ENDPOINT_MS || 2500) },
         interruption: { mode: "vad", minDuration: 600 },
       },
     });
@@ -369,7 +384,7 @@ export default defineAgent({
       if (m.type === "tts_metrics") log(`voice first audio ${ms(m.ttfbMs ?? m.ttfb)} ms`);
     });
     session.on(voice.AgentSessionEventTypes.UserStateChanged, (ev) => {
-      if (ev.oldState === "speaking" && ev.newState !== "speaking" && STT_KIND === "gemini") endOfSpeech();
+      if (ev.oldState === "speaking" && ev.newState !== "speaking" && sttKind === "gemini") endOfSpeech();
     });
     session.on(voice.AgentSessionEventTypes.UserInputTranscribed, (ev) => {
       if (ev.isFinal) log(`heard: "${ev.transcript}"`);
@@ -377,7 +392,7 @@ export default defineAgent({
 
     await session.start({ agent, room: ctx.room, outputOptions: { syncTranscription: true } as never });
     await warming;
-    log(`session started: stt ${STT_KIND}, brain ${BRAIN_MODEL}, voice ${ttsSpec}`);
+    log(`session started: stt ${sttKind}${assemblyTurns ? " (its own turn ending)" : ""}, ${patient ? "patient" : "quick"}, brain ${agent.brainModel}, voice ${ttsSpec}`);
 
     // A typed line, or the session's opening: answer it like a spoken one.
     ctx.room.localParticipant!.registerRpcMethod("chalk.say", async (data) => {

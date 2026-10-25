@@ -694,7 +694,8 @@ export async function callModel(c: ModelCall): Promise<string> {
       const r = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: c.model, max_tokens: c.maxTokens ?? 1024, temperature: c.temperature ?? 0.7, system: c.system, messages: [{ role: "user", content }] }),
+        // The current Claude models refuse temperature (400 "deprecated"); thinking off keeps a simulated student quick.
+        body: JSON.stringify({ model: c.model, max_tokens: c.maxTokens ?? 1024, output_config: { effort: "low" }, thinking: { type: "disabled" }, system: c.system, messages: [{ role: "user", content }] }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       return (await r.json()) as { content: Array<{ type: string; text?: string }>; usage?: { input_tokens: number; output_tokens: number } };
