@@ -14,6 +14,7 @@
 // squares, an area model, a figure to scale, a graph, a table.
 
 import type { ToolDeclaration } from "../whiteboard-tools";
+import { spokenToDigits } from "../answer-check";
 
 /** The four object-picture tools `illustrate` replaces in a Live session (still replayed by the dispatcher). */
 export const REPLACED_BY_ILLUSTRATE = ["draw_icons", "draw_sketch", "draw_tape_diagram", "draw_balance"] as const;
@@ -76,7 +77,9 @@ const STOP = new Set("a an and the of in on with each for to into per one all it
 
 /** The words that say what a picture is: its counts and its things. */
 export function pictureWords(what: string): Set<string> {
-  const words = what.toLowerCase().replace(/[^a-z0-9.\s]/g, " ").split(/\s+/).filter((w) => w && !STOP.has(w) && (w.length > 2 || /\d/.test(w)));
+  // "seven loose blocks" and "7 loose blocks" are the same picture (Oct 24 2026:
+  // the planner asked for the balance twice in two wordings and it was drawn twice).
+  const words = spokenToDigits(what.toLowerCase()).toLowerCase().replace(/[^a-z0-9.\s]/g, " ").split(/\s+/).filter((w) => w && !STOP.has(w) && (w.length > 2 || /\d/.test(w)));
   return new Set(words.map((w) => (w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w)));
 }
 
@@ -85,7 +88,7 @@ export function samePicture(a: string, b: string): boolean {
   const x = pictureWords(a), y = pictureWords(b);
   if (!x.size || !y.size) return false;
   // Other counts are another picture (5 brownies is not 7 brownies).
-  const nums = (s: Set<string>) => [...s].filter((w) => /\d/.test(w)).sort().join(",");
+  const nums = (s: Set<string>) => [...new Set([...s].flatMap((w) => w.match(/\d+(?:\.\d+)?/g) ?? []))].sort().join(",");
   if (nums(x) !== nums(y)) return false;
   let shared = 0;
   for (const w of x) if (y.has(w)) shared += 1;

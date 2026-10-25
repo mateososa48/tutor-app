@@ -48,7 +48,8 @@ import { PlanShapeUtil, measurePlanBox, type TLPlanShape } from "@/components/bo
 import { CardShapeUtil } from "@/components/board/CardShape";
 import { TAG_FONT_PX, TAG_H, TAG_PAD_X, TAG_TAIL, TagShapeUtil } from "@/components/board/TagShape";
 import { ConfettiLayer, type ConfettiBurst } from "@/components/board/ConfettiLayer";
-import { IllustrationShapeUtil } from "@/components/board/IllustrationShape";
+import { ILLUSTRATION_PAD, IllustrationShapeUtil } from "@/components/board/IllustrationShape";
+import { matchPart } from "@/lib/illustration/part-match";
 import { renderScene, type Scene } from "@/lib/illustration/scene";
 import { BoardStrip } from "@/components/board/BoardStrip";
 import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance, worthKeeping } from "@/lib/board-archive";
@@ -1701,9 +1702,10 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     } else if (request?.kind === "area") {
       hint = { kind: "area", area: request.area };
       named = true;
-    } else if (item.tool === "show_example" && layoutScreen(editor).w < NARROW_BOARD) {
-      // A phone sees only the left of the page: the example goes under the
-      // work, where it can be read with the problem (Oct 24 2026).
+    } else if ((item.tool === "show_example" || item.tool === "draw_illustration") && layoutScreen(editor).w < NARROW_BOARD) {
+      // A phone sees only the left of the page: the example or the picture goes
+      // under the work, where it can be read with the problem (Oct 24 2026: a
+      // picture beside the equation ran off the right of a phone).
       const lastWords = [...others].reverse().find((i) => !isHeadingItem(i));
       const r = lastWords ? inSection(rectOf(editor, lastWords)) : null;
       if (r) hint = { kind: "below", anchor: r };
@@ -1762,7 +1764,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (ids.length > 0) editor.run(() => editor.nudgeShapes(ids, { x: dx, y: dy }), { history: "ignore" });
     }
     return placed;
-  }, [ensurePageFrame, itemBounds, occupiedOn, openPage, rectOf, usedCellsOn]);
+  }, [ensurePageFrame, itemBounds, layoutScreen, occupiedOn, openPage, rectOf, usedCellsOn]);
 
   // ── Highlighter ─────────────────────────────────────────────────────────────
   // The plain text a shape shows, to decide whether a highlight's words are there.
@@ -2901,17 +2903,19 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         for (const sid of item.shapeIds) {
           const shape = editor.getShape(sid as TLShapeId);
           if (shape?.type !== "illustration") continue;
-          let parsed: { scale?: number; rects?: Record<string, Rect> } = {};
+          let parsed: { scale?: number; pad?: number; rects?: Record<string, Rect> } = {};
           try {
             parsed = JSON.parse(String((shape.props as { parts?: string }).parts ?? "{}"));
           } catch {}
           const rects = parsed.rects ?? {};
-          const key = Object.keys(rects).find((k) => k.toLowerCase() === want);
+          // By its id or by the words for it ("right pan" for "right_pan" or "r").
+          const key = matchPart(Object.keys(rects), want);
           const page = editor.getShapePageBounds(shape.id);
           if (!key || !page) continue;
           const k = parsed.scale ?? 1;
+          const pad = parsed.pad ?? 0;
           const r = rects[key];
-          return { item, rect: { x: page.x + r.x * k, y: page.y + r.y * k, w: r.w * k, h: r.h * k } };
+          return { item, rect: { x: page.x + pad + r.x * k, y: page.y + pad + r.y * k, w: r.w * k, h: r.h * k } };
         }
       }
       return null;
@@ -4082,12 +4086,18 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // Only built-in objects: a model-written SVG body never reaches the board.
       const out = renderScene({ ...scene, defs: undefined });
       if (out.w <= 0 || out.h <= 0) return null;
-      // At most a column's width and a readable height; never scaled up.
-      const MAX_W = 600;
-      const MAX_H = 420;
+      // At most a column's width and a readable height; never scaled up. A
+      // phone sees about 480 page px across at its zoom, so there a picture is
+      // smaller and fits under the work instead of running off the right.
+      const narrow = layoutScreen(editor).w < NARROW_BOARD;
+      const MAX_W = narrow ? 400 : 600;
+      const MAX_H = narrow ? 300 : 420;
       const k = Math.min(1, MAX_W / out.w, MAX_H / out.h);
-      const w = Math.round(out.w * k);
-      const h = Math.round(out.h * k);
+      // On a white card with a soft grey border (IllustrationShape): the card's
+      // padding is part of the shape, so layout keeps other work off it.
+      const pad = ILLUSTRATION_PAD;
+      const w = Math.round(out.w * k) + pad * 2;
+      const h = Math.round(out.h * k) + pad * 2;
       const x = colX(col);
       const y = colY(col).current;
       editor.createShape({
@@ -4095,7 +4105,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         type: "illustration",
         x,
         y,
-        props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: k, rects: out.parts }), scene: JSON.stringify(scene), reveal: 1 },
+        props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: k, pad, rects: out.parts }), scene: JSON.stringify(scene), reveal: 1 },
         meta: currentMeta(),
       } as unknown as Parameters<Editor["createShape"]>[0]);
       colY(col).current += h + ROW_GAP;
@@ -5325,7 +5335,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       const markerSwipes = (rects: Rect[]): HighlightStroke[] =>
         rects.slice(0, 4).map((r) => {
           const swipe = highlightSwipeFor(r);
-          return { points: swipe.points, size: swipe.size as TLDefaultSizeStyle, duration: Math.min(620, 260 + Math.max(r.w, r.h) * 1.4) };
+          // A quick flick of the wrist: a word in about a fifth of a second.
+          return { points: swipe.points, size: swipe.size as TLDefaultSizeStyle, duration: Math.min(380, 150 + Math.max(r.w, r.h) * 0.6) };
         });
       const swipes = (rects: Rect[]): HighlightStroke[] =>
         how === "marker" ? markerSwipes(rects) : rects.slice(0, 4).map((r) => ({ points: scribbleUnderlinePoints(r), size: "s" as TLDefaultSizeStyle, duration: Math.min(720, 320 + r.w * 1.6), ring: true }));

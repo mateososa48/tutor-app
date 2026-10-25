@@ -39,3 +39,11 @@ test("the same picture is recognised by its counts and things, and is pointed at
   assert.equal(memory.find("2 quarters and 5 dimes", board), null);
   assert.match(alreadyDrawn("b4", 'Drew "x" (parts: dimes, nickels) (item b4)'), /already on the board as b4 \(parts: dimes, nickels\)/);
 });
+
+test("the same picture asked for in other words, number words included, is the same picture", () => {
+  assert.equal(samePicture(
+    "a balance scale with three bags of x and seven loose blocks on the left pan, and twenty-two loose blocks on the right pan, with the equation 3x + 7 = 22 typed underneath.",
+    "a balance: left pan with three bags of x and seven loose blocks, right pan with twenty-two blocks",
+  ), true);
+  assert.equal(samePicture("5 brownies on 2 plates", "7 brownies on 2 plates"), false);
+});

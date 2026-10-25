@@ -55,18 +55,19 @@ export function toolScheduling(model: string, name: string, result: { success: b
   // and saying its reply again (Sept 26 2026 root-cause study, H1). The last
   // result of the batch wakes it once, with the others already in context.
   if (!spoken) return lastOfBatch ? "WHEN_IDLE" : "SILENT";
+  // Once the reply has given them something to do, nothing wakes it again,
+  // a failure included: it is read on the next turn (Oct 24 2026: a failed
+  // point_at after "what is 5 times 8 minus 2?" woke 3.8 into "Which problem
+  // next?" and a start_new_problem of its own while the student was answering;
+  // three such wakes in the session before were muted as second replies).
+  if (replyGaveTask) return "SILENT";
   if (!result.success) return "WHEN_IDLE";
   if (/\bCareful:/.test(result.message ?? "")) return "WHEN_IDLE";
   // A call made mid-reply ends 3.8's generation, and a silent result never
   // resumes it: "Let's test that." + a drawing, then nothing (Sept 26 2026,
   // the first speech-first candidate). Until the reply has given them
   // something to do, the batch's last result wakes it to finish.
-  if (!replyGaveTask) return lastOfBatch ? "WHEN_IDLE" : "SILENT";
-  // Once it has spoken, a changed [Tutor state] is filed too: it is read on
-  // the next turn. WHEN_IDLE made it speak a second time after its reply
-  // (Sept 26 2026: "…sheet or the idea? Where do you usually get stuck…?",
-  // heard as two questions in the saved audio).
-  return "SILENT";
+  return lastOfBatch ? "WHEN_IDLE" : "SILENT";
 }
 
 /**

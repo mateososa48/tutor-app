@@ -598,3 +598,16 @@ test("picking a problem or reading it back is not an answer to check", () => {
   assert.equal(p.pendingAnswer, null);
   noteStudentUtterance(p, "its 5(x-2)=30", 1000);
 });
+
+test("a teaching picture ends TEACH until they are stuck again", () => {
+  const p = createPolicy(0);
+  noteBoardWrite(p, "start_new_problem", { title: "Problem 1", problem: "3x + 7 = 22" });
+  noteStudentUtterance(p, "i dont know. im kinda lost", 1000);
+  assert.equal(flowStep(p)?.step, "teach");
+  noteBoardWrite(p, "draw_illustration");
+  assert.notEqual(flowStep(p)?.step, "teach", "the balance went up: now they try");
+  noteStudentUtterance(p, "umm 7", 2000);
+  assert.notEqual(flowStep(p)?.step, "teach");
+  noteStudentUtterance(p, "i still dont get it", 3000);
+  assert.equal(flowStep(p)?.step, "teach", "stuck again: teach again, now with an example");
+});

@@ -90,6 +90,8 @@ export type TutorPolicy = {
   /** A worked example (show_example) is up for this problem: their next answer had H5 help, though the board still keeps their own results theirs. */
   exampleHelp: number;
   exampleShown: boolean;
+  /** The student turn a teaching picture or example went up on this page, so TEACH ends once taught. */
+  taughtTurn: number | null;
   /** Points shown on a graph of this page so far: the page's line waits until two have been up (Oct 24 2026). */
   linePoints: number;
   /** The problem the student stated in their own words ("graph y = 2x - 1"), for a session the tutor never opens with start_new_problem. */
@@ -206,6 +208,7 @@ export function createPolicy(now: number): TutorPolicy {
     exampleHelp: 0,
     exampleShown: false,
     linePoints: 0,
+    taughtTurn: null,
     statedProblem: null,
     lastUtterance: "",
     boardAsk: null,
@@ -589,6 +592,9 @@ const SHOW_NEXT = "draw this problem as a picture (tape diagram, area model or n
 /** They have no way in yet: asked to be taught, "I don't know" before any step of this problem, or two stalls in a row. */
 export function needsTeaching(p: TutorPolicy): boolean {
   if (p.exampleShown) return false;
+  // Taught since they last said they were stuck: let them try it.
+  const asked = Math.max(p.signalTurn.teach ?? -1, p.signalTurn.idk ?? -1);
+  if (p.taughtTurn !== null && p.taughtTurn >= asked && p.missesInRow < 2) return false;
   if (active(p, "teach")) return true;
   if (!p.pageProblem) return false;
   if (active(p, "idk") && p.pageRightAnswers === 0) return true;
@@ -891,6 +897,7 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     p.exampleHelp = 0;
     p.exampleShown = false;
     p.linePoints = 0;
+    p.taughtTurn = null;
     return;
   }
   // No page yet, and the first typeset line is math: that line is the problem
@@ -908,6 +915,10 @@ export function noteBoardWrite(p: TutorPolicy, name?: string, args?: Record<stri
     return;
   }
   if (name === "draw_desmos" && args) p.linePoints = Math.max(p.linePoints, graphPoints(args));
+  // Taught: a picture or an example went up while the lesson said TEACH. The
+  // state stops saying "teach it now" until they are stuck again (Oct 24 2026:
+  // it said so for three turns after the balance, while the student answered).
+  if ((name === "draw_illustration" || name === "show_example") && needsTeaching(p)) p.taughtTurn = p.studentTurns;
   if (name === "show_example") {
     p.exampleShown = true;
     p.exampleHelp = 5;

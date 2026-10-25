@@ -1115,7 +1115,11 @@ function dispatchInner(
       const parts = done.parts.filter((p) => !p.includes("."));
       // Its parts once, in the result and so in the board list's label (Oct 23
       // 2026: they were written twice, and the short list cut both off).
-      return ok(`Drew "${title}"${parts.length ? ` (parts: ${parts.slice(0, 8).join(", ")})` : ""}.${done.problems.length ? ` Not drawn: ${done.problems.slice(0, 3).join("; ")}.` : ""}`);
+      // Oct 24 2026: pictures went up and were never marked, so the student had
+      // to work out for themselves which blocks were which. The result says how.
+      // After the item id (NEXT), so it never becomes part of the picture's label.
+      const ring = parts.length ? `${NEXT}Ring each part as you name it: circle_item(target="${parts.at(-1)}").` : "";
+      return ok(`Drew "${title}"${parts.length ? ` (parts: ${parts.slice(0, 8).join(", ")})` : ""}.${done.problems.length ? ` Not drawn: ${done.problems.slice(0, 3).join("; ")}.` : ""}${ring}`);
     }
 
     case "write_vertical": {
@@ -1235,9 +1239,11 @@ function dispatchInner(
       if (isToolError(target)) return target;
       const text = opt(args, "text");
       if (text.error) return text.error;
-      // One sky pen (Sept 16): an old `color` argument is ignored. Words are
-      // underlined with a scribble unless how is "marker" (Oct 14 2026).
-      const how = typeof args.how === "string" && args.how.trim().toLowerCase() === "marker" ? "marker" : "underline";
+      // One sky pen (Sept 16): an old `color` argument is ignored. Words get a
+      // quick highlighter swipe (Oct 24 2026, Mateo: "a quick swipe that looks
+      // like a highlighter… not a transparent thin line"); how: "underline"
+      // keeps the Oct 14 scribble.
+      const how = typeof args.how === "string" && args.how.trim().toLowerCase() === "underline" ? "underline" : "marker";
       if (!board.highlight) return fail("Highlighting is not available on this board.");
       const res = board.withDirectMeta({ owner: "tutor" }, () => board.highlight!(target, text.value, how));
       if (!res) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);

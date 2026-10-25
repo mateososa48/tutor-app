@@ -238,6 +238,8 @@ export class GeminiLiveSession {
   // it did not answer. So a tool result with no audio yet re-arms the nudge,
   // a silent turnComplete nudges at once, and one escalation follows.
   private static readonly AFTER_TOOL_MS = 6_000;
+  /** How long a picture that is ready waits for the tutor to start talking (untilSpeaking). */
+  private static readonly PICTURE_HOLD_MS = 5_000;
   private static readonly ESCALATE_MS = 10_000;
   // 3.8 sends turnComplete while it is still reasoning, and the sound
   // follows within a second or two; a silent turnComplete waits this long.
@@ -324,6 +326,7 @@ export class GeminiLiveSession {
   private readonly pictureMemory = new PictureMemory();
   /** How long an illustrate call waits for its picture (a field so a test can shorten it). */
   private illustrateWaitMs = ILLUSTRATE_WAIT_MS;
+  private pictureHoldMs = GeminiLiveSession.PICTURE_HOLD_MS;
   /** The student line (inputSeq) the planner already gave an order for, and that order: planned once per line. */
   private plannedFor = -1;
   private plannedOrder: string | null = null;
@@ -846,8 +849,22 @@ export class GeminiLiveSession {
   }
 
   /** Ask /api/illustrate for the scene and put it on the board under `callId`. */
+  /**
+   * Until the tutor's reply to this line has made a sound (or a new line came,
+   * or `maxMs` passed). Oct 24 2026: the planner's balance went up 1.4 s after
+   * the student's line and the tutor said nothing for 9 s more, so the picture
+   * sat there unexplained; it reads as being drawn for you when it appears as
+   * the tutor says "let me draw that".
+   */
+  private async untilSpeaking(seq: number, maxMs: number): Promise<number> {
+    const started = Date.now();
+    while (!this.manualDisconnect && !this.turnHadAudio && this.inputSeq === seq && Date.now() - started < maxMs) await new Promise((r) => setTimeout(r, 120));
+    return Date.now() - started;
+  }
+
   private async drawPicture(pic: { what: string; notice: string; line: string }, callId: string, signal?: AbortSignal): Promise<{ ok: true; message: string } | { ok: false; why: string }> {
     const started = Date.now();
+    const seq = this.inputSeq;
     const ill = this.illustrator;
     if (!ill) return { ok: false, why: "this session can't draw pictures" };
     const same = this.pictureMemory.find(pic.what, ill.board());
@@ -875,8 +892,9 @@ export class GeminiLiveSession {
       // Taken back while it was being drawn (the student spoke over it), or the lesson ended.
       if (signal?.aborted || this.cancelledCalls.has(callId) || this.manualDisconnect) why = "cancelled";
       else if (j?.scene) {
-        const message = await ill.draw(j.scene, callId);
-        this.debug("board", "illustration_drawn", { callId, ms: Date.now() - started, model: j.model, parts: j.parts, withheld: j.withheld, problems: j.problems, cost: j.cost, result: message });
+        const heldMs = await this.untilSpeaking(seq, this.pictureHoldMs);
+        const message = signal?.aborted || this.cancelledCalls.has(callId) || this.manualDisconnect ? null : await ill.draw(j.scene, callId);
+        this.debug("board", "illustration_drawn", { callId, ms: Date.now() - started, heldMs, model: j.model, parts: j.parts, withheld: j.withheld, problems: j.problems, cost: j.cost, result: message });
         if (message) {
           this.pictureMemory.remember(pic.what, message);
           // A picture is help on this problem, and the "no picture yet" reminder is answered.

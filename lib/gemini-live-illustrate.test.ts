@@ -50,8 +50,12 @@ function harness(reply: Reply | ((url: string, init: RequestInit) => Reply)) {
     pictureOut: string | null;
     pendingTurnNote: string | null;
     illustrateWaitMs: number;
+    pictureHoldMs: number;
+    turnHadAudio: boolean;
     newStudentInput: (kind: "text" | "voice") => void;
   };
+  // Most tests are not about the hold for the tutor's first word (one is, below).
+  s.pictureHoldMs = 0;
   return { s, drawn, events, requests, boardNow };
 }
 
@@ -152,4 +156,18 @@ test("a picture still on the board is pointed at, not drawn again; once it is go
   h.s.newStudentInput("text");
   await h.s.illustrateTool("third", { what: "3 dimes and 4 nickels" });
   assert.equal(h.drawn.length, 2, "erased or turned away: drawn again");
+});
+
+// Oct 24 2026: the planner's balance went up 9 s before the tutor said a word.
+test("a ready picture waits for the tutor to start talking, at most a few seconds", async () => {
+  const h = harness({ body: { scene: SCENE } });
+  h.s.pictureHoldMs = 1000;
+  h.s.newStudentInput("text");
+  h.s.pictures.set("order", { what: "12 marbles shared into 3 jars", notice: "", line: "idk" });
+  h.s.deliverOrder("order");
+  await wait(150);
+  assert.equal(h.drawn.length, 0, "held while the tutor is quiet");
+  h.s.turnHadAudio = true;
+  await wait(250);
+  assert.equal(h.drawn.length, 1, "drawn once the tutor speaks");
 });

@@ -45,8 +45,11 @@ test("async results: one that worked is filed silently; a refusal or a warning i
   assert.equal(toolScheduling(m, "write_step", { success: true, message: "Wrote it (item b3)." }, true), "SILENT");
   assert.equal(toolScheduling(m, "point_at", { success: true }, true), "SILENT");
   assert.equal(toolScheduling(m, "record_teaching_move", { success: true, message: "[Tutor state: …]" }, true), "SILENT", "a changed state line is read next turn, not spoken over the reply");
-  assert.equal(toolScheduling(m, "ask", { success: false }, true), "WHEN_IDLE");
-  assert.equal(toolScheduling(m, "draw_figure", { success: true, message: "Drew it. Careful: 6, 8 and 11 cannot make a right triangle." }, true), "WHEN_IDLE");
+  // Before the reply has given them something to do, a refusal or a warning wakes it to fix the drawing.
+  assert.equal(toolScheduling(m, "ask", { success: false }, true, true, true, false), "WHEN_IDLE");
+  assert.equal(toolScheduling(m, "draw_figure", { success: true, message: "Drew it. Careful: 6, 8 and 11 cannot make a right triangle." }, true, true, true, false), "WHEN_IDLE");
+  // After it has (Oct 24 2026), nothing does: a failed point_at woke it into a second turn of its own.
+  assert.equal(toolScheduling(m, "point_at", { success: false }, true, true, true, true), "SILENT");
   assert.equal(toolScheduling(m, "check_answer", { success: true }, true), undefined);
   assert.equal(toolScheduling(m, "look_at_board", { success: true }, true), undefined);
   // Before the model has said anything this turn, a result is what makes it speak.
@@ -83,7 +86,7 @@ test("before the first sound, a batch of calls wakes the model once: only its la
   assert.equal(toolScheduling(m, "draw_fraction", done, true, false, false), "SILENT");
   assert.equal(toolScheduling(m, "point_at", done, true, false, true), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "point_at", done, true, true, false), "SILENT", "after the first sound nothing wakes it");
-  assert.equal(toolScheduling(m, "draw_fraction", { success: false }, true, true, false), "WHEN_IDLE", "a refusal after speech still gets a (muted) chance to fix the drawing");
+  assert.equal(toolScheduling(m, "draw_fraction", { success: false }, true, true, false), "SILENT", "a refusal after a reply that gave a task is read next turn");
   // Mid-reply ("Let's test that." then a drawing): the reply has given them nothing to do yet, so the result wakes it to finish.
   assert.equal(toolScheduling(m, "draw_fraction", done, true, true, true, false), "WHEN_IDLE");
   assert.equal(toolScheduling(m, "draw_fraction", done, true, true, false, false), "SILENT", "one wake per batch");
@@ -125,7 +128,7 @@ test("a result that beats the first sound is held: filed SILENT when the tutor t
   assert.equal(hold.offer("e", "draw_grid", { success: true }, true), false, "once it is talking nothing is held");
   hold.offer("f", "draw_grid", { success: false }, false);
   hold.onNewInput();
-  assert.deepEqual(sent, ["f:WHEN_IDLE"], "a refusal still asks to be heard");
+  assert.deepEqual(sent, ["f:SILENT"], "a refusal is read next turn: the reply already gave them something to do");
   hold.dispose();
 });
 

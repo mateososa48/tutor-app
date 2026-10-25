@@ -35,7 +35,8 @@ const DESIGN = `How the picture should be:
 - A pie or a grid stands on its own, never inside a container.
 - Say each thing once: a bracket or an edge label, never both with the same words.
 - Arrows only between parts you gave an id, and only when something moves or turns into something; a label or a bracket says the rest.
-- Readable on a phone: few labels, big enough objects.`;
+- Readable on a phone: few labels, big enough objects.
+- Give an id to every part the tutor will point at while explaining, in plain words: "left_pan", "right_pan", "bags", "loose_blocks", "jar1", "total" (never "l", "r" or "a1"). The tutor circles them by name.`;
 
 const ICONS = BOARD_ICON_NAMES.join(" ");
 

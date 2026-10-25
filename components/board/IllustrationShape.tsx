@@ -1,6 +1,8 @@
 "use client";
 
+import { useLayoutEffect, useRef } from "react";
 import { HTMLContainer, Rectangle2d, ShapeUtil, T, type RecordProps, type TLBaseShape } from "tldraw";
+import { drawPlan, drawProgress, type DrawItem } from "@/lib/illustration/draw-in";
 
 // An illustration on the board (Oct 2026): a picture the illustrator described
 // as a scene and lib/illustration/scene.ts laid out and drew as SVG. The shape
@@ -10,7 +12,13 @@ import { HTMLContainer, Rectangle2d, ShapeUtil, T, type RecordProps, type TLBase
 // use the board's own face; every word in it was escaped by the layout, and
 // only built-in objects are drawn (no model-written SVG).
 //
-// `reveal` wipes it in from the left, like typeset math and graphs.
+// It sits on a white card with a soft grey rounded border (Oct 24 2026, Mateo:
+// "a rounded soft grey border around them"), `pad` px of card around the
+// picture; the parts' boxes are in the picture's own pixels, so pointing adds
+// the pad. `reveal` draws it as a hand would (lib/illustration/draw-in.ts):
+// each outline traced along its path, its colour filled in after, the words
+// written in order. It used to wipe in from the left like typeset math, which
+// read as pasted.
 
 export type TLIllustrationShapeProps = { w: number; h: number; svg: string; parts: string; scene: string; reveal: number };
 
@@ -26,6 +34,21 @@ export type TLIllustrationShape = TLBaseShape<"illustration", TLIllustrationShap
 export function svgViewBox(svg: string): { x: number; y: number; w: number; h: number } | null {
   const m = /viewBox="([-\d.]+) ([-\d.]+) ([\d.]+) ([\d.]+)"/.exec(svg);
   return m ? { x: Number(m[1]), y: Number(m[2]), w: Number(m[3]), h: Number(m[4]) } : null;
+}
+
+/** The card's padding and border, in board px. */
+export const ILLUSTRATION_PAD = 14;
+const CARD_RADIUS = 18;
+const CARD_BORDER = "rgba(18, 18, 21, 0.11)";
+
+/** The pad a picture was drawn with (pictures from before the card have none). */
+export function illustrationPad(parts: string): number {
+  try {
+    const p = JSON.parse(parts) as { pad?: number };
+    return typeof p.pad === "number" ? p.pad : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** The SVG to draw at the shape's size: the root's own width and height go, the viewBox scales it. */
@@ -66,30 +89,58 @@ export class IllustrationShapeUtil extends ShapeUtil<TLIllustrationShape> {
   }
 
   component(shape: TLIllustrationShape) {
-    const { w, h, svg, reveal } = shape.props;
-    const shown = reveal >= 1;
-    return (
-      <HTMLContainer style={{ width: w, height: h, pointerEvents: "none" }}>
-        <div
-          aria-label="Illustration"
-          role="img"
-          style={{
-            width: w,
-            height: h,
-            opacity: shown ? 1 : Math.min(1, reveal * 1.6),
-            clipPath: shown ? undefined : `inset(-6px ${(1 - reveal) * 100}% -6px -6px)`,
-          }}
-          dangerouslySetInnerHTML={{ __html: fitted(svg, w, h) }}
-        />
-      </HTMLContainer>
-    );
+    return <IllustrationBody shape={shape} />;
   }
 
   // The board picture the tutor sees: the same SVG, inline.
   override toSvg(shape: TLIllustrationShape) {
-    const { w, h, svg } = shape.props;
+    const { w, h, svg, parts } = shape.props;
+    const pad = illustrationPad(parts);
     const box = svgViewBox(svg);
     const inner = svg.replace(/^[\s\S]*?<svg\b[^>]*>/, "").replace(/<\/svg>\s*$/, "");
-    return <svg width={w} height={h} viewBox={box ? `${box.x} ${box.y} ${box.w} ${box.h}` : undefined} preserveAspectRatio="xMidYMid meet" dangerouslySetInnerHTML={{ __html: inner }} />;
+    return (
+      <g>
+        {pad > 0 && <rect x={0.75} y={0.75} width={w - 1.5} height={h - 1.5} rx={CARD_RADIUS} fill="#ffffff" stroke={CARD_BORDER} strokeWidth={1.5} />}
+        <svg x={pad} y={pad} width={w - pad * 2} height={h - pad * 2} viewBox={box ? `${box.x} ${box.y} ${box.w} ${box.h}` : undefined} preserveAspectRatio="xMidYMid meet" dangerouslySetInnerHTML={{ __html: inner }} />
+      </g>
+    );
   }
+}
+
+function IllustrationBody({ shape }: { shape: TLIllustrationShape }) {
+  const { w, h, svg, parts, reveal } = shape.props;
+  const pad = illustrationPad(parts);
+  const host = useRef<HTMLDivElement>(null);
+  const plan = useRef<{ svg: string; items: DrawItem[] } | null>(null);
+  // Before paint, so a picture created hidden never flashes whole.
+  useLayoutEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    // Again when the picture's markup was rebuilt (the shape re-mounts while it
+    // is revealed), or the styles land on pieces no longer on the page.
+    if (!plan.current || plan.current.svg !== svg || !plan.current.items.every((it) => el.contains(it.el))) plan.current = { svg, items: drawPlan(el) };
+    drawProgress(plan.current.items, reveal);
+  }, [svg, reveal]);
+  const card = pad > 0;
+  return (
+    <HTMLContainer style={{ width: w, height: h, pointerEvents: "none" }}>
+      <div
+        aria-label="Illustration"
+        role="img"
+        style={{
+          width: w,
+          height: h,
+          boxSizing: "border-box",
+          padding: pad,
+          background: card ? "#ffffff" : undefined,
+          border: card ? `1.5px solid ${CARD_BORDER}` : undefined,
+          borderRadius: card ? CARD_RADIUS : undefined,
+          // The card itself comes in first, quickly; the picture draws on it.
+          opacity: reveal >= 1 ? 1 : Math.min(1, reveal * 8),
+        }}
+      >
+        <div ref={host} dangerouslySetInnerHTML={{ __html: fitted(svg, w - pad * 2, h - pad * 2) }} />
+      </div>
+    </HTMLContainer>
+  );
 }

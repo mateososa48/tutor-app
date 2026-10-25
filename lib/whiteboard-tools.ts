@@ -636,13 +636,13 @@ const ALL_TOOL_DECLARATIONS = [
   {
     name: "highlight",
     description:
-      "Underline something on the board in sky blue while you talk about it: one term in an equation, a number in a table, a label, or mark a whole item. Use it whenever you say 'this', 'notice', or 'look at', and say what the mark means. Marks stay until erased.",
+      "Swipe a highlighter over something on the board while you talk about it: one term in an equation, a number in a table, a label, or mark a whole item. Use it whenever you say 'this', 'notice', or 'look at', and say what the mark means. Marks stay until erased.",
     parameters: {
       type: "object",
       properties: {
         target: { type: "string", description: "Item id ('b3'), label words, or 'last'." },
         text: { type: "string", description: "The exact part to highlight as it reads on the board, e.g. '2x', '3/4', '11'. Leave it out to highlight the whole item." },
-        how: { type: "string", enum: ["underline", "marker"], description: "underline (default) or a marker swipe." },
+        how: { type: "string", enum: ["marker", "underline"], description: "marker (default) or a scribbled underline." },
       },
       required: ["target"],
     },
