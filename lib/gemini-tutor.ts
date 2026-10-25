@@ -257,7 +257,7 @@ export class GeminiTutorSession {
         },
         onDebugEvent: (event) => this.callbacks.onDebugEvent?.(event),
       },
-      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools, vad: this.options.vad, coach: this.options.coach, planner: this.planner(config), illustrator: this.illustrator(config) },
+      { systemInstruction: config.instructions, voiceName: config.voice, model: this.model, runtime: this.options.runtime, asyncTools: this.options.asyncTools, vad: this.options.vad, coach: this.options.coach, planner: this.planner(config), illustrator: this.illustrator(config), pendingAudioMs: () => player.getPendingSourceMs() },
     );
     this.session = session;
 

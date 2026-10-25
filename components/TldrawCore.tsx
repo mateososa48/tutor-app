@@ -50,6 +50,7 @@ import { TAG_FONT_PX, TAG_H, TAG_PAD_X, TAG_TAIL, TagShapeUtil } from "@/compone
 import { ConfettiLayer, type ConfettiBurst } from "@/components/board/ConfettiLayer";
 import { ILLUSTRATION_PAD, IllustrationShapeUtil } from "@/components/board/IllustrationShape";
 import { matchPart } from "@/lib/illustration/part-match";
+import type { Annotation } from "@/lib/board-annotate";
 import { renderScene, type Scene } from "@/lib/illustration/scene";
 import { BoardStrip } from "@/components/board/BoardStrip";
 import { ARCHIVE_GAP, ARCHIVE_TOTAL_MS, archiveFrameAt, archiveRect, slideDistance, worthKeeping } from "@/lib/board-archive";
@@ -421,6 +422,8 @@ export interface WhiteboardHandle {
   fadeQuestions?(): number;
   /** A right answer: a green box drawn round it and a check beside it (Oct 14 2026). */
   markCorrect?(target: string): BoardItem | null;
+  /** The tutor's sky-blue handwriting on a line: notes under, over or beside its parts, a division bar, a cancel (lib/board-annotate). */
+  annotate?(target: string, marks: Annotation[]): BoardItem | null;
   /** The student's answer typeset (it had math in it), behind a "You said" tag. */
   addStudentMath?(latex: string): void;
   /** The board's items as they are now (the dispatcher looks for duplicates in them). */
@@ -5217,6 +5220,141 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
             { points: handBoxPoints(bb, BOX_PAD), size: "m", duration: 560, ring: true, color: "check" },
             { points: checkPoints(c.x, c.y, c.size), size: "m", duration: 280, ring: true, color: "check", after: () => celebrate(editor, { x: c.x + c.size * 1.02, y: c.y - c.size * 0.62 }) },
           ], meta);
+        },
+      });
+      return item;
+    },
+
+    annotate(target: string, marks: Annotation[]) {
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const item = resolveItemTarget(itemsRef.current, target);
+      if (!item) return null;
+      notePage(editor, item);
+      const meta = currentMeta();
+      const SIZE: TLDefaultSizeStyle = "m";
+      const textH = FONT_PX[SIZE] * LINE_HEIGHT;
+      // Room for the notes, decided now, so what is written next steers clear
+      // of them (as the green check does).
+      const now = itemBounds(editor, item, MARK_BOUNDS);
+      if (now) {
+        const held = rectOf(editor, item) ?? now;
+        let x1 = Math.max(held.x + held.w, now.x + now.w);
+        let y1 = Math.max(held.y + held.h, now.y + now.h);
+        for (const m of marks) {
+          if (m.kind === "right") x1 = Math.max(x1, now.x + now.w + 22 + measureText(editor, m.text, "draw", SIZE, null).w);
+          if (m.kind === "under" || m.kind === "divide") y1 = Math.max(y1, now.y + now.h + 10 + textH);
+          if (m.kind === "below") y1 = Math.max(y1, now.y + now.h + 8 + textH + (marks.some((k) => k.kind === "under" || k.kind === "divide") ? FONT_PX.s * LINE_HEIGHT + 4 : 0));
+        }
+        const y0 = marks.some((m) => m.kind === "over") ? Math.min(held.y, now.y - textH - 4) : held.y;
+        placedRectsRef.current.set(item.id, { x: held.x, y: y0, w: x1 - held.x, h: y1 - y0 });
+      }
+      const reduce = () => prefersReducedMotion() || instantRef.current;
+      // One note written as a hand writes it: the pen leads, the words come
+      // out a letter at a time, in the tutor's sky handwriting.
+      // A line the board has already filed (a new problem began while these
+      // were queued): its notes are filed with it, so they slide away together.
+      const metaFor = (host: BoardItem) => (itemsRef.current.includes(host) ? meta : { ...meta, archived: true });
+      const typeMs = (text: string) => Math.min(900, 140 + 60 * text.length);
+      const write = (host: BoardItem, text: string, x: number, y: number, done: () => void, size: TLDefaultSizeStyle = SIZE) => {
+        const id = createShapeId();
+        const lineH = FONT_PX[size] * LINE_HEIGHT;
+        const full = text.replace(/(^|[\s(])-(?=\d)/g, "$1\u2212");
+        editor.run(() => {
+          editor.createShape({
+            id,
+            type: "text",
+            x,
+            y,
+            props: { richText: toRichText(reduce() ? full : ""), size, font: "draw", color: MARK, textAlign: "start", w: 8, autoSize: true, scale: 1 },
+            meta: { ...metaFor(host), itemId: host.id, mark: true },
+          } as Parameters<Editor["createShape"]>[0]);
+        }, { history: "ignore" });
+        host.shapeIds = [...host.shapeIds, id];
+        if (reduce()) return done();
+        moveCursor(editor, x, y + lineH * 0.7, 200, () => {
+          const t0 = performance.now();
+          const ms = typeMs(full);
+          const frame = (t: number) => {
+            if (!editor.getShape(id)) return;
+            const p = Math.min(1, Math.max(0, (t - t0) / ms));
+            const shown = typedPrefix(full, p);
+            editor.run(() => editor.updateShapes([{ id, type: "text", props: { richText: toRichText(shown) } }] as unknown as Parameters<Editor["updateShapes"]>[0]), { history: "ignore" });
+            const w = measureText(editor, shown || " ", "draw", size, null).w;
+            patchPresence(editor, { cursor: { x: x + w, y: y + lineH * 0.7, type: "default", rotation: 0 } });
+            if (p < 1) requestAnimationFrame(frame);
+            else done();
+          };
+          requestAnimationFrame(frame);
+        });
+      };
+      const draw = () => {
+        const host = findHost(item.id);
+        if (!host) return;
+        const line = itemBounds(editor, host, MARK_BOUNDS);
+        if (!line) return;
+        const own = host.shapeIds.filter((sid) => {
+          const shape = editor.getShape(sid as TLShapeId);
+          return shape && shape.type !== "highlight" && (shape.meta as { mark?: unknown }).mark !== true;
+        });
+        // The part of the line a mark goes with, measured on the board.
+        const termRect = (term: string): Rect | null => {
+          const variants = matchVariants(term);
+          for (const sid of own) {
+            const plain = normalizeForMatch(shapeText(editor, sid));
+            if (!variants.some((v) => plain.includes(v))) continue;
+            const rects = textRectsIn(editor, sid, variants);
+            if (rects?.length) return rects[0];
+          }
+          return null;
+        };
+        const steps: Array<(next: () => void) => void> = [];
+        // Notes under the whole line go below anything written under its terms.
+        const underTerms = marks.some((m) => m.kind === "under" || m.kind === "divide");
+        let belowY = line.y + line.h + (underTerms ? FONT_PX.s * LINE_HEIGHT + 12 : 8);
+        for (const m of marks) {
+          if (m.kind === "right") {
+            steps.push((next) => write(host, m.text, line.x + line.w + 22, line.y + line.h / 2 - textH / 2, next));
+            continue;
+          }
+          if (m.kind === "below") {
+            const y = belowY;
+            belowY += textH;
+            steps.push((next) => write(host, m.text, line.x, y, next));
+            continue;
+          }
+          const r = m.term ? termRect(m.term) : null;
+          if (!r) continue;
+          const cx = r.x + r.w / 2;
+          const sw = measureText(editor, m.text || " ", "draw", "s", null).w;
+          const sh = FONT_PX.s * LINE_HEIGHT;
+          if (m.kind === "under") steps.push((next) => write(host, m.text, cx - sw / 2, r.y + r.h + 2, next, "s"));
+          else if (m.kind === "over") steps.push((next) => write(host, m.text, cx - sw / 2, r.y - sh + 2, next, "s"));
+          else if (m.kind === "cancel") {
+            // A slash through the term, bottom left to top right.
+            const pts = Array.from({ length: 9 }, (_, i) => ({ x: r.x - 3 + ((r.w + 6) * i) / 8, y: r.y + r.h + 2 - ((r.h + 4) * i) / 8 + Math.sin(i * 0.9) * 0.6 }));
+            steps.push((next) => runHighlights(editor, host.id, [{ points: pts, size: "s", duration: 260, ring: true, after: next }], metaFor(host)));
+          } else if (m.kind === "divide") {
+            // A short bar under the term, as in a fraction, and the divisor under it.
+            const barY = r.y + r.h + 5;
+            const half = Math.max(r.w, sw) / 2 + 5;
+            const pts = Array.from({ length: 8 }, (_, i) => ({ x: cx - half + (2 * half * i) / 7, y: barY + Math.sin(i * 0.8) * 0.8 - i * 0.15 }));
+            steps.push((next) => runHighlights(editor, host.id, [{ points: pts, size: "s", duration: 220, ring: true, after: () => write(host, m.text, cx - sw / 2, barY + 2, next, "s") }], metaFor(host)));
+          }
+        }
+        const run = (k: number) => (k < steps.length ? steps[k](() => run(k + 1)) : scheduleCursorHide(editor, 2400));
+        run(0);
+      };
+      enqueue({
+        kind: "action",
+        wait: 420 + 300 + marks.reduce((t, m) => t + (m.kind === "cancel" ? 300 : m.kind === "divide" ? 440 + typeMs(m.text) : 220 + typeMs(m.text)), 0),
+        run: () => {
+          const host = findHost(item.id);
+          const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
+          if (!host || !bb) return;
+          focusOn(editor, bb.x - 16, bb.y - 50, bb.w + 260, bb.h + 110);
+          const t = setTimeout(draw, rectVisible(editor, bb) ? 0 : 420);
+          scribbleTimersRef.current.push(t);
         },
       });
       return item;

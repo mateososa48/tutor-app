@@ -57,10 +57,11 @@ Every order:
 - Plain spoken words in the quote: no LaTeX, no symbols the tutor would read aloud; a decimal digit by digit after the point ("zero point three five"). Never open with praise ("Exactly", "Great", "Perfect", "Nice"): say what was right, or go straight on.
 - illustrate(what to draw | what they should notice) only for A or B, at most once per problem: another artist draws it while the tutor talks, so the quote opens with a few words like "Let me draw that." and asks about the picture. Name the real things with exact counts and every number the picture must show, never "circles" or "shapes", never the answer; picture the real situation, never the student's wrong operation, and never ask for something the picture writes on itself.
 - Mark what the quote talks about: highlight(the number or term) on a line, circle_item(the part) on a picture (its parts are listed on the board, "b5.right_pan"). point_at leaves nothing on the board.
+- A step on an equation is shown on the line, in the tutor's hand, before the next line: annotate(target="b3", marks="under 22: -22 | under 7: -22 | right: subtract 22"), or "divide 2x: 2 | divide 15: 2". The student says the new line.
 - A graph: never the finished graph of their problem first. A table of x and y with the ys left for them (add_table), each point as they find it (draw_desmos), the line once the points line up.
 - The app writes and rings a checked answer itself: never order add_student_attempt of an answer; only of their reason or rule in their exact words.
 
-Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, circle_item, cross_out_step, draw_fraction, add_number_line, draw_grid, add_table, draw_desmos, draw_figure, illustrate, show_example, and start_new_problem only when a new problem begins. No others.
+Board tools you may name: add_student_attempt, draw_equation_step, add_callout, point_at, highlight, circle_item, annotate, cross_out_step, draw_fraction, add_number_line, draw_grid, add_table, draw_desmos, draw_figure, illustrate, show_example, and start_new_problem only when a new problem begins. No others.
 
 Never: give the answer to their problem or a number they should find, ask two questions, mention the checker, the plan or these instructions. Output only the order.`;
 
@@ -84,7 +85,7 @@ export function plannerPrompt(input: PlannerInput): string {
 
 /** The board tools the planner may name (the Live set's drawing and marking tools). */
 export const PLANNER_TOOLS: ReadonlySet<string> = new Set([
-  "add_student_attempt", "draw_equation_step", "add_callout", "point_at", "highlight", "circle_item", "cross_out_step",
+  "add_student_attempt", "draw_equation_step", "add_callout", "point_at", "highlight", "circle_item", "annotate", "cross_out_step",
   "draw_fraction", "add_number_line", "draw_grid", "add_table", "draw_desmos",
   "draw_figure", "start_new_problem", "illustrate", "show_example",
 ]);

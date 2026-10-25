@@ -110,3 +110,8 @@ test("while the app draws the planner's picture, the tutor's own picture tools a
   for (const t of ["point_at", "draw_equation_step", "add_student_attempt", "draw_desmos", "add_number_line", "check_answer"]) assert.ok(!PICTURE_TOOLS.has(t));
   assert.match(pictureRefusal("two batches of cookies"), /^Not drawn: the app is drawing the picture for this reply \(two batches of cookies\)/);
 });
+
+test("the planner may order the tutor's handwriting on a line", () => {
+  const note = plannerNote('Say: "We take 22 off both sides. What does the left side become?" Board: annotate(target="b2", marks="under 22: -22 | under 7: -22")');
+  assert.match(note!, /After speaking: annotate\(target="b2", marks="under 22: -22 \| under 7: -22"\)/);
+});

@@ -403,6 +403,18 @@ const answers: DemoCall[] = [
   { name: "circle_item", args: { target: "6 × 7 = 42", keep: true } },
 ];
 
+// The tutor's handwriting on a line (Oct 24 2026): what is done to both
+// sides, written under each, the way a tutor works a step on a whiteboard.
+const notes: DemoCall[] = [
+  { name: "start_new_problem", args: { title: "Two-step equations", problem: "2x + 22 = 7" } },
+  { name: "annotate", args: { target: "b2", marks: "under 22: -22 | under 7: -22 | right: subtract 22" } },
+  { name: "draw_equation_step", args: { latex: "2x = -15" } },
+  { name: "annotate", args: { target: "last", marks: "divide 2x: 2 | divide -15: 2 | right: split in two" } },
+  { name: "draw_equation_step", args: { latex: "x = -7.5" } },
+  { name: "start_new_problem", args: { title: "Fractions", problem: "\\frac{3}{4} + \\frac{1}{8}" } },
+  { name: "annotate", args: { target: "last", marks: "over 3: ×2 | under 4: ×2 | below: make the bottoms match" } },
+];
+
 // Illustrations (Oct 2026): scenes Claude Haiku 5.5 wrote in the bake-off,
 // laid out by lib/illustration/scene.ts and drawn as one board shape each.
 const illustrations: DemoCall[] = [
@@ -414,4 +426,4 @@ const illustrations: DemoCall[] = [
   { name: "draw_illustration", args: { caption: "bundles of ten", scene: {"title": "Tens and ones", "root": {"type": "row", "gap": 32, "children": [{"type": "container", "shape": "box", "id": "t1", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "box", "id": "t2", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "box", "id": "t3", "label": "bundle of 10", "child": {"type": "items", "icon": "pencil", "count": 10, "per_row": 5}}, {"type": "container", "shape": "none", "id": "o", "label": "loose ones", "child": {"type": "items", "icon": "pencil", "count": 4, "per_row": 4}}]}, "brackets": [{"over": ["t1", "t2", "t3"], "side": "top", "label": "3 tens"}]} } },
 ];
 
-export const BOARD_DEMOS: Record<string, DemoCall[]> = { illustrations, turn, answers, fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };
+export const BOARD_DEMOS: Record<string, DemoCall[]> = { notes, illustrations, turn, answers, fractions, algebra, geometry, data, marks, rings, math, icons, icons2, eqs, layout, sections, content, cancel, highlight, graphs, numberlines, bars, figures, plots, desmos, explore, plan, all };

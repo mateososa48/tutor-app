@@ -193,3 +193,13 @@ test("a caption of only dots is dropped, a lone period is kept", () => {
   assert.equal(c.clean("."), ".");
   assert.equal(c.clean("So... five?"), "So... five?");
 });
+
+test("a no-speech marker cut across fragments never reaches the caption", () => {
+  const c = new SpeechTextCleaner();
+  assert.equal(c.clean(" Let me draw that for you.<no "), " Let me draw that for you.");
+  assert.equal(c.clean("speech>{pause}"), "");
+  assert.equal(c.clean(" What do you see?"), " What do you see?");
+  const d = new SpeechTextCleaner();
+  assert.equal(d.clean("Okay {pau"), "Okay ");
+  assert.equal(d.clean("se} go on"), " go on");
+});

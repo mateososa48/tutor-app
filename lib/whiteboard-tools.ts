@@ -661,6 +661,22 @@ const ALL_TOOL_DECLARATIONS = [
     },
   },
   {
+    name: "annotate",
+    description:
+      "Write on a line in your own hand, the way a tutor works a step on a whiteboard: what you do to both sides under each, a division bar, a cancel, a short note beside it.",
+    parameters: {
+      type: "object",
+      properties: {
+        target: { type: "string", description: "The line: item id ('b3'), its words, or 'last'." },
+        marks: {
+          type: "string",
+          description: "Split by ' | ': 'under 22: -22 | under 7: -22 | right: subtract 22'. Kinds: under/over <term>: text, divide <term>: 2, cancel <term>, right: note, below: note.",
+        },
+      },
+      required: ["target", "marks"],
+    },
+  },
+  {
     name: "erase_items",
     description:
       "Erase specific items from the board: a wrong attempt after it has been corrected, a picture the student no longer needs, a hint they have used. Keeps the rest.",

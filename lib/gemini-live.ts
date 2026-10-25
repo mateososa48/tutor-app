@@ -22,6 +22,9 @@ import { TurnTracker, pcmBase64Ms, type TurnTrigger } from "./live-turn-metrics"
 // one we use) and thinks for about 20 s before it draws or answers properly,
 // so it is here to try, not to run a session on. It also needs a thinking
 // level, or the socket closes with 1007.
+
+/** The tutor announcing a picture: "let me draw that", "here's a picture", "picture a balance". */
+const DRAW_CUE = /\b(?:let me|i'?ll|i will|i'?m going to|let'?s)\s+(?:draw|sketch|show you|put (?:that|it|this) (?:up|on))|\bhere'?s (?:a|the) (?:picture|drawing|balance)|\b(?:look at|see) (?:the|this) (?:picture|drawing|balance)/i;
 export const LIVE_MODELS: Record<string, string> = {
   "3.1": "gemini-3.1-flash-live-preview",
   "3.8": "gemini-3.8-live",
@@ -239,7 +242,7 @@ export class GeminiLiveSession {
   // a silent turnComplete nudges at once, and one escalation follows.
   private static readonly AFTER_TOOL_MS = 6_000;
   /** How long a picture that is ready waits for the tutor to start talking (untilSpeaking). */
-  private static readonly PICTURE_HOLD_MS = 5_000;
+  private static readonly PICTURE_HOLD_MS = 15_000;
   private static readonly ESCALATE_MS = 10_000;
   // 3.8 sends turnComplete while it is still reasoning, and the sound
   // follows within a second or two; a silent turnComplete waits this long.
@@ -326,6 +329,15 @@ export class GeminiLiveSession {
   private readonly pictureMemory = new PictureMemory();
   /** How long an illustrate call waits for its picture (a field so a test can shorten it). */
   private illustrateWaitMs = ILLUSTRATE_WAIT_MS;
+  /** How much of the tutor's voice is queued and not yet heard, in the voice's own ms (the page's player). */
+  private readonly pendingAudioMs?: () => number;
+  /** This reply's voice so far, in its own ms, and where in it the tutor says it is drawing ("let me draw that"). */
+  private replyAudioMs = 0;
+  private pictureCueMs: number | null = null;
+  private replyDone = false;
+  /** A picture went up for this line (the planner's or the tutor's own): its follow-up question is owed once. */
+  private pictureThisInput = false;
+  private pictureFollowedUp = false;
   private pictureHoldMs = GeminiLiveSession.PICTURE_HOLD_MS;
   /** The student line (inputSeq) the planner already gave an order for, and that order: planned once per line. */
   private plannedFor = -1;
@@ -368,8 +380,9 @@ export class GeminiLiveSession {
   private inputSeq = 0;
   private lastInputAt = 0;
 
-  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption; illustrator?: IllustratorOption }) {
+  constructor(callbacks: SessionCallbacks, options: { systemInstruction: string; voiceName: string; model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption; illustrator?: IllustratorOption; pendingAudioMs?: () => number }) {
     this.coach = options.coach;
+    this.pendingAudioMs = options.pendingAudioMs;
     this.planner = options.planner;
     this.illustrator = options.illustrator;
     this.callbacks = callbacks;
@@ -392,6 +405,11 @@ export class GeminiLiveSession {
     this.lastInputAt = Date.now();
     this.lastInputKind = kind;
     this.turnHadAudio = false;
+    this.replyAudioMs = 0;
+    this.pictureCueMs = null;
+    this.replyDone = false;
+    this.pictureThisInput = false;
+    this.pictureFollowedUp = false;
     this.replyText = "";
     this.interruptedSinceAudio = false;
     this.awaitingReply = true;
@@ -798,6 +816,7 @@ export class GeminiLiveSession {
     this.pictures.clear();
     if (!pic || !this.illustrator) return;
     this.pictureOut = pic.what;
+    this.pictureThisInput = true;
     void this.drawPicture(pic, `planner-picture-${Date.now()}`).then((r) => {
       if (!r.ok) this.pictureFailed(pic.what, r.why);
     });
@@ -815,6 +834,7 @@ export class GeminiLiveSession {
     if (!this.illustrator) return { success: false, error: illustrateFailed("this session can't draw pictures") };
     if (this.pictureOut) return { success: true, message: pictureRefusal(this.pictureOut) };
     this.pictureOut = req.what;
+    this.pictureThisInput = true;
     const controller = new AbortController();
     this.illustrations.set(id, controller);
     const job = this.drawPicture({ ...req, line: this.lastStudentLine }, id, controller.signal).finally(() => this.illustrations.delete(id));
@@ -849,17 +869,45 @@ export class GeminiLiveSession {
   }
 
   /** Ask /api/illustrate for the scene and put it on the board under `callId`. */
+  /** The tutor's voice for this reply that the student has actually heard, in the voice's own ms. */
+  private heardAudioMs(): number {
+    return Math.max(0, this.replyAudioMs - (this.pendingAudioMs?.() ?? 0));
+  }
+
   /**
-   * Until the tutor's reply to this line has made a sound (or a new line came,
-   * or `maxMs` passed). Oct 24 2026: the planner's balance went up 1.4 s after
-   * the student's line and the tutor said nothing for 9 s more, so the picture
-   * sat there unexplained; it reads as being drawn for you when it appears as
-   * the tutor says "let me draw that".
+   * Until the student hears the tutor announce the picture ("let me draw
+   * that"), or `maxMs` passed, or a new line came. Oct 24 2026: drawn at the
+   * first sound, the picture went up during "Let me teach you the idea first"
+   * and was finished 8 s before "let me draw that for you" played. With no
+   * announcement in the reply, it goes up a second and a half into the voice.
+   * Without a player to ask (the bench), at the first sound.
    */
   private async untilSpeaking(seq: number, maxMs: number): Promise<number> {
     const started = Date.now();
-    while (!this.manualDisconnect && !this.turnHadAudio && this.inputSeq === seq && Date.now() - started < maxMs) await new Promise((r) => setTimeout(r, 120));
+    const ready = () => {
+      if (!this.turnHadAudio) return false;
+      if (!this.pendingAudioMs) return true;
+      const heard = this.heardAudioMs();
+      if (this.pictureCueMs !== null) return heard >= this.pictureCueMs - 250;
+      return this.replyDone || this.replyText.length > 160 ? heard >= Math.min(1500, this.replyAudioMs) : false;
+    };
+    while (!this.manualDisconnect && this.inputSeq === seq && !ready() && Date.now() - started < maxMs) await new Promise((r) => setTimeout(r, 100));
     return Date.now() - started;
+  }
+
+  /**
+   * A reply that drew a picture and gave them nothing to do (Oct 24 2026: it
+   * ended on "Let me draw that for you." and the student waited 39 s): once its
+   * voice has played, the tutor is asked once for a question about the picture.
+   */
+  private async pictureFollowUp(seq: number) {
+    if (this.pictureFollowedUp) return;
+    this.pictureFollowedUp = true;
+    const started = Date.now();
+    while (!this.manualDisconnect && this.inputSeq === seq && (this.pendingAudioMs?.() ?? 0) > 150 && Date.now() - started < 30_000) await new Promise((r) => setTimeout(r, 150));
+    if (this.manualDisconnect || this.inputSeq !== seq) return;
+    this.debug("turn", "picture_follow_up", { afterMs: Date.now() - started });
+    this.sendUserTurn([{ text: "(The picture is on the board now. Ask the student one short question about it, and ring the part you mean with circle_item.)" }], "event");
   }
 
   private async drawPicture(pic: { what: string; notice: string; line: string }, callId: string, signal?: AbortSignal): Promise<{ ok: true; message: string } | { ok: false; why: string }> {
@@ -1175,6 +1223,11 @@ export class GeminiLiveSession {
     this.flushStudentUtterance();
     this.tutorTurnText = joinTranscript(this.tutorTurnText, text, this.spacedTranscripts);
     this.replyText = joinTranscript(this.replyText, text, this.spacedTranscripts);
+    // Where in the voice the tutor announces the picture: the transcript runs
+    // ahead of the audio, so the voice that has arrived by now is about where
+    // these words are (Oct 24 2026: drawn at the first sound, the picture was
+    // finished 8 s before "let me draw that" was heard at 0.8x speed).
+    if (this.pictureCueMs === null && DRAW_CUE.test(this.replyText)) this.pictureCueMs = this.replyAudioMs;
     this.tutorRuntime.noteTutorSpeech(this.replyText);
     this.scheduleTurnFinishCheck();
   }
@@ -1447,6 +1500,7 @@ export class GeminiLiveSession {
             continue;
           }
           this.turns.noteAudio(pcmBase64Ms(inlineData.data), now);
+          this.replyAudioMs += pcmBase64Ms(inlineData.data);
           this.turnHadAudio = true;
           this.awaitingReply = false;
           this.clearUnanswered();
@@ -1510,6 +1564,8 @@ export class GeminiLiveSession {
         this.debug("turn", "turn_complete", { tutorChars: this.replyText.trim().length, pendingTools: this.pendingTools, ...(serverContent.turnCompleteReason ? { reason: serverContent.turnCompleteReason } : {}) });
         if (this.turns.finish("turn_complete", now)) this.scheduleTurnFlush();
         this.gate.onTurnComplete(this.turnHadAudio, this.replyText, givesTask);
+        this.replyDone = true;
+        if (this.pictureThisInput && this.turnHadAudio && !givesTask(this.replyText)) void this.pictureFollowUp(this.inputSeq);
         this.replyText = "";
         this.droppedAudioChunks = 0;
         this.finishTutorTurn();

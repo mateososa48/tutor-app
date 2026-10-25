@@ -171,3 +171,23 @@ test("a ready picture waits for the tutor to start talking, at most a few second
   await wait(250);
   assert.equal(h.drawn.length, 1, "drawn once the tutor speaks");
 });
+
+// Oct 24 2026: at 0.8x speed the picture was done 8 s before "let me draw that" played.
+test("with a player, the picture waits until the student hears the tutor announce it", async () => {
+  const h = harness({ body: { scene: SCENE } });
+  const s = h.s as unknown as { pictureHoldMs: number; turnHadAudio: boolean; replyAudioMs: number; pictureCueMs: number | null; pendingAudioMs?: () => number; newStudentInput: (k: "text") => void; pictures: Map<string, unknown>; deliverOrder: (o: string) => void };
+  let pending = 6000;
+  s.pendingAudioMs = () => pending;
+  s.pictureHoldMs = 3000;
+  s.newStudentInput("text");
+  s.pictures.set("order", { what: "12 marbles shared into 3 jars", notice: "", line: "idk" });
+  s.deliverOrder("order");
+  s.turnHadAudio = true;
+  s.replyAudioMs = 9000;
+  s.pictureCueMs = 5000;
+  await wait(250);
+  assert.equal(h.drawn.length, 0, "3 s heard, the announcement is at 5 s");
+  pending = 4200;
+  await wait(250);
+  assert.equal(h.drawn.length, 1, "drawn as the student hears it");
+});

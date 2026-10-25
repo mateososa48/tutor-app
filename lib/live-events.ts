@@ -290,15 +290,27 @@ export const NO_SPEECH = /<no speech>|\{pause\}/i;
 
 export class SpeechTextCleaner {
   private inComment = false;
+  /** A marker cut across fragments ("Let me draw that.<no " then "speech>{pause}"), held until it closes. */
+  private held = "";
 
   /** A new tutor turn: an HTML comment never closed in the last one does not swallow this one. */
   reset() {
     this.inComment = false;
+    this.held = "";
   }
 
   clean(fragment: string): string {
     let out = "";
-    let rest = fragment;
+    let rest = this.held + fragment;
+    this.held = "";
+    // Oct 24 2026: "<no " and "speech>" came as two fragments and the caption
+    // read "Let me draw that for you.<no speech>". An opening "<" or "{" with
+    // only letters after it waits for the next fragment.
+    const open = /[<{][a-z ]{0,14}$/i.exec(rest);
+    if (open) {
+      this.held = open[0];
+      rest = rest.slice(0, open.index);
+    }
     while (rest) {
       if (this.inComment) {
         const end = rest.indexOf("-->");

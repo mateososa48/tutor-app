@@ -54,6 +54,21 @@ test("set_plan refuses an empty plan and a step with no plan, and keeps four ste
   assert.equal(f.plan()!.steps.length, 4);
 });
 
+test("annotate writes the tutor's notes on a line, and refuses marks it cannot read", () => {
+  const f = fakeBoard();
+  const seen: unknown[] = [];
+  (f.board as unknown as { annotate: unknown }).annotate = (target: string, marks: unknown) => {
+    seen.push(marks);
+    return target === "b2" ? { id: "b2", label: "2x + 22 = 7" } : null;
+  };
+  const r = dispatchWhiteboardTool("annotate", { target: "b2", marks: "under 22: -22 | under 7: -22 | right: subtract 22" }, { whiteboard: f.board });
+  assert.equal(r.success, true, msg(r));
+  assert.match(msg(r), /Wrote on b2 \(2x \+ 22 = 7\): -22 under 22, -22 under 7, a note: subtract 22/);
+  assert.equal(dispatchWhiteboardTool("annotate", { target: "b2", marks: "sideways 22: x" }, { whiteboard: f.board }).success, false);
+  assert.equal(dispatchWhiteboardTool("annotate", { target: "b2", marks: "under: -22" }, { whiteboard: f.board }).success, false);
+  assert.match(msg(dispatchWhiteboardTool("annotate", { target: "b9", marks: "right: note" }, { whiteboard: f.board })), /Nothing on the board matches "b9"/);
+});
+
 // The dispatcher reaches tldraw (through the board's colours), whose React
 // scheduler holds a MessagePort open: let it go, or the run never exits.
 after(() => {

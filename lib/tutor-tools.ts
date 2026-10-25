@@ -503,7 +503,7 @@ export function filledSteps(policy: TutorPolicy): Array<{ item: string; latex: s
 // not said and the problem did not give, goes up as "?".
 // An equation line's own result is the result rule's (it becomes the "= ?"
 // question the auto-check reads), so `latex` is not here.
-const GUARDED_KEYS = new Set(["text", "annotation", "annotations", "label", "caption", "second_label", "cells", "rows", "body", "ask", "total", "points"]);
+const GUARDED_KEYS = new Set(["text", "annotation", "annotations", "label", "caption", "second_label", "cells", "rows", "body", "ask", "total", "points", "marks"]);
 const NUMBER_TOKEN = /(?<![\w.\/])-?\d+(?:\.\d+)?(?:\s*\/\s*\d+)?(?![\w.\/]*\d)/g;
 
 // The words in an illustration's scene (lib/illustration/scene.ts): everything

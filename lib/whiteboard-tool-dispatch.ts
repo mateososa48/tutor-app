@@ -1,3 +1,4 @@
+import { describeAnnotations, parseAnnotations } from "./board-annotate";
 import { parseScene, renderScene, type Scene } from "@/lib/illustration/scene";
 import type { WhiteboardHandle } from "@/components/TldrawCore";
 import { parsePlan, planIsSolutionSteps, planSummary, PLAN_MAX_STEPS, validStep } from "@/lib/board-plan";
@@ -1272,6 +1273,21 @@ function dispatchInner(
       const item = board.withDirectMeta({ owner: "tutor" }, () => board.markCorrect!(target));
       if (!item) return fail(`Nothing on the board matches "${target}".`);
       return ok(`Boxed ${item.id} (${item.label}) in green with a check.`);
+    }
+
+    // The tutor's handwriting on a line (Oct 24 2026): −22 under both sides,
+    // a bar and 2 under each side, a cancel, a note beside it.
+    case "annotate": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const target = requiredString(args, "target");
+      if (isToolError(target)) return target;
+      const marks = parseAnnotations(args.marks);
+      if ("error" in marks) return fail(marks.error);
+      if (!board.annotate) return fail("This board cannot write notes on a line; use highlight instead.");
+      const item = board.withDirectMeta({ owner: "tutor" }, () => board.annotate!(target, marks));
+      if (!item) return fail(`Nothing on the board matches "${target}". Use an id from the [Board: …] list.`);
+      return ok(`Wrote on ${item.id} (${item.label}): ${describeAnnotations(marks)}.`);
     }
 
     case "circle_item": {
