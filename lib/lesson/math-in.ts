@@ -47,8 +47,11 @@ export function posedProblem(text: string): { statement: string; math?: string; 
     const answer = (big ? va >= vb : va <= vb) ? a : b;
     return { statement: `Which is ${cmp[1].toLowerCase()}, ${a} or ${b}?`, solution: { answer, work: answer } };
   }
+  // Their own working is not a new problem ("i got -9 - 8 = -17?" became the
+  // heading, Oct 31): only a line that sets a problem out does.
+  if (/\b(?:i (?:got|get|put|did|wrote|think)|my answer|so it'?s)\b/i.test(text)) return null;
   const math = mathIn(text);
-  if (math && /[?]|\b(?:solve|what is|find|work out|how (?:many|much))\b|^\s*(?:it was|the problem (?:is|was)|question)\b/i.test(text)) return { statement: text.trim().slice(0, 200), math };
+  if (math && /\b(?:solve|what is|find|work out|how (?:many|much))\b|^\s*(?:it was|the problem (?:is|was)|question\b|problem\b)/i.test(text)) return { statement: text.trim().slice(0, 200), math };
   return null;
 }
 

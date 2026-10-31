@@ -40,7 +40,7 @@ export function fallbackPlan(a: InputAssessment): TurnPlan {
   const falseOnes = a.claims.filter((c) => c.verdict === "verified_false");
   if (a.signals.includes("stop")) return { move: "close", speech: [{ id: "s1", text: "Okay, let's stop here. Nice work today.", needs: [] }], board: [], question: null, givesAnswer: false, close: true };
   if (a.answer?.verdict === "correct" || a.final?.verdict === "correct") say.push("Your answer is right.");
-  else if (a.answer?.verdict === "incorrect") say.push("That one doesn't work yet.");
+  // A wrong verdict is never said by the fallback alone: the checker can misread a line.
   for (const c of falseOnes.slice(0, 2)) say.push(`One step to fix: ${c.correct?.replace(/\*/g, " times ").replace(/\//g, " divided by ")}.`);
   // Respond to their line, never a generic "what next" after a question of theirs.
   say.push(a.answer?.verdict === "incorrect" || a.final?.verdict === "incorrect" ? "Walk me through how you got it?" : a.signals.includes("question") ? "Good question. Tell me what you think so far, and we'll check it together?" : "Which part should we look at first?");
@@ -64,7 +64,7 @@ function openingOps(s: LessonState, prefix: string): Compiled {
     const spec = startWork(p.math);
     const rendered = renderWork(spec);
     const sid = `work:${p.id}`;
-    ops.push({ opId: `${prefix}.w`, type: "draw", sid, kind: "work", spec, rendered, label: "the working", reserveH: 200 });
+    ops.push({ opId: `${prefix}.w`, type: "draw", sid, kind: "work", spec, rendered, label: "the working", reserveH: 320 });
     objects.push({ sid, kind: "work", problemId: p.id, spec, parts: [...new Set([...Object.keys(rendered.parts), ...Object.keys(rendered.aliases)])], facts: [describeWork(spec)], status: "pending" });
   }
   return { ops, objects, issues: [], notes: [] };

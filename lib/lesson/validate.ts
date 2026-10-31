@@ -460,7 +460,15 @@ export function salvage(plan: TurnPlan, detail: Issue[]): TurnPlan | null {
       speech = [{ id: "ok", text: `Your answer, ${numberWords(right[1])}, is right.`, needs: [] }, ...speech];
       continue;
     }
-    if (d.kind === "verdict" && /INCORRECT|CORRECT/.test(d.text)) return null;
+    // The checker and the model still disagree after a second try: the checker
+    // may have read the line as an answer to a different question (Oct 31:
+    // "f(2) is 5" was checked against the question about another row). Say
+    // neither right nor wrong: cut the verdict sentences, keep the rest.
+    if (d.kind === "verdict" && /INCORRECT|CORRECT/.test(d.text)) {
+      const wrongOne = /INCORRECT, but the speech calls it right/.test(d.text) ? AFFIRMS : DENIES;
+      speech = speech.map((seg) => ({ ...seg, text: (seg.text.match(/[^.?!]+[.?!]*\s*/g) ?? [seg.text]).filter((x) => !wrongOne.test(x)).join("").trim() })).filter((seg) => seg.text);
+      continue;
+    }
     // A false claim of theirs still not corrected: the code says the true fact itself.
     const claim = /their claim "([^"]+)" is false \(([^)]+)\)/.exec(d.text);
     if (d.kind === "verdict" && claim) {
