@@ -221,6 +221,8 @@ export function buildPlane(
     added.push(`${id} ${l.text}`);
   }
   for (const a of arrows) {
+    // The same hop again is already there (an edit re-sent the first two).
+    if (spec.arrows.some((q) => q.from[0] === a.from[0] && q.from[1] === a.from[1] && q.to[0] === a.to[0] && q.to[1] === a.to[1])) continue;
     if (spec.arrows.length >= MAX_ARROWS) break;
     const id = `A${spec.arrows.length + 1}`;
     spec.arrows.push({ id, ...a });
@@ -264,7 +266,9 @@ export function buildPlane(
     const hi = Math.max(...xs);
     const whole = xs.every((x) => Number.isInteger(x));
     const t = tickStep(Math.max(hi, 0) - Math.min(lo, 0));
-    const view: [number, number] = !whole ? [Math.min(0, Math.floor(lo)), Math.max(1, Math.ceil(hi))] : t === 1 ? [Math.min(0, lo - 1), Math.max(0, hi + 1)] : [lo >= 0 ? 0 : Math.floor((lo - t / 2) / t) * t, hi <= 0 ? 0 : Math.ceil((hi + t / 2) / t) * t];
+    // Zero is on it when it is near; 22 down to 15 is drawn from 14 to 23, not from 0 (its hops were specks).
+    const far = (lo > 10 || hi < -10) && hi - lo <= 20;
+    const view: [number, number] = !whole ? [Math.min(0, Math.floor(lo)), Math.max(1, Math.ceil(hi))] : far ? [lo - 1, hi + 1] : t === 1 ? [Math.min(0, lo - 1), Math.max(0, hi + 1)] : [lo >= 0 ? 0 : Math.floor((lo - t / 2) / t) * t, hi <= 0 ? 0 : Math.ceil((hi + t / 2) / t) * t];
     if (view[0] !== spec.x[0] || view[1] !== spec.x[1]) rescaled = Boolean(old);
     spec.x = view;
   }
@@ -301,7 +305,23 @@ function renderNumberLine(spec: PlaneSpec, fresh: Set<string>, width: number): R
   // Hops first: their labels take lanes, and the line sits under the highest lane.
   const LANE = 18;
   const lanes: Rect[][] = [];
-  const hops = spec.arrows.map((a) => {
+  // A run of the same hop, each starting where the last landed ("back 1" six
+  // times), is labelled once over its first hop with how many ("back 1 ×6"):
+  // six stacked labels made a staircase (Oct 31).
+  const runLabel = new Map<string, string | undefined>();
+  for (let k = 0; k < spec.arrows.length; k++) {
+    const a = spec.arrows[k];
+    const prev = spec.arrows[k - 1];
+    if (prev && a.label && prev.label === a.label && prev.to[0] === a.from[0]) {
+      runLabel.set(a.id, undefined);
+      continue;
+    }
+    let n = 1;
+    while (spec.arrows[k + n] && spec.arrows[k + n].label === a.label && spec.arrows[k + n].from[0] === spec.arrows[k + n - 1].to[0]) n++;
+    runLabel.set(a.id, a.label ? (n > 1 ? `${a.label} ×${n}` : a.label) : undefined);
+  }
+  const hops = spec.arrows.map((a0) => {
+    const a = { ...a0, label: runLabel.get(a0.id) };
     const x1 = X(a.from[0]);
     const x2 = X(a.to[0]);
     const lw = a.label ? textWidth(a.label, 15) : 0;

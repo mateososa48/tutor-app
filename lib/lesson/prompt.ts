@@ -97,12 +97,12 @@ export function turnContext(state: LessonState, input: StudentInput, a: InputAss
   if (state.uploads && !state.uploads.read)
     lines.push(`UPLOAD: they uploaded ${state.uploads.files === 1 ? "a picture" : `${state.uploads.files} pictures`} of their work, but it could not be read. Never say no picture came: say you couldn't read it clearly and ask them to type the problem they want.`);
   if (p) {
-    lines.push(`CURRENT PROBLEM ${p.id}: ${p.statement}${p.math && p.math !== p.statement ? ` [math: ${p.math}]` : ""}${p.status === "solved" ? " (SOLVED by them)" : ""}`);
+    lines.push(`CURRENT PROBLEM ${p.id}: ${p.statement}${p.math && p.math !== p.statement ? ` [math: ${p.math}]` : ""}${p.written ? ` [they wrote on the sheet: ${p.written}]` : ""}${p.status === "solved" ? " (SOLVED by them)" : ""}`);
     lines.push(p.solution ? `ANSWER (private, checked): ${p.solution.answer} = ${p.solution.work}` : p.math && /=/.test(p.math) && /[a-z]/i.test(p.math) ? "ANSWER: the code solves the equation itself" : "ANSWER: not known yet; give it in solution, with arithmetic that computes it");
     if (p.givens.length) lines.push(`GIVENS: ${p.givens.map((f) => `${f.id} ${f.name} = ${f.value}${f.unit ? ` ${f.unit}` : ""}`).join("; ")}`);
   } else lines.push("CURRENT PROBLEM: none yet");
   const others = state.problems.filter((x) => x.id !== state.current);
-  if (others.length) lines.push(`OTHER PROBLEMS: ${others.map((x) => `${x.id} ${x.statement.slice(0, 80)} (${x.status})`).join("; ")}`);
+  if (others.length) lines.push(`OTHER PROBLEMS: ${others.map((x) => `${x.id} ${x.statement.slice(0, 80)}${x.written ? ` [they wrote: ${x.written}]` : ""} (${x.status === "solved" ? "solved: right on the sheet or in the lesson; do not ask it again" : x.status})`).join("; ")}`);
   lines.push(`BOARD:\n${boardForModel(state)}`);
   if (open.length) lines.push(`OPEN QUESTION: "${open[open.length - 1].text}"${open[open.length - 1].expects ? ` (private answer: ${open[open.length - 1].expects})` : ""}`);
   if (answered.length) lines.push(`ANSWERED QUESTIONS (settled; do not ask again): ${answered.map((q) => `"${q.text}"`).join("; ")}`);

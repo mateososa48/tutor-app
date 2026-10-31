@@ -9,6 +9,7 @@
 // tool, so the result is JSON. A number the model could not read is left out,
 // not guessed; the student can correct a fact, which makes a new revision.
 
+import { evaluate } from "../math-claims";
 import type { Fact, ProblemRecord } from "./types";
 import { mathIn } from "./state";
 
@@ -38,6 +39,7 @@ const TOOL = {
               },
             },
             figure: { type: "string", description: "The figure in a few words, when there is one (\"right triangle, right angle at bottom right, base along the bottom, height on the right side\")." },
+            their_answer: { type: "string", description: "The answer the student wrote for it on the sheet (handwriting, often after the = sign), exactly as written (\"11\", \"-3/4\"). Leave out when nothing is written." },
           },
           required: ["number", "statement", "givens"],
         },
@@ -92,7 +94,7 @@ export async function extractSourceProblems(files: SourceFile[], signal?: AbortS
   const raw = Array.isArray(use?.input?.problems) ? use!.input!.problems : [];
   let factN = 0;
   return raw.slice(0, 20).map((p, i): ProblemRecord => {
-    const o = (p ?? {}) as { number?: unknown; statement?: unknown; math?: unknown; givens?: unknown; figure?: unknown };
+    const o = (p ?? {}) as { number?: unknown; statement?: unknown; math?: unknown; givens?: unknown; figure?: unknown; their_answer?: unknown };
     const number = String(o.number ?? i + 1).trim();
     const statement = String(o.statement ?? "").trim().slice(0, 400);
     const source = { kind: "worksheet" as const, file: images[0].label, question: number };
@@ -103,7 +105,14 @@ export async function extractSourceProblems(files: SourceFile[], signal?: AbortS
       .map((g) => ({ id: `F${++factN}`, name: String(g.name ?? "value").slice(0, 40), value: g.value as number, ...(typeof g.unit === "string" && g.unit.trim() ? { unit: g.unit.trim().slice(0, 12) } : {}), source }));
     const math = typeof o.math === "string" && o.math.trim() ? o.math.trim() : mathIn(statement) ?? undefined;
     const figure = typeof o.figure === "string" && o.figure.trim() ? ` [figure: ${o.figure.trim().slice(0, 160)}]` : "";
-    return { id: `P${i + 1}`, revision: 1, statement: `${number}. ${statement}${figure}`, ...(math ? { math } : {}), givens, source, status: "open" };
+    // What they wrote, checked when the problem is plain arithmetic: a right
+    // one is solved already (Oct 31: the tutor said it saw no answers on a
+    // sheet with four written, then re-asked the one they had right).
+    const written = typeof o.their_answer === "string" && o.their_answer.trim() ? o.their_answer.trim().slice(0, 40) : undefined;
+    const value = math && !/[a-z=<>]/i.test(math) ? evaluate(math.replace(/[−–]/g, "-").replace(/×/g, "*").replace(/÷/g, "/")) : null;
+    const theirs = written ? evaluate(written.replace(/[−–]/g, "-")) : null;
+    const right = value !== null && theirs !== null && Math.abs(value - theirs) < 1e-9;
+    return { id: `P${i + 1}`, revision: 1, statement: `${number}. ${statement}${figure}`, ...(math ? { math } : {}), givens, ...(written ? { written } : {}), source, status: right ? "solved" : "open" };
   }).filter((p) => p.statement.length > 3);
 }
 

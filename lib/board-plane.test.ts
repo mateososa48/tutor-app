@@ -81,3 +81,15 @@ test("a graph with everything on y = 0 is a number line, fitted to its values", 
   if ("error" in big) return assert.fail(big.error);
   assert.deepEqual(big.spec.x, [0, 90]);
 });
+
+test("a number line keeps one copy of each hop, labels a run once, and sits around values far from zero", () => {
+  const a = buildPlane(null, { points: "(22, 0)", arrows: "(22, 0) to (21, 0): back 1" });
+  if ("error" in a) return assert.fail(a.error);
+  const b = buildPlane(a.spec, { arrows: "(22, 0) to (21, 0): back 1; (21, 0) to (20, 0): back 1; (20, 0) to (19, 0): back 1" });
+  if ("error" in b) return assert.fail(b.error);
+  assert.equal(b.spec.arrows.length, 3);
+  assert.deepEqual(b.spec.x, [18, 23]);
+  const svg = renderPlane(b.spec).svg;
+  assert.equal((svg.match(/back 1/g) ?? []).length, 1);
+  assert.match(svg, /back 1 ×3/);
+});

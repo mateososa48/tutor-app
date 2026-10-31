@@ -33,6 +33,8 @@ export type ProblemRecord = {
   /** Its math, when it is one line of math: the working column starts from it. */
   math?: string;
   givens: Fact[];
+  /** What the student wrote as their answer on the sheet, read from the picture ("11"). */
+  written?: string;
   /** What is being found, in words. */
   unknown?: string;
   /**

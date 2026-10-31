@@ -70,7 +70,12 @@ export async function callPlanModel(spec: string, system: string, messages: Msg[
   try {
     input = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1));
   } catch {
-    throw new Error(`${model} gave text that is not JSON (${j.stop_reason}): ${text.slice(0, 120)}`);
+    // Plain words instead of the tool (Oct 31: "Yes, we can be done. You saw
+    // that…"): a turn of speech only, which the checks then read like any
+    // other plan, instead of an apology from the fallback.
+    const said = text.replace(/\s+/g, " ").trim();
+    if (!said || said.length > 700 || /[{}<>]/.test(said)) throw new Error(`${model} gave text that is not JSON (${j.stop_reason}): ${text.slice(0, 120)}`);
+    input = { move: "explain", speech: (said.match(/[^.?!]+[.?!]*/g) ?? [said]).map((x) => ({ say: x.trim() })).filter((x) => x.say), board: [] };
   }
   return { input, model: spec, ms: Date.now() - started, usage: j.usage, toolUseId: "", reply: { role: "assistant", content: text } };
 }
