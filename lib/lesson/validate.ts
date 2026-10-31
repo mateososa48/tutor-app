@@ -231,8 +231,9 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
       return inter / Math.max(1, Math.min(A.size, B.size)) >= 0.7;
     };
     const last = state.questions.filter((q) => q.problemId === state.current).slice(-2);
-    if (last.length === 2 && last.every((q) => q.status !== "answered" && like(q.text, plan.question!.text))) {
-      add("question", `you have asked "${last[1].text}" twice and they have not answered it; give more help this time (show the first move, a smaller question, or a picture), or ask it a different way.`);
+    // Answered or not: a reply that did not take it up still marks an open question answered.
+    if (last.length === 2 && last.every((q) => like(q.text, plan.question!.text))) {
+      add("question", `you have asked "${last[1].text}" twice already; give more help this time (show the first move, a smaller question, or a picture), or ask it a different way.`);
     }
   }
 
@@ -281,7 +282,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   const SHOWN: Array<[RegExp, string[], string]> = [
     [/\btable\b/i, ["table"], "a table"],
     [/\b(?:graph|curve|plotted|the line through)\b/i, ["plane"], "a graph"],
-    [/\b(?:blocks?|cubes?|rods?|marbles?|the bags?|the picture|coins?)\b/i, ["illustration"], "a picture"],
+    [/\b(?:blocks?|cubes?|rods?|marbles?|the bags?|the picture|coins?)\b/i, ["illustration", "blocks"], "a picture"],
     [/\b(?:bars?|pie)\b/i, ["fraction", "illustration"], "a fraction model"],
     [/\b(?:rectangle|triangle|diagonal)\b/i, ["geometry", "illustration"], "a figure"],
   ];
@@ -295,6 +296,13 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
       }
     }
   }
+
+  // 4d. "Here it is, drawn fresh" over a board that did not change, and "line
+  // five" on a board with no line numbers (Oct 31, reviewed blind).
+  const changed = compiled.ops.some((o) => o.type === "draw" || o.type === "tool" || o.type === "illustrate" || (o.type === "edit" && JSON.stringify(o.spec) !== JSON.stringify(state.board.find((b) => b.sid === o.sid)?.spec)));
+  const claimsDrawing = /\b(?:here it is|here's the new|i(?:'ve| have) (?:drawn|added|put)|i drew|drawn (?:it )?(?:fresh|again|now)|i'll draw|let me draw|i'm drawing|watch (?:as|while) i)\b/i;
+  if (!changed && speech.some((x) => claimsDrawing.test(x.text))) add("board", "the speech says you are drawing something, but nothing new is drawn this turn: say it is already on the board and point at it (a mark), or draw what is new.");
+  if (speech.some((x) => /\bline (?:one|two|three|four|five|six|seven|\d)\b/i.test(x.text))) add("speech", 'the board has no line numbers: name the line by what it says ("the line with negative six"), and mark it.');
 
   // 4a. The problem's own answer is theirs to find: a sentence that says it
   // goes, unless this turn means to tell them (Oct 31: "one half plus one
@@ -339,7 +347,8 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     const asking = speech.filter((seg) => /\?/.test(seg.text)).map((seg) => seg.text.replace(plan.question!.text, "")).join(" ");
     if (!speech.length || states(asking, exp, known)) add("leak", `the speech gives away the answer to its own question (${exp}). Leave it for them, or set gives_answer if you mean to tell them.`);
     for (const b of plan.board) {
-      const written = b.do === "work_step" ? b.result ?? "" : b.do === "work_line" ? b.text : b.do === "table" ? b.rows : "";
+      // Graph arrows and points count too ("right 1, down 2" up while asking what y does).
+      const written = b.do === "work_step" ? b.result ?? "" : b.do === "work_line" ? b.text : b.do === "table" ? b.rows : b.do === "graph" ? [b.arrows ?? "", b.points ?? ""].join(" ") : "";
       if (written && !/\?/.test(written) && states(written, exp, known)) add("leak", `the board writes the answer to the question in the same turn (${written}). Write it with ? for them.`);
     }
     const q: QuestionRecord = { id: "probe", problemId: state.current, text: plan.question.text, kind: plan.question.kind, expects: exp, ...(plan.question.check ? { check: plan.question.check } : {}), status: "open", askedTurn: "probe" };

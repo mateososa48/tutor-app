@@ -304,14 +304,19 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
   // Numbers along the axes, skipping the one the arrowhead sits on and any
   // a point sits on (its own label says it).
   const nums: string[] = [];
+  // Where the axis numbers sit, so no point or arrow label lands on one
+  // (Oct 31: "(2, −1)" ran into the tick "3").
+  const tickRects: Rect[] = [];
   const under = (x: number, y: number) => spec.points.some((p) => Math.abs(X(p.x) - x) < 12 && Math.abs(Y(p.y) - y) < 12);
   for (let x = Math.ceil(spec.x[0] / step) * step; x < spec.x[1] - 1e-9; x += step) {
     if (Math.abs(x) < 1e-9 || x <= spec.x[0] + 1e-9 || under(X(x), oy + 4)) continue;
     nums.push(`<text x="${n1(X(x))}" y="${n1(oy + 15)}" text-anchor="middle" font-family="${FONT}" font-size="11.5" fill="${NUMBER}" ${HALO}>${fmt(x)}</text>`);
+    tickRects.push({ x: X(x) - 10, y: oy + 4, w: 20, h: 14 });
   }
   for (let y = Math.ceil(spec.y[0] / step) * step; y < spec.y[1] - 1e-9; y += step) {
     if (Math.abs(y) < 1e-9 || y <= spec.y[0] + 1e-9 || under(ox - 4, Y(y))) continue;
     nums.push(`<text x="${n1(ox - 6)}" y="${n1(Y(y) + 4)}" text-anchor="end" font-family="${FONT}" font-size="11.5" fill="${NUMBER}" ${HALO}>${fmt(y)}</text>`);
+    tickRects.push({ x: ox - 28, y: Y(y) - 8, w: 22, h: 14 });
   }
   nums.push(`<text x="${n1(ox - 6)}" y="${n1(oy + 15)}" text-anchor="end" font-family="${FONT}" font-size="11.5" fill="${NUMBER}" ${HALO}>0</text>`);
   out.push(nums.join(""));
@@ -407,7 +412,7 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
       // Off any point and its ring: an upright arrow's label goes to the other
       // side (Oct 31: "right 1, down 2" ran into "(2, −1)").
       let lxx = lx;
-      const over = (x: number) => dotZones.some((z) => x < z.x + z.w && z.x < x + lw && ly - 14 < z.y + z.h && z.y < ly + 4);
+      const over = (x: number) => [...dotZones, ...tickRects].some((z) => x < z.x + z.w && z.x < x + lw && ly - 14 < z.y + z.h && z.y < ly + 4);
       if (over(lxx) && Math.abs(dx) < Math.abs(dy)) lxx = Math.min(x1, x2) - lw - 6;
       if (over(lxx)) ly += 18;
       const lx2 = lxx;
@@ -420,7 +425,7 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     parts[a.id] = box;
   }
   // Points last, over the lines, each with its coordinates.
-  const placedLabels: Rect[] = [...Object.entries(parts).filter(([k]) => /^L\d+$/.test(k)).map(([, r]) => r), ...arrowLabels];
+  const placedLabels: Rect[] = [...Object.entries(parts).filter(([k]) => /^L\d+$/.test(k)).map(([, r]) => r), ...arrowLabels, ...tickRects];
   // Each dot with the room a ring round it takes, so no label sits under a ring
   // (Oct 31 2026: the rings on (2, 0) and (3, 0) covered their labels).
   const dots: Rect[] = spec.points.filter((q) => inView(spec, q.x, q.y)).map((q) => ({ x: X(q.x) - 17, y: Y(q.y) - 17, w: 34, h: 34 }));

@@ -146,6 +146,10 @@ function contentOf(name: string, args: Args): string | null {
       // The scene is an object: the generic picture fingerprint reads only
       // strings, so every illustration had looked like the first one.
       return typeof args.scene === "string" ? args.scene : JSON.stringify(args.scene ?? null);
+    case "draw_picture":
+      // The same, for the engine's pictures: every table had looked like the
+      // first table, so a second one was never drawn (Oct 31, T13).
+      return `${String(args.kind)}:${JSON.stringify(args.spec ?? null)}`;
     default:
       return toolRole(name) === "draw" ? pictureContent(args) : null;
   }
@@ -1008,7 +1012,7 @@ function dispatchInner(
       if (isToolError(board)) return board;
       if (!board.drawPicture) return fail("This board cannot draw pictures.");
       const kind = String(args.kind ?? "");
-      if (!["plane", "table", "work", "geometry"].includes(kind)) return fail(`Unknown picture kind "${kind}".`);
+      if (!["plane", "table", "work", "geometry", "blocks"].includes(kind)) return fail(`Unknown picture kind "${kind}".`);
       const rendered = args.rendered as { svg: string; w: number; h: number; parts: Record<string, { x: number; y: number; w: number; h: number }>; aliases: Record<string, string> } | undefined;
       if (!rendered || typeof rendered.svg !== "string" || !(rendered.w > 0) || !(rendered.h > 0)) return fail("The picture has nothing to draw.");
       const label = typeof args.label === "string" ? args.label : kind;

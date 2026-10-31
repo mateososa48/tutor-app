@@ -36,7 +36,7 @@ const TURN_PLAN_BASE = {
         items: {
           type: "object",
           properties: {
-            do: { type: "string", enum: ["work_step", "work_line", "work_fill", "table", "graph", "figure", "example", "mark", "fractions", "picture"] },
+            do: { type: "string", enum: ["work_step", "work_line", "work_fill", "table", "graph", "figure", "example", "mark", "fractions", "blocks", "picture"] },
             fractions: { type: "string", description: "fractions: one or two fractions on the same whole, \"1/2, 1/3\"." },
             common: { type: "number", description: "fractions: cut both into this many equal parts (6 for halves and thirds)." },
             model: { type: "string", enum: ["bar", "circle"], description: "fractions: bars (default) or circles." },
@@ -50,7 +50,7 @@ const TURN_PLAN_BASE = {
             text: { type: "string", description: "work_line: a line written under the newest one." },
             id: { type: "string", description: "table/graph/figure: its id (\"table1\", \"graph1\", \"fig1\"); the same id edits the one already up." },
             columns: { type: "string", description: "table: \"x | y\"." },
-            rows: { type: "string", description: "table: \"0 | ?; 1 | ?\"." },
+            rows: { type: "string", description: "table: \"0 | ?; 1 | ?\". blocks: its states left to right, \"42: 4 tens 2 ones | after the trade: 3 tens 12 ones (10 new) | take away 7: 3 tens 12 ones, cross 7 ones\"." },
             title: { type: "string" },
             points: { type: "string", description: "graph: \"(0, -1); (1, 1); A(2, 3)\"." },
             lines: { type: "string", description: "graph: \"y = 2x - 1; x = 3; through (0, -1) and (2, 3)\"." },
@@ -209,6 +209,10 @@ export function parseTurnPlan(raw: unknown): ParsedPlan {
       case "fractions":
         if (str(o.fractions)) board.push({ do: "fractions", ...(str(o.id) ? { id: str(o.id) } : {}), fractions: str(o.fractions), ...(typeof o.common === "number" ? { common: o.common } : {}), ...(o.model === "circle" ? { model: "circle" as const } : {}) });
         else issues.push("fractions needs fractions");
+        break;
+      case "blocks":
+        if (str(o.rows)) board.push({ do: "blocks", ...(str(o.id) ? { id: str(o.id) } : {}), rows: str(o.rows) });
+        else issues.push("blocks needs rows");
         break;
       case "picture":
         if (str(o.what)) board.push({ do: "picture", ...(str(o.id) ? { id: str(o.id) } : {}), what: str(o.what).slice(0, 300), ...(str(o.notice) ? { notice: str(o.notice).slice(0, 300) } : {}) });

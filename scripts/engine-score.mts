@@ -42,7 +42,7 @@ function checksFor(r: Rec, s: LessonState | null): Check[] {
     const t = words(saidIn(r, 1));
     out.push({ name: "keeps 4 hours as right", ok: / 4 hours? (?:is )?(?:right|correct)|(?:right|correct)\b.* 4 hours/.test(t) || / (?:yes|right|correct) .*\b4\b/.test(t), detail: saidIn(r, 1).slice(0, 160) });
     out.push({ name: "says 5×4+3 is 23", ok: / 5 times 4 plus 3 (?:is|equals|makes|comes to|gives) (?:exactly )?23 /.test(t) || / 23 not 24 /.test(t) });
-    out.push({ name: "says 24 is more than 23", ok: / 24 (?:is )?(?:more|bigger|greater|over|higher) (?:than )?23 /.test(t) || / 24 is not (?:under|less than) 23 /.test(t) || /24 (?:would be|is) (?:over|above)/.test(t), detail: "the comparison claim" });
+    out.push({ name: "says 24 is more than 23", ok: / 24 (?:is |would be )?(?:more|bigger|greater|over|higher) (?:than )?23 /.test(t) || / 24 is not (?:under|less than) 23 /.test(t) || /24 (?:would be|is) (?:over|above)/.test(t), detail: "the comparison claim" });
     out.push({ name: "never affirms 5×4+3 = 24", ok: !/ 5 times 4 plus 3 (?:is|equals) 24 /.test(words(allSaid)) });
   }
   if (r.case === "T02" && s) {

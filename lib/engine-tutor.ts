@@ -61,8 +61,9 @@ export function opToCall(op: BoardOp, items: Map<string, string>): { name: strin
       return { name: "highlight", args: { target: item, ...(part ? { text: part } : {}) } };
     case "underline":
       return { name: "highlight", args: { target: item, ...(part ? { text: part } : {}), how: "underline" } };
+    // A pointer shows only while the pen is there; a laser ring is seen with the sentence.
     case "point":
-      return { name: "point_at", args: { target } };
+      return { name: "circle_item", args: { target, keep: false } };
     case "cross":
       // No strike on a picture's part yet: a kept ring says "this one" instead.
       return { name: "circle_item", args: { target, keep: true } };
@@ -375,9 +376,24 @@ export class EngineTutorSession {
     const done = new Map<string, "ok" | "failed">();
     const settle: Array<() => void> = [];
     const wake = () => settle.splice(0).forEach((f) => f());
+    // A mark on exactly what a sentence talks about waits for that sentence, so
+    // the ring or the pointer comes as the words do (it faded before the
+    // sentence on Oct 31). Every other op goes at once, in order.
+    const needed = new Set(res.speech.filter((x) => !x.early).flatMap((x) => x.needs));
+    const deferred = new Map<string, BoardOp>();
+    for (const op of res.ops) if (op.type === "mark" && needed.has(op.ref) && !deferred.has(op.ref)) deferred.set(op.ref, op);
+    const markNow = async (seg: SpeechSegment) => {
+      for (const n of seg.needs) {
+        const op = deferred.get(n);
+        if (!op) continue;
+        deferred.delete(n);
+        receipts.push(await this.apply(op));
+      }
+    };
     const applyAll = (async () => {
       for (const op of res!.ops) {
         if (this.ended) break;
+        if (op.type === "mark" && deferred.get(op.ref) === op) continue;
         const receipt = await this.apply(op);
         receipts.push(receipt);
         const key = op.type === "heading" ? `heading` : op.type === "mark" ? op.ref : op.sid;
@@ -390,11 +406,6 @@ export class EngineTutorSession {
     void applyAll.then(() => {
       applied = true;
       wake();
-      void fetch(`/api/sessions/${this.options.sessionId}/turns/receipts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ turnId: res!.turnId, receipts }) })
-        .catch((err) => this.debug("error", "receipts_failed", { message: (err as Error).message }));
-      record.receipts = receipts;
-      const failed = receipts.filter((r) => r.status === "failed" || r.status === "blocked");
-      if (failed.length) this.debug("engine", "board_failed", { turnId: res!.turnId, failed });
     });
 
     // What a need waits on: the op whose sid it names (with or without a part).
@@ -417,7 +428,7 @@ export class EngineTutorSession {
     };
 
     for (const seg of res.speech) {
-      if (gen !== this.generation || this.ended) return;
+      if (gen !== this.generation || this.ended) break;
       // Said already, while the turn was planned.
       if (seg.early && earlySaid) {
         await earlySaid;
@@ -429,16 +440,25 @@ export class EngineTutorSession {
         await new Promise<void>((ok) => settle.push(ok));
         state = ready(seg);
       }
-      if (gen !== this.generation || this.ended) return;
+      if (gen !== this.generation || this.ended) break;
       const text = state === "ok" ? seg.text : seg.fallback ?? "";
       if (!text) {
         this.debug("engine", "segment_skipped", { id: seg.id, needs: seg.needs });
         continue;
       }
+      if (state === "ok") await markNow(seg);
       await this.say(text, gen);
       record.said.push(text);
     }
     await applyAll;
+    // Marks whose sentence was never said (skipped, or cut off by a new line) still go up.
+    if (!this.ended) for (const op of deferred.values()) receipts.push(await this.apply(op));
+    // Receipts before the next line is sent: the lesson's board is what was drawn.
+    record.receipts = receipts;
+    const failed = receipts.filter((r) => r.status === "failed" || r.status === "blocked");
+    if (failed.length) this.debug("engine", "board_failed", { turnId: res.turnId, failed });
+    await fetch(`/api/sessions/${this.options.sessionId}/turns/receipts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ turnId: res.turnId, receipts }) })
+      .catch((err) => this.debug("error", "receipts_failed", { message: (err as Error).message }));
     if (gen === this.generation && !this.ended) this.callbacks.onActivity("idle");
   }
 

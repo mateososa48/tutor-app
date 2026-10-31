@@ -7,9 +7,10 @@
 // as an issue for the model to fix, never as a drawing.
 
 import { checkStep, spokenToDigits } from "../answer-check";
+import { describeBlocks, parseBlocks, renderBlocks } from "../board-blocks";
 import { buildPlane, describePlane, renderPlane, type PlaneSpec } from "../board-plane";
 import { describeTable, mergeTable, parseTable, renderTable, sameColumns, type TableSpec } from "../board-table";
-import { addLine, addStep, describeWork, fillLine, isPending, lastLine, renderWork, startWork, type WorkSpec } from "../board-work";
+import { addLine, addStep, describeWork, fillLine, isPending, lastLine, plainMath, renderWork, startWork, type WorkSpec } from "../board-work";
 import { geometryFacts, polygon, rectangle, renderGeometry, rightTriangle, type GeometrySpec } from "../board-geometry";
 import { falseAssertions } from "../math-claims";
 import { isTheirProblem } from "../worked-example";
@@ -163,6 +164,13 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
       }
       case "work_line": {
         const { spec, obj } = work();
+        // A line already in the working is not written again (Oct 31: the
+        // problem appeared three times, heading included, and no work).
+        const same = (x: string) => plainMath(x).replace(/\s+/g, "");
+        if (spec.lines.some((l) => same(l.text) === same(b.text)) || (p?.math && same(p.math) === same(b.text) && spec.lines.length)) {
+          notes.push(`"${b.text}" is already on the board`);
+          break;
+        }
         if (spelledMath(b.text)) {
           issues.push(`work_line "${b.text}": write it in symbols ("1/2 × 12 × 5"), not words; say the words aloud instead`);
           break;
@@ -291,6 +299,21 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         const r = renderWork(spec);
         put(picture(sid, "work", s.current, spec, r, [describeWork(spec)]));
         ops.push({ opId: opId(), type: "draw", sid, kind: "work", spec, rendered: r, label: `example ${b.problem}` });
+        break;
+      }
+      case "blocks": {
+        const spec = parseBlocks(b.rows);
+        if ("error" in spec) {
+          issues.push(spec.error);
+          break;
+        }
+        // One blocks picture a problem: a new one replaces the last (same id).
+        const old = [...objects, ...s.board].find((o) => o.kind === "blocks" && o.problemId === s.current && o.status !== "failed");
+        const sid = b.id && latest(b.id) ? b.id : old?.sid ?? b.id ?? "blocks1";
+        const prev = latest(sid);
+        const r = renderBlocks(spec);
+        put(picture(sid, "blocks", s.current, spec, r, describeBlocks(spec), prev?.kind === "blocks" ? prev : undefined));
+        ops.push(prev?.kind === "blocks" ? { opId: opId(), type: "edit", sid, kind: "blocks", spec, rendered: r, label: "base-ten blocks" } : { opId: opId(), type: "draw", sid, kind: "blocks", spec, rendered: r, label: "base-ten blocks" });
         break;
       }
       case "fractions": {

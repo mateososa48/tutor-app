@@ -53,10 +53,11 @@ function openingOps(s: LessonState, prefix: string): Compiled {
   // The problem's math when it has one ("3x + 7 = 22"); else its first sentence, short.
   const first = p.statement.split(/(?<=[.?!])\s+/)[0];
   // Its math when it has any ("1/2 + 1/3", never the student's wrong "= 2/5" after it).
-  const title = p.math ? p.math : first.length <= 56 ? first.replace(/[.]$/, "") : `${first.slice(0, 52).replace(/\s+\S*$/, "")}…`;
+  const title = p.math ? p.math : first.length <= 90 ? first.replace(/[.]$/, "") : `${first.slice(0, 86).replace(/\s+\S*$/, "")}…`;
   const ops: BoardOp[] = [{ opId: `${prefix}.h`, type: "heading", title }];
   const objects: BoardObject[] = [{ sid: `heading:${p.id}`, kind: "heading", problemId: p.id, parts: [], facts: [title], status: "pending" }];
-  if (p.math && /[=<>]/.test(p.math) && /[a-z]/i.test(p.math)) {
+  // An equation to solve opens the working; a definition ("y = -2x + 3") does not.
+  if (p.math && /[=<>]/.test(p.math) && /[a-z]/i.test(p.math) && !/^\s*[a-z]\s*=/i.test(p.math)) {
     const spec = startWork(p.math);
     const rendered = renderWork(spec);
     const sid = `work:${p.id}`;

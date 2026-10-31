@@ -57,7 +57,7 @@ import { matchPart } from "@/lib/illustration/part-match";
 import { findPart } from "@/lib/board-plane";
 
 /** The pictures the board draws from a spec (lib/board-plane, board-table, board-work, board-geometry). */
-export type PictureKind = "plane" | "table" | "work" | "geometry";
+export type PictureKind = "plane" | "table" | "work" | "geometry" | "blocks";
 /** A drawn picture: its SVG, size, named parts, their aliases, and the shapes of the parts that have one. */
 export type RenderedPicture = { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string>; paths?: Record<string, { pts: Array<[number, number]>; closed: boolean }> };
 import type { Annotation } from "@/lib/board-annotate";
@@ -4172,7 +4172,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       if (!editor) return;
       // A graph or a figure sits on the same white card as a picture; a table
       // draws its own frame; the working of a problem is written straight on the board.
-      const pad = kind === "plane" || kind === "geometry" ? 10 : 0;
+      const pad = kind === "plane" || kind === "geometry" || kind === "blocks" ? 10 : 0;
       const w = Math.round(out.w) + pad * 2;
       const h = Math.round(out.h) + pad * 2;
       const x = colX("left");
