@@ -219,6 +219,8 @@ export type LessonState = {
   evidence: LearnerEvidence[];
   requests: RequestRecord[];
   board: BoardObject[];
+  /** The marks on the board now: sky rings and swipes last until a later turn marks again; checks and crosses stay. */
+  marks?: Array<{ ref: string; how: string; turnId: string }>;
   /** The conversation, newest last, bounded. */
   transcript: Array<{ id: string; role: "student" | "tutor"; text: string; at: number }>;
   /** The turn waiting for its receipts. */

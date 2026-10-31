@@ -241,3 +241,12 @@ test("a sentence said twice in a turn is said once, the asking one kept", async 
   assert.equal((said.match(/pick one problem/gi) ?? []).length, 1);
   assert.match(said, /\?/);
 });
+
+// S-function (Oct 31): the tutor said it was not sure which blue circle was meant, about rings it drew.
+test("the planner's board list names the marks still on the board", async () => {
+  let s = createLesson({ intake: "f(x) = x + 3" });
+  const r1 = await runTurn(s, input("u1", "ok"), { planner: scripted({ move: "explain", speech: [{ say: "Here is a table." }, { say: "What comes out for two?" }], board: [{ do: "table", id: "t1", columns: "in | out", rows: "2 | ?" }], question: { ask: "What comes out for two?", kind: "value", expects: "5" } }) });
+  s = applied(r1.state, r1);
+  const r2 = await runTurn(s, input("u2", "5"), { planner: scripted({ move: "confirm", speech: [{ say: "Yes, two in gives five out.", needs: ["t1.r1c2"] }, { say: "What comes out for ten?" }], board: [{ do: "mark", ref: "t1.r1c2", how: "ring" }], question: { ask: "What comes out for ten?", kind: "value", expects: "13" } }) });
+  assert.match(boardForModel(r2.state), /Marks you put on the board, still there: ring on t1\.r1c2/);
+});

@@ -147,6 +147,11 @@ export function boardForModel(s: LessonState): string {
     .filter((b) => !offPage(s, b))
     .map((b) => `${b.sid} (${b.kind}${b.problemId ? `, ${b.problemId}` : ""}${b.status === "pending" ? ", not drawn yet" : ""}): ${b.facts.join("; ") || "(no facts)"}${b.parts.length ? ` | parts: ${b.parts.slice(0, 24).join(", ")}` : ""}`);
   // Earlier pages are out of sight: never pointed at or edited, only drawn again.
+  const shownMarks = (s.marks ?? []).filter((m) => {
+    const obj = s.board.find((b) => b.sid === m.ref.split(".")[0] || (m.ref.startsWith("work:") && b.sid === m.ref.split(".")[0]));
+    return !obj || !offPage(s, obj);
+  });
+  if (shownMarks.length) lines.push(`Marks you put on the board, still there: ${shownMarks.map((m) => `${m.how} on ${m.ref} (${m.turnId})`).join("; ")}`);
   if (off.length) lines.push(`Earlier pages, filed away and out of sight (draw again what you need; never mark or point at them): ${off.map((b) => `${b.sid} (${b.facts[0]?.slice(0, 60) ?? b.kind})`).join("; ")}`);
   return lines.join("\n") || "empty";
 }
@@ -167,6 +172,13 @@ export function recordTurn(s: LessonState, turnId: string, plan: TurnPlan, ops: 
   // What this turn drew is on the page the board is on after its heading, if it had one.
   const page = merged.filter((b) => b.kind === "heading" && b.status !== "failed").length;
   const board = merged.map((b) => (b.page === undefined && objects.includes(b) ? { ...b, page } : b));
+  // What is marked now (Oct 31: the tutor said it was not sure which blue
+  // circle the student meant, about two rings it had drawn itself). A turn
+  // that marks again takes last turn's rings off, as the page does; a pointer
+  // only shows while it is there.
+  const placed = ops.flatMap((o) => (o.type === "mark" && o.how !== "point" ? [{ ref: o.ref, how: o.how, turnId }] : []));
+  const clears = ops.some((o) => o.type === "mark" && o.how !== "check" && o.how !== "cross");
+  const marks = [...(s.marks ?? []).filter((m) => !clears || m.how === "check" || m.how === "cross"), ...placed].slice(-12);
   // The problem's answer, once, and only when its arithmetic checks out.
   const problems = plan.solution && verifySolution(plan.solution) ? s.problems.map((p) => (p.id === s.current && !p.solution ? { ...p, solution: plan.solution! } : p)) : s.problems;
   return {
@@ -176,6 +188,7 @@ export function recordTurn(s: LessonState, turnId: string, plan: TurnPlan, ops: 
     turns: s.turns + 1,
     questions,
     board,
+    marks,
     transcript: [...s.transcript, { id: turnId, role: "tutor" as const, text: said, at }].slice(-TRANSCRIPT_MAX),
     pending: { turnId, epoch: s.epoch, ops, plan },
     closing: s.closing || plan.close,

@@ -17,6 +17,7 @@ const assessClaimsText = (text: string) => assessClaims(text).map((c) => c.text)
 import { checkResponse, checkSupport, verifySolution, type InputAssessment } from "./assess";
 import type { Compiled } from "./compile";
 import { resolveRef } from "./compile";
+import { namedProblem } from "./source";
 import { offPage } from "./state";
 import type { LessonState, QuestionRecord, TurnPlan } from "./types";
 
@@ -263,6 +264,14 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     const posed = numbersOf(spokenExpression(m[1]).replace(/\^\d+/g, " "));
     const missing = posed.filter((n) => !numbersOf(visible.replace(/\^\d+/g, " ")).includes(n));
     if (posed.length >= 2 && missing.length) add("board", `the new problem ("${m[1].slice(0, 70)}") is only spoken: write it on the board (a work_line, or a table) so they can see it.`);
+  }
+
+  // Working on another problem from the sheet without moving to it piles its
+  // pictures under the old heading (Oct 31: #3, #5 and #7 all sat under "−7 − 4").
+  const sheet = state.problems.filter((p) => p.source.kind === "worksheet");
+  if (sheet.length > 1 && !plan.problem && plan.board.some((b) => b.do !== "mark")) {
+    const named = namedProblem(spokenToDigits(speech.map((x) => x.text).join(" ")), sheet);
+    if (named && named !== state.current && state.problems.find((p) => p.id === named)?.status !== "solved") add("board", `this turn works on ${named} (named in the speech) but problem is not set: set problem to "${named}" so it gets its own heading and page.`);
   }
 
   // A word problem needs its answer on record, so "I got 4" can be checked in code.
