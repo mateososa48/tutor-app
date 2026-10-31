@@ -467,6 +467,17 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         // A cross is for the student's own superseded line, never for a line
         // the problem gave or the tutor wrote (Oct 31: a correct setup line
         // was marked as if it were the mistake).
+        // A green check is for a finished answer: a line whose right side is
+        // still a computation is not one (kids12: a check that never reached
+        // "= 0" was boxed as verified).
+        if (b.how === "check" && hit.obj.kind === "work" && hit.part) {
+          const line = (hit.obj.spec as WorkSpec | undefined)?.lines.find((l) => l.id.toLowerCase() === hit.part!.toLowerCase().split(".")[0]);
+          const rhs = line ? line.text.split("=").at(-1) ?? "" : "";
+          if (line && (/\?/.test(line.text) || /\d\s*[-−+×*÷/]\s*[\d(]|\)\s*[-−+×*÷/]/.test(rhs))) {
+            issues.push(`mark: check goes on a finished answer; ${b.ref} still reads "${line.text}". Finish the line first (a work_step to its value), or point at it`);
+            break;
+          }
+        }
         if (b.how === "cross") {
           const line = hit.obj.kind === "work" && hit.part ? (hit.obj.spec as WorkSpec | undefined)?.lines.find((l) => l.id.toLowerCase() === hit.part!.toLowerCase().split(".")[0]) : undefined;
           if (!line || line.by !== "student") {

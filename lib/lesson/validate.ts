@@ -281,6 +281,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     add("question", plan.solution ? `solution: "${plan.solution.work}" does not give ${plan.solution.answer}; give the answer and plain arithmetic that computes it.` : "give solution: this problem's final answer (private) and plain arithmetic that computes it (answer \"4\", work \"(23-3)/5\").");
   }
 
+  let askedEarly = false;
   // The same thing said twice in one turn sounds like a glitch (Oct 31: "Pick
   // one problem… tell me the numbers" and then "Can you pick one problem…?").
   // The one that asks stays.
@@ -299,8 +300,15 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
         const shared = [...A].filter((w) => B.has(w)).length;
         if (shared / Math.max(A.size, B.size) < 0.7) continue;
         // The first item may already have been said (the early sentence): the plan goes back instead.
-        if (sents[x].i === 0) add("advice", `you say the same thing twice ("${sents[x].t.slice(0, 50)}" and "${sents[y].t.slice(0, 50)}"): say it once; the first sentence is already said.`);
-        else drop.add(sents[y].t.includes("?") && !sents[x].t.includes("?") ? sents[x].t : sents[y].t);
+        // The first item may already have been said: it stays, and a repeat
+        // of it goes when the first already asks or hands a task (kids12:
+        // "Tell me how you decided… How did you decide…?").
+        if (sents[x].i === 0) {
+          if (sents[x].t.includes("?") || GIVES_TASK.test(sents[x].t)) {
+            drop.add(sents[y].t);
+            askedEarly = true;
+          } else add("advice", `you say the same thing twice ("${sents[x].t.slice(0, 50)}" and "${sents[y].t.slice(0, 50)}"): say it once; the first sentence is already said.`);
+        } else drop.add(sents[y].t.includes("?") && !sents[x].t.includes("?") ? sents[x].t : sents[y].t);
       }
     if (drop.size) {
       speech = speech.map((seg) => ({ ...seg, text: (seg.text.match(/[^.?!]+[.?!]*\s*/g) ?? [seg.text]).filter((t) => !drop.has(t.trim())).join("").trim() })).filter((seg) => seg.text);
@@ -530,7 +538,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     }
   }
   // A question the speech never asks is added at the end; one it asks in other words is left alone.
-  if (plan.question && !plan.close && plan.move !== "recap" && !speech.some((s) => s.text.includes("?"))) speech.push({ id: `s${speech.length + 1}`, text: cleanSpeech(plan.question.text), needs: [] });
+  if (plan.question && !askedEarly && !plan.close && plan.move !== "recap" && !speech.some((s) => s.text.includes("?"))) speech.push({ id: `s${speech.length + 1}`, text: cleanSpeech(plan.question.text), needs: [] });
   if (!speech.length) add("speech", "speech is empty");
   // A turn leaves them something to do: a question, or a task said as one
   // (Oct 31: "Eleven came out, and we want the number that went in." and
