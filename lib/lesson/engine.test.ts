@@ -250,3 +250,16 @@ test("the planner's board list names the marks still on the board", async () => 
   const r2 = await runTurn(s, input("u2", "5"), { planner: scripted({ move: "confirm", speech: [{ say: "Yes, two in gives five out.", needs: ["t1.r1c2"] }, { say: "What comes out for ten?" }], board: [{ do: "mark", ref: "t1.r1c2", how: "ring" }], question: { ask: "What comes out for ten?", kind: "value", expects: "13" } }) });
   assert.match(boardForModel(r2.state), /Marks you put on the board, still there: ring on t1\.r1c2/);
 });
+
+// S-algebra-sheet (Oct 31): ÷3 under "3x + 14 = 29" gave "x = 5" on the board, checked.
+test("a step's result is the line above with what is written under each side done to it", async () => {
+  const s = createLesson({ intake: "3x + 14 = 29" });
+  const r = await runTurn(s, input("u1", "idk how"), {
+    planner: scripted(
+      { move: "model_step", speech: [{ say: "Divide both sides by three." }, { say: "Does that work?" }], board: [{ do: "work_step", left: "÷3", right: "÷3", note: "divide by 3", result: "x = 5" }], question: { ask: "Does that work?", kind: "open" }, gives_answer: true },
+      { move: "model_step", speech: [{ say: "Take fourteen from both sides first." }, { say: "What is three x now?" }], board: [{ do: "work_step", left: "−14", right: "−14", note: "subtract 14", result: "3x = 15" }], question: { ask: "What is three x now?", kind: "step", expects: "3x = 15" }, gives_answer: true },
+    ),
+  });
+  assert.equal(r.log.calls, 2);
+  assert.match(r.log.issues[0].join(" "), /does not give "x = 5"/);
+});

@@ -486,7 +486,11 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     const problemKey = currentMath(state).replace(/\s+/g, "").replace(/[.,;]+$/, "");
     const rhsValue = numbersOf(/=\s*([^=]+)$/.exec(exp)?.[1] ?? "").find(Boolean);
     const candidates = clauses.filter((c) => !(problemKey && c.replace(/\s+/g, "").includes(problemKey.split(" ")[0])) && (plan.question!.kind !== "step" || !rhsValue || numbersOf(c).includes(rhsValue)));
-    let hit = candidates.find((c) => checkResponse(q, c).verdict === "correct");
+    // A factored form is answered only by a line with its brackets: the
+    // problem itself is equal to it (Oct 31: "x^2 + 7x + 12" was taken as
+    // having answered "the factored form").
+    const needsBrackets = /\(/.test(exp);
+    let hit = candidates.find((c) => (!needsBrackets || /\(/.test(c)) && checkResponse(q, c).verdict === "correct");
     // A single value they have already said on this problem (not one of the
     // problem's own numbers): asking for it again is asking what they said
     // (Oct 31 2026: "found 2 and 3", then "what is x when x − 3 = 0?").
@@ -500,7 +504,9 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
       // From the opening line, only what they gave as an answer ("found 2 and 3"),
       // not the inputs the problem lists ("for x = 0, 1, 2", T13 on Oct 31).
       const theirLines = [...state.goal.text.split(/(?<=[.?!;])\s+/).filter((c) => /\b(?:got|get|found|find|is|are|equals?|think|answer)\b/i.test(c)), ...theirs.filter((l) => l.trim() !== state.goal.text.trim())];
-      const found = theirLines.find((l) => !hedge.test(l) && numbersOf(l).some((n) => n === single && !own.has(n)));
+      // "c is 1" defines a letter; it does not answer "what is b² − 4ac?" (Oct 31).
+      const asValue = (l: string) => numbersOf(l.replace(/[−–]/g, "-").replace(/\b[a-z]\s*(?:is|=)\s*-?\d+(?:\.\d+)?/gi, " ")).includes(single);
+      const found = theirLines.find((l) => !hedge.test(l) && asValue(l) && !own.has(single));
       if (found) hit = found;
     }
     if (hit && !/again|check|remind|still/i.test(plan.question.text)) add("reask", `they already answered "${plan.question.text.slice(0, 80)}" (${exp}): "${hit.slice(0, 100)}". Use their answer instead of asking for it.`);

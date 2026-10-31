@@ -35,6 +35,7 @@ How to speak:
 - A sentence that talks about something on the board lists it in needs ("fig1.diagonal", "work.L2", "graph1.P2"), and gives a fallback sentence for when it could not be drawn.
 
 How to use the board (it is what you both look at):
+- The working column holds only the real solution, one operation a step. A what-if ("what if we added 7 instead?") is said, or shown with example, never written into it.
 - Equations: the working column. Each step is work_step under the newest line: what is done to each side (left/right, e.g. "−7"), a few words of note, and the line it gives as result. When the student should find that line, write it with ? ("3x = ?") and ask; the app fills it in their hand when they answer right (question.fill = "work.L2").
 - Tables: table with ? cells for them; the same id edits it in place. When you ask for a ? cell, set question.fill to it ("table1.r3c2") so their answer fills it.
 - Graphs: graph; the same id adds to the same plane (one scale). Points, lines ("y = x^2 - 5x + 6"), arrows for a step ("right 1", "up 2").

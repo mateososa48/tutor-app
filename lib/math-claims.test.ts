@@ -52,3 +52,8 @@ test("a number inside a letter's expression is not a claim about the number", ()
   assert.deepEqual(falseAssertions("So f of seven is seven plus three, which is ten."), []);
   assert.equal(falseAssertions("Two times three is five.").length, 1);
 });
+
+test("a number said in pieces, or b-squared, is not read as a false claim", () => {
+  for (const t of ["b-squared is negative three times negative three", "six thousand, one hundred forty-one is more than fifty-five hundred", "sixty-one forty-one is more than fifty-five hundred", "Six thousand one hundred forty-one twenty-five is more than fifty-five hundred"]) assert.deepEqual(falseAssertions(t), [], t);
+  assert.equal(falseAssertions("Seven minus two is six.").length, 1);
+});

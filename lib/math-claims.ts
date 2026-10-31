@@ -66,10 +66,13 @@ const NUMBER = /^-?\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?%?$/;
 
 /** The line with number words as digits and spoken operators as symbols. */
 export function mathForm(text: string): string {
-  let t = spokenToDigits(text.replace(/\$/g, " ").replace(/,(?=\d{3}\b)/g, ""));
+  // "b-squared" is "b squared".
+  let t = spokenToDigits(text.replace(/\$/g, " ").replace(/,(?=\d{3}\b)/g, "").replace(/([a-z])-(?=(?:squared|cubed)\b)/gi, "$1 "));
   for (const [re, sym] of OPS) t = t.replace(re, sym);
   // "5x4" between two numbers is a times sign; never inside a word.
   t = t.replace(/(\d)\s*[x]\s*(?=\d)/g, "$1 * ");
+  // "seven minus two" comes out as "7 -2": between two numbers it is a subtraction.
+  t = t.replace(/(\d)\s+-(?=\d)/g, "$1 - ");
   return t.replace(/[ \t]+/g, " ");
 }
 
@@ -214,6 +217,12 @@ export function extractClaims(text: string): Claim[] {
     // not about 2 or 7 (Oct 31: both were called false, and a turn fell back).
     const before2 = toks[i - 2]?.s ?? "";
     if ((isOp(before) || /^of$/i.test(before)) && /^[a-z]$/i.test(before2)) {
+      i = left.end;
+      continue;
+    }
+    // The tail of a number said in pieces: "six thousand, one hundred
+    // forty-one" (6000, 141), "sixty-one forty-one" (61 41), "6141 25".
+    if (isNum(before) || (before === "," && isNum(before2))) {
       i = left.end;
       continue;
     }

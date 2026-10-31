@@ -10,14 +10,14 @@
 //   5. the turn is recorded, waiting for the page's receipts.
 // Exactly one engine owns checks, questions and lesson state for a session.
 
-import { blankText, type InputAssessment } from "./assess";
+import { blankText, checkFinal, type InputAssessment } from "./assess";
 import { compileBoard, fillBlank, type Compiled } from "./compile";
 import { parseTurnPlan } from "./plan";
 import { ENGINE_SYSTEM, turnContext } from "./prompt";
 import { callPlanModel, ENGINE_MODELS, repairMessages, type PlanCall } from "./provider";
 import { cleanIntake, commitInput, currentProblem, recordTurn } from "./state";
 import { describeWork, renderWork, startWork } from "../board-work";
-import { cleanSpeech, salvage, validatePlan, withholdOnBoard, type Issue } from "./validate";
+import { cleanSpeech, salvage, validatePlan, withholdOnBoard, type Issue, type Verdict } from "./validate";
 import { earlySentence, scanPartial } from "./stream";
 import { faithfulness } from "../engine-voice";
 import type { BoardObject, BoardOp, LessonState, SpeechSegment, StudentInput, TurnPlan } from "./types";
@@ -112,7 +112,7 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   const issuesLog: string[][] = [];
   let calls = 0;
   let model: string | undefined;
-  let chosen: { plan: TurnPlan; compiled: Compiled; base: LessonState } | null = null;
+  let chosen: { plan: TurnPlan; compiled: Compiled; base: LessonState; verdict?: Verdict } | null = null;
   let last: { plan: TurnPlan; compiled: Compiled; detail: Issue[]; base: LessonState } | null = null;
   // A plan that moves to another problem on the sheet is compiled and checked on that problem.
   const onProblem = (plan: TurnPlan): LessonState => (plan.problem && plan.problem !== withAuto.current && withAuto.problems.some((p) => p.id === plan.problem) ? { ...withAuto, current: plan.problem } : withAuto);
@@ -160,7 +160,7 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
     const checked = validatePlan(base, assessment, held.plan, parsed.verdict, compiled);
     fixes.push(...held.fixes, ...checked.fixes);
     if (!checked.issues.length) {
-      chosen = { plan: checked.plan, compiled, base };
+      chosen = { plan: checked.plan, compiled, base, verdict: parsed.verdict };
       break;
     }
     last = { plan: checked.plan, compiled, detail: checked.detail, base };
@@ -189,6 +189,12 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   const compiled = chosen?.compiled ?? { ops: [], objects: [], issues: [], notes: [] };
   const ops = [...auto, ...compiled.ops];
   const objects = [...autoObjects.filter((o) => !compiled.objects.some((c) => c.sid === o.sid)), ...compiled.objects];
-  const next = recordTurn(chosen?.base ?? withAuto, turnId, plan, ops, objects, Date.now());
+  let next = recordTurn(chosen?.base ?? withAuto, turnId, plan, ops, objects, Date.now());
+  // Their answer to the problem itself, called right with checked arithmetic:
+  // the problem is solved, even when it came as an answer to a smaller
+  // question (Oct 31: #3 settled in the lesson was "re-checked" at the end).
+  const v = chosen?.verdict;
+  const cur = next.problems.find((x) => x.id === next.current);
+  if (v?.is === "correct" && cur && cur.status === "open" && checkFinal(cur, v.answer)?.verdict === "correct") next = { ...next, problems: next.problems.map((x) => (x.id === cur.id ? { ...x, status: "solved" as const } : x)) };
   return { state: next, turnId, speech: plan.speech, ops, log: { model, ms: Date.now() - started, calls, issues: issuesLog, fixes, fallback, assessment, move: plan.move, ...(firstTokenMs !== undefined ? { firstTokenMs } : {}), ...(earlyMs !== undefined ? { earlyMs } : {}), ...(usage ? { usage } : {}) } };
 }

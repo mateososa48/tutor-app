@@ -6,7 +6,7 @@
 // and returns the ops the page applies as they are. Anything wrong comes back
 // as an issue for the model to fix, never as a drawing.
 
-import { checkStep, spokenToDigits } from "../answer-check";
+import { checkStep, sameExpression, spokenToDigits } from "../answer-check";
 import { describeBlocks, parseBlocks, renderBlocks } from "../board-blocks";
 import { describeGroups, parseGroups, renderGroups } from "../board-groups";
 import { buildPlane, describePlane, renderPlane, type PlaneSpec } from "../board-plane";
@@ -64,6 +64,29 @@ export function shownText(svg: string): string[] {
     .filter((m) => !/font-size="11\.5"|data-tick/.test(m[1]))
     .map((m) => m[2].replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim())
     .filter(Boolean);
+}
+
+/** One operation on a side ("−7", "÷ 3", "×5", "+2"), as a rewrite of that side. */
+function sideOp(op: string | undefined): ((side: string) => string) | null {
+  const m = /^\s*([+\-−–×*÷/])\s*(\d+(?:\.\d+)?)\s*$/.exec(op ?? "");
+  if (!m) return null;
+  const n = m[2];
+  const sym = m[1] === "×" ? "*" : m[1] === "÷" ? "/" : /[−–]/.test(m[1]) ? "-" : m[1];
+  return (side) => `(${side}) ${sym} ${n}`;
+}
+
+/** Why the step's result is not the line above with its operations done, or null when it is (or when it cannot tell). */
+function sideMismatch(above: string, result: string, left?: string, right?: string): string | null {
+  const opL = sideOp(left);
+  const opR = sideOp(right);
+  if (!opL || !opR) return null;
+  const [aL, aR] = plainMath(above).split("=");
+  const [rL, rR] = plainMath(result).split("=");
+  if (aR === undefined || rR === undefined) return null;
+  if (sameExpression(opL(aL), rL) && sameExpression(opR(aR), rR)) return null;
+  // Simplified the other way round ("15 = 3x") is still the same step.
+  if (sameExpression(opL(aL), rR) && sameExpression(opR(aR), rL)) return null;
+  return `doing ${left} to "${aL.trim()}" and ${right} to "${aR.trim()}" does not give "${result}"; write the line it does give, or do one operation at a time`;
 }
 
 function picture(sid: string, kind: PictureKind, problemId: string | null, spec: unknown, rendered: RenderedPicture, facts: string[], prev?: BoardObject): BoardObject {
@@ -145,6 +168,16 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         if (!b.left && !b.right && !b.note) {
           issues.push("work_step needs what is done to each side (left, right)");
           break;
+        }
+        // What is written under each side is what was done to it: "3x + 14 =
+        // 29", then ÷3 on both sides, does not give "x = 5", though x = 5 is
+        // its answer (Oct 31: that chain stayed up, checked, as the solution).
+        if (result && !/\?/.test(result) && /=/.test(above.text) && !isPending(above)) {
+          const bad = sideMismatch(above.text, result, b.left, b.right);
+          if (bad) {
+            issues.push(`work_step: ${bad}`);
+            break;
+          }
         }
         const r = addStep(spec, { left: b.left, right: b.right, ...(b.note ? { note: b.note } : {}), result, by: "tutor" });
         if ("error" in r) {
