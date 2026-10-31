@@ -60,7 +60,8 @@ function partsOf(r: RenderedPicture): string[] {
 /** The words and numbers a picture shows: its SVG's text, without the small numbers along a graph's axes. */
 export function shownText(svg: string): string[] {
   return [...svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)]
-    .filter((m) => !/font-size="11\.5"/.test(m[1]))
+    // Axis numbers (a plane's small ones, a number line's ticks) are the scale, not something it says.
+    .filter((m) => !/font-size="11\.5"|data-tick/.test(m[1]))
     .map((m) => m[2].replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim())
     .filter(Boolean);
 }

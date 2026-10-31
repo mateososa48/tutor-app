@@ -276,16 +276,19 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   // one problem… tell me the numbers" and then "Can you pick one problem…?").
   // The one that asks stays.
   {
-    const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+    const STOP = new Set(["the", "and", "you", "your", "that", "this", "with", "what", "for", "are", "was", "can", "its", "it's", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]);
+    const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w)));
     const sents = speech.flatMap((seg, i) => (seg.text.match(/[^.?!]+[.?!]*\s*/g) ?? [seg.text]).map((t) => ({ i, t: t.trim() })));
     const drop = new Set<string>();
     for (let x = 0; x < sents.length; x++)
       for (let y = x + 1; y < sents.length; y++) {
         const A = words(sents[x].t);
         const B = words(sents[y].t);
+        // The same sentence said twice, not two sentences about one thing
+        // ("Yes, five full rows." then "0.35 fills only three full rows").
         if (A.size < 4 || B.size < 4) continue;
         const shared = [...A].filter((w) => B.has(w)).length;
-        if (shared / Math.min(A.size, B.size) < 0.7) continue;
+        if (shared / Math.max(A.size, B.size) < 0.7) continue;
         // The first item may already have been said (the early sentence): the plan goes back instead.
         if (sents[x].i === 0) add("speech", `you say the same thing twice ("${sents[x].t.slice(0, 50)}" and "${sents[y].t.slice(0, 50)}"): say it once; the first sentence is already said.`);
         else drop.add(sents[y].t.includes("?") && !sents[x].t.includes("?") ? sents[x].t : sents[y].t);
@@ -396,7 +399,8 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   if (plan.question?.expects && !plan.givesAnswer) {
     const onBoard = [...state.board.filter((b) => !compiled.objects.some((o) => o.sid === b.sid)), ...compiled.objects].filter((b) => b.status !== "failed");
     // Only what can be read on it: a figure's computed area or a graph's view range is not shown.
-    const known0 = knownNumbers(state, false);
+    // The options a question names are not its answer showing ("0.6 or 0.06?" beside a grid labelled 0.6).
+    const known0 = new Set([...knownNumbers(state, false), ...numbersOf(plan.question.text)]);
     const shown = onBoard.find((b) => b.kind !== "heading" && (b.shown ?? []).some((f) => states(f, plan.question!.expects!, known0)));
     if (shown) add("question", `the board already shows the answer to "${plan.question.text}" (${shown.sid} reads: ${(shown.shown ?? []).join(", ").slice(0, 120)}); ask about something the board does not show, or have them explain what it shows.`);
   }
@@ -463,7 +467,10 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     const q: QuestionRecord = { id: "probe", problemId: state.current, text: plan.question.text, kind: plan.question.kind, expects: exp, ...(plan.question.check ? { check: plan.question.check } : {}), status: "open", askedTurn: "probe" };
     const theirs = state.transcript.filter((t) => t.role === "student").map((t) => t.text);
     const lines = [state.goal.text, ...theirs];
-    const clauses = lines.flatMap((l) => [l, ...l.split(/(?<=[.?!;])\s+|\s+(?:and then|then|so)\s+/i)]).filter((c) => /\d/.test(c) && c.length < 240);
+    // A hedge between two values ("16 and 15?", "-25?? or 25") is not their
+    // answer yet: asking which one is the right move (Oct 31).
+    const hedge = /-?\d[\d./]*\s*\??\s*(?:or|and)\s+-?\d[\d./]*[^.!]*\?|\?\s*\??\s*or\s+-?\d/i;
+    const clauses = lines.flatMap((l) => [l, ...l.split(/(?<=[.?!;])\s+|\s+(?:and then|then|so)\s+/i)]).filter((c) => /\d/.test(c) && c.length < 240 && !hedge.test(c));
     // The problem itself is not an answer to one of its steps ("3x + 7 = 22"
     // has the same solution as "3x = 15"), and a step is answered only by a
     // line that says its new value.
@@ -476,14 +483,18 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     // (Oct 31 2026: "found 2 and 3", then "what is x when x − 3 = 0?").
     const single = /^\s*(?:[a-z]\s*=\s*)?(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*$/i.exec(exp)?.[1];
     if (!hit && single && plan.question.kind === "value") {
-      const own = new Set(numbersOf(currentMath(state)));
+      // The problem's numbers, as they stated it too ("a is 2, b is -3, c is 1"
+      // is the problem, not an answer to a later question; Oct 31).
+      const statement = state.problems.find((x) => x.id === state.current)?.statement ?? "";
+      const defined = [...statement.replace(/[−–]/g, "-").matchAll(/\b[a-z]\s*(?:is|=)\s*(-?\d+(?:\.\d+)?)/gi)].map((m) => m[1]);
+      const own = new Set([...numbersOf(currentMath(state)), ...defined]);
       // From the opening line, only what they gave as an answer ("found 2 and 3"),
       // not the inputs the problem lists ("for x = 0, 1, 2", T13 on Oct 31).
       const theirLines = [...state.goal.text.split(/(?<=[.?!;])\s+/).filter((c) => /\b(?:got|get|found|find|is|are|equals?|think|answer)\b/i.test(c)), ...theirs.filter((l) => l.trim() !== state.goal.text.trim())];
-      const found = theirLines.find((l) => numbersOf(l).some((n) => n === single && !own.has(n)));
+      const found = theirLines.find((l) => !hedge.test(l) && numbersOf(l).some((n) => n === single && !own.has(n)));
       if (found) hit = found;
     }
-    if (hit && !/again|check|remind|still/i.test(plan.question.text)) add("reask", `they already answered this ("${hit.slice(0, 100)}"): use their answer instead of asking for it.`);
+    if (hit && !/again|check|remind|still/i.test(plan.question.text)) add("reask", `they already answered "${plan.question.text.slice(0, 80)}" (${exp}): "${hit.slice(0, 100)}". Use their answer instead of asking for it.`);
   }
   // The blank a question fills must exist and be waiting; otherwise the question just has no blank.
   if (plan.question?.fill) {

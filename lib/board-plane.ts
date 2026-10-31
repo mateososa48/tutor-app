@@ -337,7 +337,7 @@ function renderNumberLine(spec: PlaneSpec, fresh: Set<string>, width: number): R
     const x = Math.round(k * minor * 1000) / 1000;
     const big = Math.abs(x / step - Math.round(x / step)) < 1e-6;
     ticks.push(`M${n1(X(x))} ${n1(base - (big ? 6 : 4))}V${n1(base + (big ? 6 : 4))}`);
-    if (big) nums.push(`<text x="${n1(X(x))}" y="${n1(base + 21)}" text-anchor="middle" font-family="${FONT}" font-size="13" font-weight="500" fill="#3a3a42" ${HALO}>${fmt(x)}</text>`);
+    if (big) nums.push(`<text data-tick="1" x="${n1(X(x))}" y="${n1(base + 21)}" text-anchor="middle" font-family="${FONT}" font-size="13" font-weight="500" fill="#3a3a42" ${HALO}>${fmt(x)}</text>`);
   }
   out.push(`<path d="${ticks.join("")}" stroke="${AXIS}" stroke-width="1.4" fill="none"/>`);
   out.push(nums.join(""));

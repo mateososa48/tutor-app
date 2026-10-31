@@ -46,3 +46,9 @@ test("the evaluator is exact on the four operations, powers and brackets", () =>
   assert.equal(evaluate("4 / 0"), null);
   assert.match(mathForm("five times four"), /5 \* 4/);
 });
+
+test("a number inside a letter's expression is not a claim about the number", () => {
+  assert.deepEqual(falseAssertions("So b squared is negative three times negative three, which is positive nine."), []);
+  assert.deepEqual(falseAssertions("So f of seven is seven plus three, which is ten."), []);
+  assert.equal(falseAssertions("Two times three is five.").length, 1);
+});

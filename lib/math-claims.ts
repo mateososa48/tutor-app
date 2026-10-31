@@ -209,6 +209,14 @@ export function extractClaims(text: string): Claim[] {
       i = left.end;
       continue;
     }
+    // "b squared is (-3)(-3)" ("b ^ 2 is …") and "f of 7 is 7 + 3": the number
+    // belongs to an expression in a letter, so the claim is about b² or f(7),
+    // not about 2 or 7 (Oct 31: both were called false, and a turn fell back).
+    const before2 = toks[i - 2]?.s ?? "";
+    if ((isOp(before) || /^of$/i.test(before)) && /^[a-z]$/i.test(before2)) {
+      i = left.end;
+      continue;
+    }
     const start = toks[i].at;
     const stop = toks[right.end].at + toks[right.end].s.length;
     claims.push({ text: t.slice(start, stop).replace(/\s+/g, " ").trim(), span: [start, stop], lhs: left.expr, rhs: right.expr, rel: rel.rel, attributed: ATTRIBUTION.test(t.slice(Math.max(0, t.lastIndexOf(".", start) + 1), start)) });
