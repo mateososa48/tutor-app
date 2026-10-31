@@ -137,7 +137,10 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   for (let attempt = 0; attempt < 2 && !chosen; attempt++) {
     let call: PlanCall;
     try {
-      call = await planner(ENGINE_SYSTEM, messages, attempt === 0 ? onPartial : undefined);
+      // The repair streams too: when nothing was said early on the first try,
+      // the repaired plan's first sentence is (Oct 31: every kids10 turn over
+      // 7 s was a repair with nothing said early, 8-10 s of silence).
+      call = await planner(ENGINE_SYSTEM, messages, onPartial);
     } catch (err) {
       issuesLog.push([`model call failed: ${(err as Error).message.slice(0, 160)}`]);
       break;
