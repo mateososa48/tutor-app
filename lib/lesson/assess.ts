@@ -27,7 +27,9 @@ const SIGNALS: Array<[Signal, RegExp]> = [
 export function readSignals(text: string): Signal[] {
   // The intake's own last sentence names the language, not a request.
   const t = text.replace(/\s*Please teach me in [^.]{1,40}\.\s*$/i, "").trim();
-  return SIGNALS.filter(([, re]) => re.test(t)).map(([s]) => s);
+  const found = SIGNALS.filter(([, re]) => re.test(t)).map(([s]) => s);
+  // "i think i get it, can i try one on my own" wants a task, not a close (Oct 31).
+  return /\b(?:try (?:one|another|it)|one more|another one|give me (?:one|another))\b/i.test(t) ? found.filter((s) => s !== "done_understood") : found;
 }
 
 /** A reason was given: "because", "since", "so", "cuz". Whether it holds is the claims' business. */
