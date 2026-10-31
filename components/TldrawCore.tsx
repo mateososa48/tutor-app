@@ -26,6 +26,10 @@ import {
   normalizeForMatch,
   resolveItemTarget,
   ringPoints,
+  segmentRingPoints,
+  outlinePoints,
+  densify,
+  highlightSizeFor,
   handBoxPoints,
   headingRulePoints,
   strikePoints,
@@ -51,6 +55,11 @@ import { ConfettiLayer, type ConfettiBurst } from "@/components/board/ConfettiLa
 import { ILLUSTRATION_PAD, IllustrationShapeUtil } from "@/components/board/IllustrationShape";
 import { matchPart } from "@/lib/illustration/part-match";
 import { findPart } from "@/lib/board-plane";
+
+/** The pictures the board draws from a spec (lib/board-plane, board-table, board-work, board-geometry). */
+export type PictureKind = "plane" | "table" | "work" | "geometry";
+/** A drawn picture: its SVG, size, named parts, their aliases, and the shapes of the parts that have one. */
+export type RenderedPicture = { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string>; paths?: Record<string, { pts: Array<[number, number]>; closed: boolean }> };
 import type { Annotation } from "@/lib/board-annotate";
 import { renderScene, type Scene } from "@/lib/illustration/scene";
 import { BoardStrip } from "@/components/board/BoardStrip";
@@ -407,11 +416,11 @@ export interface WhiteboardHandle {
   /** An illustration from a scene (lib/illustration/scene.ts): laid out, drawn, its parts kept for pointing. */
   drawIllustration?(scene: Scene, opts?: { column?: "left" | "right" }): { w: number; h: number; parts: string[]; problems: string[] } | null;
   /** A graph or a table drawn from its spec (lib/board-plane.ts, lib/board-table.ts), its parts kept for marks. */
-  drawPicture?(kind: "plane" | "table", spec: object, out: { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string> }, opts?: { reserveH?: number }): void;
+  drawPicture?(kind: PictureKind, spec: object, out: RenderedPicture, opts?: { reserveH?: number }): void;
   /** The newest graph or table on this board (or the one `target` names), and its spec. */
-  findPicture?(kind: "plane" | "table", target?: string): { item: BoardItem; spec: object } | null;
+  findPicture?(kind: PictureKind, target?: string): { item: BoardItem; spec: object } | null;
   /** Edit a graph or table in place: the new drawing replaces the old, only its `data-fresh` pieces drawn in. */
-  editPicture?(itemId: string, spec: object, out: { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string> }, label: string, content: string | null): BoardItem | null;
+  editPicture?(itemId: string, spec: object, out: RenderedPicture, label: string, content: string | null): BoardItem | null;
   writeVertical(opts: VerticalDrawing): void;
   drawLongDivision(opts: LongDivisionDrawing): void;
   drawTransversal(opts: TransversalDrawing): void;
@@ -2904,7 +2913,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     // A named part of an illustration ("jar2" in b3), as a page rectangle. The
     // target is "b3.jar2", "b3 jar2", or a bare part name, which means the
     // newest illustration that has it. Null when it names no part.
-    const illustrationPart = (editor: Editor, target: string): { item: BoardItem; rect: Rect } | null => {
+    const illustrationPart = (editor: Editor, target: string): { item: BoardItem; rect: Rect; path?: { pts: Array<{ x: number; y: number }>; closed: boolean } } | null => {
       const t = target.trim();
       const m = /^(?:item\s+)?(b\d+)\s*[.:\s]\s*(\S.*)$/i.exec(t);
       const named = m ? [resolveItemTarget(itemsRef.current, m[1])].filter((x): x is BoardItem => Boolean(x)) : [...itemsRef.current].reverse();
@@ -2913,20 +2922,27 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         for (const sid of item.shapeIds) {
           const shape = editor.getShape(sid as TLShapeId);
           if (shape?.type !== "illustration") continue;
-          let parsed: { scale?: number; pad?: number; rects?: Record<string, Rect>; aliases?: Record<string, string> } = {};
+          let parsed: { scale?: number; pad?: number; rects?: Record<string, Rect>; aliases?: Record<string, string>; paths?: Record<string, { pts: Array<[number, number]>; closed: boolean }> } = {};
           try {
             parsed = JSON.parse(String((shape.props as { parts?: string }).parts ?? "{}"));
           } catch {}
           const rects = parsed.rects ?? {};
           // By its id or by the words for it ("right pan" for "right_pan" or "r").
           // A graph's or table's own names first ("(1, 1)", "y = 2x - 1", "x = 2"), then by words.
-          const key = (parsed.aliases ? findPart(rects, parsed.aliases, m ? m[2] : t) : null) ?? (/^[A-Za-z_][\w.-]*$|\s/.test(want) ? matchPart(Object.keys(rects), want) : null);
+          // A picture with its own names (graph, table, working, figure) answers
+          // only to them: a fuzzy match boxed the wrong line for a line that does not exist.
+          const key = parsed.aliases ? findPart(rects, parsed.aliases, m ? m[2] : t) : /^[A-Za-z_][\w.-]*$|\s/.test(want) ? matchPart(Object.keys(rects), want) : null;
           const page = editor.getShapePageBounds(shape.id);
           if (!key || !page) continue;
           const k = parsed.scale ?? 1;
           const pad = parsed.pad ?? 0;
           const r = rects[key];
-          return { item, rect: { x: page.x + pad + r.x * k, y: page.y + pad + r.y * k, w: r.w * k, h: r.h * k } };
+          const outline = parsed.paths?.[key];
+          return {
+            item,
+            rect: { x: page.x + pad + r.x * k, y: page.y + pad + r.y * k, w: r.w * k, h: r.h * k },
+            ...(outline ? { path: { pts: outline.pts.map(([x, y]) => ({ x: page.x + pad + x * k, y: page.y + pad + y * k })), closed: outline.closed } } : {}),
+          };
         }
       }
       return null;
@@ -4151,11 +4167,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return { w, h, parts: Object.keys(out.parts), problems: out.problems };
     },
 
-    drawPicture(kind: "plane" | "table", spec: object, out: { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string> }, opts: { reserveH?: number } = {}) {
+    drawPicture(kind: PictureKind, spec: object, out: RenderedPicture, opts: { reserveH?: number } = {}) {
       const editor = editorRef.current;
       if (!editor) return;
-      // A graph sits on the same white card as a picture; a table draws its own frame.
-      const pad = kind === "plane" ? 10 : 0;
+      // A graph or a figure sits on the same white card as a picture; a table
+      // draws its own frame; the working of a problem is written straight on the board.
+      const pad = kind === "plane" || kind === "geometry" ? 10 : 0;
       const w = Math.round(out.w) + pad * 2;
       const h = Math.round(out.h) + pad * 2;
       const x = colX("left");
@@ -4165,14 +4182,14 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         type: "illustration",
         x,
         y,
-        props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: 1, pad, rects: out.parts, aliases: out.aliases }), scene: JSON.stringify(spec), reveal: 1 },
+        props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: 1, pad, rects: out.parts, aliases: out.aliases, paths: out.paths ?? {} }), scene: JSON.stringify(spec), reveal: 1 },
         // Room kept under a table for the rows it will grow (endItem reads it).
         meta: { ...currentMeta(), ...(opts.reserveH ? { reserveH: opts.reserveH } : {}) },
       } as unknown as Parameters<Editor["createShape"]>[0]);
       colY("left").current += h + ROW_GAP;
     },
 
-    findPicture(kind: "plane" | "table", target?: string) {
+    findPicture(kind: PictureKind, target?: string) {
       const editor = editorRef.current;
       if (!editor) return null;
       const named = target ? resolveItemTarget(itemsRef.current, target.replace(/[.:\s].*$/, "")) : null;
@@ -4190,7 +4207,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       return null;
     },
 
-    editPicture(itemId: string, spec: object, out: { svg: string; w: number; h: number; parts: Record<string, Rect>; aliases: Record<string, string> }, label: string, content: string | null) {
+    editPicture(itemId: string, spec: object, out: RenderedPicture, label: string, content: string | null) {
       const editor = editorRef.current;
       if (!editor) return null;
       const item = itemsRef.current.find((i) => i.id === itemId);
@@ -4212,7 +4229,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         editor.updateShape({
           id: shape.id,
           type: "illustration",
-          props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: 1, pad, rects: out.parts, aliases: out.aliases }), scene: JSON.stringify(spec), reveal: fresh && !reduce ? 0 : 1 },
+          props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: 1, pad, rects: out.parts, aliases: out.aliases, paths: out.paths ?? {} }), scene: JSON.stringify(spec), reveal: fresh && !reduce ? 0 : 1 },
         } as unknown as Parameters<Editor["updateShape"]>[0]);
       }, { history: "ignore" });
       item.label = itemLabelFrom(label, item.tool.replaceAll("_", " "));
@@ -5271,11 +5288,14 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
     markCorrect(target: string) {
       const editor = editorRef.current;
       if (!editor) return null;
-      const item = resolveItemTarget(itemsRef.current, target);
+      // A line of a picture ("b2.L5", the last line of the working) or a whole item.
+      const part = illustrationPart(editor, target);
+      const item = part?.item ?? resolveItemTarget(itemsRef.current, target);
       if (!item) return null;
       notePage(editor, item);
       const meta = currentMeta();
-      const now = itemBounds(editor, item, MARK_BOUNDS);
+      const boundsNow = () => (part ? illustrationPart(editor, target)?.rect ?? null : itemBounds(editor, item, MARK_BOUNDS));
+      const now = boundsNow();
       recordDirectSemanticAction(
         { type: "highlight_step", step_label: item.label, style: "circle" },
         { shapeIds: [], bounds: now ? { x: now.x, y: now.y, w: now.w, h: now.h, pageIndex: pageIndex.current } : undefined },
@@ -5329,7 +5349,7 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         wait: 1400,
         run: () => {
           const host = findHost(item.id);
-          const bb = host ? itemBounds(editor, host, MARK_BOUNDS) : null;
+          const bb = host ? (part ? illustrationPart(editor, target)?.rect ?? null : itemBounds(editor, host, MARK_BOUNDS)) : null;
           if (!host || !bb) return;
           focusOn(editor, bb.x - 16, bb.y - 40, bb.w + 80, bb.h + 56);
           const c = SPOTS[side](bb);
@@ -5552,8 +5572,12 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           focusOn(editor, bb.x - 16, bb.y - 16, bb.w + 32, bb.h + 32);
           // A kept ring is a real sky stroke that belongs to the item; the
           // laser ring is the tutor's presence and fades.
-          if (keep) runHighlights(editor, host.id, [{ points: ringPoints(bb, 9), size: "m", duration: 900, ring: true }], meta);
-          else tutorScribble(editor, ringPoints(bb, 12), { duration: 640, hold: 3000, size: 5 });
+          // A part with its own shape is ringed along it: a triangle's outline,
+          // a long thin loop round a diagonal or a graph's line.
+          const shaped = part ? illustrationPart(editor, target)?.path : undefined;
+          const loop = shaped ? (shaped.closed ? outlinePoints(shaped.pts, keep ? 8 : 11) : segmentRingPoints(shaped.pts[0], shaped.pts[shaped.pts.length - 1], keep ? 9 : 12)) : null;
+          if (keep) runHighlights(editor, host.id, [{ points: loop ?? ringPoints(bb, 9), size: "m", duration: 900, ring: true }], meta);
+          else tutorScribble(editor, loop ?? ringPoints(bb, 12), { duration: 640, hold: 3000, size: 5 });
         },
       });
       return item;
@@ -5605,8 +5629,15 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         // point or the label. A graph's only DOM text is its credit, so a
         // graph never falls back to measuring text.
         if (pictureHit) {
-          const r = (text ? illustrationPart(editor, `${item.id}.${text.trim()}`) ?? tableCell(editor, item, text) : null)?.rect ?? pictureHit.rect;
-          runHighlights(editor, item.id, how === "underline" ? swipes([r]) : markerSwipes([r]), meta);
+          const hit = (text ? illustrationPart(editor, `${item.id}.${text.trim()}`) ?? tableCell(editor, item, text) : null) ?? pictureHit;
+          const shaped = (hit as { path?: { pts: Array<{ x: number; y: number }>; closed: boolean } }).path;
+          // Along the part's own shape: a swipe down the diagonal, round the triangle.
+          if (shaped) {
+            const pen = highlightSizeFor(14);
+            runHighlights(editor, item.id, [{ points: shaped.closed ? outlinePoints(shaped.pts, 0) : densify(shaped.pts, false, 3), size: pen.size as TLDefaultSizeStyle, duration: 520 }], meta);
+            return;
+          }
+          runHighlights(editor, item.id, how === "underline" ? swipes([hit.rect]) : markerSwipes([hit.rect]), meta);
           return;
         }
         const holderShape = holder ? editor.getShape(holder as TLShapeId) : undefined;

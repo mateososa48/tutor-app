@@ -83,7 +83,8 @@ export function parsePoints(input: unknown): Array<{ x: number; y: number; name?
     const y = num(m[3]);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const at = out.findIndex((p) => coordKey(p.x, p.y) === coordKey(x, y));
-    const name = m[1] && !/^(?:at|to|and|or|is|the)$/i.test(m[1]) ? m[1].toUpperCase() : undefined;
+    // "P1(2, 0)" names the point by the board's own id: not a name to print.
+    const name = m[1] && !/^(?:at|to|and|or|is|the)$/i.test(m[1]) && !/^P\d+$/i.test(m[1]) ? m[1].toUpperCase() : undefined;
     if (at >= 0) {
       if (name && !out[at].name) out[at].name = name;
       continue;
@@ -409,6 +410,8 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     parts[a.id] = box;
   }
   // Points last, over the lines, each with its coordinates.
+  const placedLabels: Rect[] = Object.entries(parts).filter(([k]) => /^L\d+$/.test(k)).map(([, r]) => r);
+  const dots: Rect[] = spec.points.filter((q) => inView(spec, q.x, q.y)).map((q) => ({ x: X(q.x) - 7, y: Y(q.y) - 7, w: 14, h: 14 }));
   for (const p of spec.points) {
     if (!inView(spec, p.x, p.y) && !(p.x === spec.x[0] || p.y === spec.y[0])) continue;
     const px = X(p.x);
@@ -417,10 +420,19 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     const tw = textWidth(text, 13);
     // Off the line's side: up and left of a rising line, up and right otherwise.
     const s = slopeAt(p.x);
-    let lx = s !== null && s > 0 ? px - tw - 12 : px + 12;
-    if (lx < M) lx = px + 12;
-    if (lx + tw > w - M) lx = px - tw - 12;
-    const ly = py - 12 < top + M + 10 ? py + 22 : py - 12;
+    // Up and left of a rising line, up and right otherwise; then the other
+    // spots round the dot, the first that is inside the picture and clear of
+    // every other label and dot (Oct 31 2026: (2, 0) and (3, 0) ran into each other).
+    const left = px - tw - 12, right = px + 12, above = py - 12, below = py + 22;
+    const tries: Array<[number, number]> = (s !== null && s > 0 ? [[left, above], [right, below], [right, above], [left, below]] : [[right, above], [left, below], [left, above], [right, below]]) as Array<[number, number]>;
+    const fits = ([x, y]: [number, number]) => {
+      const r = { x, y: y - 12, w: tw, h: 16 };
+      if (r.x < M || r.x + r.w > w - M || r.y < top + M || r.y + r.h > h - M) return false;
+      const hits = (o: Rect) => r.x < o.x + o.w && o.x < r.x + r.w && r.y < o.y + o.h && o.y < r.y + r.h;
+      return !placedLabels.some(hits) && !dots.some(hits);
+    };
+    const [lx, ly] = tries.find(fits) ?? tries[0];
+    placedLabels.push({ x: lx, y: ly - 12, w: tw, h: 16 });
     out.push(wrap(p.id, `<circle cx="${n1(px)}" cy="${n1(py)}" r="5" fill="${PEN}" stroke="${PEN}" stroke-width="1.5"/><text x="${n1(lx)}" y="${n1(ly)}" font-family="${FONT}" font-size="13" font-weight="500" fill="#3a3a42" ${HALO}>${esc(text)}</text>`));
     // Room for a ring round the dot that stays off its label.
     parts[p.id] = { x: px - 11, y: py - 11, w: 22, h: 22 };

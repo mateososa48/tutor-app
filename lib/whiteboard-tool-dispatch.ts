@@ -314,6 +314,18 @@ export function dispatchWhiteboardTool(
     const edited = editPictureTool(name, args, ctx.whiteboard);
     if (edited) return edited;
   }
+  // The engine's edit of a picture already up: same item, new drawing, only
+  // the new pieces drawn in. The receipt is the item and its parts.
+  if (name === "edit_picture") {
+    const board = ctx.whiteboard;
+    if (!board?.editPicture) return fail("This board cannot edit pictures.");
+    const target = typeof args.target === "string" ? args.target : "";
+    const rendered = args.rendered as { svg: string; w: number; h: number; parts: Record<string, { x: number; y: number; w: number; h: number }>; aliases: Record<string, string> } | undefined;
+    if (!target || !rendered) return fail("edit_picture needs a target and a drawing.");
+    const label = typeof args.label === "string" ? args.label : target;
+    const item = board.withDirectMeta({ owner: "tutor" }, () => board.editPicture!(target, (args.spec ?? {}) as object, rendered, label, null));
+    return item ? ok(`${item.id} ${label}`) : fail(`Nothing on the board is ${target}.`);
+  }
   if (name === "set_plan") {
     const board = ctx.whiteboard;
     if (!board?.setPlan) return fail("This board cannot show a plan.");
@@ -987,6 +999,23 @@ function dispatchInner(
         extraExpressions.length ? `also ${extraExpressions.join("; ")}` : "",
       ].filter(Boolean).join("; ");
       return ok(`Graphed y = ${expression} for x from ${xMin} to ${xMax}${extra ? `; ${extra}` : ""}.`);
+    }
+
+    // The engine's own drawing (lib/lesson): a picture already compiled and
+    // checked on the server, drawn as it is. Not declared to any model.
+    case "draw_picture": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      if (!board.drawPicture) return fail("This board cannot draw pictures.");
+      const kind = String(args.kind ?? "");
+      if (!["plane", "table", "work", "geometry"].includes(kind)) return fail(`Unknown picture kind "${kind}".`);
+      const rendered = args.rendered as { svg: string; w: number; h: number; parts: Record<string, { x: number; y: number; w: number; h: number }>; aliases: Record<string, string> } | undefined;
+      if (!rendered || typeof rendered.svg !== "string" || !(rendered.w > 0) || !(rendered.h > 0)) return fail("The picture has nothing to draw.");
+      const label = typeof args.label === "string" ? args.label : kind;
+      board.withDirectMeta({ owner: "tutor", tutorReferenceLabel: label }, () =>
+        board.drawPicture!(kind as "plane", (args.spec ?? {}) as object, rendered, { reserveH: typeof args.reserveH === "number" ? args.reserveH : 0 }),
+      );
+      return ok(label);
     }
 
     // A coordinate plane that grows (lib/board-plane.ts): empty, points, lines, arrows.

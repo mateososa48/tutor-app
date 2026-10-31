@@ -586,3 +586,56 @@ export function underlinePoints(b: ItemBounds, n = 18): Array<{ x: number; y: nu
   }
   return pts;
 }
+
+// ── Marks that follow a part's own shape (Oct 31 2026) ───────────────────
+// A ring round a diagonal used to be a ring round the whole figure (the
+// diagonal's box is the figure's box), and a swipe over it was a flat band
+// across the middle. Parts that have a shape (a segment, a polygon, a line on
+// a graph) are marked along it.
+
+type Pt = { x: number; y: number };
+
+/** Points every `step` px along a polyline (closed: back to the start). */
+export function densify(pts: Pt[], closed: boolean, step = 4): Pt[] {
+  const out: Pt[] = [];
+  const ring = closed ? [...pts, pts[0]] : pts;
+  for (let i = 0; i < ring.length - 1; i++) {
+    const a = ring[i], b = ring[i + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / step));
+    for (let k = 0; k < n; k++) out.push({ x: a.x + ((b.x - a.x) * k) / n, y: a.y + ((b.y - a.y) * k) / n });
+  }
+  out.push(ring[ring.length - 1]);
+  return out;
+}
+
+/** A hand loop round a segment: a long thin oval along it, closing past its start. */
+export function segmentRingPoints(a: Pt, b: Pt, pad = 10, n = 56): Pt[] {
+  const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const ang = Math.atan2(b.y - a.y, b.x - a.x);
+  const rx = len / 2 + pad + 4, ry = pad + 4;
+  const start = -2.35;
+  const sweep = Math.PI * 2 + RING_OVERLAP;
+  const out: Pt[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = start + (sweep * i) / n;
+    // Spiral in a touch, as a pen closes a loop.
+    const k = 1 - (0.05 * i) / n;
+    const x = Math.cos(t) * rx * k, y = Math.sin(t) * ry * k;
+    out.push({ x: cx + x * Math.cos(ang) - y * Math.sin(ang), y: cy + x * Math.sin(ang) + y * Math.cos(ang) });
+  }
+  return out;
+}
+
+/** A polygon's outline pushed `offset` px out from its centre, traced round and a little past the start. */
+export function outlinePoints(pts: Pt[], offset = 8): Pt[] {
+  const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+  const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+  const out = pts.map((p) => {
+    const d = Math.hypot(p.x - cx, p.y - cy) || 1;
+    return { x: p.x + ((p.x - cx) / d) * offset, y: p.y + ((p.y - cy) / d) * offset };
+  });
+  const loop = densify(out, true, 6);
+  // Past the start by a tenth of the way round.
+  return [...loop, ...loop.slice(1, Math.max(2, Math.round(loop.length * 0.08)))];
+}
