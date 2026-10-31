@@ -77,7 +77,7 @@ export function knownNumbers(state: LessonState, withBoard = true): Set<string> 
 }
 
 /** One thing wrong with a plan. Hard issues go back to the model; the rest are fixed here. */
-export type Issue = { text: string; kind: "false_math" | "verdict" | "leak" | "reask" | "close" | "board" | "speech" | "question" | "ends" };
+export type Issue = { text: string; kind: "false_math" | "verdict" | "leak" | "reask" | "close" | "board" | "speech" | "question" | "ends" | "advice" };
 
 /** A sentence that hands them a task ("Try it.", "Tell me what you get.", "Your turn."). */
 export const GIVES_TASK = /\b(?:try|tell me|show me|write|work (?:it )?out|figure (?:it )?out|find|give me|go ahead|your turn|count|pick|choose|type|say|check|plug|put|start)\b/i;
@@ -150,7 +150,7 @@ export function factInWords(fact: string): string {
     .join(" ");
 }
 
-export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnPlan, verdict: Verdict, compiled: Compiled): { plan: TurnPlan; issues: string[]; detail: Issue[]; fixes: string[] } {
+export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnPlan, verdict: Verdict, compiled: Compiled): { plan: TurnPlan; issues: string[]; detail: Issue[]; fixes: string[]; advice: string[] } {
   const detail: Issue[] = compiled.issues.map((text) => ({ text, kind: "board" as const }));
   const fixes: string[] = [];
   const add = (kind: Issue["kind"], text: string) => detail.push({ kind, text });
@@ -263,7 +263,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     if (!m) continue;
     const posed = numbersOf(spokenExpression(m[1]).replace(/\^\d+/g, " "));
     const missing = posed.filter((n) => !numbersOf(visible.replace(/\^\d+/g, " ")).includes(n));
-    if (posed.length >= 2 && missing.length) add("board", `the new problem ("${m[1].slice(0, 70)}") is only spoken: write it on the board (a work_line, or a table) so they can see it.`);
+    if (posed.length >= 2 && missing.length) add("advice", `the new problem ("${m[1].slice(0, 70)}") is only spoken: write it on the board (a work_line, or a table) so they can see it.`);
   }
 
   // Working on another problem from the sheet without moving to it piles its
@@ -271,7 +271,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   const sheet = state.problems.filter((p) => p.source.kind === "worksheet");
   if (sheet.length > 1 && !plan.problem && plan.board.some((b) => b.do !== "mark")) {
     const named = namedProblem(spokenToDigits(speech.map((x) => x.text).join(" ")), sheet);
-    if (named && named !== state.current && state.problems.find((p) => p.id === named)?.status !== "solved") add("board", `this turn works on ${named} (named in the speech) but problem is not set: set problem to "${named}" so it gets its own heading and page.`);
+    if (named && named !== state.current && state.problems.find((p) => p.id === named)?.status !== "solved") add("advice", `this turn works on ${named} (named in the speech) but problem is not set: set problem to "${named}" so it gets its own heading and page.`);
   }
 
   // A word problem needs its answer on record, so "I got 4" can be checked in code.
@@ -299,7 +299,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
         const shared = [...A].filter((w) => B.has(w)).length;
         if (shared / Math.max(A.size, B.size) < 0.7) continue;
         // The first item may already have been said (the early sentence): the plan goes back instead.
-        if (sents[x].i === 0) add("speech", `you say the same thing twice ("${sents[x].t.slice(0, 50)}" and "${sents[y].t.slice(0, 50)}"): say it once; the first sentence is already said.`);
+        if (sents[x].i === 0) add("advice", `you say the same thing twice ("${sents[x].t.slice(0, 50)}" and "${sents[y].t.slice(0, 50)}"): say it once; the first sentence is already said.`);
         else drop.add(sents[y].t.includes("?") && !sents[x].t.includes("?") ? sents[x].t : sents[y].t);
       }
     if (drop.size) {
@@ -373,7 +373,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
         // "the three losses", "two rows": counts, not entries.
         const said = numbersOf(sentence.replace(/\b(?:one|two|three|four|five|six|\d)\s+(?:losses|rows?|columns?|numbers|values|entries|steps|times|dots|points|lines|years?)\b/gi, " "));
         const missing = said.filter((n) => !inTable.has(n));
-        if (said.length >= 2 && missing.length) add("board", `the speech reads ${missing.join(", ")} off the table ("${sentence.slice(0, 80)}"), but the table does not show ${missing.length === 1 ? "it" : "them"}: add the row or column first, or say only what it shows.`);
+        if (said.length >= 2 && missing.length) add("advice", `the speech reads ${missing.join(", ")} off the table ("${sentence.slice(0, 80)}"), but the table does not show ${missing.length === 1 ? "it" : "them"}: add the row or column first, or say only what it shows.`);
       }
     }
   }
@@ -382,7 +382,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   const onBoardNow = [...state.board.filter((b) => b.status !== "failed"), ...compiled.objects];
   if (onBoardNow.some((b) => b.facts.some((f) => /shaded, row by row/.test(f))) && !onBoardNow.some((b) => b.kind === "table")) {
     const col = speech.find((x) => /\bcolumns?\b/i.test(x.text));
-    if (col) add("board", `the grid is shaded row by row from the top, but the speech says columns ("${col.text.slice(0, 70)}"): say rows.`);
+    if (col) add("advice", `the grid is shaded row by row from the top, but the speech says columns ("${col.text.slice(0, 70)}"): say rows.`);
   }
   // 4g. A ring goes on the point the sentence names (Oct 31: "the point is
   // three, five" with the ring on (2, 3)).
@@ -396,7 +396,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
       const pair = (x: string, y: string) => said.some((n, i) => n === x && said[i + 1] === y);
       const mine = pts.find((q) => q.id.toLowerCase() === hit.part!.toLowerCase());
       const other = pts.find((q) => q !== mine && pair(q.x, q.y));
-      if (mine && !pair(mine.x, mine.y) && other) add("board", `the mark on ${ref} is the point (${mine.x}, ${mine.y}), but the sentence names (${other.x}, ${other.y}), which is ${hit.obj.sid}.${other.id}: mark the point you name.`);
+      if (mine && !pair(mine.x, mine.y) && other) add("advice", `the mark on ${ref} is the point (${mine.x}, ${mine.y}), but the sentence names (${other.x}, ${other.y}), which is ${hit.obj.sid}.${other.id}: mark the point you name.`);
     }
   }
 
@@ -530,7 +530,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   // (Oct 31: "Eleven came out, and we want the number that went in." and
   // nothing else, twice in a row, to a stuck student).
   const lastLine = (speech.at(-1)?.text ?? "").split(/(?<=[.?!])\s+/).filter(Boolean).at(-1) ?? "";
-  if (speech.length && !plan.close && plan.move !== "recap" && !speech.some((x) => x.text.includes("?")) && !GIVES_TASK.test(lastLine)) add("ends", "the turn ends with nothing for them to do: end on one question, or a short task (\"Try it on the board's next line.\").");
+  if (speech.length && !plan.close && plan.move !== "recap" && !speech.some((x) => x.text.includes("?")) && !GIVES_TASK.test(lastLine)) add("advice", "the turn ends with nothing for them to do: end on one question, or a short task (\"Try it on the board's next line.\").");
   const asks = (speech.map((s) => s.text).join(" ").match(/\?/g) ?? []).length;
   if (asks > 1) add("question", `the speech asks ${asks} questions; ask one.`);
 
@@ -544,7 +544,13 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     });
     return { ...s, needs };
   });
-  return { plan: { ...plan, speech }, issues: detail.map((d) => d.text), detail, fixes };
+  // Advice never sends the plan back: a second planning call cost more than
+  // these defects (Oct 31, kids8: repairs 29% → 49% of turns, turns with no
+  // board change 17% → 32%, and blind judges preferred the run before them on
+  // 6 of 9). The next turn's planner reads it instead.
+  const advice = detail.filter((d) => d.kind === "advice").map((d) => d.text);
+  const hard = detail.filter((d) => d.kind !== "advice");
+  return { plan: { ...plan, speech }, issues: hard.map((d) => d.text), detail: hard, fixes, advice };
 }
 
 const fmtNum = (v: number) => (Number.isFinite(v) ? String(Math.round(v * 1e6) / 1e6) : "");
@@ -592,9 +598,6 @@ export function salvage(plan: TurnPlan, detail: Issue[]): TurnPlan | null {
     if (d.kind === "close") return null;
   }
   if (!speech.length) return null;
-  // Nothing left for them to do: one plain question, never a silence after a statement.
-  const last = speech.at(-1)!.text.split(/(?<=[.?!])\s+/).at(-1) ?? "";
-  if (!plan.close && plan.move !== "recap" && !speech.some((x) => x.text.includes("?")) && !GIVES_TASK.test(last)) speech = [...speech, { id: `end${speech.length + 1}`, text: "What would you try next?", needs: [] }];
   return { ...plan, speech, question };
 }
 

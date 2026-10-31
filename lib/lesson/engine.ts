@@ -112,7 +112,7 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   const issuesLog: string[][] = [];
   let calls = 0;
   let model: string | undefined;
-  let chosen: { plan: TurnPlan; compiled: Compiled; base: LessonState; verdict?: Verdict } | null = null;
+  let chosen: { plan: TurnPlan; compiled: Compiled; base: LessonState; verdict?: Verdict; advice?: string[] } | null = null;
   let last: { plan: TurnPlan; compiled: Compiled; detail: Issue[]; base: LessonState } | null = null;
   // A plan that moves to another problem on the sheet is compiled and checked on that problem.
   const onProblem = (plan: TurnPlan): LessonState => (plan.problem && plan.problem !== withAuto.current && withAuto.problems.some((p) => p.id === plan.problem) ? { ...withAuto, current: plan.problem } : withAuto);
@@ -160,7 +160,7 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
     const checked = validatePlan(base, assessment, held.plan, parsed.verdict, compiled);
     fixes.push(...held.fixes, ...checked.fixes);
     if (!checked.issues.length) {
-      chosen = { plan: checked.plan, compiled, base, verdict: parsed.verdict };
+      chosen = { plan: checked.plan, compiled, base, verdict: parsed.verdict, advice: checked.advice };
       break;
     }
     last = { plan: checked.plan, compiled, detail: checked.detail, base };
@@ -190,6 +190,7 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   const ops = [...auto, ...compiled.ops];
   const objects = [...autoObjects.filter((o) => !compiled.objects.some((c) => c.sid === o.sid)), ...compiled.objects];
   let next = recordTurn(chosen?.base ?? withAuto, turnId, plan, ops, objects, Date.now());
+  next = { ...next, advice: chosen?.advice?.slice(0, 4) ?? [] };
   // Their answer to the problem itself, called right with checked arithmetic:
   // the problem is solved, even when it came as an answer to a smaller
   // question (Oct 31: #3 settled in the lesson was "re-checked" at the end).

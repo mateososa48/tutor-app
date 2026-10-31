@@ -218,7 +218,7 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         const { spec, obj } = work();
         // "L3: both red = …" is the model's label for the line, not part of it.
         // "L3:" is the model's label for the line, "1." the sheet's number: neither is part of it.
-        const text = b.text.replace(/^\s*L\d+\s*[:.)]\s*/i, "").replace(/^\s*(?:#|no\.?\s*)?\d{1,2}\s*[.)]\s+(?=[-−(\d a-z])/i, "");
+        const text = b.text.replace(/^\s*L\d+(?:\s*[:.)]\s*|\s+)/i, "").replace(/^\s*(?:#|no\.?\s*)?\d{1,2}\s*[.)]\s+(?=[-−(\d a-z])/i, "");
         if (wordyLine(text)) {
           issues.push(`work_line "${text}": the working holds math, not sentences; say the words aloud and write only the math`);
           break;

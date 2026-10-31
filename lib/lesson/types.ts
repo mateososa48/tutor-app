@@ -219,6 +219,8 @@ export type LessonState = {
   evidence: LearnerEvidence[];
   requests: RequestRecord[];
   board: BoardObject[];
+  /** What the code noticed about the last turn without sending it back; the next plan reads it. */
+  advice?: string[];
   /** The marks on the board now: sky rings and swipes last until a later turn marks again; checks and crosses stay. */
   marks?: Array<{ ref: string; how: string; turnId: string }>;
   /** The conversation, newest last, bounded. */

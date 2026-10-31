@@ -189,8 +189,8 @@ test("numbers read off a table must be on it", async () => {
       { move: "explain", speech: [{ say: "Look at the y column: negative one, one, three." }, { say: "How much does y grow each time?" }], board: [], question: { ask: "How much does y grow each time?", kind: "value", expects: "2" } },
     ),
   });
-  assert.equal(r2.log.calls, 2);
-  assert.match(r2.log.issues[0].join(" "), /reads 5 off the table/);
+  assert.equal(r2.log.calls, 1);
+  assert.match((r2.state.advice ?? []).join(" "), /reads 5 off the table/);
 });
 
 test("a ring with a sentence lands on the point the sentence names", async () => {
@@ -203,11 +203,11 @@ test("a ring with a sentence lands on the point the sentence names", async () =>
       { move: "confirm", speech: [{ say: "The new point is three, five, on the line.", needs: ["g.P4"] }, { say: "What does y do each step?" }], board: [{ do: "mark", ref: "g.P4", how: "ring" }], question: { ask: "What does y do each step?", kind: "open" } },
     ),
   });
-  assert.equal(r2.log.calls, 2);
-  assert.match(r2.log.issues[0].join(" "), /names \(3, 5\)/);
+  assert.equal(r2.log.calls, 1);
+  assert.match((r2.state.advice ?? []).join(" "), /names \(3, 5\)/);
 });
 
-test("a turn that ends on a statement goes back for something to do", async () => {
+test("a turn that ends on a statement is noted for the next turn", async () => {
   const s = createLesson({ intake: "f(x) = 2x + 1, what goes in to get 11?" });
   const r = await runTurn(s, input("u1", "wait so backwards?"), {
     planner: scripted(
@@ -215,12 +215,12 @@ test("a turn that ends on a statement goes back for something to do", async () =
       { move: "explain", speech: [{ say: "Yes, eleven came out, and we want the number that went in." }, { say: "What number doubled and plus one makes eleven?" }], board: [], question: { ask: "What number doubled and plus one makes eleven?", kind: "value", expects: "5" } },
     ),
   });
-  assert.equal(r.log.calls, 2);
-  assert.match(r.log.issues[0].join(" "), /nothing for them to do/);
+  assert.equal(r.log.calls, 1);
+  assert.match((r.state.advice ?? []).join(" "), /nothing for them to do/);
 });
 
 // S-factor-novice (Oct 31): a new problem handed over under move "confirm", only spoken.
-test("a new problem said aloud must be written, whatever the move", async () => {
+test("a new problem said aloud and not written is noted, whatever the move", async () => {
   const s = createLesson({ intake: "factor x^2 + 7x + 12" });
   const r = await runTurn(s, input("u1", "3 and 4"), {
     planner: scripted(
@@ -228,8 +228,8 @@ test("a new problem said aloud must be written, whatever the move", async () => 
       { move: "confirm", speech: [{ say: "Three and four do both jobs." }, { say: "Now try a new one: x squared plus five x plus four. Which two numbers work?" }], board: [{ do: "work_line", text: "x^2 + 5x + 4" }], question: { ask: "Which two numbers work?", kind: "open" } },
     ),
   });
-  assert.equal(r.log.calls, 2);
-  assert.match(r.log.issues[0].join(" "), /only spoken/);
+  assert.equal(r.log.calls, 1);
+  assert.match((r.state.advice ?? []).join(" "), /only spoken/);
 });
 
 test("a sentence said twice in a turn is said once, the asking one kept", async () => {

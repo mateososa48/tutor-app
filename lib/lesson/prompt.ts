@@ -105,6 +105,7 @@ export function turnContext(state: LessonState, input: StudentInput, a: InputAss
   const others = state.problems.filter((x) => x.id !== state.current);
   if (others.length) lines.push(`OTHER PROBLEMS: ${others.map((x) => `${x.id} ${x.statement.slice(0, 80)}${x.written ? ` [they wrote: ${x.written}]` : ""} (${x.status === "solved" ? "solved: right on the sheet or in the lesson; do not ask it again" : x.status})`).join("; ")}`);
   lines.push(`BOARD:\n${boardForModel(state)}`);
+  if (state.advice?.length) lines.push(`NOTED ABOUT YOUR LAST TURN (do better this turn, without mentioning it): ${state.advice.join(" | ")}`);
   if (open.length) lines.push(`OPEN QUESTION: "${open[open.length - 1].text}"${open[open.length - 1].expects ? ` (private answer: ${open[open.length - 1].expects})` : ""}`);
   if (answered.length) lines.push(`ANSWERED QUESTIONS (settled; do not ask again): ${answered.map((q) => `"${q.text}"`).join("; ")}`);
   const said = alreadySaid(state);
