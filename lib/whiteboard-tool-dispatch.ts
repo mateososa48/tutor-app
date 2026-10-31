@@ -1012,7 +1012,7 @@ function dispatchInner(
       if (isToolError(board)) return board;
       if (!board.drawPicture) return fail("This board cannot draw pictures.");
       const kind = String(args.kind ?? "");
-      if (!["plane", "table", "work", "geometry", "blocks"].includes(kind)) return fail(`Unknown picture kind "${kind}".`);
+      if (!["plane", "table", "work", "geometry", "blocks", "groups"].includes(kind)) return fail(`Unknown picture kind "${kind}".`);
       const rendered = args.rendered as { svg: string; w: number; h: number; parts: Record<string, { x: number; y: number; w: number; h: number }>; aliases: Record<string, string> } | undefined;
       if (!rendered || typeof rendered.svg !== "string" || !(rendered.w > 0) || !(rendered.h > 0)) return fail("The picture has nothing to draw.");
       const label = typeof args.label === "string" ? args.label : kind;

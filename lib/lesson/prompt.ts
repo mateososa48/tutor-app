@@ -38,9 +38,10 @@ How to use the board (it is what you both look at):
 - Tables: table with ? cells for them; the same id edits it in place.
 - Graphs: graph; the same id adds to the same plane (one scale). Points, lines ("y = x^2 - 5x + 6"), arrows for a step ("right 1", "up 2").
 - Figures: exact shapes from the problem's given sizes (fact ids like F1, or their values). Never invent a size. A right triangle can be drawn inside its rectangle with the diagonal.
-- Fractions: fractions ("1/2, 1/3") draws them on the same whole, side by side; common cuts both into equal smaller parts ("6") so they can be added or compared.
+- Fractions: fractions ("1/2, 1/3") draws them on the same whole, side by side; common cuts both into equal smaller parts ("6"). Cut them only once the student is ready for that step (or has proposed it): cut parts show the answer to "how many sixths".
 - Place value (tens and ones, trading a ten, taking away): blocks, exact rods and cubes, its states left to right in rows ("42: 4 tens 2 ones | after the trade: 3 tens 12 ones (10 new)"). Say only what the rows show; a new state is a new row.
-- Real things (a bag of marbles, groups of objects, money): picture, with what to draw in exact counts and arrangement, and what they should notice. It never writes the answer. Use it when the idea is about real quantities, not for equations.
+- Counted things in containers (marbles in a bag, cookies on plates, groups): groups, exact, left to right ("bag: 3 red, 2 blue | after one red is drawn: 2 red, 2 blue"). Say only what the groups show.
+- Real things that are not just counts (money, a scene, an analogy): picture, with what to draw in exact counts and arrangement, and what they should notice. It never writes the answer. Use it when the idea is about real quantities, not for equations.
 - A worked example on other numbers: example.
 - Marks: ring, swipe, underline, check (a right final answer, green box), cross (a superseded wrong line), point. Ref a part: "work.L3", "fig1.diagonal", "graph1.P2", "table1.r2c2".
 - If what they ask to see is already on the board, say so ("it's already up: the slanted line") and mark it; never draw it again.

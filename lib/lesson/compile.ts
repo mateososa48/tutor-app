@@ -8,6 +8,7 @@
 
 import { checkStep, spokenToDigits } from "../answer-check";
 import { describeBlocks, parseBlocks, renderBlocks } from "../board-blocks";
+import { describeGroups, parseGroups, renderGroups } from "../board-groups";
 import { buildPlane, describePlane, renderPlane, type PlaneSpec } from "../board-plane";
 import { describeTable, mergeTable, parseTable, renderTable, sameColumns, type TableSpec } from "../board-table";
 import { addLine, addStep, describeWork, fillLine, isPending, lastLine, plainMath, renderWork, startWork, type WorkSpec } from "../board-work";
@@ -326,6 +327,24 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         const r = renderWork(spec);
         put(picture(sid, "work", s.current, spec, r, [describeWork(spec)]));
         ops.push({ opId: opId(), type: "draw", sid, kind: "work", spec, rendered: r, label: `example ${b.problem}` });
+        break;
+      }
+      case "groups": {
+        const spec = parseGroups(b.groups);
+        if ("error" in spec) {
+          issues.push(spec.error);
+          break;
+        }
+        const old = [...objects, ...s.board].find((o) => o.kind === "groups" && o.problemId === s.current && o.status !== "failed");
+        const sid = b.id && latest(b.id) ? b.id : old?.sid ?? b.id ?? "groups1";
+        const prev = latest(sid);
+        if (prev?.kind === "groups" && JSON.stringify(prev.spec) === JSON.stringify(spec)) {
+          notes.push(`${sid} is already on the board as asked`);
+          break;
+        }
+        const r = renderGroups(spec);
+        put(picture(sid, "groups", s.current, spec, r, describeGroups(spec), prev?.kind === "groups" ? prev : undefined));
+        ops.push(prev?.kind === "groups" ? { opId: opId(), type: "edit", sid, kind: "groups", spec, rendered: r, label: "groups" } : { opId: opId(), type: "draw", sid, kind: "groups", spec, rendered: r, label: "groups" });
         break;
       }
       case "blocks": {

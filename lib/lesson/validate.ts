@@ -282,7 +282,7 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   const SHOWN: Array<[RegExp, string[], string]> = [
     [/\btable\b/i, ["table"], "a table"],
     [/\b(?:graph|curve|plotted|the line through)\b/i, ["plane"], "a graph"],
-    [/\b(?:blocks?|cubes?|rods?|marbles?|the bags?|the picture|coins?)\b/i, ["illustration", "blocks"], "a picture"],
+    [/\b(?:blocks?|cubes?|rods?|marbles?|the bags?|the picture|coins?|plates?|cookies?)\b/i, ["illustration", "blocks", "groups"], "a picture"],
     [/\b(?:bars?|pie)\b/i, ["fraction", "illustration"], "a fraction model"],
     [/\b(?:rectangle|triangle|diagonal)\b/i, ["geometry", "illustration"], "a figure"],
   ];
@@ -314,6 +314,10 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   const claimsDrawing = /\b(?:here it is|here's the new|i(?:'ve| have) (?:drawn|added|put)|i drew|drawn (?:it )?(?:fresh|again|now)|i'll draw|let me draw|i'm drawing|watch (?:as|while) i)\b/i;
   if (speech.some((x) => /\b(?:drawn (?:it )?(?:fresh|again)|here it is again|draw it again)\b/i.test(x.text))) add("speech", "never redraw what is already up: say it is already on the board and point at it.");
   if (!changed && speech.some((x) => claimsDrawing.test(x.text))) add("board", "the speech says you are drawing something, but nothing new is drawn this turn: say it is already on the board and point at it (a mark), or draw what is new.");
+  // A curve crosses the axis where it passes through it (Oct 31: "touches" twice, despite the prompt).
+  if (state.board.some((b) => b.kind === "plane") || compiled.objects.some((o) => o.kind === "plane")) {
+    if (speech.some((x) => /\btouch(?:es|ing)?\b[^.?!]*\b(?:axis|zero)\b/i.test(x.text))) add("speech", 'say the curve "crosses" the axis where it passes through it; "touches" means it meets it without crossing.');
+  }
   if (speech.some((x) => /\bline (?:one|two|three|four|five|six|seven|\d)\b/i.test(x.text))) add("speech", 'the board has no line numbers: name the line by what it says ("the line with negative six"), and mark it.');
 
   // 4a. The problem's own answer is theirs to find: a sentence that says it

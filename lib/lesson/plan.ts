@@ -36,7 +36,8 @@ const TURN_PLAN_BASE = {
         items: {
           type: "object",
           properties: {
-            do: { type: "string", enum: ["work_step", "work_line", "work_fill", "table", "graph", "figure", "example", "mark", "fractions", "blocks", "picture"] },
+            do: { type: "string", enum: ["work_step", "work_line", "work_fill", "table", "graph", "figure", "example", "mark", "fractions", "blocks", "groups", "picture"] },
+            groups: { type: "string", description: "groups: things in containers, left to right, \"bag: 3 red, 2 blue | after one red is drawn: 2 red, 2 blue\", \"plate 1: 4 cookies | plate 2: 4 cookies\"; \"cross 1 red\" crosses one out." },
             fractions: { type: "string", description: "fractions: one or two fractions on the same whole, \"1/2, 1/3\"." },
             common: { type: "number", description: "fractions: cut both into this many equal parts (6 for halves and thirds)." },
             model: { type: "string", enum: ["bar", "circle"], description: "fractions: bars (default) or circles." },
@@ -209,6 +210,10 @@ export function parseTurnPlan(raw: unknown): ParsedPlan {
       case "fractions":
         if (str(o.fractions)) board.push({ do: "fractions", ...(str(o.id) ? { id: str(o.id) } : {}), fractions: str(o.fractions), ...(typeof o.common === "number" ? { common: o.common } : {}), ...(o.model === "circle" ? { model: "circle" as const } : {}) });
         else issues.push("fractions needs fractions");
+        break;
+      case "groups":
+        if (str(o.groups)) board.push({ do: "groups", ...(str(o.id) ? { id: str(o.id) } : {}), groups: str(o.groups) });
+        else issues.push("groups needs groups");
         break;
       case "blocks":
         if (str(o.rows)) board.push({ do: "blocks", ...(str(o.id) ? { id: str(o.id) } : {}), rows: str(o.rows) });

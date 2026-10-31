@@ -90,7 +90,7 @@ export type RequestRecord = { id: string; inputId: string; kind: Signal; text: s
 
 // ── The board ───────────────────────────────────────────────────────────
 
-export type PictureKind = "plane" | "table" | "work" | "geometry" | "blocks";
+export type PictureKind = "plane" | "table" | "work" | "geometry" | "blocks" | "groups";
 
 /** One thing on the board the lesson knows: its semantic id, the item it became, and its spec. */
 export type BoardObject = {
@@ -193,6 +193,7 @@ export type BoardIntent =
   | { do: "mark"; ref: string; how: "ring" | "swipe" | "underline" | "check" | "cross" | "point" }
   | { do: "fractions"; id?: string; fractions: string; common?: number; model?: "bar" | "circle" }
   | { do: "blocks"; id?: string; rows: string }
+  | { do: "groups"; id?: string; groups: string }
   | { do: "picture"; id?: string; what: string; notice?: string };
 
 export type LessonState = {

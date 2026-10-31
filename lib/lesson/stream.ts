@@ -10,6 +10,7 @@ import { falseAssertions } from "../math-claims";
 import type { InputAssessment } from "./assess";
 import type { LessonState } from "./types";
 import { AFFIRMS, DENIES, cleanSpeech, knownNumbers, numbersOf, states } from "./validate";
+import { resolveRef } from "./compile";
 
 /** The end of the JSON value starting at i (exclusive), or -1 while it is still incomplete. */
 function valueEnd(s: string, i: number): number {
@@ -110,8 +111,14 @@ export function earlySentence(state: LessonState, a: InputAssessment, partial: R
   const first = partial.speech[0] as { say?: unknown; text?: unknown; needs?: unknown } | undefined;
   if (!first) return null;
   const say = typeof first.say === "string" ? first.say : typeof first.text === "string" ? first.text : "";
-  const needs = Array.isArray(first.needs) ? first.needs.filter((n) => typeof n === "string" && n.trim()) : [];
-  if (needs.length) return null;
+  const needs = Array.isArray(first.needs) ? first.needs.filter((n): n is string => typeof n === "string" && Boolean(n.trim())) : [];
+  // What it talks about must already be up from an earlier turn: a drawing of
+  // this turn is not there yet when the sentence is said.
+  const upAlready = (n: string) => {
+    const hit = resolveRef(state, [], n);
+    return Boolean(hit && hit.obj.status === "applied" && (!hit.part || hit.obj.parts.some((p) => p.toLowerCase() === hit.part!.toLowerCase())));
+  };
+  if (!needs.every(upAlready)) return null;
   const text = cleanSpeech(say);
   if (!text || text.split(/\s+/).length > 60) return null;
   if (falseAssertions(text).length) return null;
