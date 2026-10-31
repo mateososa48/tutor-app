@@ -12,7 +12,29 @@ import { sessionEvents } from "./schema";
 import { appendSessionEvents } from "./session-events";
 import type { LessonState } from "../lesson/types";
 
+/**
+ * A read that is tried again: the Neon HTTP client sometimes fails or hangs a
+ * query under load (Oct 31: a load hung 21 s, then failed, twice, and the
+ * student waited 37 s for a reply). Each try gets `ms` before the next starts.
+ */
+async function retried<T>(run: () => Promise<T>, tries = 3, ms = 6000): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await Promise.race([run(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`query took over ${ms} ms`)), ms))]);
+    } catch (err) {
+      last = err;
+      await new Promise((ok) => setTimeout(ok, 250 * (i + 1)));
+    }
+  }
+  throw last;
+}
+
 export async function loadLesson(sessionId: string): Promise<LessonState | null> {
+  return retried(() => readLesson(sessionId));
+}
+
+async function readLesson(sessionId: string): Promise<LessonState | null> {
   const [row] = await db
     .select({ payload: sessionEvents.payload })
     .from(sessionEvents)
@@ -32,9 +54,17 @@ export async function saveLesson(sessionId: string, expected: number | null, nex
     const now = await loadLesson(sessionId);
     if (now && now.revision !== expected) return false;
   }
-  await appendSessionEvents(sessionId, [
+  const events = [
     ...extra.map((e) => ({ kind: e.kind, actor: "system", offsetMs, payload: e.payload })),
     { kind: "lesson.state", actor: "system", offsetMs, payload: { state: next as unknown as Record<string, unknown> } },
-  ]);
+  ];
+  // A write is tried again only when it failed outright: one that timed out may
+  // still land, and a second copy of a state is harmless but not wanted.
+  try {
+    await appendSessionEvents(sessionId, events);
+  } catch {
+    await new Promise((ok) => setTimeout(ok, 300));
+    await appendSessionEvents(sessionId, events);
+  }
   return true;
 }

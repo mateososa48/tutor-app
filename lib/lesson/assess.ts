@@ -7,6 +7,7 @@
 import { checkAnswer, checkStep, spokenToDigits } from "../answer-check";
 import { assessClaims, evaluate, extractClaims, verifyClaim, type ClaimAssessment } from "../math-claims";
 import { looksLikeAnswer } from "../tutor-policy";
+import { mathIn, numbersOf } from "./math-in";
 import type { AnswerVerdict, LessonState, QuestionRecord, Signal, StudentInput } from "./types";
 
 const SIGNALS: Array<[Signal, RegExp]> = [
@@ -83,6 +84,18 @@ export function checkResponse(q: QuestionRecord, text: string, blank?: string): 
   const said = text.split(/\s*[,;]?\s+(?:because|cause|'cause|cuz|coz|since|bc)\b/i)[0];
   const expectsValue = q.expects ? /^\s*(?:[a-z]\s*=\s*)?(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*$/i.exec(q.expects.replace(/[−–]/g, "-"))?.[1] : undefined;
   const tries: Array<() => { verdict: AnswerVerdict; detail?: string } | null> = [
+    () => {
+      // An expression that equals the answer but is not worked out yet ("3/6
+      // plus 2/6" for 5/6): partly there (Oct 31: called incorrect).
+      if (!expectsValue) return null;
+      const expr = mathIn(said);
+      if (!expr || /[a-z=]/i.test(expr)) return null;
+      const v = evaluate(expr);
+      const want = evaluate(expectsValue);
+      if (v === null || want === null || Math.abs(v - want) > 1e-9) return null;
+      if (numbersOf(said).includes(expectsValue)) return null;
+      return { verdict: "partial", detail: `${expr} equals the answer but is not worked out yet` };
+    },
     () => {
       // A "3x = ?" line on the board: their answer is that line filled in,
       // whether they say the whole line ("3x = 15") or just its value ("15").

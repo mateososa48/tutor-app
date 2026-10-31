@@ -7,10 +7,12 @@
 // segment once the board things it talks about are up. A segment whose board
 // thing failed says its fallback, or nothing.
 //
-// Typed input only in this slice; the microphone is not opened.
+// Spoken input goes through the same engine: a listening Live socket
+// (lib/engine-ear) turns each finished utterance into a committed line.
 
-import { EngineVoice, tokenUrl } from "./engine-voice";
-import { AudioPlayer } from "./audio";
+import { EngineVoice, faithfulness, tokenUrl } from "./engine-voice";
+import { EngineEar } from "./engine-ear";
+import { AudioCapture, AudioPlayer, quietFrame } from "./audio";
 import { revealByFraction } from "./gemini-tutor";
 import { DEFAULT_LIVE_MODEL } from "./gemini-live";
 import type { LiveTutorCallbacks, LiveTutorStartOptions } from "./live-tutor";
@@ -80,6 +82,9 @@ function sourceFiles(files: UploadedFile[]) {
 export class EngineTutorSession {
   readonly boardFrames = "on-demand" as const;
   private voice: EngineVoice | null = null;
+  private ear: EngineEar | null = null;
+  private capture: AudioCapture | null = null;
+  private muted = false;
   private player: AudioPlayer | null = null;
   private meter: ReturnType<typeof setInterval> | null = null;
   private speechRate = tutorSpeedRate(DEFAULT_TUTOR_SPEED);
@@ -98,6 +103,7 @@ export class EngineTutorSession {
   private waiting: string[] = [];
   // The last lines both ways, for the illustrator (it labels only numbers they have had).
   private recent: Array<{ who: "student" | "tutor"; text: string }> = [];
+  private recentTutor: string[] = [];
   private lineN = 0;
 
   /** Every turn as it ran, for the runner and the dev console. */
@@ -185,6 +191,8 @@ export class EngineTutorSession {
       }
     }, 80);
 
+    if (opts.micStream) void this.listen(opts.micStream);
+
     this.callbacks.onConnected({ resumed: opts.mode === "resume", expiresAt: null });
     if (active) {
       clearActiveIntake();
@@ -193,8 +201,60 @@ export class EngineTutorSession {
     }
   }
 
+  /** The microphone into the ear; each utterance it hears is a spoken line. */
+  private async listen(stream: MediaStream) {
+    const ear = new EngineEar({
+      model: this.model,
+      url: async () => {
+        const r = await fetch("/api/live-token", { method: "POST" });
+        const { token } = (await r.json()) as { token?: string };
+        if (!token) throw new Error("live-token empty");
+        return tokenUrl(token);
+      },
+      onSpeechStart: () => this.callbacks.onActivity("idle"),
+      onUtterance: (text) => this.heard(text),
+      onDebug: (kind, payload) => this.debug("ear", kind, payload),
+      onClosed: (code, reason) => {
+        this.debug("ear", "ear_closed", { code, reason });
+        // Listening again after a drop, unless the session is over.
+        if (!this.ended && this.capture) void ear.connect().catch((err) => this.debug("error", "ear_reconnect_failed", { message: (err as Error).message }));
+      },
+    });
+    this.ear = ear;
+    try {
+      await ear.connect();
+    } catch (err) {
+      this.debug("error", "ear_connect_failed", { message: (err as Error).message });
+      return;
+    }
+    const capture = new AudioCapture((base64, rate, silent) => {
+      // Muted, or a flattened quiet room: the same length of room tone, never nothing.
+      ear.sendAudio(this.muted || silent ? quietFrame(Math.floor((base64.length * 3) / 8)) : base64, rate);
+    }, 16000);
+    this.capture = capture;
+    await capture.start(stream);
+  }
+
+  /**
+   * A spoken line, unless it is the tutor's own voice coming back through the
+   * speakers (it matches what was just said).
+   */
+  private heard(text: string) {
+    const lastSaid = this.recentTutor.slice(-3).join(" ");
+    if (lastSaid && faithfulness(lastSaid, text) > 0.6) {
+      this.debug("ear", "echo_dropped", { text: text.slice(0, 200) });
+      return;
+    }
+    this.callbacks.onTranscript({ id: `spoken_${Date.now()}`, role: "student", text, at: Date.now() });
+    this.commit(text, "spoken");
+  }
+
   async end(): Promise<void> {
     this.ended = true;
+    this.capture?.stop();
+    this.capture = null;
+    this.ear?.close();
+    this.ear = null;
     this.generation += 1;
     if (this.meter) clearInterval(this.meter);
     this.meter = null;
@@ -205,8 +265,8 @@ export class EngineTutorSession {
     this.callbacks.onAudioAnalyser?.(null);
   }
 
-  setMuted(): void {
-    /* typed slice: no microphone */
+  setMuted(muted: boolean): void {
+    this.muted = muted;
   }
 
   setSpeechRate(rate: number) {
@@ -229,7 +289,7 @@ export class EngineTutorSession {
    * the last (the student moved on); lines that arrive while a turn is being
    * planned wait and go together as one.
    */
-  private commit(text: string, source: "intake" | "typed", files: ReturnType<typeof sourceFiles> = []) {
+  private commit(text: string, source: "intake" | "typed" | "spoken", files: ReturnType<typeof sourceFiles> = []) {
     this.generation += 1;
     this.player?.flush();
     this.timeline = [];
@@ -251,7 +311,7 @@ export class EngineTutorSession {
     });
   }
 
-  private async runTurn(text: string, source: "intake" | "typed", files: ReturnType<typeof sourceFiles>, gen: number) {
+  private async runTurn(text: string, source: "intake" | "typed" | "spoken", files: ReturnType<typeof sourceFiles>, gen: number) {
     const t0 = performance.now();
     let res: TurnResponse | null = null;
     // The first sentence can arrive before the turn (lib/lesson/stream): it is
@@ -433,6 +493,7 @@ export class EngineTutorSession {
     if (gen !== this.generation) return;
     if (!r.ok) this.debug("voice", "segment_not_said", { text: text.slice(0, 200), reason: r.reason });
     this.recent = [...this.recent, { who: "tutor" as const, text }].slice(-8);
+    this.recentTutor = [...this.recentTutor, text].slice(-4);
     // The approved text is the record: what the student was meant to hear.
     this.callbacks.onTranscript({ id: `engine_${at}`, role: "tutor", text, at });
   }

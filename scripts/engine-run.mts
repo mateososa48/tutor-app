@@ -11,6 +11,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { execFileSync } from "node:child_process";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 
 const arg = (name: string, fallback?: string) => {
@@ -23,6 +25,41 @@ const RUNS = Number(arg("runs", "1"));
 const WIDTH = Number(arg("width", "1440"));
 const HEIGHT = WIDTH < 600 ? 844 : 900;
 const MODEL = arg("model");
+// "engine" (the tutoring engine, ?engine=1) or "live" (today's Gemini Live tutor), on the same lines.
+const TUTOR = arg("tutor", "engine") as "engine" | "live";
+// Spoken: every line after the intake is said into the microphone (macOS `say`).
+const SPOKEN = process.argv.includes("--spoken");
+
+/** A line as 48 kHz speech, base64 WAV, from macOS `say` (math read as words). */
+function speech(line: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "say-"));
+  const said = line.replace(/(\d)\/(\d)/g, "$1 over $2").replace(/\^2/g, " squared").replace(/-(\d)/g, "minus $1").replace(/\*/g, " times ");
+  execFileSync("say", ["-v", "Samantha", "-o", path.join(dir, "a.aiff"), said]);
+  execFileSync("afconvert", ["-f", "WAVE", "-d", "LEI16@48000", "-c", "1", path.join(dir, "a.aiff"), path.join(dir, "a.wav")]);
+  return fs.readFileSync(path.join(dir, "a.wav")).toString("base64");
+}
+
+/** The page's microphone becomes room tone, with __speak(wav) to say a line into it. */
+const FAKE_MIC = `(() => {
+  const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getUserMedia = async (c) => {
+    if (!c || !c.audio) return real(c);
+    const ctx = new AudioContext({ sampleRate: 48000 });
+    const dest = ctx.createMediaStreamDestination();
+    const n = ctx.createBuffer(1, 48000, 48000);
+    const d = n.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() - 0.5) * 0.0006;
+    const room = ctx.createBufferSource(); room.buffer = n; room.loop = true; room.connect(dest); room.start();
+    window.__speak = async (b64) => {
+      await ctx.resume();
+      const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+      const buf = await ctx.decodeAudioData(bytes.buffer);
+      const src = ctx.createBufferSource(); src.buffer = buf; src.connect(dest); src.start();
+      return new Promise((ok) => { src.onended = () => ok(buf.duration); });
+    };
+    return dest.stream;
+  };
+})();`;
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
 export type Case = { id: string; intake: string; file?: string; lines: string[] };
@@ -132,11 +169,12 @@ async function snap(page: Page, dir: string, name: string) {
 async function runCase(browser: Browser, c: Case, dir: string) {
   const page = await browser.newPage();
   await page.setViewport({ width: WIDTH, height: HEIGHT });
+  if (SPOKEN) await page.evaluateOnNewDocument(FAKE_MIC);
   const consoleErrors: string[] = [];
   page.on("console", (m) => {
     if (m.type() === "error") consoleErrors.push(m.text().slice(0, 300));
   });
-  const to = encodeURIComponent(`/session?engine=1&ready=1${MODEL ? `&engineModel=${MODEL}` : ""}`);
+  const to = encodeURIComponent(TUTOR === "live" ? "/session?ready=1" : `/session?engine=1&ready=1${MODEL ? `&engineModel=${MODEL}` : ""}`);
   await page.goto(`${BASE}/api/dev/qa-login?to=${to}`, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("#intake-topic", { timeout: 60_000 });
   await page.type("#intake-topic", c.intake);
@@ -147,6 +185,7 @@ async function runCase(browser: Browser, c: Case, dir: string) {
   }
   const start = await page.waitForSelector("xpath/.//button[contains(., 'Start session')]");
   await start!.click();
+  if (TUTOR === "live") return runLive(page, c, dir, consoleErrors);
   await page.waitForFunction(() => Boolean((window as unknown as { __chalkEngine?: unknown }).__chalkEngine), { timeout: 60_000 });
   const sessionId = /\/session\/([^?/]+)/.exec(page.url())?.[1] ?? "";
   const summaries: string[] = [];
@@ -157,12 +196,17 @@ async function runCase(browser: Browser, c: Case, dir: string) {
     summaries.push(await snap(page, dir, "t1"));
     for (const [i, line] of c.lines.entries()) {
       const before = await engineTurns(page);
-      if (!(await page.$('input[placeholder="Type to the tutor…"]'))) {
-        await page.click('button[aria-label="Type to the tutor"]');
-        await page.waitForSelector('input[placeholder="Type to the tutor…"]');
+      if (SPOKEN) {
+        // Said into the microphone; the turn starts once the ear hears the end of it.
+        await page.evaluate((b64: string) => (window as unknown as { __speak: (b: string) => Promise<number> }).__speak(b64), speech(line));
+      } else {
+        if (!(await page.$('input[placeholder="Type to the tutor…"]'))) {
+          await page.click('button[aria-label="Type to the tutor"]');
+          await page.waitForSelector('input[placeholder="Type to the tutor…"]');
+        }
+        await page.type('input[placeholder="Type to the tutor…"]', line);
+        await page.keyboard.press("Enter");
       }
-      await page.type('input[placeholder="Type to the tutor…"]', line);
-      await page.keyboard.press("Enter");
       waits.push(await settle(page, before + 1));
       summaries.push(await snap(page, dir, `t${i + 2}`));
     }
@@ -172,6 +216,66 @@ async function runCase(browser: Browser, c: Case, dir: string) {
   // Saved whole or partial: a stalled turn is traced from its session id.
   const turns = (await page.evaluate(() => (window as unknown as { __chalkEngine?: { turns: unknown[] } }).__chalkEngine?.turns ?? [])) as EngineTurn[];
   const record = { case: c.id, sessionId, base: BASE, width: WIDTH, intake: c.intake, file: c.file ?? null, lines: c.lines, turns, summaries, waits, consoleErrors, ...(error ? { error } : {}) };
+  fs.writeFileSync(path.join(dir, "record.json"), JSON.stringify(record, null, 2));
+  await page.close();
+  if (error) throw new Error(`${error} (session ${sessionId})`);
+  return record;
+}
+
+type Live = { dev: { lastAudioAt: number; lastToolAt: number; lines: string[]; tools: string[] }; devQuiet(ms: number): boolean };
+const liveState = (page: Page) => page.evaluate(() => {
+  const l = (window as unknown as { __chalkLive?: Live }).__chalkLive;
+  return l ? { lines: l.dev.lines.length, tools: l.dev.tools.length, audioAt: l.dev.lastAudioAt, quiet: l.devQuiet(4000) } : null;
+});
+
+/** Today's tutor on the same lines: a turn is over once it has spoken and then been quiet for 4 s. */
+async function runLive(page: Page, c: Case, dir: string, consoleErrors: string[]) {
+  await page.waitForFunction(() => Boolean((window as unknown as { __chalkLive?: unknown }).__chalkLive), { timeout: 60_000 });
+  const sessionId = /\/session\/([^?/]+)/.exec(page.url())?.[1] ?? "";
+  const turns: EngineTurn[] = [];
+  const summaries: string[] = [];
+  const waits: number[] = [];
+  let error: string | null = null;
+  const settleLive = async (sentAt: number) => {
+    const t0 = Date.now();
+    let firstAudio = 0;
+    while (Date.now() - t0 < 90_000) {
+      const s = await liveState(page);
+      if (s && s.audioAt > sentAt && !firstAudio) firstAudio = s.audioAt - sentAt;
+      if (s && s.audioAt > sentAt && s.quiet) return { wait: Date.now() - t0, firstAudio };
+      await wait(300);
+    }
+    throw new Error("live turn did not settle in 90 s");
+  };
+  const take = async (line: string, from: { lines: number; tools: number }, wait0: { wait: number; firstAudio: number }, i: number) => {
+    const all = (await page.evaluate(() => {
+      const l = (window as unknown as { __chalkLive: Live }).__chalkLive;
+      return { lines: l.dev.lines, tools: l.dev.tools };
+    })) as { lines: string[]; tools: string[] };
+    turns.push({ turnId: `t${i}`, line, ms: wait0.firstAudio, speech: [], said: [all.lines.slice(from.lines).join("").replace(/\s+/g, " ").trim()], ops: all.tools.slice(from.tools), receipts: [] });
+    waits.push(wait0.wait);
+  };
+  try {
+    let from = { lines: 0, tools: 0 };
+    await take(c.intake, from, await settleLive(Date.now() - 60_000), 1);
+    summaries.push(await snap(page, dir, "t1"));
+    for (const [i, line] of c.lines.entries()) {
+      const s = (await liveState(page))!;
+      from = { lines: s.lines, tools: s.tools };
+      if (!(await page.$('input[placeholder="Type to the tutor…"]'))) {
+        await page.click('button[aria-label="Type to the tutor"]');
+        await page.waitForSelector('input[placeholder="Type to the tutor…"]');
+      }
+      await page.type('input[placeholder="Type to the tutor…"]', line);
+      const sentAt = await page.evaluate(() => Date.now());
+      await page.keyboard.press("Enter");
+      await take(line, from, await settleLive(sentAt), i + 2);
+      summaries.push(await snap(page, dir, `t${i + 2}`));
+    }
+  } catch (err) {
+    error = (err as Error).message;
+  }
+  const record = { case: c.id, tutor: "live", sessionId, base: BASE, width: WIDTH, intake: c.intake, file: c.file ?? null, lines: c.lines, turns, summaries, waits, consoleErrors, ...(error ? { error } : {}) };
   fs.writeFileSync(path.join(dir, "record.json"), JSON.stringify(record, null, 2));
   await page.close();
   if (error) throw new Error(`${error} (session ${sessionId})`);

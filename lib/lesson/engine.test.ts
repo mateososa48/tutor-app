@@ -80,7 +80,7 @@ test("a figure with an invented size is refused; the given sizes draw the triang
   });
   assert.match(r.log.issues[0].join(" "), /not one of the problem's givens/);
   const fig = r.state.board.find((b) => b.sid === "fig1")!;
-  assert.ok(fig.facts.includes("diagonal AC 13 cm, from bottom left to top right"));
+  assert.ok(fig.facts.includes("diagonal AC 13 cm (no label on the board), from bottom left to top right"));
   assert.ok(fig.facts.some((f) => f.startsWith("triangle ABC area 30 cm²")));
   assert.deepEqual(r.speech[0].needs, ["fig1.diagonal"]);
 });

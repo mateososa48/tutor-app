@@ -225,7 +225,9 @@ export function geometryFacts(spec: GeometrySpec): string[] {
     return `${id} (${v} ${h}, ${fmt(p.x)}, ${fmt(p.y)})`;
   };
   const facts = spec.points.length ? [`corners: ${spec.points.map((p) => where(p.id)).join(", ")}`] : [];
-  for (const s of spec.segments) facts.push(`${s.role === "diagonal" ? "diagonal" : s.role === "height" ? "height" : "side"} ${s.from}${s.to} ${fmt(segmentLength(spec, s))}${u ? ` ${u}` : ""}${s.role === "diagonal" ? `, from ${where(s.from).replace(/^\w+ \(([^,]+),.*$/, "$1")} to ${where(s.to).replace(/^\w+ \(([^,]+),.*$/, "$1")}` : ""}`);
+  // A length not written on the figure is said so: the tutor must not point at a
+  // number the student cannot see (Oct 31: "the thirteen on the slanted side").
+  for (const s of spec.segments) facts.push(`${s.role === "diagonal" ? "diagonal" : s.role === "height" ? "height" : "side"} ${s.from}${s.to} ${fmt(segmentLength(spec, s))}${u ? ` ${u}` : ""}${s.label ? ` (labelled "${s.label}")` : " (no label on the board)"}${s.role === "diagonal" ? `, from ${where(s.from).replace(/^\w+ \(([^,]+),.*$/, "$1")} to ${where(s.to).replace(/^\w+ \(([^,]+),.*$/, "$1")}` : ""}`);
   for (const p of spec.polygons) facts.push(`${p.name ?? p.id} ${p.points.join("")} area ${fmt(polygonArea(spec, p))}${u ? ` ${u}²` : ""}${p.shade && p.shade !== "none" ? ` (shaded ${p.shade})` : ""}`);
   for (const r of spec.rightAngles) facts.push(`right angle at ${r.at}`);
   return facts;

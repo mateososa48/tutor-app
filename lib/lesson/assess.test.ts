@@ -18,3 +18,11 @@ test("a solution is kept only when its arithmetic gives its answer", () => {
   assert.ok(!verifySolution({ answer: "5", work: "(23-3)/5" }));
   assert.ok(!verifySolution({ answer: "4", work: "the most hours" }));
 });
+
+test("an expression equal to the answer, not yet worked out, is partly right", async () => {
+  const { checkResponse } = await import("./assess");
+  const q = { id: "q1", problemId: "P1", text: "What is one half plus one third?", kind: "value" as const, expects: "5/6", status: "open" as const, askedTurn: "t1" };
+  assert.equal(checkResponse(q, "so is it 3/6 plus 2/6?").verdict, "partial");
+  assert.equal(checkResponse(q, "5/6").verdict, "correct");
+  assert.equal(checkResponse(q, "2/5").verdict, "incorrect");
+});

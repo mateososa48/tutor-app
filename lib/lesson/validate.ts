@@ -172,7 +172,19 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   // twenty-three". A true total said somewhere else ("so four hours costs
   // twenty-three") was let through on Oct 31 and repaired nothing.
   const sentences = spoken.split(/(?<=[.?!])\s+/);
+  // The problem's answer, while they are still finding it: a false claim about
+  // it is repaired by saying it is not their value, not by telling the answer
+  // (Oct 31, T09: "1/2 + 1/3 = 2/5" had to be fixed by saying 5/6, which the
+  // answer guard then cut, and the turn fell back).
+  const curP = state.problems.find((x) => x.id === state.current);
+  const answerKept = curP && curP.status !== "solved" && !plan.givesAnswer ? curP.solution?.answer ?? (curP.math && !/[a-z=<>]/i.test(curP.math) ? (() => { const v = evaluate(curP.math!); return v === null ? null : fmtValue(v); })() : null) : null;
   for (const c of a.claims.filter((x) => x.verdict === "verified_false")) {
+    if (answerKept && c.values && numbersOf(fmtValue(c.values[0])).every((n) => numbersOf(answerKept).includes(n))) {
+      const theirs = numbersOf(c.rhs);
+      const denied = sentences.some((x) => theirs.every((n) => numbersOf(x).includes(n)) && (/\bnot\b|n't\b|\bisn|\bcan't\b/i.test(x) || DENIES.test(x)));
+      if (!denied) add("verdict", `their claim "${c.text}" is false; say plainly that it is not ${c.rhs} (without telling them the answer).`);
+      continue;
+    }
     const lhsNums = numbersOf(c.lhs);
     const rhsNums = numbersOf(c.rhs);
     const truth = c.values ? fmtNum(c.rel === "=" || c.rel === "!=" ? c.values[0] : NaN) : null;
@@ -195,10 +207,17 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   if (lastTutor) {
     const STOP = new Set(["the", "and", "that", "this", "you", "your", "with", "for", "are", "was", "what", "when", "then", "they", "them", "one", "its", "it's", "can", "have", "here", "there", "now", "just", "only", "into", "from", "each"]);
     const content = (t: string) => t.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w));
-    const now = content(speech.map((x) => x.text).join(" "));
-    const was = new Set(content(lastTutor));
+    // Pairs of words, not single words: the topic's own words ("rectangle",
+    // "diagonal", "twelve") come back in every good turn (Oct 31: single words
+    // sent back five good turns in one run).
+    const pairs = (t: string) => {
+      const w = content(t);
+      return w.slice(1).map((x, i) => `${w[i]} ${x}`);
+    };
+    const now = pairs(speech.map((x) => x.text).join(" "));
+    const was = new Set(pairs(lastTutor));
     const shared = now.filter((w) => was.has(w)).length;
-    if (now.length >= 12 && shared / now.length > 0.7) add("speech", "most of this is what you said last turn; they heard it. Say something new: a different way in (a picture, an example, the other view), or the next step.");
+    if (now.length >= 10 && shared / now.length > 0.5) add("speech", "most of this is what you said last turn; they heard it. Say something new: a different way in (a picture, an example, the other view), or the next step.");
   }
 
   // The same question, unanswered twice, is not asked a third time the same
@@ -238,6 +257,44 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   }
   if (plan.close && plan.question) plan = { ...plan, question: null };
   if (a.signals.includes("done_understood") && plan.move === "practice") add("close", "they finished and said they understand: recap and offer more; do not start a new task.");
+
+  // 4b. The question still open from the last turn is theirs to answer too:
+  // the tutor does not answer it for them (Oct 31: asked what five hours cost,
+  // then said "twenty-eight" itself the next turn).
+  const stillOpen = a.question && !a.answer && a.question.expects && (a.question.kind === "value" || a.question.kind === "step") ? a.question.expects : null;
+  if (stillOpen && !plan.givesAnswer) {
+    const known = knownNumbers(state);
+    let cutOpen = 0;
+    speech = speech.map((seg) => {
+      const parts = seg.text.match(/[^.?!]+[.?!]*\s*/g) ?? [seg.text];
+      const kept = parts.filter((x) => !states(x, stillOpen, known));
+      cutOpen += parts.length - kept.length;
+      return { ...seg, text: kept.join("").trim() };
+    }).filter((seg) => seg.text);
+    if (cutOpen) fixes.push(`cut ${cutOpen} sentence${cutOpen === 1 ? "" : "s"} that answered the open question (${stillOpen}) for them`);
+  }
+
+  // 4c. Talk only about what is on the board: a sentence that shows the student
+  // a table, a graph, a picture or a figure needs one there, up already or drawn
+  // this turn (Oct 31, judged blind: "let's make its table" with none drawn).
+  const kinds = new Set([...state.board.filter((b) => b.status !== "failed").map((b) => b.kind), ...compiled.objects.map((o) => o.kind)]);
+  const SHOWN: Array<[RegExp, string[], string]> = [
+    [/\btable\b/i, ["table"], "a table"],
+    [/\b(?:graph|curve|plotted|the line through)\b/i, ["plane"], "a graph"],
+    [/\b(?:blocks?|cubes?|rods?|marbles?|the bags?|the picture|coins?)\b/i, ["illustration"], "a picture"],
+    [/\b(?:bars?|pie)\b/i, ["fraction", "illustration"], "a fraction model"],
+    [/\b(?:rectangle|triangle|diagonal)\b/i, ["geometry", "illustration"], "a figure"],
+  ];
+  const pointing = /\b(?:here (?:is|are)|here's|look at|on the board|i(?:'ve| have) drawn|i drew|i'll draw|let's make|see the|notice the|count the)\b/i;
+  for (const seg of speech) {
+    if (!pointing.test(seg.text)) continue;
+    for (const [re, need, what] of SHOWN) {
+      if (re.test(seg.text) && !need.some((k) => kinds.has(k as never))) {
+        add("board", `the speech shows them ${what} ("${seg.text.slice(0, 70)}") but none is on the board or drawn this turn: draw it, or do not point to it.`);
+        break;
+      }
+    }
+  }
 
   // 4a. The problem's own answer is theirs to find: a sentence that says it
   // goes, unless this turn means to tell them (Oct 31: "one half plus one

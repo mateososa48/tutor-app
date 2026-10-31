@@ -74,7 +74,17 @@ export class GeminiTutorSession {
 
   readonly boardFrames = "auto" as const;
 
-  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption; illustrator?: IllustratorOption } = {}) {}
+  /** Development: what the runner (scripts/engine-run.mts --tutor live) reads to know a turn is over. */
+  readonly dev = { lastAudioAt: 0, lastToolAt: 0, lines: [] as string[], tools: [] as string[] };
+
+  /** Development: nothing heard, drawn or playing for `ms`. */
+  devQuiet(ms: number): boolean {
+    return Date.now() - Math.max(this.dev.lastAudioAt, this.dev.lastToolAt) > ms && !this.player?.isPlaying();
+  }
+
+  constructor(private readonly callbacks: LiveTutorCallbacks, private readonly options: { model?: string; runtime?: TutorRuntime; asyncTools?: boolean; vad?: LiveVadConfig; coach?: { topic: () => string; board: () => string }; planner?: PlannerOption; illustrator?: IllustratorOption } = {}) {
+    if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") (window as unknown as { __chalkLive?: GeminiTutorSession }).__chalkLive = this;
+  }
 
   /** The Live model this session runs, for the recording and the QA chip. */
   get model(): string {
@@ -167,6 +177,7 @@ export class GeminiTutorSession {
             if (dry > 60) this.debug("audio", "audio_underrun", { gapMs: Math.round(dry), turn: this.turnIndex });
           }
           player.enqueue(base64);
+          this.dev.lastAudioAt = Date.now();
           this.turnAudioMs += pcmMs(base64);
           this.lastAudioAt = Date.now();
           this.setSpeaking(true);
@@ -186,9 +197,12 @@ export class GeminiTutorSession {
               if (!this.ended && !this.speaking) this.callbacks.onActivity("thinking");
             }, 700);
           }
+          if (entry.role === "tutor") this.dev.lines.push(entry.text);
           this.callbacks.onTranscript(entry);
         },
         onToolCall: (name, args, callId) => {
+          this.dev.lastToolAt = Date.now();
+          this.dev.tools.push(name);
           this.callbacks.onActivity("writing");
           const result = this.callbacks.onToolCall(name, args, callId);
           setTimeout(() => {
