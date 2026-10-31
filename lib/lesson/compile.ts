@@ -30,8 +30,10 @@ function numbersIn(text: string): string[] {
  */
 /** Words in a line beyond a label: the working is math; sentences belong in speech ("first red : 3/5 of all"). */
 export function wordyLine(text: string): boolean {
-  const words = (text.replace(/\\[a-z]+/gi, " ").match(/\b[a-z]{2,}\b/gi) ?? []).filter((w) => !/^(?:or|and|so|cm|mm|m|km|in|ft|kg|g|hours?|sin|cos|tan|log|ln)$/i.test(w));
-  return words.length > 2;
+  // Formula words are fine ("Area = 1/2 × base × height"); sentences are not,
+  // and they show in their small words ("both red = 3/5 of the time, then…").
+  const small = (text.match(/\b(?:the|of|then|those|these|is|are|a|an|to|for|with|that|this|it|we|you|when|if|each|time|times?)\b/gi) ?? []).length;
+  return small >= 2;
 }
 
 export function spelledMath(text: string): boolean {
@@ -54,8 +56,16 @@ function partsOf(r: RenderedPicture): string[] {
   return [...new Set([...Object.keys(r.parts), ...Object.keys(r.aliases)])];
 }
 
+/** The words and numbers a picture shows: its SVG's text, without the small numbers along a graph's axes. */
+export function shownText(svg: string): string[] {
+  return [...svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g)]
+    .filter((m) => !/font-size="11\.5"/.test(m[1]))
+    .map((m) => m[2].replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim())
+    .filter(Boolean);
+}
+
 function picture(sid: string, kind: PictureKind, problemId: string | null, spec: unknown, rendered: RenderedPicture, facts: string[], prev?: BoardObject): BoardObject {
-  return { sid, kind, problemId, spec, parts: partsOf(rendered), facts, status: prev?.status === "applied" ? "applied" : "pending", ...(prev?.itemId ? { itemId: prev.itemId } : {}) };
+  return { sid, kind, problemId, spec, parts: partsOf(rendered), facts, shown: shownText(rendered.svg), status: prev?.status === "applied" ? "applied" : "pending", ...(prev?.itemId ? { itemId: prev.itemId } : {}) };
 }
 
 /** A fact value by id ("F2") or a number that is one of the problem's givens. */
@@ -352,7 +362,7 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         for (let k = 2; used.has(sid); k++) sid = `frac${k}`;
         const words = `${fr.map((f) => `${f.n}/${f.d}`).join(" and ")} as ${b.model === "circle" ? "circles" : "bars"} of the same whole${b.common ? `, each cut into ${b.common} equal parts (${fr.map((f) => `${f.n}/${f.d} = ${(f.n * b.common!) / f.d}/${b.common}`).join(", ")})` : ""}`;
         const args: Record<string, unknown> = { fraction: `${fr[0].n}/${fr[0].d}`, model: b.model ?? "bar", ...(fr[1] ? { second_fraction: `${fr[1].n}/${fr[1].d}` } : {}), ...(b.common ? { common_denominator: b.common } : {}) };
-        put({ sid, kind: "fraction", problemId: s.current, parts: [], facts: [words], status: "pending" });
+        put({ sid, kind: "fraction", problemId: s.current, parts: [], facts: [words], shown: fr.map((f) => (b.common ? `= ${(f.n * b.common) / f.d}/${b.common}` : `${f.n}/${f.d}`)), status: "pending" });
         ops.push({ opId: opId(), type: "tool", sid, name: "draw_fraction", args, label: words });
         break;
       }

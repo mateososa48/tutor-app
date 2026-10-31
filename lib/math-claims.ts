@@ -142,7 +142,9 @@ function readExpr(toks: Tok[], i: number): { end: number; expr: string; ops: num
 
 /** The relation phrase starting at token i, as text matched against RELATIONS. */
 function readRelation(t: string, from: number): { rel: Relation; to: number } | null {
-  const rest = t.slice(from).replace(/^\s*,?\s*/, "");
+  // No comma between a value and its relation: "the chance is 0, at least 1
+  // of them…" is not "0 ≥ 1" (Oct 31: read as a false claim).
+  const rest = t.slice(from).replace(/^\s*/, "");
   const skipped = t.length - from - rest.length;
   for (const { re, rel } of RELATIONS) {
     const m = re.exec(rest);

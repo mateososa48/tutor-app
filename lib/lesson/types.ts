@@ -104,6 +104,8 @@ export type BoardObject = {
   parts: string[];
   /** Facts the picture states, from its spec ("diagonal AC 13 cm"). */
   facts: string[];
+  /** Text the student can read on it (facts can hold more: a computed area, a view range). */
+  shown?: string[];
   status: "pending" | "applied" | "failed";
 };
 

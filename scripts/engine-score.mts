@@ -62,7 +62,10 @@ function checksFor(r: Rec, s: LessonState | null): Check[] {
       return Math.abs(pair[0].x - Math.min(...xs)) < 1e-6 && Math.abs(pair[0].y - Math.min(...ys)) < 1e-6 && Math.abs(pair[1].x - Math.max(...xs)) < 1e-6 && Math.abs(pair[1].y - Math.max(...ys)) < 1e-6;
     }));
     out.push({ name: "diagonal from (0,0) to (12,5)", ok: diag });
-    out.push({ name: "picture drawn by the turn the triangle was asked for", ok: (r.turns[1]?.ops ?? []).some((o) => /^(?:draw|edit) /.test(o) && !/work:/.test(o)), detail: (r.turns[1]?.ops ?? []).join(", ") });
+    // Drawn by then: this turn, or already up and pointed at (redrawing it is refused).
+    const t2ops = r.turns[1]?.ops ?? [];
+    const figBefore = (r.turns[0]?.ops ?? []).some((o) => /^(?:draw|edit) fig/.test(o));
+    out.push({ name: "picture up by the turn the triangle was asked for", ok: t2ops.some((o) => /^(?:draw|edit) /.test(o) && !/work:/.test(o)) || (figBefore && t2ops.some((o) => /^mark .* fig/.test(o))), detail: t2ops.join(", ") });
   }
   if (r.case === "T05" && s) {
     const pl = planes(s);

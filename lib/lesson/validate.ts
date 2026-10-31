@@ -302,8 +302,10 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   // blocks labelled "4 tens").
   if (plan.question?.expects && !plan.givesAnswer && (plan.question.kind === "value" || plan.question.kind === "step")) {
     const onBoard = [...state.board.filter((b) => !compiled.objects.some((o) => o.sid === b.sid)), ...compiled.objects].filter((b) => b.status !== "failed");
-    const shown = onBoard.find((b) => b.kind !== "heading" && b.facts.some((f) => states(f, plan.question!.expects!, knownNumbers(state, false))));
-    if (shown) add("question", `the board already shows the answer to "${plan.question.text}" (${shown.sid}: ${shown.facts.join("; ").slice(0, 120)}); ask about something the board does not show, or have them explain what it shows.`);
+    // Only what can be read on it: a figure's computed area or a graph's view range is not shown.
+    const known0 = knownNumbers(state, false);
+    const shown = onBoard.find((b) => b.kind !== "heading" && (b.shown ?? []).some((f) => states(f, plan.question!.expects!, known0)));
+    if (shown) add("question", `the board already shows the answer to "${plan.question.text}" (${shown.sid} reads: ${(shown.shown ?? []).join(", ").slice(0, 120)}); ask about something the board does not show, or have them explain what it shows.`);
   }
 
   // 4d. "Here it is, drawn fresh" over a board that did not change, and "line
@@ -378,7 +380,10 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     const single = /^\s*(?:[a-z]\s*=\s*)?(-?\d+(?:\.\d+)?(?:\/\d+)?)\s*$/i.exec(exp)?.[1];
     if (!hit && single && plan.question.kind === "value") {
       const own = new Set(numbersOf(currentMath(state)));
-      const found = lines.find((l) => numbersOf(l).some((n) => n === single && !own.has(n)));
+      // From the opening line, only what they gave as an answer ("found 2 and 3"),
+      // not the inputs the problem lists ("for x = 0, 1, 2", T13 on Oct 31).
+      const theirLines = [...state.goal.text.split(/(?<=[.?!;])\s+/).filter((c) => /\b(?:got|get|found|find|is|are|equals?|think|answer)\b/i.test(c)), ...theirs.filter((l) => l.trim() !== state.goal.text.trim())];
+      const found = theirLines.find((l) => numbersOf(l).some((n) => n === single && !own.has(n)));
       if (found) hit = found;
     }
     if (hit && !/again|check|remind|still/i.test(plan.question.text)) add("reask", `they already answered this ("${hit.slice(0, 100)}"): use their answer instead of asking for it.`);
