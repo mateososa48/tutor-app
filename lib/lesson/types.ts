@@ -107,6 +107,8 @@ export type BoardObject = {
   /** Text the student can read on it (facts can hold more: a computed area, a view range). */
   shown?: string[];
   status: "pending" | "applied" | "failed";
+  /** The board page it is on (each new problem's heading turns the page); older pages are filed away, out of sight. */
+  page?: number;
 };
 
 /** A compiled board operation, applied by the page as it is. */
@@ -207,6 +209,8 @@ export type LessonState = {
   grade?: string;
   /** What they came for, in their words, kept for the whole session. */
   goal: { text: string; source: SourceRef };
+  /** Pictures they uploaded at the start, and whether their problems could be read. */
+  uploads?: { files: number; read: boolean };
   problems: ProblemRecord[];
   current: string | null;
   questions: QuestionRecord[];

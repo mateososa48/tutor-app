@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildPlane, chooseView, describePlane, findPart, parseArrows, parseLine, parsePoints, renderPlane, type PlaneSpec } from "./board-plane";
+import { buildPlane, chooseView, describePlane, findPart, isNumberLine, parseArrows, parseLine, parsePoints, renderPlane, type PlaneSpec } from "./board-plane";
 
 test("points are read once each, with their names, from the forms the tutor writes", () => {
   assert.deepEqual(parsePoints("(0,-1): (0, -1), (1,1): (1, 1), A(2, 3)"), [{ x: 0, y: -1 }, { x: 1, y: 1 }, { x: 2, y: 3, name: "A" }]);
@@ -61,4 +61,23 @@ test("an empty plane is a plane, and the drawing names every part", () => {
   const ux = (out.w - 20) / (g.spec.x[1] - g.spec.x[0]);
   const uy = (out.h - 20) / (g.spec.y[1] - g.spec.y[0]);
   assert.ok(Math.abs(ux - uy) < 0.5);
+});
+
+test("a graph with everything on y = 0 is a number line, fitted to its values", () => {
+  const b = buildPlane(null, { points: "(-7, 0); (-11, 0)", arrows: "(-7, 0) to (-11, 0): minus 4" });
+  assert.ok(!("error" in b));
+  if ("error" in b) return;
+  assert.ok(isNumberLine(b.spec));
+  assert.deepEqual(b.spec.x, [-12, 0]);
+  assert.match(describePlane(b.spec), /number line from −12 to 0.*dots P1 at −7, P2 at −11.*hops A1 from −7 to −11 "minus 4"/);
+  const r = renderPlane(b.spec);
+  assert.ok(!/\(−7, 0\)/.test(r.svg), "no coordinate labels on a number line");
+  assert.ok(r.parts.P2 && r.parts.A1);
+  const d = buildPlane(null, { points: "(0.35, 0); (0.5, 0)" });
+  if ("error" in d) return assert.fail(d.error);
+  assert.deepEqual(d.spec.x, [0, 1]);
+  assert.match(renderPlane(d.spec).svg, />0\.3</);
+  const big = buildPlane(null, { points: "(0, 0); (85, 0)" });
+  if ("error" in big) return assert.fail(big.error);
+  assert.deepEqual(big.spec.x, [0, 90]);
 });

@@ -49,13 +49,27 @@ const TOOL = {
 
 export type SourceFile = { label: string; name: string; mimeType: string; base64: string };
 
+/**
+ * The picture's real type, read from its first bytes: a PNG saved as ".jpg"
+ * is labelled image/jpeg by the browser, and the API refuses the mismatch
+ * (Oct 31: a worksheet upload read as nothing, and the tutor said it saw no picture).
+ */
+export function sniffImageType(base64: string, claimed: string): string {
+  const head = base64.slice(0, 16);
+  if (head.startsWith("iVBORw0KGgo")) return "image/png";
+  if (head.startsWith("/9j/")) return "image/jpeg";
+  if (head.startsWith("R0lGOD")) return "image/gif";
+  if (head.startsWith("UklGR")) return "image/webp";
+  return claimed === "image/jpg" ? "image/jpeg" : claimed;
+}
+
 /** The problems on the uploaded pictures, or [] when they could not be read. */
 export async function extractSourceProblems(files: SourceFile[], signal?: AbortSignal): Promise<ProblemRecord[]> {
   const key = process.env.ANTHROPIC_API_KEY;
   const images = files.filter((f) => /^image\/(png|jpe?g|gif|webp)$/.test(f.mimeType)).slice(0, 4);
   if (!key || !images.length) return [];
   const content = [
-    ...images.map((f) => ({ type: "image", source: { type: "base64", media_type: f.mimeType === "image/jpg" ? "image/jpeg" : f.mimeType, data: f.base64 } })),
+    ...images.map((f) => ({ type: "image", source: { type: "base64", media_type: sniffImageType(f.base64, f.mimeType), data: f.base64 } })),
     { type: "text", text: "Read every problem on this worksheet. Copy each statement exactly, and list every number it gives (on the figure too) with what it measures and its unit." },
   ];
   const r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -72,7 +86,7 @@ export async function extractSourceProblems(files: SourceFile[], signal?: AbortS
     }),
     signal,
   });
-  if (!r.ok) throw new Error(`${SOURCE_MODEL} ${r.status}`);
+  if (!r.ok) throw new Error(`${SOURCE_MODEL} ${r.status}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
   const j = (await r.json()) as { content?: Array<{ type: string; name?: string; input?: { problems?: unknown[] } }> };
   const use = (j.content ?? []).find((b) => b.type === "tool_use" && b.name === TOOL.name);
   const raw = Array.isArray(use?.input?.problems) ? use!.input!.problems : [];

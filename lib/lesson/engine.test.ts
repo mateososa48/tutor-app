@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runTurn } from "./engine";
-import { applyReceipts, createLesson } from "./state";
+import { applyReceipts, boardForModel, createLesson, newProblem } from "./state";
 import type { LessonState } from "./types";
 
 // A scripted model: each call returns the next plan in the list.
@@ -151,4 +151,70 @@ test("fractions on one whole and pictures of real things compile to the board's 
   assert.ok(c.ops.some((o) => o.type === "illustrate" && o.what.includes("tens rods")));
   // A common cut that does not fit both is refused.
   assert.ok(compileBoard(s, [{ do: "fractions", fractions: "1/2, 1/3", common: 4 }], "t1").issues.length);
+});
+
+// S-worksheet (Oct 31): #2 was talked through before it became current; when it
+// did, its heading turned the page and filed the number line away the turn its ring was due.
+test("a problem that opens keeps the drawings made before any problem was chosen, and its page", async () => {
+  const sheet = [newProblem("P1", "1. -5 + 8 =", { kind: "worksheet", file: "File 1", question: "1" }), newProblem("P2", "2. -7 - 4 =", { kind: "worksheet", file: "File 1", question: "2" })];
+  let s = createLesson({ intake: "can you check my worksheet", problems: sheet, current: null });
+  const r1 = await runTurn(s, input("u1", "number 2 i got 11"), { planner: scripted({ move: "explain", speech: [{ say: "Let's put the steps in a table." }, { say: "Where do you start?" }], board: [{ do: "table", id: "steps", columns: "step | value", rows: "start | -7" }], question: { ask: "Where do you start?", kind: "value" } }) });
+  s = applied(r1.state, r1);
+  s = { ...s, current: "P2" };
+  const r2 = await runTurn(s, input("u2", "at -7"), { planner: scripted({ move: "confirm", speech: [{ say: "Yes, you start at negative seven." }, { say: "Which way does minus four move?" }], board: [{ do: "mark", ref: "steps", how: "ring" }], question: { ask: "Which way does minus four move?", kind: "choice" } }) });
+  assert.equal(r2.ops.filter((o) => o.type === "heading").length, 0);
+  assert.ok(r2.ops.some((o) => o.type === "mark" && o.ref === "steps"));
+  assert.equal(r2.state.board.find((b) => b.sid === "steps")?.problemId, "P2");
+});
+
+test("a drawing on a page that was turned is never marked, and the planner sees it as filed away", async () => {
+  let s = createLesson({ intake: "1/2 + 1/3" });
+  const r1 = await runTurn(s, input("u1", "idk"), { planner: scripted({ move: "explain", speech: [{ say: "Here are the parts." }, { say: "What do you notice?" }], board: [{ do: "table", id: "old", columns: "a | b", rows: "1 | 2" }], question: { ask: "What do you notice?", kind: "open" } }) });
+  s = applied(r1.state, r1);
+  // Another problem's heading turns the page.
+  s = { ...s, board: [...s.board, { sid: "heading:P9", kind: "heading", problemId: "P9", parts: [], facts: ["next"], status: "applied", page: 2 }] };
+  assert.match(boardForModel(s), /Earlier pages, filed away[^\n]*old/);
+  const r2 = await runTurn(s, input("u2", "what"), { planner: scripted({ move: "explain", speech: [{ say: "Look here." }, { say: "What is one half plus one third?" }], board: [{ do: "mark", ref: "old", how: "ring" }], question: { ask: "What is one half plus one third?", kind: "value" } }) });
+  assert.ok(!r2.ops.some((o) => o.type === "mark" && o.ref === "old"));
+});
+
+// S-graph-novice (Oct 31): "Look at the y column: negative one, one, three, five" over a three-row table.
+test("numbers read off a table must be on it", async () => {
+  let s = createLesson({ intake: "graph y = 2x - 1" });
+  const r1 = await runTurn(s, input("u1", "i dont get graphs"), { planner: scripted({ move: "explain", speech: [{ say: "Here's a table of the rule." }, { say: "What do you notice?" }], board: [{ do: "table", id: "t1", columns: "x | y", rows: "0 | -1; 1 | 1; 2 | 3" }], question: { ask: "What do you notice?", kind: "open" } }) });
+  s = applied(r1.state, r1);
+  const r2 = await runTurn(s, input("u2", "they go up"), {
+    planner: scripted(
+      { move: "explain", speech: [{ say: "Look at the y column: negative one, one, three, five." }, { say: "How much does y grow each time?" }], board: [], question: { ask: "How much does y grow each time?", kind: "value", expects: "2" } },
+      { move: "explain", speech: [{ say: "Look at the y column: negative one, one, three." }, { say: "How much does y grow each time?" }], board: [], question: { ask: "How much does y grow each time?", kind: "value", expects: "2" } },
+    ),
+  });
+  assert.equal(r2.log.calls, 2);
+  assert.match(r2.log.issues[0].join(" "), /reads 5 off the table/);
+});
+
+test("a ring with a sentence lands on the point the sentence names", async () => {
+  let s = createLesson({ intake: "graph y = 2x - 1" });
+  const r1 = await runTurn(s, input("u1", "ok"), { planner: scripted({ move: "explain", speech: [{ say: "Here are the points." }, { say: "What do you notice?" }], board: [{ do: "graph", id: "g", points: "(0, -1); (1, 1); (2, 3); (3, 5)" }], question: { ask: "What do you notice?", kind: "open" } }) });
+  s = applied(r1.state, r1);
+  const r2 = await runTurn(s, input("u2", "they line up"), {
+    planner: scripted(
+      { move: "confirm", speech: [{ say: "The new point is three, five, on the line.", needs: ["g.P3"] }, { say: "What does y do each step?" }], board: [{ do: "mark", ref: "g.P3", how: "ring" }], question: { ask: "What does y do each step?", kind: "open" } },
+      { move: "confirm", speech: [{ say: "The new point is three, five, on the line.", needs: ["g.P4"] }, { say: "What does y do each step?" }], board: [{ do: "mark", ref: "g.P4", how: "ring" }], question: { ask: "What does y do each step?", kind: "open" } },
+    ),
+  });
+  assert.equal(r2.log.calls, 2);
+  assert.match(r2.log.issues[0].join(" "), /names \(3, 5\)/);
+});
+
+test("a turn that ends on a statement goes back for something to do", async () => {
+  const s = createLesson({ intake: "f(x) = 2x + 1, what goes in to get 11?" });
+  const r = await runTurn(s, input("u1", "wait so backwards?"), {
+    planner: scripted(
+      { move: "explain", speech: [{ say: "Yes, eleven came out, and we want the number that went in." }], board: [] },
+      { move: "explain", speech: [{ say: "Yes, eleven came out, and we want the number that went in." }, { say: "What number doubled and plus one makes eleven?" }], board: [], question: { ask: "What number doubled and plus one makes eleven?", kind: "value", expects: "5" } },
+    ),
+  });
+  assert.equal(r.log.calls, 2);
+  assert.match(r.log.issues[0].join(" "), /nothing for them to do/);
 });

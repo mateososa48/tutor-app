@@ -48,17 +48,22 @@ export function fallbackPlan(a: InputAssessment): TurnPlan {
 }
 
 /** The ops that open a problem on the board: its heading, and its working column when it is an equation. */
-function openingOps(s: LessonState, prefix: string): Compiled {
+function openingOps(s: LessonState, prefix: string): Compiled & { adopt: string[] } {
   const p = currentProblem(s);
-  if (!p || s.board.some((b) => b.problemId === p.id)) return { ops: [], objects: [], issues: [], notes: [] };
+  if (!p || s.board.some((b) => b.problemId === p.id)) return { ops: [], objects: [], issues: [], notes: [], adopt: [] };
+  // Drawn before any problem was chosen (they talked about #2 before it was
+  // current): those pictures are about this one. They stay, and the page does
+  // not turn; a heading would file them away mid-explanation (Oct 31, a number
+  // line archived the turn its ring was due).
+  const adopt = s.board.some((b) => b.kind === "heading") ? [] : s.board.filter((b) => b.problemId == null && b.status !== "failed").map((b) => b.sid);
   // The problem's math when it has one ("3x + 7 = 22"); else its first sentence, short.
   // A word problem's heading keeps its question too ("…$5 per hour. My budget is $23."), when two sentences fit.
   const sentences = p.statement.split(/(?<=[.?!])\s+/);
   const first = sentences.length > 1 && `${sentences[0]} ${sentences[1]}`.length <= 110 ? `${sentences[0]} ${sentences[1]}` : sentences[0];
   // Its math when it has any ("1/2 + 1/3", never the student's wrong "= 2/5" after it).
   const title = p.math ? p.math : first.length <= 110 ? first.replace(/[.]$/, "") : `${first.slice(0, 106).replace(/\s+\S*$/, "")}…`;
-  const ops: BoardOp[] = [{ opId: `${prefix}.h`, type: "heading", title }];
-  const objects: BoardObject[] = [{ sid: `heading:${p.id}`, kind: "heading", problemId: p.id, parts: [], facts: [title], status: "pending" }];
+  const ops: BoardOp[] = adopt.length ? [] : [{ opId: `${prefix}.h`, type: "heading", title }];
+  const objects: BoardObject[] = adopt.length ? [] : [{ sid: `heading:${p.id}`, kind: "heading", problemId: p.id, parts: [], facts: [title], status: "pending" }];
   // An equation to solve opens the working; a definition ("y = -2x + 3") does not.
   if (p.math && /[=<>]/.test(p.math) && /[a-z]/i.test(p.math) && !/^\s*[a-z]\s*=/i.test(p.math)) {
     const spec = startWork(p.math);
@@ -67,7 +72,7 @@ function openingOps(s: LessonState, prefix: string): Compiled {
     ops.push({ opId: `${prefix}.w`, type: "draw", sid, kind: "work", spec, rendered, label: "the working", reserveH: 320 });
     objects.push({ sid, kind: "work", problemId: p.id, spec, parts: [...new Set([...Object.keys(rendered.parts), ...Object.keys(rendered.aliases)])], facts: [describeWork(spec)], status: "pending" });
   }
-  return { ops, objects, issues: [], notes: [] };
+  return { ops, objects, issues: [], notes: [], adopt };
 }
 
 export async function runTurn(prev: LessonState, input: StudentInput, opts: { planner?: Planner; turnId?: string; onEarly?: (text: string) => void } = {}): Promise<TurnResult> {
@@ -84,6 +89,7 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   const autoObjects: BoardObject[] = [];
   const notes: string[] = [];
   const open = openingOps(state, turnId);
+  if (open.adopt.length) state.board = state.board.map((b) => (open.adopt.includes(b.sid) ? { ...b, problemId: state.current } : b));
   auto.push(...open.ops);
   autoObjects.push(...open.objects);
   const q = assessment.question;

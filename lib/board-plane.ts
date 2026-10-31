@@ -256,6 +256,18 @@ export function buildPlane(
     spec.y = [Math.min(view.y[0], spec.y[0]), Math.max(view.y[1], spec.y[1])];
     rescaled = true;
   }
+  // A number line fits its values: whole numbers with a step either side and
+  // zero; decimals on the wholes around them (0.35 and 0.5 on 0 to 1, in tenths).
+  if (!asked && isNumberLine(spec)) {
+    const xs = all.map((p) => p.x);
+    const lo = Math.min(...xs);
+    const hi = Math.max(...xs);
+    const whole = xs.every((x) => Number.isInteger(x));
+    const t = tickStep(Math.max(hi, 0) - Math.min(lo, 0));
+    const view: [number, number] = !whole ? [Math.min(0, Math.floor(lo)), Math.max(1, Math.ceil(hi))] : t === 1 ? [Math.min(0, lo - 1), Math.max(0, hi + 1)] : [lo >= 0 ? 0 : Math.floor((lo - t / 2) / t) * t, hi <= 0 ? 0 : Math.ceil((hi + t / 2) / t) * t];
+    if (view[0] !== spec.x[0] || view[1] !== spec.x[1]) rescaled = Boolean(old);
+    spec.x = view;
+  }
   return { spec, fresh, added, rescaled };
 }
 
@@ -264,8 +276,112 @@ export function tickStep(span: number): number {
   return span <= 12 ? 1 : span <= 24 ? 2 : span <= 60 ? 5 : span <= 120 ? 10 : 20;
 }
 
+/**
+ * Everything on y = 0 and no lines: a number line, not a plane (Oct 31:
+ * −7 − 4 was drawn on a coordinate plane, every dot labelled "(−7, 0)").
+ */
+export function isNumberLine(spec: PlaneSpec): boolean {
+  return spec.lines.length === 0 && spec.points.length + spec.arrows.length > 0 && spec.points.every((p) => p.y === 0) && spec.arrows.every((a) => a.from[1] === 0 && a.to[1] === 0);
+}
+
+/** A number line: ticks and numbers under it, dots on it, hops arcing over it with their labels in lanes. */
+function renderNumberLine(spec: PlaneSpec, fresh: Set<string>, width: number): RenderedPlane {
+  const xSpan = spec.x[1] - spec.x[0];
+  const M = 14;
+  // Room for every whole number on a short line; a long one shrinks to fit.
+  // Every whole number numbered on a short line; a long one shrinks to fit.
+  const unit = Math.max(width / xSpan, xSpan <= 16 ? 32 : xSpan <= 30 ? 16 : 0);
+  const gw = xSpan * unit;
+  const top = spec.caption ? 28 : 0;
+  const parts: Record<string, Rect> = {};
+  const aliases: Record<string, string> = {};
+  const out: string[] = [];
+  const wrap = (id: string, inner: string) => (fresh.has(id) ? `<g data-fresh="1">${inner}</g>` : inner);
+  const X = (x: number) => M + (x - spec.x[0]) * unit;
+  // Hops first: their labels take lanes, and the line sits under the highest lane.
+  const LANE = 18;
+  const lanes: Rect[][] = [];
+  const hops = spec.arrows.map((a) => {
+    const x1 = X(a.from[0]);
+    const x2 = X(a.to[0]);
+    const lw = a.label ? textWidth(a.label, 15) : 0;
+    const cx = (x1 + x2) / 2;
+    let lane = 0;
+    const r = (k: number) => ({ x: cx - lw / 2 - 3, y: k, w: lw + 6, h: 1 });
+    while (a.label && (lanes[lane] ?? []).some((o) => r(lane).x < o.x + o.w && o.x < r(lane).x + r(lane).w)) lane++;
+    if (a.label) (lanes[lane] ??= []).push(r(lane));
+    return { a, x1, x2, cx, lw, lane };
+  });
+  const arcH = Math.min(26, Math.max(12, unit * 0.7));
+  const laneCount = lanes.length;
+  const base = top + M + (spec.arrows.length ? arcH + 8 + (laneCount ? 14 + (laneCount - 1) * LANE : 0) : 6);
+  if (spec.caption) {
+    out.push(wrap("caption", `<text x="${M}" y="17" font-family="${FONT}" font-size="15" font-weight="600" fill="#5b5b66">${esc(spec.caption)}</text>`));
+    parts.caption = { x: M, y: 2, w: textWidth(spec.caption, 15), h: 20 };
+  }
+  const head = (x: number, y: number, dx: number) => `M${n1(x - dx * 7)} ${n1(y - 4)}L${n1(x)} ${n1(y)}L${n1(x - dx * 7)} ${n1(y + 4)}`;
+  out.push(`<path d="M${n1(X(spec.x[0]) - 6)} ${n1(base)}H${n1(X(spec.x[1]) + 6)}${head(X(spec.x[1]) + 6, base, 1)}${head(X(spec.x[0]) - 6, base, -1)}" stroke="${AXIS}" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`);
+  parts["x-axis"] = { x: X(spec.x[0]), y: base - 6, w: gw, h: 12 };
+  aliases.numberline = "x-axis";
+  // A tick at every tenth, half or whole (whatever the span needs); a number
+  // on each tick there is room for, else on every few.
+  // Numbers on a round step with room for them (1, 2, 5, 10 …, or tenths and
+  // halves on a short line); small ticks between, never closer than 8px.
+  const NICE = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+  const step = NICE.find((n) => n * unit >= 30) ?? xSpan;
+  const minor = [step / 10, step / 5, step / 2, step].find((m) => m * unit >= 8 && (step < 1 || Number.isInteger(m))) ?? step;
+  const ticks: string[] = [];
+  const nums: string[] = [];
+  const k0 = Math.ceil(spec.x[0] / minor - 1e-9);
+  for (let k = k0; k * minor <= spec.x[1] + 1e-9; k++) {
+    const x = Math.round(k * minor * 1000) / 1000;
+    const big = Math.abs(x / step - Math.round(x / step)) < 1e-6;
+    ticks.push(`M${n1(X(x))} ${n1(base - (big ? 6 : 4))}V${n1(base + (big ? 6 : 4))}`);
+    if (big) nums.push(`<text x="${n1(X(x))}" y="${n1(base + 21)}" text-anchor="middle" font-family="${FONT}" font-size="13" font-weight="500" fill="#3a3a42" ${HALO}>${fmt(x)}</text>`);
+  }
+  out.push(`<path d="${ticks.join("")}" stroke="${AXIS}" stroke-width="1.4" fill="none"/>`);
+  out.push(nums.join(""));
+  for (const h of hops) {
+    const dir = h.x2 >= h.x1 ? 1 : -1;
+    const apex = base - arcH;
+    const end = { x: h.x2 - dir * 1.5, y: base - 3 };
+    // An arc over the line, its head pointing down at where the hop lands.
+    let inner = `<path d="M${n1(h.x1)} ${n1(base - 3)}Q${n1(h.cx)} ${n1(apex - arcH * 0.5)} ${n1(end.x)} ${n1(end.y)}" stroke="${MARK}" stroke-width="2.4" fill="none" stroke-linecap="round"/><path d="M${n1(end.x - dir * 6)} ${n1(end.y - 7)}L${n1(end.x)} ${n1(end.y)}L${n1(end.x - dir * 1)} ${n1(end.y - 9)}" stroke="${MARK}" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+    let box: Rect = { x: Math.min(h.x1, h.x2) - 2, y: apex - 4, w: Math.abs(h.x2 - h.x1) + 4, h: base - apex + 4 };
+    if (h.a.label) {
+      const ly = apex - 8 - h.lane * LANE;
+      inner += `<text x="${n1(h.cx)}" y="${n1(ly)}" text-anchor="middle" font-family="${HAND}" font-size="15" font-weight="600" fill="${MARK}" ${HALO}>${esc(h.a.label)}</text>`;
+      box = { x: Math.min(box.x, h.cx - h.lw / 2), y: ly - 14, w: Math.max(box.x + box.w, h.cx + h.lw / 2) - Math.min(box.x, h.cx - h.lw / 2), h: base - ly + 14 };
+      aliases[textKey(h.a.label)] ??= h.a.id;
+    }
+    out.push(wrap(h.a.id, inner));
+    parts[h.a.id] = box;
+  }
+  // Dots on the line; a named one has its name under the numbers.
+  let low = base + 26;
+  for (const p of spec.points) {
+    const px = X(p.x);
+    let inner = `<circle cx="${n1(px)}" cy="${n1(base)}" r="5.5" fill="${PEN}" stroke="#ffffff" stroke-width="1.5"/>`;
+    if (p.name) {
+      const tw = textWidth(p.name, 13);
+      inner += `<text x="${n1(px)}" y="${n1(base + 38)}" text-anchor="middle" font-family="${FONT}" font-size="13" font-weight="600" fill="${PEN}" ${HALO}>${esc(p.name)}</text>`;
+      parts[`${p.id}.label`] = { x: px - tw / 2, y: base + 26, w: tw, h: 16 };
+      aliases[p.name.toLowerCase()] = p.id;
+      low = base + 44;
+    }
+    out.push(wrap(p.id, inner));
+    parts[p.id] = { x: px - 8, y: base - 8, w: 16, h: 16 };
+    aliases[coordKey(p.x, p.y)] = p.id;
+    aliases[textKey(fmt(p.x))] ??= p.id;
+  }
+  const w = gw + M * 2;
+  const h = low + M - 6;
+  return { svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n1(w)} ${n1(h)}" width="${n1(w)}" height="${n1(h)}">${out.join("")}</svg>`, w, h, parts, aliases };
+}
+
 /** Draw it. `width` is the plane's own width in px; units are square. */
 export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), width = 340): RenderedPlane {
+  if (isNumberLine(spec)) return renderNumberLine(spec, fresh, Math.max(width, 380));
   const xSpan = spec.x[1] - spec.x[0];
   const ySpan = spec.y[1] - spec.y[0];
   let unit = width / xSpan;
@@ -331,6 +447,8 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     }
     return null;
   };
+  // Where the lines run, in small boxes, so no label is written across one.
+  const curveBoxes: Rect[] = [];
   spec.lines.forEach((l, i) => {
     const color = PENS[i % PENS.length];
     let d = "";
@@ -355,6 +473,7 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
         }
         const inside = y >= spec.y[0] && y <= spec.y[1];
         if (prev && Math.abs(y - prev.y) > ySpan * 2) pen = false;
+        if (inside && k % 3 === 0) curveBoxes.push({ x: X(x) - 3, y: Y(y) - 3, w: 6, h: 6 });
         if (inside) {
           if (!pen) {
             // Enter at the edge it came in through.
@@ -390,7 +509,9 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
   });
   // Arrows: the tutor's own marks on the graph (right 1, up 2), in sky, labelled by hand.
   const arrowLabels: Rect[] = [];
-  const dotZones = spec.points.filter((q) => inView(spec, q.x, q.y)).map((q) => ({ x: X(q.x) - 17, y: Y(q.y) - 17, w: 34, h: 34 }));
+  // A dot and a ring round it take this much room from point labels; an arrow's label only needs to miss the dot.
+  const dotZones = spec.points.filter((q) => inView(spec, q.x, q.y)).map((q) => ({ x: X(q.x) - 10, y: Y(q.y) - 10, w: 20, h: 20 }));
+  const shafts: Rect[] = spec.arrows.map((o) => ({ x: Math.min(X(o.from[0]), X(o.to[0])) - 3, y: Math.min(Y(o.from[1]), Y(o.to[1])) - 3, w: Math.abs(X(o.to[0]) - X(o.from[0])) + 6, h: Math.abs(Y(o.to[1]) - Y(o.from[1])) + 6 }));
   for (const a of spec.arrows) {
     const x1 = X(a.from[0]);
     const y1 = Y(a.from[1]);
@@ -403,19 +524,27 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     let box: Rect = { x: Math.min(x1, x2) - 4, y: Math.min(y1, y2) - 4, w: Math.abs(x2 - x1) + 8, h: Math.abs(y2 - y1) + 8 };
     if (a.label) {
       const lw = textWidth(a.label, 15);
-      // Under a sideways arrow, beside an upright one.
-      const lx = Math.abs(dx) >= Math.abs(dy) ? (x1 + x2) / 2 - lw / 2 : Math.max(x1, x2) + 6;
-      // Never on the axis and its numbers: an upright arrow that crosses the
-      // x-axis has its label nearer its head.
-      let ly = Math.abs(dx) >= Math.abs(dy) ? Math.max(y1, y2) + 18 : (y1 + y2) / 2 + 5;
-      if (Math.abs(dx) < Math.abs(dy) && Math.abs(ly - 5 - oy) < 16) ly = y1 + (y2 - y1) * 0.78 + 5;
-      // Off any point and its ring: an upright arrow's label goes to the other
-      // side (Oct 31: "right 1, down 2" ran into "(2, −1)").
-      let lxx = lx;
-      const over = (x: number) => [...dotZones, ...tickRects].some((z) => x < z.x + z.w && z.x < x + lw && ly - 14 < z.y + z.h && z.y < ly + 4);
-      if (over(lxx) && Math.abs(dx) < Math.abs(dy)) lxx = Math.min(x1, x2) - lw - 6;
-      if (over(lxx)) ly += 18;
-      const lx2 = lxx;
+      // Spots round the arrow: under or over a sideways one, right or left of
+      // an upright one, at its middle and then nearer its ends; the first that
+      // is inside the picture and clear of every other label, arrow, dot and
+      // axis number wins (Oct 31: "right 1" and "right 2" from one start were
+      // written on top of each other, "up 1" sat on the axis).
+      const side = Math.abs(dx) >= Math.abs(dy);
+      const spots: Array<[number, number]> = [];
+      for (const t of [0.5, 0.3, 0.7]) {
+        const mx = x1 + (x2 - x1) * t;
+        const my = y1 + (y2 - y1) * t;
+        if (side) spots.push([mx - lw / 2, my + 19], [mx - lw / 2, my - 7], [mx - lw / 2, my + 37], [mx - lw / 2, my - 25]);
+        else spots.push([mx + 7, my + 5], [mx - lw - 7, my + 5]);
+      }
+      const axisBand: Rect[] = [{ x: X(spec.x[0]), y: oy - 3, w: gw, h: 6 }, { x: ox - 3, y: Y(spec.y[1]), w: 6, h: gh }];
+      const clear = ([x, y]: [number, number]) => {
+        const r = { x: x - 2, y: y - 14, w: lw + 4, h: 18 };
+        if (r.x < 2 || r.x + r.w > w - 2 || r.y < top + 2 || r.y + r.h > h - 2) return false;
+        const hits = (o: Rect) => r.x < o.x + o.w && o.x < r.x + r.w && r.y < o.y + o.h && o.y < r.y + r.h;
+        return ![...arrowLabels, ...dotZones, ...tickRects, ...shafts, ...axisBand, ...curveBoxes].some(hits);
+      };
+      const [lx2, ly] = spots.find(clear) ?? spots.find(([x, y]) => clear([x, y]) || ![...arrowLabels].some((o) => x < o.x + o.w && o.x < x + lw && y - 14 < o.y + o.h && o.y < y + 4)) ?? spots[0];
       arrowLabels.push({ x: lx2, y: ly - 14, w: lw, h: 18 });
       inner += `<text x="${n1(lx2)}" y="${n1(ly)}" font-family="${HAND}" font-size="15" font-weight="600" fill="${MARK}" ${HALO}>${esc(a.label)}</text>`;
       box = { x: Math.min(box.x, lx2), y: Math.min(box.y, ly - 14), w: Math.max(box.x + box.w, lx2 + lw) - Math.min(box.x, lx2), h: Math.max(box.y + box.h, ly + 4) - Math.min(box.y, ly - 14) };
@@ -425,7 +554,7 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     parts[a.id] = box;
   }
   // Points last, over the lines, each with its coordinates.
-  const placedLabels: Rect[] = [...Object.entries(parts).filter(([k]) => /^L\d+$/.test(k)).map(([, r]) => r), ...arrowLabels, ...tickRects];
+  const placedLabels: Rect[] = [...Object.entries(parts).filter(([k]) => /^L\d+$/.test(k)).map(([, r]) => r), ...arrowLabels, ...tickRects, ...shafts, ...curveBoxes];
   // Each dot with the room a ring round it takes, so no label sits under a ring
   // (Oct 31 2026: the rings on (2, 0) and (3, 0) covered their labels).
   const dots: Rect[] = spec.points.filter((q) => inView(spec, q.x, q.y)).map((q) => ({ x: X(q.x) - 17, y: Y(q.y) - 17, w: 34, h: 34 }));
@@ -441,7 +570,9 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     // spots round the dot, the first that is inside the picture and clear of
     // every other label and dot (Oct 31 2026: (2, 0) and (3, 0) ran into each other).
     const left = px - tw - 19, right = px + 19, above = py - 15, below = py + 29;
-    const tries: Array<[number, number]> = (s !== null && s > 0 ? [[left, above], [right, below], [right, above], [left, below]] : [[right, above], [left, below], [left, above], [right, below]]) as Array<[number, number]>;
+    const near: Array<[number, number]> = (s !== null && s > 0 ? [[left, above], [right, below], [right, above], [left, below]] : [[right, above], [left, below], [left, above], [right, below]]) as Array<[number, number]>;
+    // Then straight above or below, then a step further out.
+    const tries: Array<[number, number]> = [...near, [px - tw / 2, py - 19], [px - tw / 2, py + 33], ...near.map(([x, y]): [number, number] => [x + (x < px ? -14 : 14), y + (y < py ? -12 : 12)])];
     const fits = ([x, y]: [number, number]) => {
       const r = { x, y: y - 12, w: tw, h: 16 };
       if (r.x < M || r.x + r.w > w - M || r.y < top + M || r.y + r.h > h - M) return false;
@@ -462,6 +593,13 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
 
 /** The graph as the tutor reads it back. */
 export function describePlane(spec: PlaneSpec): string {
+  if (isNumberLine(spec)) {
+    const bits = [
+      spec.points.length ? `dots ${spec.points.map((p) => `${p.id} ${p.name ? `${p.name} ` : ""}at ${fmt(p.x)}`).join(", ")}` : "",
+      spec.arrows.length ? `hops ${spec.arrows.map((a) => `${a.id} from ${fmt(a.from[0])} to ${fmt(a.to[0])}${a.label ? ` "${a.label}"` : ""}`).join(", ")}` : "",
+    ].filter(Boolean);
+    return `a number line from ${fmt(spec.x[0])} to ${fmt(spec.x[1])}, every whole number marked; ${bits.join("; ")}`;
+  }
   const bits = [
     spec.points.length ? `points ${spec.points.map((p) => `${p.id} ${p.name ? `${p.name} ` : ""}(${fmt(p.x)}, ${fmt(p.y)})`).join(", ")}` : "",
     spec.lines.length ? `lines ${spec.lines.map((l) => `${l.id} ${l.text}`).join(", ")}` : "",

@@ -1354,6 +1354,14 @@ function dispatchInner(
     }
 
     // Answered: the question tags fade (the app, after a right answer).
+    // The engine's turn starts by taking last turn's "look here" rings off (not declared to the model).
+    case "clear_rings": {
+      const board = ensureBoard(ctx);
+      if (isToolError(board)) return board;
+      const n = board.clearRings?.() ?? 0;
+      return ok(n ? `Cleared ${n} ring${n === 1 ? "" : "s"}.` : "No rings to clear.");
+    }
+
     case "settle_questions": {
       const board = ensureBoard(ctx);
       if (isToolError(board)) return board;

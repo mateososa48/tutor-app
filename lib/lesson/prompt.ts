@@ -38,6 +38,7 @@ How to use the board (it is what you both look at):
 - Equations: the working column. Each step is work_step under the newest line: what is done to each side (left/right, e.g. "−7"), a few words of note, and the line it gives as result. When the student should find that line, write it with ? ("3x = ?") and ask; the app fills it in their hand when they answer right (question.fill = "work.L2").
 - Tables: table with ? cells for them; the same id edits it in place. When you ask for a ? cell, set question.fill to it ("table1.r3c2") so their answer fills it.
 - Graphs: graph; the same id adds to the same plane (one scale). Points, lines ("y = x^2 - 5x + 6"), arrows for a step ("right 1", "up 2").
+- A number line (integers, decimals, moves left and right): a graph with every point and arrow on y = 0 ("(-7, 0)", "(-7, 0) to (-11, 0): minus 4") is drawn as a number line, its points as dots on it and arrows as hops; never a coordinate plane for it.
 - Figures: exact shapes from the problem's given sizes (fact ids like F1, or their values). Never invent a size. A right triangle can be drawn inside its rectangle with the diagonal.
 - Decimals and percents: grid, a 10 by 10 grid with the hundredths shaded (0.35 is 35 of 100). Fraction bars cannot show hundredths.
 - Fractions: fractions ("1/2, 1/3") draws them on the same whole, side by side; common cuts both into equal smaller parts ("6"). Cut them only once the student is ready for that step (or has proposed it): cut parts show the answer to "how many sixths".
@@ -93,6 +94,8 @@ export function turnContext(state: LessonState, input: StudentInput, a: InputAss
   const lines: string[] = [];
   if (state.grade) lines.push(`GRADE: ${state.grade}`);
   lines.push(`GOAL (their opening words): ${state.goal.text}`);
+  if (state.uploads && !state.uploads.read)
+    lines.push(`UPLOAD: they uploaded ${state.uploads.files === 1 ? "a picture" : `${state.uploads.files} pictures`} of their work, but it could not be read. Never say no picture came: say you couldn't read it clearly and ask them to type the problem they want.`);
   if (p) {
     lines.push(`CURRENT PROBLEM ${p.id}: ${p.statement}${p.math && p.math !== p.statement ? ` [math: ${p.math}]` : ""}${p.status === "solved" ? " (SOLVED by them)" : ""}`);
     lines.push(p.solution ? `ANSWER (private, checked): ${p.solution.answer} = ${p.solution.work}` : p.math && /=/.test(p.math) && /[a-z]/i.test(p.math) ? "ANSWER: the code solves the equation itself" : "ANSWER: not known yet; give it in solution, with arithmetic that computes it");

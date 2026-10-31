@@ -15,7 +15,7 @@ import { addLine, addStep, describeWork, fillLine, isPending, lastLine, plainMat
 import { geometryFacts, polygon, rectangle, renderGeometry, rightTriangle, type GeometrySpec } from "../board-geometry";
 import { falseAssertions } from "../math-claims";
 import { isTheirProblem } from "../worked-example";
-import { currentProblem } from "./state";
+import { currentProblem, offPage } from "./state";
 import type { BoardIntent, BoardObject, BoardOp, LessonState, PictureKind, RenderedPicture } from "./types";
 
 export type Compiled = { ops: BoardOp[]; objects: BoardObject[]; issues: string[]; notes: string[] };
@@ -94,7 +94,8 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
   const notes: string[] = [];
   let n = 0;
   const opId = () => `${opPrefix}.o${++n}`;
-  const latest = (sid: string) => objects.find((o) => o.sid === sid) ?? s.board.find((o) => o.sid === sid && o.status !== "failed");
+  // A picture on a page that was turned is out of sight: the same id is drawn again, fresh.
+  const latest = (sid: string) => objects.find((o) => o.sid === sid) ?? s.board.find((o) => o.sid === sid && o.status !== "failed" && !offPage(s, o));
   const put = (o: BoardObject) => {
     const at = objects.findIndex((x) => x.sid === o.sid);
     if (at >= 0) objects[at] = o;
@@ -416,6 +417,10 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         const hit = resolveRef(s, objects, b.ref);
         if (!hit) {
           issues.push(`mark: nothing on the board is "${b.ref}"`);
+          break;
+        }
+        if (!objects.includes(hit.obj) && offPage(s, hit.obj)) {
+          issues.push(`mark: ${hit.obj.sid} is on an earlier page, filed away and out of sight; draw what you need on this page instead`);
           break;
         }
         if (hit.part && !hit.obj.parts.some((x) => x.toLowerCase() === hit.part!.toLowerCase().replace(/\s+/g, "")) && !hit.obj.parts.includes(hit.part)) {

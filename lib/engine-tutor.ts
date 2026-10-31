@@ -402,6 +402,9 @@ export class EngineTutorSession {
       }
     };
     const applyAll = (async () => {
+      // Last turn's "look here" rings come off when this turn marks the board
+      // (reviewers found three rings piled on one table, none about the question).
+      if (res!.ops.some((o) => o.type === "mark" && (o.how === "ring" || o.how === "swipe" || o.how === "underline" || o.how === "point"))) await this.callbacks.onToolCall("clear_rings", {}, `engine.${res!.turnId}.clear`);
       for (const op of res!.ops) {
         if (this.ended) break;
         if (op.type === "mark" && deferred.get(op.ref) === op) continue;

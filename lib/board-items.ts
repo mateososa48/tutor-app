@@ -248,6 +248,7 @@ const TOOL_ROLES: Record<string, ToolRole> = {
   mark_correct: "mark",
   annotate: "mark",
   settle_questions: "mark",
+  clear_rings: "mark",
   highlight: "mark",
   highlight_step: "mark",
   cross_out_step: "mark",

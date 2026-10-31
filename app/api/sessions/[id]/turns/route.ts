@@ -72,7 +72,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     // With a worksheet, the problem is the one they named; with one problem, that one; else they pick.
     const picked = problems.length ? namedProblem(text, problems) ?? (problems.length === 1 ? problems[0].id : null) : undefined;
-    lesson = createLesson({ intake: text, grade: profile?.grade || undefined, ...(problems.length ? { problems, current: picked ?? null } : {}) });
+    lesson = createLesson({ intake: text, grade: profile?.grade || undefined, ...(files.length ? { uploads: files.length } : {}), ...(problems.length ? { problems, current: picked ?? null } : {}) });
   }
 
   // A later line that names another problem on the sheet moves to it.

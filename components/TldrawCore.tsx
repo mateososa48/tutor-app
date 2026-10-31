@@ -436,6 +436,8 @@ export interface WhiteboardHandle {
   highlight?(target: string, text: string | undefined, how?: "underline" | "marker"): { item: BoardItem; part: "text" | "item" } | null;
   /** The question tags on the board in play fade once a right answer settles them. */
   fadeQuestions?(): number;
+  /** Take the tutor's kept sky rings off the board (the engine clears last turn's rings before it marks again). */
+  clearRings?(): number;
   /** A right answer: a green box drawn round it and a check beside it (Oct 14 2026). */
   markCorrect?(target: string): BoardItem | null;
   /** The tutor's sky-blue handwriting on a line: notes under, over or beside its parts, a division bar, a cancel (lib/board-annotate). */
@@ -1931,7 +1933,8 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
           props: stroke.ring
             ? { ...common, color: stroke.color ?? MARK, size: stroke.size, fill: "none", dash: "solid", isClosed: false }
             : { ...common, color: stroke.color ?? MARK, size: stroke.size },
-          meta: { ...meta, itemId, mark: true },
+          // A sky ring says "look here" for one turn; a green box is an answer's mark and stays.
+          meta: { ...meta, itemId, mark: true, ...(stroke.ring && !stroke.color ? { ring: true } : {}) },
         } as Parameters<Editor["createShape"]>[0]);
       }, { history: "ignore" });
       host.shapeIds = [...host.shapeIds, id];
@@ -5511,6 +5514,28 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
         },
       });
       return item;
+    },
+
+    clearRings() {
+      const editor = editorRef.current;
+      if (!editor) return 0;
+      const shapes = editor.getCurrentPageShapes().filter((shape) => (shape.meta as { ring?: boolean }).ring && !(shape.meta as { archived?: boolean }).archived);
+      if (shapes.length === 0) return 0;
+      const ids = new Set<string>(shapes.map((shape) => shape.id));
+      for (const item of itemsRef.current) item.shapeIds = item.shapeIds.filter((sid) => !ids.has(sid));
+      const remove = () => editor.run(() => editor.deleteShapes(shapes.map((shape) => shape.id).filter((sid) => editor.getShape(sid))), { history: "ignore" });
+      if (prefersReducedMotion() || instantRef.current) remove();
+      else {
+        const t0 = performance.now();
+        const step = (now: number) => {
+          const p = Math.min(1, Math.max(0, (now - t0) / 220));
+          editor.run(() => editor.updateShapes(shapes.filter((shape) => editor.getShape(shape.id)).map((shape) => ({ id: shape.id, type: shape.type, opacity: 1 - p }))), { history: "ignore" });
+          if (p < 1) requestAnimationFrame(step);
+          else remove();
+        };
+        requestAnimationFrame(step);
+      }
+      return shapes.length;
     },
 
     fadeQuestions() {

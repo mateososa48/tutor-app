@@ -26,7 +26,7 @@ export function cleanIntake(text: string): string {
     .trim();
 }
 
-export function createLesson(opts: { intake: string; grade?: string; problems?: ProblemRecord[]; current?: string | null }): LessonState {
+export function createLesson(opts: { intake: string; grade?: string; problems?: ProblemRecord[]; current?: string | null; uploads?: number }): LessonState {
   const intake = cleanIntake(opts.intake);
   // Math in the intake, or a word problem (numbers and a question): the first problem.
   const posed = mathIn(intake) || (/\d/.test(intake) && /\?|\b(?:find|how (?:many|much|long|far)|what is|solve|work out)\b/i.test(intake));
@@ -37,6 +37,7 @@ export function createLesson(opts: { intake: string; grade?: string; problems?: 
     epoch: 0,
     ...(opts.grade ? { grade: opts.grade } : {}),
     goal: { text: intake.slice(0, 600) || "(not said yet)", source: { kind: "utterance", id: "u0" } },
+    ...(opts.uploads ? { uploads: { files: opts.uploads, read: Boolean(opts.problems?.length) } } : {}),
     problems,
     current: opts.current !== undefined ? opts.current : (problems[0]?.id ?? null),
     questions: [],
@@ -128,12 +129,26 @@ export function alreadySaid(s: LessonState): string[] {
 }
 
 /** The board as the lesson knows it, for the model: each object, its id, its parts and what it shows. */
+/** The page the board is on: one per heading drawn (a new problem turns the page). */
+export function currentPage(s: LessonState): number {
+  return s.board.filter((b) => b.kind === "heading" && b.status !== "failed").length;
+}
+
+/** On a page that was turned: filed away, out of sight. */
+export function offPage(s: LessonState, b: BoardObject): boolean {
+  return b.page !== undefined && b.page < currentPage(s);
+}
+
 export function boardForModel(s: LessonState): string {
   if (!s.board.length) return "empty";
-  return s.board
-    .filter((b) => b.status !== "failed")
-    .map((b) => `${b.sid} (${b.kind}${b.problemId ? `, ${b.problemId}` : ""}${b.status === "pending" ? ", not drawn yet" : ""}): ${b.facts.join("; ") || "(no facts)"}${b.parts.length ? ` | parts: ${b.parts.slice(0, 24).join(", ")}` : ""}`)
-    .join("\n");
+  const live = s.board.filter((b) => b.status !== "failed");
+  const off = live.filter((b) => offPage(s, b));
+  const lines = live
+    .filter((b) => !offPage(s, b))
+    .map((b) => `${b.sid} (${b.kind}${b.problemId ? `, ${b.problemId}` : ""}${b.status === "pending" ? ", not drawn yet" : ""}): ${b.facts.join("; ") || "(no facts)"}${b.parts.length ? ` | parts: ${b.parts.slice(0, 24).join(", ")}` : ""}`);
+  // Earlier pages are out of sight: never pointed at or edited, only drawn again.
+  if (off.length) lines.push(`Earlier pages, filed away and out of sight (draw again what you need; never mark or point at them): ${off.map((b) => `${b.sid} (${b.facts[0]?.slice(0, 60) ?? b.kind})`).join("; ")}`);
+  return lines.join("\n") || "empty";
 }
 
 /**
@@ -148,7 +163,10 @@ export function recordTurn(s: LessonState, turnId: string, plan: TurnPlan, ops: 
     questions.push(q);
   }
   const said = plan.speech.map((x) => x.text).join(" ");
-  const board = [...s.board.filter((b) => !objects.some((o) => o.sid === b.sid)), ...objects];
+  const merged = [...s.board.filter((b) => !objects.some((o) => o.sid === b.sid)), ...objects];
+  // What this turn drew is on the page the board is on after its heading, if it had one.
+  const page = merged.filter((b) => b.kind === "heading" && b.status !== "failed").length;
+  const board = merged.map((b) => (b.page === undefined && objects.includes(b) ? { ...b, page } : b));
   // The problem's answer, once, and only when its arithmetic checks out.
   const problems = plan.solution && verifySolution(plan.solution) ? s.problems.map((p) => (p.id === s.current && !p.solution ? { ...p, solution: plan.solution! } : p)) : s.problems;
   return {

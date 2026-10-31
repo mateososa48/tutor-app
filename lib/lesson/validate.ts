@@ -75,7 +75,10 @@ export function knownNumbers(state: LessonState, withBoard = true): Set<string> 
 }
 
 /** One thing wrong with a plan. Hard issues go back to the model; the rest are fixed here. */
-export type Issue = { text: string; kind: "false_math" | "verdict" | "leak" | "reask" | "close" | "board" | "speech" | "question" };
+export type Issue = { text: string; kind: "false_math" | "verdict" | "leak" | "reask" | "close" | "board" | "speech" | "question" | "ends" };
+
+/** A sentence that hands them a task ("Try it.", "Tell me what you get.", "Your turn."). */
+export const GIVES_TASK = /\b(?:try|tell me|show me|write|work (?:it )?out|figure (?:it )?out|find|give me|go ahead|your turn|count|pick|choose|type|say|check|plug|put|start)\b/i;
 
 /** The issues with a parsed, compiled plan; and the plan with small things fixed. */
 /** The right side of a line, written as "?" ("5h ≤ 20" → "5h ≤ ?"). */
@@ -309,6 +312,38 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     }
   }
 
+  // 4f. Numbers read off a table are on the table (Oct 31: "Look at the y
+  // column: negative one, one, three, five" over a table with three rows;
+  // "the three losses in the table: 15, 12.75, 10.84" over a table of values).
+  const tables = [...state.board.filter((b) => b.status !== "failed" && !compiled.objects.some((o) => o.sid === b.sid)), ...compiled.objects].filter((b) => b.kind === "table");
+  if (tables.length) {
+    const inTable = new Set(tables.flatMap((b) => (b.shown ?? b.facts).flatMap(numbersOf)));
+    for (const seg of speech) {
+      for (const sentence of seg.text.split(/(?<=[.!])\s+/)) {
+        if (sentence.includes("?") || !/\b(?:table|column|row)\b/i.test(sentence)) continue;
+        // "the three losses", "two rows": counts, not entries.
+        const said = numbersOf(sentence.replace(/\b(?:one|two|three|four|five|six|\d)\s+(?:losses|rows?|columns?|numbers|values|entries|steps|times|dots|points|lines|years?)\b/gi, " "));
+        const missing = said.filter((n) => !inTable.has(n));
+        if (said.length >= 2 && missing.length) add("board", `the speech reads ${missing.join(", ")} off the table ("${sentence.slice(0, 80)}"), but the table does not show ${missing.length === 1 ? "it" : "them"}: add the row or column first, or say only what it shows.`);
+      }
+    }
+  }
+  // 4g. A ring goes on the point the sentence names (Oct 31: "the point is
+  // three, five" with the ring on (2, 3)).
+  for (const seg of speech) {
+    const said = numbersOf(seg.text);
+    if (said.length < 2) continue;
+    for (const ref of seg.needs) {
+      const hit = resolveRef(state, compiled.objects, ref);
+      if (!hit || hit.obj.kind !== "plane" || !hit.part || !/^P\d+$/i.test(hit.part)) continue;
+      const pts = [...hit.obj.facts.join(" ").replace(/[−–]/g, "-").matchAll(/\b(P\d+)\s*\((-?[\d.]+),\s*(-?[\d.]+)\)/g)].map((m) => ({ id: m[1], x: m[2], y: m[3] }));
+      const pair = (x: string, y: string) => said.some((n, i) => n === x && said[i + 1] === y);
+      const mine = pts.find((q) => q.id.toLowerCase() === hit.part!.toLowerCase());
+      const other = pts.find((q) => q !== mine && pair(q.x, q.y));
+      if (mine && !pair(mine.x, mine.y) && other) add("board", `the mark on ${ref} is the point (${mine.x}, ${mine.y}), but the sentence names (${other.x}, ${other.y}), which is ${hit.obj.sid}.${other.id}: mark the point you name.`);
+    }
+  }
+
   // 4e. A question the board already answers is no question (Oct 31: "how many
   // sixths is one half?" beside a bar labelled "= 3/6"; "how many tens?" over
   // blocks labelled "4 tens").
@@ -421,6 +456,11 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   // A question the speech never asks is added at the end; one it asks in other words is left alone.
   if (plan.question && !plan.close && plan.move !== "recap" && !speech.some((s) => s.text.includes("?"))) speech.push({ id: `s${speech.length + 1}`, text: cleanSpeech(plan.question.text), needs: [] });
   if (!speech.length) add("speech", "speech is empty");
+  // A turn leaves them something to do: a question, or a task said as one
+  // (Oct 31: "Eleven came out, and we want the number that went in." and
+  // nothing else, twice in a row, to a stuck student).
+  const lastLine = (speech.at(-1)?.text ?? "").split(/(?<=[.?!])\s+/).filter(Boolean).at(-1) ?? "";
+  if (speech.length && !plan.close && plan.move !== "recap" && !speech.some((x) => x.text.includes("?")) && !GIVES_TASK.test(lastLine)) add("ends", "the turn ends with nothing for them to do: end on one question, or a short task (\"Try it on the board's next line.\").");
   const asks = (speech.map((s) => s.text).join(" ").match(/\?/g) ?? []).length;
   if (asks > 1) add("question", `the speech asks ${asks} questions; ask one.`);
 
@@ -482,6 +522,9 @@ export function salvage(plan: TurnPlan, detail: Issue[]): TurnPlan | null {
     if (d.kind === "close") return null;
   }
   if (!speech.length) return null;
+  // Nothing left for them to do: one plain question, never a silence after a statement.
+  const last = speech.at(-1)!.text.split(/(?<=[.?!])\s+/).at(-1) ?? "";
+  if (!plan.close && plan.move !== "recap" && !speech.some((x) => x.text.includes("?")) && !GIVES_TASK.test(last)) speech = [...speech, { id: `end${speech.length + 1}`, text: "What would you try next?", needs: [] }];
   return { ...plan, speech, question };
 }
 
