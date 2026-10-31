@@ -263,3 +263,16 @@ test("a step's result is the line above with what is written under each side don
   assert.equal(r.log.calls, 2);
   assert.match(r.log.issues[0].join(" "), /does not give "x = 5"/);
 });
+
+// kids9 (Oct 31): "Here is problem two, up on the board" with nothing drawn.
+test("saying a problem is up on the board when nothing new is drawn goes back", async () => {
+  const s = createLesson({ intake: "3x + 7 = 22" });
+  const r = await runTurn(s, input("u1", "ok next one"), {
+    planner: scripted(
+      { move: "practice", speech: [{ say: "Here is problem two, up on the board." }, { say: "What would you do first?" }], board: [], question: { ask: "What would you do first?", kind: "open" } },
+      { move: "practice", speech: [{ say: "Problem two is five times x minus two equals thirty." }, { say: "What would you do first?" }], board: [{ do: "work_line", text: "5(x - 2) = 30" }], question: { ask: "What would you do first?", kind: "open" } },
+    ),
+  });
+  assert.equal(r.log.calls, 2);
+  assert.match(r.log.issues[0].join(" "), /nothing new is drawn/);
+});

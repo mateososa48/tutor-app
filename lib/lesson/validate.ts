@@ -417,7 +417,8 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   // 4d. "Here it is, drawn fresh" over a board that did not change, and "line
   // five" on a board with no line numbers (Oct 31, reviewed blind).
   const changed = compiled.ops.some((o) => o.type === "draw" || o.type === "tool" || o.type === "illustrate" || (o.type === "edit" && JSON.stringify(o.spec) !== JSON.stringify(state.board.find((b) => b.sid === o.sid)?.spec)));
-  const claimsDrawing = /\b(?:here it is|here's the new|i(?:'ve| have) (?:drawn|added|put)|i drew|drawn (?:it )?(?:fresh|again|now)|i'll draw|let me draw|i'm drawing|watch (?:as|while) i)\b/i;
+  // "Here is problem two, up on the board" with nothing new drawn (Oct 31, kids9).
+  const claimsDrawing = /\b(?:here(?:'s| is) (?:problem|number|question|the (?:new|next|problem))\b[^.?!]*\b(?:up|on the board)\b|(?:i(?:'ve| have) )?(?:put|written|written it|put it) (?:it |that )?(?:up|on the board)\b|here it is|here's the new|i(?:'ve| have) (?:drawn|added|put)|i drew|drawn (?:it )?(?:fresh|again|now)|i'll draw|let me draw|i'm drawing|watch (?:as|while) i)\b/i;
   if (speech.some((x) => /\b(?:drawn (?:it )?(?:fresh|again)|here it is again|draw it again)\b/i.test(x.text))) add("speech", "never redraw what is already up: say it is already on the board and point at it.");
   if (!changed && speech.some((x) => claimsDrawing.test(x.text))) add("board", "the speech says you are drawing something, but nothing new is drawn this turn: say it is already on the board and point at it (a mark), or draw what is new.");
   // A curve crosses the axis where it passes through it (Oct 31: "touches" twice, despite the prompt).
