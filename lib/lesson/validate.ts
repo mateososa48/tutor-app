@@ -69,8 +69,8 @@ function currentMath(state: LessonState): string {
 }
 
 /** Numbers already on the table: the problem's, the board's before this turn, and every number the student has said. */
-export function knownNumbers(state: LessonState): Set<string> {
-  const texts = [state.goal.text, ...state.problems.flatMap((p) => [p.statement, p.math ?? "", ...p.givens.map((f) => String(f.value))]), ...state.transcript.filter((t) => t.role === "student").map((t) => t.text), ...state.board.flatMap((b) => b.facts)];
+export function knownNumbers(state: LessonState, withBoard = true): Set<string> {
+  const texts = [state.goal.text, ...state.problems.flatMap((p) => [p.statement, p.math ?? "", ...p.givens.map((f) => String(f.value))]), ...state.transcript.filter((t) => t.role === "student").map((t) => t.text), ...(withBoard ? state.board.flatMap((b) => b.facts) : [])];
   return new Set(texts.flatMap(numbersOf));
 }
 
@@ -297,10 +297,20 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     }
   }
 
+  // 4e. A question the board already answers is no question (Oct 31: "how many
+  // sixths is one half?" beside a bar labelled "= 3/6"; "how many tens?" over
+  // blocks labelled "4 tens").
+  if (plan.question?.expects && !plan.givesAnswer && (plan.question.kind === "value" || plan.question.kind === "step")) {
+    const onBoard = [...state.board.filter((b) => !compiled.objects.some((o) => o.sid === b.sid)), ...compiled.objects].filter((b) => b.status !== "failed");
+    const shown = onBoard.find((b) => b.kind !== "heading" && b.facts.some((f) => states(f, plan.question!.expects!, knownNumbers(state, false))));
+    if (shown) add("question", `the board already shows the answer to "${plan.question.text}" (${shown.sid}: ${shown.facts.join("; ").slice(0, 120)}); ask about something the board does not show, or have them explain what it shows.`);
+  }
+
   // 4d. "Here it is, drawn fresh" over a board that did not change, and "line
   // five" on a board with no line numbers (Oct 31, reviewed blind).
   const changed = compiled.ops.some((o) => o.type === "draw" || o.type === "tool" || o.type === "illustrate" || (o.type === "edit" && JSON.stringify(o.spec) !== JSON.stringify(state.board.find((b) => b.sid === o.sid)?.spec)));
   const claimsDrawing = /\b(?:here it is|here's the new|i(?:'ve| have) (?:drawn|added|put)|i drew|drawn (?:it )?(?:fresh|again|now)|i'll draw|let me draw|i'm drawing|watch (?:as|while) i)\b/i;
+  if (speech.some((x) => /\b(?:drawn (?:it )?(?:fresh|again)|here it is again|draw it again)\b/i.test(x.text))) add("speech", "never redraw what is already up: say it is already on the board and point at it.");
   if (!changed && speech.some((x) => claimsDrawing.test(x.text))) add("board", "the speech says you are drawing something, but nothing new is drawn this turn: say it is already on the board and point at it (a mark), or draw what is new.");
   if (speech.some((x) => /\bline (?:one|two|three|four|five|six|seven|\d)\b/i.test(x.text))) add("speech", 'the board has no line numbers: name the line by what it says ("the line with negative six"), and mark it.');
 

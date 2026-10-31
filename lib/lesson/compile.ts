@@ -28,6 +28,12 @@ function numbersIn(text: string): string[] {
  * Math spelled out in words ("one half times 12 times 5"): the working column
  * is math, not sentences; it rendered as "onehalftimes12times5" on Oct 31.
  */
+/** Words in a line beyond a label: the working is math; sentences belong in speech ("first red : 3/5 of all"). */
+export function wordyLine(text: string): boolean {
+  const words = (text.replace(/\\[a-z]+/gi, " ").match(/\b[a-z]{2,}\b/gi) ?? []).filter((w) => !/^(?:or|and|so|cm|mm|m|km|in|ft|kg|g|hours?|sin|cos|tan|log|ln)$/i.test(w));
+  return words.length > 2;
+}
+
 export function spelledMath(text: string): boolean {
   return (text.match(/\b(?:times|plus|minus|divided|over|half|halves|third|quarter|equals|squared|cubed)\b/gi) ?? []).length >= 1 && !/^\s*\w+\s*$/.test(text);
 }
@@ -164,31 +170,37 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
       }
       case "work_line": {
         const { spec, obj } = work();
+        // "L3: both red = …" is the model's label for the line, not part of it.
+        const text = b.text.replace(/^\s*L\d+\s*[:.)]\s*/i, "");
+        if (wordyLine(text)) {
+          issues.push(`work_line "${text}": the working holds math, not sentences; say the words aloud and write only the math`);
+          break;
+        }
         // A line already in the working is not written again (Oct 31: the
         // problem appeared three times, heading included, and no work).
         const same = (x: string) => plainMath(x).replace(/\s+/g, "");
-        if (spec.lines.some((l) => same(l.text) === same(b.text)) || (p?.math && same(p.math) === same(b.text) && spec.lines.length)) {
-          notes.push(`"${b.text}" is already on the board`);
+        if (spec.lines.some((l) => same(l.text) === same(text)) || (p?.math && same(p.math) === same(text) && spec.lines.length)) {
+          notes.push(`"${text}" is already on the board`);
           break;
         }
-        if (spelledMath(b.text)) {
-          issues.push(`work_line "${b.text}": write it in symbols ("1/2 × 12 × 5"), not words; say the words aloud instead`);
+        if (spelledMath(text)) {
+          issues.push(`work_line "${text}": write it in symbols ("1/2 × 12 × 5"), not words; say the words aloud instead`);
           break;
         }
-        const bad = falseAssertions(b.text);
+        const bad = falseAssertions(text);
         if (bad.length) {
-          issues.push(`work_line "${b.text}" is false: ${bad.map((c) => c.correct).join("; ")}`);
+          issues.push(`work_line "${text}" is false: ${bad.map((c) => c.correct).join("; ")}`);
           break;
         }
         const above = spec.lines.length ? lastLine(spec) : null;
-        if (above && /=/.test(b.text) && /[a-z]/i.test(b.text) && !/\?/.test(b.text) && !isPending(above) && /=/.test(above.text)) {
-          const ok = checkStep(above.text, b.text);
+        if (above && /=/.test(text) && /[a-z]/i.test(text) && !/\?/.test(text) && !isPending(above) && /=/.test(above.text)) {
+          const ok = checkStep(above.text, text);
           if (ok && ok.verdict === "incorrect") {
-            issues.push(`work_line "${b.text}" does not follow from "${above.text}"`);
+            issues.push(`work_line "${text}" does not follow from "${above.text}"`);
             break;
           }
         }
-        const r = addLine(spec, b.text, "tutor");
+        const r = addLine(spec, text, "tutor");
         putWork(r.spec, r.fresh, obj);
         break;
       }
@@ -265,6 +277,11 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
           break;
         }
         const prev = before;
+        // The same figure again changes nothing: no op (it read as "drawn fresh" over an unchanged board).
+        if (prev?.kind === "geometry" && JSON.stringify(prev.spec) === JSON.stringify(spec)) {
+          notes.push(`${sid} is already on the board as asked`);
+          break;
+        }
         const r = renderGeometry(spec);
         put(picture(sid, "geometry", s.current, spec, r, geometryFacts(spec), prev?.kind === "geometry" ? prev : undefined));
         ops.push(prev?.kind === "geometry" ? { opId: opId(), type: "edit", sid, kind: "geometry", spec, rendered: r, label: "figure" } : { opId: opId(), type: "draw", sid, kind: "geometry", spec, rendered: r, label: "figure" });
@@ -311,6 +328,10 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         const old = [...objects, ...s.board].find((o) => o.kind === "blocks" && o.problemId === s.current && o.status !== "failed");
         const sid = b.id && latest(b.id) ? b.id : old?.sid ?? b.id ?? "blocks1";
         const prev = latest(sid);
+        if (prev?.kind === "blocks" && JSON.stringify(prev.spec) === JSON.stringify(spec)) {
+          notes.push(`${sid} is already on the board as asked`);
+          break;
+        }
         const r = renderBlocks(spec);
         put(picture(sid, "blocks", s.current, spec, r, describeBlocks(spec), prev?.kind === "blocks" ? prev : undefined));
         ops.push(prev?.kind === "blocks" ? { opId: opId(), type: "edit", sid, kind: "blocks", spec, rendered: r, label: "base-ten blocks" } : { opId: opId(), type: "draw", sid, kind: "blocks", spec, rendered: r, label: "base-ten blocks" });

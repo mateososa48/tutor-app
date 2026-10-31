@@ -85,7 +85,7 @@ function packet(r: Rec, s: LessonState | null, dir: string, checks: Check[]): st
   lines.push(`Student's opening: "${r.intake}"`, "");
   r.turns.forEach((t, i) => {
     const student = i === 0 ? r.intake : r.lines[i - 1];
-    lines.push(`## Turn ${i + 1}`, `Student: ${student}`, `Tutor (said aloud): ${t.said.join(" ") || "(nothing)"}`, `Board changes: ${t.ops.join("; ") || "none"}`);
+    lines.push(`## Turn ${i + 1}`, `Student: ${student}`, `Tutor (said aloud): ${t.said.join(" ") || "(nothing)"}`, `Board changes: ${t.ops.join("; ") || "none"}${t.ops.some((o) => /^mark point/.test(o)) ? " (a 'point' mark is a laser ring drawn while that sentence is said; it fades, so it is not in the picture taken after the turn)" : ""}`);
     lines.push(`Board after: ${path.join(dir, `t${i + 1}-board.jpg`)} (full screen: ${path.join(dir, `t${i + 1}.png`)})`, "");
   });
   if (s) {

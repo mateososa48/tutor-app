@@ -51,9 +51,11 @@ function openingOps(s: LessonState, prefix: string): Compiled {
   const p = currentProblem(s);
   if (!p || s.board.some((b) => b.problemId === p.id)) return { ops: [], objects: [], issues: [], notes: [] };
   // The problem's math when it has one ("3x + 7 = 22"); else its first sentence, short.
-  const first = p.statement.split(/(?<=[.?!])\s+/)[0];
+  // A word problem's heading keeps its question too ("…$5 per hour. My budget is $23."), when two sentences fit.
+  const sentences = p.statement.split(/(?<=[.?!])\s+/);
+  const first = sentences.length > 1 && `${sentences[0]} ${sentences[1]}`.length <= 110 ? `${sentences[0]} ${sentences[1]}` : sentences[0];
   // Its math when it has any ("1/2 + 1/3", never the student's wrong "= 2/5" after it).
-  const title = p.math ? p.math : first.length <= 90 ? first.replace(/[.]$/, "") : `${first.slice(0, 86).replace(/\s+\S*$/, "")}…`;
+  const title = p.math ? p.math : first.length <= 110 ? first.replace(/[.]$/, "") : `${first.slice(0, 106).replace(/\s+\S*$/, "")}…`;
   const ops: BoardOp[] = [{ opId: `${prefix}.h`, type: "heading", title }];
   const objects: BoardObject[] = [{ sid: `heading:${p.id}`, kind: "heading", problemId: p.id, parts: [], facts: [title], status: "pending" }];
   // An equation to solve opens the working; a definition ("y = -2x + 3") does not.
