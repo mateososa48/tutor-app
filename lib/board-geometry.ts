@@ -212,8 +212,21 @@ function layoutGeometry(spec: GeometrySpec, fresh: Set<string>, maxW: number, ma
 /** What the figure shows, as facts: "base AB 12 cm; height BC 5 cm; diagonal AC 13 cm; triangle ABC area 30 cm²". */
 export function geometryFacts(spec: GeometrySpec): string[] {
   const u = spec.unit ?? "";
-  const facts = spec.segments.map((s) => `${s.role === "diagonal" ? "diagonal" : s.id} ${s.from}${s.to} ${fmt(segmentLength(spec, s))}${u ? ` ${u}` : ""}`);
-  for (const p of spec.polygons) facts.push(`${p.name ?? p.id} ${p.points.join("")} area ${fmt(polygonArea(spec, p))}${u ? ` ${u}²` : ""}`);
+  // Where each corner sits, in words a tutor says ("bottom left"): on Oct 31
+  // the tutor described the drawn diagonal as running the other way.
+  const xs = spec.points.map((p) => p.x);
+  const ys = spec.points.map((p) => p.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const where = (id: string) => {
+    const p = spec.points.find((q) => q.id === id);
+    if (!p) return id;
+    const v = p.y === y1 ? "top" : p.y === y0 ? "bottom" : "middle";
+    const h = p.x === x0 ? "left" : p.x === x1 ? "right" : "middle";
+    return `${id} (${v} ${h}, ${fmt(p.x)}, ${fmt(p.y)})`;
+  };
+  const facts = spec.points.length ? [`corners: ${spec.points.map((p) => where(p.id)).join(", ")}`] : [];
+  for (const s of spec.segments) facts.push(`${s.role === "diagonal" ? "diagonal" : s.role === "height" ? "height" : "side"} ${s.from}${s.to} ${fmt(segmentLength(spec, s))}${u ? ` ${u}` : ""}${s.role === "diagonal" ? `, from ${where(s.from).replace(/^\w+ \(([^,]+),.*$/, "$1")} to ${where(s.to).replace(/^\w+ \(([^,]+),.*$/, "$1")}` : ""}`);
+  for (const p of spec.polygons) facts.push(`${p.name ?? p.id} ${p.points.join("")} area ${fmt(polygonArea(spec, p))}${u ? ` ${u}²` : ""}${p.shade && p.shade !== "none" ? ` (shaded ${p.shade})` : ""}`);
   for (const r of spec.rightAngles) facts.push(`right angle at ${r.at}`);
   return facts;
 }

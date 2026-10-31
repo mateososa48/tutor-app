@@ -26,7 +26,7 @@ How a good tutor decides:
 - End on at most one question, and only one that helps decide what to do next. A recap or close has none.
 
 How to speak:
-- Short spoken sentences, plain words, under about 60 words in all unless you are explaining a new idea. No praise words ("great", "perfect", "awesome", "exactly"), no "does that make sense", no "do you want to" except for an optional continuation at the end.
+- It is heard, not read: a long turn loses them. Two to four short sentences, about 45 words in all, then the question. Only when teaching a new idea to someone with no way in, up to about 75. Say one idea; leave the next for the next turn. No praise words ("great", "perfect", "awesome", "exactly"), no "does that make sense", no "do you want to" except for an optional continuation at the end.
 - Math in words: "three x plus seven equals twenty-two"; decimals digit by digit ("zero point three five"). Never symbols, LaTeX or markup in speech.
 - A sentence that talks about something on the board lists it in needs ("fig1.diagonal", "work.L2", "graph1.P2"), and gives a fallback sentence for when it could not be drawn.
 
@@ -35,6 +35,8 @@ How to use the board (it is what you both look at):
 - Tables: table with ? cells for them; the same id edits it in place.
 - Graphs: graph; the same id adds to the same plane (one scale). Points, lines ("y = x^2 - 5x + 6"), arrows for a step ("right 1", "up 2").
 - Figures: exact shapes from the problem's given sizes (fact ids like F1, or their values). Never invent a size. A right triangle can be drawn inside its rectangle with the diagonal.
+- Fractions: fractions ("1/2, 1/3") draws them on the same whole, side by side; common cuts both into equal smaller parts ("6") so they can be added or compared.
+- Real things (base-ten blocks, a bag of marbles, groups of objects, money): picture, with what to draw in exact counts and arrangement, and what they should notice. It never writes the answer. Use it when the idea is about real quantities, not for equations.
 - A worked example on other numbers: example.
 - Marks: ring, swipe, underline, check (a right final answer, green box), cross (a superseded wrong line), point. Ref a part: "work.L3", "fig1.diagonal", "graph1.P2", "table1.r2c2".
 - Do not draw what you will not talk about.
@@ -44,7 +46,7 @@ Questions and verdicts:
 - When the student gives a waiting line in their own words, the app fills it if it can check it; otherwise fill it yourself with work_fill (line "L2", text "3x = 15") before the next work_step. A new step always goes under a finished line.
 - Calling their answer right or wrong when the CHECKER gave no verdict: give verdict with because, arithmetic facts the code can check ("5*4+3 = 23", "23 <= 23", "5*5+3 = 28", "28 > 23").
 
-Answer only with the turn_plan tool. Each speech item is {"say": "...", "needs": [...]}.`;
+Answer only with the turn_plan tool: call it at once, with no text before it. Each speech item is {"say": "...", "needs": [...]}. Put your first sentence first: it is said as soon as it is written.`;
 
 /** The moves that fit now, from the signals and the assessment: guidance, not a script. */
 export function allowedMoves(state: LessonState, a: InputAssessment): { moves: TeachingMove[]; note: string } {
@@ -60,6 +62,7 @@ export function allowedMoves(state: LessonState, a: InputAssessment): { moves: T
 
 function checkerLines(a: InputAssessment): string[] {
   const out: string[] = [];
+  if (a.final) out.push(`their answer to the whole problem (${a.final.value}): ${a.final.verdict.toUpperCase()} (checked against ${a.final.against})`);
   if (a.answer && a.question) out.push(`their answer to the open question ("${a.question.text}"): ${a.answer.verdict.toUpperCase()}${a.answer.detail ? ` (${a.answer.detail.slice(0, 200)})` : ""}`);
   else if (a.question) out.push(`open question ("${a.question.text}"): their line is not an answer to it`);
   for (const c of a.claims) {
@@ -81,7 +84,8 @@ export function turnContext(state: LessonState, input: StudentInput, a: InputAss
   if (state.grade) lines.push(`GRADE: ${state.grade}`);
   lines.push(`GOAL (their opening words): ${state.goal.text}`);
   if (p) {
-    lines.push(`CURRENT PROBLEM ${p.id}: ${p.statement}${p.math && p.math !== p.statement ? ` [math: ${p.math}]` : ""}`);
+    lines.push(`CURRENT PROBLEM ${p.id}: ${p.statement}${p.math && p.math !== p.statement ? ` [math: ${p.math}]` : ""}${p.status === "solved" ? " (SOLVED by them)" : ""}`);
+    lines.push(p.solution ? `ANSWER (private, checked): ${p.solution.answer} = ${p.solution.work}` : p.math && /=/.test(p.math) && /[a-z]/i.test(p.math) ? "ANSWER: the code solves the equation itself" : "ANSWER: not known yet; give it in solution, with arithmetic that computes it");
     if (p.givens.length) lines.push(`GIVENS: ${p.givens.map((f) => `${f.id} ${f.name} = ${f.value}${f.unit ? ` ${f.unit}` : ""}`).join("; ")}`);
   } else lines.push("CURRENT PROBLEM: none yet");
   const others = state.problems.filter((x) => x.id !== state.current);

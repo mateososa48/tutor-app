@@ -9,8 +9,8 @@ import type { BoardIntent, PlannedQuestion, SpeechSegment, TeachingMove, TurnPla
 
 export const MOVES: TeachingMove[] = ["clarify", "diagnose", "explain", "model_step", "completion", "hint", "contrast", "confirm", "practice", "self_explanation", "repair", "recap", "close"];
 
-/** The tool the model must answer with (Anthropic `input_schema`). */
-export const TURN_PLAN_TOOL = {
+/** The tool's fields, as written; TURN_PLAN_TOOL below puts them in the order the model fills them. */
+const TURN_PLAN_BASE = {
   name: "turn_plan",
   description: "Your plan for this one turn: what the voice says, what the board shows, the one question (if any) and its private answer.",
   input_schema: {
@@ -36,7 +36,12 @@ export const TURN_PLAN_TOOL = {
         items: {
           type: "object",
           properties: {
-            do: { type: "string", enum: ["work_step", "work_line", "work_fill", "table", "graph", "figure", "example", "mark"] },
+            do: { type: "string", enum: ["work_step", "work_line", "work_fill", "table", "graph", "figure", "example", "mark", "fractions", "picture"] },
+            fractions: { type: "string", description: "fractions: one or two fractions on the same whole, \"1/2, 1/3\"." },
+            common: { type: "number", description: "fractions: cut both into this many equal parts (6 for halves and thirds)." },
+            model: { type: "string", enum: ["bar", "circle"], description: "fractions: bars (default) or circles." },
+            what: { type: "string", description: "picture: real things with exact counts and arrangement, \"2 tens rods and 3 unit cubes\", \"a bag with 3 red and 2 blue marbles\". Never the answer written on it." },
+            notice: { type: "string", description: "picture: what they should notice in it." },
             line: { type: "string", description: "work_fill: the waiting line to fill (\"L2\"), with text its full line (\"3x = 15\")." },
             left: { type: "string", description: "work_step: what is done to the left side, as written under it (\"−7\", \"÷3\")." },
             right: { type: "string", description: "work_step: what is done to the right side." },
@@ -95,12 +100,34 @@ export const TURN_PLAN_TOOL = {
         required: ["ask", "kind"],
       },
       gives_answer: { type: "boolean", description: "True when this turn tells them the answer to their problem (counted as help)." },
+      solution: {
+        type: "object",
+        description: "Only when CURRENT PROBLEM shows no ANSWER yet: its final answer, private, and plain arithmetic that computes it, which the code evaluates (answer \"4\", work \"(23-3)/5\").",
+        properties: { answer: { type: "string" }, work: { type: "string" } },
+        required: ["answer", "work"],
+      },
       close: { type: "boolean", description: "True to end or wrap up the session: no new task, no question." },
       why: { type: "string", description: "One short line on why this move, for the logs." },
     },
     required: ["move", "speech", "board"],
   },
 } as const;
+
+/**
+ * The tool the model answers with, speech first: the model writes fields in
+ * schema order, and the first sentence is said as soon as it is complete
+ * (lib/lesson/stream.ts). Question and verdict first cost 3.4-5.8 s before
+ * the first word (Oct 31 2026); without the question, an early sentence
+ * may only use numbers the student already has.
+ */
+const P = TURN_PLAN_BASE.input_schema.properties;
+export const TURN_PLAN_TOOL = {
+  ...TURN_PLAN_BASE,
+  input_schema: {
+    ...TURN_PLAN_BASE.input_schema,
+    properties: { move: P.move, speech: P.speech, question: P.question, verdict: P.verdict, solution: P.solution, gives_answer: P.gives_answer, close: P.close, board: P.board, why: P.why },
+  },
+};
 
 export type ParsedPlan = { ok: true; plan: TurnPlan; verdict: { answer: string; is: "correct" | "incorrect" | "partial"; because: string[] } | null } | { ok: false; issues: string[] };
 
@@ -179,6 +206,14 @@ export function parseTurnPlan(raw: unknown): ParsedPlan {
         else issues.push("mark needs ref");
         break;
       }
+      case "fractions":
+        if (str(o.fractions)) board.push({ do: "fractions", ...(str(o.id) ? { id: str(o.id) } : {}), fractions: str(o.fractions), ...(typeof o.common === "number" ? { common: o.common } : {}), ...(o.model === "circle" ? { model: "circle" as const } : {}) });
+        else issues.push("fractions needs fractions");
+        break;
+      case "picture":
+        if (str(o.what)) board.push({ do: "picture", ...(str(o.id) ? { id: str(o.id) } : {}), what: str(o.what).slice(0, 300), ...(str(o.notice) ? { notice: str(o.notice).slice(0, 300) } : {}) });
+        else issues.push("picture needs what");
+        break;
       default:
         issues.push(`unknown board do "${String(o.do)}"`);
     }
@@ -195,5 +230,7 @@ export function parseTurnPlan(raw: unknown): ParsedPlan {
     if (["correct", "incorrect", "partial"].includes(String(v.is))) verdict = { answer: str(v.answer), is: v.is as "correct", because: Array.isArray(v.because) ? v.because.map(str).filter(Boolean) : [] };
   }
   if (issues.length || !move) return { ok: false, issues };
-  return { ok: true, plan: { move, speech, board, question, givesAnswer: r.gives_answer === true, close: r.close === true, ...(str(r.why) ? { why: str(r.why) } : {}) }, verdict };
+  const sol = r.solution && typeof r.solution === "object" ? (r.solution as Record<string, unknown>) : null;
+  const solution = sol && str(sol.answer) && str(sol.work) ? { answer: str(sol.answer), work: str(sol.work) } : undefined;
+  return { ok: true, plan: { move, speech, board, question, givesAnswer: r.gives_answer === true, close: r.close === true, ...(solution ? { solution } : {}), ...(str(r.why) ? { why: str(r.why) } : {}) }, verdict };
 }

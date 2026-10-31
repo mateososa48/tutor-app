@@ -6,7 +6,7 @@
 // and returns the ops the page applies as they are. Anything wrong comes back
 // as an issue for the model to fix, never as a drawing.
 
-import { checkStep } from "../answer-check";
+import { checkStep, spokenToDigits } from "../answer-check";
 import { buildPlane, describePlane, renderPlane, type PlaneSpec } from "../board-plane";
 import { describeTable, mergeTable, parseTable, renderTable, sameColumns, type TableSpec } from "../board-table";
 import { addLine, addStep, describeWork, fillLine, isPending, lastLine, renderWork, startWork, type WorkSpec } from "../board-work";
@@ -17,6 +17,19 @@ import { currentProblem } from "./state";
 import type { BoardIntent, BoardObject, BoardOp, LessonState, PictureKind, RenderedPicture } from "./types";
 
 export type Compiled = { ops: BoardOp[]; objects: BoardObject[]; issues: string[]; notes: string[] };
+
+/** The numbers in a line, in digits ("twenty" counts as 20). */
+function numbersIn(text: string): string[] {
+  return (spokenToDigits(text.replace(/[−–]/g, "-")).match(/-?\d+(?:\.\d+)?(?:\/\d+)?/g) ?? []).map((n) => n.replace(/^-0$/, "0"));
+}
+
+/**
+ * Math spelled out in words ("one half times 12 times 5"): the working column
+ * is math, not sentences; it rendered as "onehalftimes12times5" on Oct 31.
+ */
+export function spelledMath(text: string): boolean {
+  return (text.match(/\b(?:times|plus|minus|divided|over|half|halves|third|quarter|equals|squared|cubed)\b/gi) ?? []).length >= 1 && !/^\s*\w+\s*$/.test(text);
+}
 
 const workSid = (problemId: string | null) => `work:${problemId ?? "none"}`;
 
@@ -97,6 +110,10 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         }
         const above = lastLine(spec);
         const result = b.result?.trim() || null;
+        if (result && spelledMath(result)) {
+          issues.push(`work_step result "${result}": write it in symbols, not words`);
+          break;
+        }
         // A result the tutor writes must follow from the line above.
         if (result && !/\?/.test(result) && /=/.test(above.text) && !isPending(above)) {
           const ok = checkStep(above.text, result);
@@ -125,6 +142,17 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
           issues.push(`work_fill: ${b.line} is not a waiting line`);
           break;
         }
+        // Their hand writes only what they said: the new numbers must be in
+        // their newest line (Oct 31: "5h ≤ 20" written as theirs when they
+        // had said "I got 4 hours… 24, which is under 23").
+        const theirs = [...s.transcript].reverse().find((t) => t.role === "student")?.text ?? "";
+        const had = new Set(numbersIn(line.text));
+        const fresh = numbersIn(b.text).filter((n) => !had.has(n));
+        const saidNums = new Set(numbersIn(theirs));
+        if (fresh.some((n) => !saidNums.has(n))) {
+          issues.push(`work_fill: they have not said ${fresh.filter((n) => !saidNums.has(n)).join(", ")}; ask for it (leave the line waiting), or write it yourself as a work_step if you are showing it`);
+          break;
+        }
         const r = fillLine(spec, line.id, b.text, "student");
         if ("error" in r) {
           issues.push(`work_fill: ${r.error}`);
@@ -135,6 +163,10 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
       }
       case "work_line": {
         const { spec, obj } = work();
+        if (spelledMath(b.text)) {
+          issues.push(`work_line "${b.text}": write it in symbols ("1/2 × 12 × 5"), not words; say the words aloud instead`);
+          break;
+        }
         const bad = falseAssertions(b.text);
         if (bad.length) {
           issues.push(`work_line "${b.text}" is false: ${bad.map((c) => c.correct).join("; ")}`);
@@ -193,25 +225,38 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         break;
       }
       case "figure": {
-        const sid = b.id || "fig1";
+        // One figure a problem: a new id on a problem that has one edits it
+        // (Oct 31: "fig2" drew a second triangle beside the first).
+        const figOfProblem = [...objects, ...s.board].find((o) => o.kind === "geometry" && o.problemId === s.current && o.status !== "failed");
+        const sid = b.id && latest(b.id) ? b.id : figOfProblem?.sid ?? b.id ?? "fig1";
+        // An edit keeps what the figure had unless told otherwise: the triangle
+        // asked for "inside its rectangle" stays a triangle (Oct 31: redrawn as a
+        // plain rectangle, its shading gone while the tutor said "here is the
+        // triangle").
+        const before = latest(sid);
+        const old = before?.kind === "geometry" ? (before.spec as GeometrySpec) : undefined;
+        const wasTriangle = Boolean(old?.polygons.some((x) => x.id === "triangle"));
+        const shape = b.shape === "rectangle" && wasTriangle ? "right_triangle" : b.shape;
+        const inRectangle = b.in_rectangle ?? (b.shape === "rectangle" && wasTriangle ? true : old ? old.segments.some((x) => x.role === "diagonal") : undefined);
+        const shadeOther = b.shade_other ?? (old ? old.polygons.some((x) => x.id === "other") : undefined);
         let spec: GeometrySpec | { error: string };
-        if (b.shape === "polygon") {
+        if (shape === "polygon") {
           spec = polygon(b.vertices ?? [], { labels: b.labels, unit: b.unit });
         } else {
-          const base = sizeFrom(s, b.base, b.shape === "rectangle" ? "width" : "base");
+          const base = sizeFrom(s, b.base, shape === "rectangle" ? "width" : "base");
           const height = sizeFrom(s, b.height, "height");
           if ("error" in base || "error" in height) {
             issues.push(("error" in base ? base.error : "") || (height as { error: string }).error);
             break;
           }
           const unit = b.unit ?? base.unit ?? height.unit;
-          spec = b.shape === "right_triangle" ? rightTriangle(base.value, height.value, { unit, inRectangle: b.in_rectangle, shadeOther: b.shade_other }) : rectangle(base.value, height.value, { unit, diagonal: b.in_rectangle });
+          spec = shape === "right_triangle" ? rightTriangle(base.value, height.value, { unit, inRectangle, shadeOther }) : rectangle(base.value, height.value, { unit, diagonal: inRectangle });
         }
         if ("error" in spec) {
           issues.push(`figure: ${spec.error}`);
           break;
         }
-        const prev = latest(sid);
+        const prev = before;
         const r = renderGeometry(spec);
         put(picture(sid, "geometry", s.current, spec, r, geometryFacts(spec), prev?.kind === "geometry" ? prev : undefined));
         ops.push(prev?.kind === "geometry" ? { opId: opId(), type: "edit", sid, kind: "geometry", spec, rendered: r, label: "figure" } : { opId: opId(), type: "draw", sid, kind: "geometry", spec, rendered: r, label: "figure" });
@@ -248,6 +293,33 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         ops.push({ opId: opId(), type: "draw", sid, kind: "work", spec, rendered: r, label: `example ${b.problem}` });
         break;
       }
+      case "fractions": {
+        const fr = [...b.fractions.matchAll(/(-?\d+)\s*\/\s*(\d+)/g)].slice(0, 2).map((m) => ({ n: Number(m[1]), d: Number(m[2]) }));
+        if (!fr.length || fr.some((f) => f.d < 1 || f.d > 24 || f.n < 0 || f.n > 3 * f.d)) {
+          issues.push(`fractions "${b.fractions}": give one or two fractions like "1/2, 1/3" (denominators up to 24)`);
+          break;
+        }
+        if (b.common !== undefined && (b.common < 2 || b.common > 24 || fr.some((f) => b.common! % f.d !== 0))) {
+          issues.push(`fractions: ${b.common} parts cannot cut ${fr.map((f) => `${f.n}/${f.d}`).join(" and ")} evenly; use a common multiple of ${fr.map((f) => f.d).join(" and ")}`);
+          break;
+        }
+        const used = new Set([...objects, ...s.board].map((o) => o.sid));
+        let sid = b.id && !used.has(b.id) ? b.id : "frac1";
+        for (let k = 2; used.has(sid); k++) sid = `frac${k}`;
+        const words = `${fr.map((f) => `${f.n}/${f.d}`).join(" and ")} as ${b.model === "circle" ? "circles" : "bars"} of the same whole${b.common ? `, each cut into ${b.common} equal parts (${fr.map((f) => `${f.n}/${f.d} = ${(f.n * b.common!) / f.d}/${b.common}`).join(", ")})` : ""}`;
+        const args: Record<string, unknown> = { fraction: `${fr[0].n}/${fr[0].d}`, model: b.model ?? "bar", ...(fr[1] ? { second_fraction: `${fr[1].n}/${fr[1].d}` } : {}), ...(b.common ? { common_denominator: b.common } : {}) };
+        put({ sid, kind: "fraction", problemId: s.current, parts: [], facts: [words], status: "pending" });
+        ops.push({ opId: opId(), type: "tool", sid, name: "draw_fraction", args, label: words });
+        break;
+      }
+      case "picture": {
+        const used = new Set([...objects, ...s.board].map((o) => o.sid));
+        let sid = b.id && !used.has(b.id) ? b.id : "pic1";
+        for (let k = 2; used.has(sid); k++) sid = `pic${k}`;
+        put({ sid, kind: "illustration", problemId: s.current, parts: [], facts: [`a picture: ${b.what}`], status: "pending" });
+        ops.push({ opId: opId(), type: "illustrate", sid, what: b.what, ...(b.notice ? { notice: b.notice } : {}), label: b.what.slice(0, 80) });
+        break;
+      }
       case "mark": {
         const hit = resolveRef(s, objects, b.ref);
         if (!hit) {
@@ -257,6 +329,16 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         if (hit.part && !hit.obj.parts.some((x) => x.toLowerCase() === hit.part!.toLowerCase().replace(/\s+/g, "")) && !hit.obj.parts.includes(hit.part)) {
           issues.push(`mark: ${hit.obj.sid} has no part "${hit.part}" (parts: ${hit.obj.parts.slice(0, 16).join(", ")})`);
           break;
+        }
+        // A cross is for the student's own superseded line, never for a line
+        // the problem gave or the tutor wrote (Oct 31: a correct setup line
+        // was marked as if it were the mistake).
+        if (b.how === "cross") {
+          const line = hit.obj.kind === "work" && hit.part ? (hit.obj.spec as WorkSpec | undefined)?.lines.find((l) => l.id.toLowerCase() === hit.part!.toLowerCase().split(".")[0]) : undefined;
+          if (!line || line.by !== "student") {
+            issues.push(`mark: cross only marks a line the student wrote that is now superseded; ${b.ref} is ${line ? `a line ${line.by === "given" ? "the problem gave" : "you wrote"}` : "not one of their lines"}. Point at it or underline it instead`);
+            break;
+          }
         }
         ops.push({ opId: opId(), type: "mark", ref: `${hit.obj.sid}${hit.part ? `.${hit.part}` : ""}`, how: b.how });
         break;

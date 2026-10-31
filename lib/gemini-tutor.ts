@@ -23,7 +23,7 @@ function pcmMs(base64: string): number {
   return bytes / 48; // 16-bit mono at 24 kHz: 48 bytes per millisecond
 }
 
-function revealByFraction(text: string, frac: number): string {
+export function revealByFraction(text: string, frac: number): string {
   if (!text) return "";
   if (frac >= 0.995) return text;
   let n = Math.floor(text.length * frac);

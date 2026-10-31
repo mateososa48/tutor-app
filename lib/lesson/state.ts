@@ -4,7 +4,7 @@
 // it directly; it only sends committed student lines and board receipts.
 
 import { spokenToDigits } from "../answer-check";
-import { assessInput, type InputAssessment } from "./assess";
+import { assessInput, verifySolution, type InputAssessment } from "./assess";
 import type { BoardObject, BoardOp, BoardReceipt, Fact, LearnerEvidence, LessonState, ProblemRecord, QuestionRecord, StudentInput, TurnPlan } from "./types";
 
 const TRANSCRIPT_MAX = 60;
@@ -12,12 +12,24 @@ const TRANSCRIPT_MAX = 60;
 /** The math in a line of text, when it has one: "x^2-5x+6=0", "3x + 7 = 22", "1/2+1/3". */
 export function mathIn(text: string): string | null {
   const t = spokenToDigits(text).replace(/[−–]/g, "-").replace(/×/g, "*").replace(/÷/g, "/");
-  // An equation: letters and numbers with operators around an "=".
-  const eq = /(?:^|[\s:,(])([-(]?\s*[\d.]*\s*[a-z]?(?:\^\d+)?(?:\s*[-+*/^()]\s*[\d.]*\s*[a-z]?(?:\^\d+)?(?:\(\s*[-\d.a-z+\s]*\))?)*\s*(?:=|<|>|≤|≥)\s*-?[\d.]+(?:\s*[-+*/]\s*[\d.a-z]+)*)/i.exec(t);
-  if (eq && /[a-z]/i.test(eq[1]) && /\d/.test(eq[1])) return eq[1].replace(/\s+/g, " ").trim().replace(/[.,;]+$/, "");
-  // Arithmetic: "1/2 + 1/3", "42 - 27", "23 − 9".
-  const ar = /(-?\d+(?:\.\d+)?(?:\/\d+)?(?:\s*[-+*/]\s*-?\d+(?:\.\d+)?(?:\/\d+)?)+)/.exec(t);
-  return ar ? ar[1].replace(/\s+/g, " ").trim() : null;
+  // Pieces of math: words of two or more letters break them, single letters
+  // (variables) stay (Oct 31: "3(x - 2) = 3x - 6" had been cut to "3(x - 2) = 3",
+  // and "y = -2x + 3" to "y = -2").
+  const pieces = t
+    .split(/[?!;:,]|\.(?=\s|$)/)
+    .flatMap((sentence) => sentence.split(/\b[a-z]{2,}\b/i))
+    .map((x) => x.replace(/\s+/g, " ").trim().replace(/^[=+*/^)]+|[-=+*/^(]+$/g, "").trim())
+    .filter((x) => /\d/.test(x) && /[-+*/^=<>≤≥]/.test(x.replace(/^-/, "")));
+  const relation = (x: string) => /(?:=|<|>|≤|≥)/.test(x);
+  // An equation with a letter: the problem itself ("3x + 7 = 22").
+  const eqs = pieces.filter((x) => relation(x) && /[a-z]/i.test(x) && /^[\d\sa-z()+\-*/^.=<>≤≥]+$/i.test(x));
+  if (eqs.length) return eqs.sort((a, b) => b.length - a.length)[0];
+  // Arithmetic: "42 - 27", or the left side of a claim about it ("1/2 + 1/3 = 2/5" is their answer, not the problem).
+  for (const x of pieces) {
+    const left = relation(x) ? x.split(/=|<|>|≤|≥/)[0].trim() : x;
+    if (/^-?\d+(?:\.\d+)?(?:\/\d+)?(?:\s*[-+*/]\s*-?\d+(?:\.\d+)?(?:\/\d+)?)+$/.test(left)) return left;
+  }
+  return null;
 }
 
 export function newProblem(id: string, statement: string, source: ProblemRecord["source"], givens: Fact[] = []): ProblemRecord {
@@ -26,8 +38,17 @@ export function newProblem(id: string, statement: string, source: ProblemRecord[
 }
 
 /** A lesson from the intake: their words are the goal, any math in them is the first problem. */
+/** The intake's own framing (lib/session-intake) taken off: it is not the student's words. */
+export function cleanIntake(text: string): string {
+  return text
+    .replace(/\s*Please teach me in [^.]{1,40}\.\s*$/i, "")
+    .replace(/\s*I uploaded (?:a picture|\d+ pictures) of it\.\s*$/i, "")
+    .replace(/^\s*I need help with:\s*/i, "")
+    .trim();
+}
+
 export function createLesson(opts: { intake: string; grade?: string; problems?: ProblemRecord[]; current?: string | null }): LessonState {
-  const intake = opts.intake.replace(/\s*Please teach me in [^.]{1,40}\.\s*$/i, "").trim();
+  const intake = cleanIntake(opts.intake);
   // Math in the intake, or a word problem (numbers and a question): the first problem.
   const posed = mathIn(intake) || (/\d/.test(intake) && /\?|\b(?:find|how (?:many|much|long|far)|what is|solve|work out)\b/i.test(intake));
   const problems = opts.problems?.length ? opts.problems : posed ? [newProblem("P1", intake, { kind: "utterance", id: "u0" })] : [];
@@ -63,6 +84,7 @@ export function assistanceOn(s: LessonState, problemId: string | null): number {
  * moves on, so work planned for an older line is stale.
  */
 export function commitInput(s: LessonState, input: StudentInput): { state: LessonState; assessment: InputAssessment } {
+  if (input.source === "intake") input = { ...input, text: cleanIntake(input.text) || input.text };
   const assessment = assessInput(s, input);
   const transcript = [...s.transcript, { id: input.id, role: "student" as const, text: input.text, at: input.at }].slice(-TRANSCRIPT_MAX);
   const q = assessment.question;
@@ -70,7 +92,7 @@ export function commitInput(s: LessonState, input: StudentInput): { state: Lesso
     id: `e${s.evidence.length + 1}`,
     inputId: input.id,
     problemId: s.current,
-    ...(q && assessment.answer ? { questionId: q.id, answer: assessment.answer } : {}),
+    ...(q && assessment.answer ? { questionId: q.id, answer: assessment.answer } : assessment.final ? { answer: { text: input.text, verdict: assessment.final.verdict, detail: `the whole problem: ${assessment.final.value} against ${assessment.final.against}` } } : {}),
     claims: assessment.claims,
     reasonGiven: assessment.reasonGiven,
     assistance: assistanceOn(s, s.current),
@@ -81,7 +103,17 @@ export function commitInput(s: LessonState, input: StudentInput): { state: Lesso
   const questions = s.questions.map((x) => (answered && x.id === q!.id ? { ...x, status: "answered" as const, answeredBy: input.id } : x));
   const requests = [...s.requests, ...assessment.signals.filter((k) => k === "show_me" || k === "slower" || k === "different_way" || k === "harder" || k === "already_answered").map((k, i) => ({ id: `r${s.requests.length + i + 1}`, inputId: input.id, kind: k, text: input.text.slice(0, 160), status: "open" as const }))];
   return {
-    state: { ...s, epoch: s.epoch + 1, transcript, evidence: [...s.evidence, ev], questions, requests, closing: s.closing || assessment.signals.includes("stop") },
+    state: {
+      ...s,
+      epoch: s.epoch + 1,
+      transcript,
+      evidence: [...s.evidence, ev],
+      questions,
+      requests,
+      // A right answer to the whole problem solves it.
+      problems: assessment.final?.verdict === "correct" ? s.problems.map((p) => (p.id === s.current ? { ...p, status: "solved" as const } : p)) : s.problems,
+      closing: s.closing || assessment.signals.includes("stop"),
+    },
     assessment,
   };
 }
@@ -129,8 +161,11 @@ export function recordTurn(s: LessonState, turnId: string, plan: TurnPlan, ops: 
   }
   const said = plan.speech.map((x) => x.text).join(" ");
   const board = [...s.board.filter((b) => !objects.some((o) => o.sid === b.sid)), ...objects];
+  // The problem's answer, once, and only when its arithmetic checks out.
+  const problems = plan.solution && verifySolution(plan.solution) ? s.problems.map((p) => (p.id === s.current && !p.solution ? { ...p, solution: plan.solution! } : p)) : s.problems;
   return {
     ...s,
+    problems,
     revision: s.revision + 1,
     turns: s.turns + 1,
     questions,
@@ -151,7 +186,8 @@ export function applyReceipts(s: LessonState, turnId: string, receipts: BoardRec
   if (!s.pending || s.pending.turnId !== turnId) return s;
   const byOp = new Map(receipts.map((r) => [r.opId, r]));
   const board = s.board.map((b) => {
-    const op = s.pending!.ops.find((o) => (o.type === "draw" || o.type === "edit") && o.sid === b.sid);
+    // The last op on this object is what it ended as (a draw, then edits of it).
+    const op = b.kind === "heading" && b.status === "pending" ? s.pending!.ops.find((o) => o.type === "heading") : [...s.pending!.ops].reverse().find((o) => o.type !== "heading" && o.type !== "mark" && o.sid === b.sid);
     if (!op) return b;
     const r = byOp.get(op.opId);
     if (!r) return b;

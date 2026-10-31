@@ -15,9 +15,11 @@ import { compileBoard, fillBlank, type Compiled } from "./compile";
 import { parseTurnPlan } from "./plan";
 import { ENGINE_SYSTEM, turnContext } from "./prompt";
 import { callPlanModel, ENGINE_MODELS, repairMessages, type PlanCall } from "./provider";
-import { commitInput, currentProblem, recordTurn } from "./state";
+import { cleanIntake, commitInput, currentProblem, recordTurn } from "./state";
 import { describeWork, renderWork, startWork } from "../board-work";
-import { cleanSpeech, salvage, validatePlan, type Issue } from "./validate";
+import { cleanSpeech, salvage, validatePlan, withholdOnBoard, type Issue } from "./validate";
+import { earlySentence, scanPartial } from "./stream";
+import { faithfulness } from "../engine-voice";
 import type { BoardObject, BoardOp, LessonState, SpeechSegment, StudentInput, TurnPlan } from "./types";
 
 export type TurnResult = {
@@ -25,12 +27,12 @@ export type TurnResult = {
   turnId: string;
   speech: SpeechSegment[];
   ops: BoardOp[];
-  log: { model?: string; ms: number; calls: number; issues: string[][]; fixes: string[]; fallback: boolean; assessment: InputAssessment; move?: string };
+  log: { model?: string; ms: number; calls: number; issues: string[][]; fixes: string[]; fallback: boolean; assessment: InputAssessment; move?: string; firstTokenMs?: number; earlyMs?: number; usage?: Record<string, unknown> };
 };
 
-type Planner = (system: string, messages: Array<{ role: "user" | "assistant"; content: unknown }>) => Promise<PlanCall>;
+export type Planner = (system: string, messages: Array<{ role: "user" | "assistant"; content: unknown }>, onPartial?: (json: string) => void) => Promise<PlanCall>;
 
-const defaultPlanner: Planner = (system, messages) => callPlanModel(ENGINE_MODELS[0], system, messages);
+const defaultPlanner: Planner = (system, messages, onPartial) => callPlanModel(ENGINE_MODELS[0], system, messages, undefined, onPartial);
 
 /** An honest turn when no plan passed: the checker's facts, nothing invented, one plain question. */
 export function fallbackPlan(a: InputAssessment): TurnPlan {
@@ -50,7 +52,8 @@ function openingOps(s: LessonState, prefix: string): Compiled {
   if (!p || s.board.some((b) => b.problemId === p.id)) return { ops: [], objects: [], issues: [], notes: [] };
   // The problem's math when it has one ("3x + 7 = 22"); else its first sentence, short.
   const first = p.statement.split(/(?<=[.?!])\s+/)[0];
-  const title = p.math && /[=<>]/.test(p.math) ? p.math : first.length <= 56 ? first.replace(/[.]$/, "") : `${first.slice(0, 52).replace(/\s+\S*$/, "")}…`;
+  // Its math when it has any ("1/2 + 1/3", never the student's wrong "= 2/5" after it).
+  const title = p.math ? p.math : first.length <= 56 ? first.replace(/[.]$/, "") : `${first.slice(0, 52).replace(/\s+\S*$/, "")}…`;
   const ops: BoardOp[] = [{ opId: `${prefix}.h`, type: "heading", title }];
   const objects: BoardObject[] = [{ sid: `heading:${p.id}`, kind: "heading", problemId: p.id, parts: [], facts: [title], status: "pending" }];
   if (p.math && /[=<>]/.test(p.math) && /[a-z]/i.test(p.math)) {
@@ -63,10 +66,13 @@ function openingOps(s: LessonState, prefix: string): Compiled {
   return { ops, objects, issues: [], notes: [] };
 }
 
-export async function runTurn(prev: LessonState, input: StudentInput, opts: { planner?: Planner; turnId?: string } = {}): Promise<TurnResult> {
+export async function runTurn(prev: LessonState, input: StudentInput, opts: { planner?: Planner; turnId?: string; onEarly?: (text: string) => void } = {}): Promise<TurnResult> {
   const started = Date.now();
   const planner = opts.planner ?? defaultPlanner;
   const turnId = opts.turnId ?? `t${prev.turns + 1}`;
+  // The intake's own framing ("I need help with:", "Please teach me in English.")
+  // is not the student's words; the planner read it as a request for "plain English".
+  if (input.source === "intake") input = { ...input, text: cleanIntake(input.text) || input.text };
   const { state, assessment } = commitInput(prev, input);
 
   // The app's own moves, before the model plans.
@@ -100,32 +106,53 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   let last: { plan: TurnPlan; compiled: Compiled; detail: Issue[] } | null = null;
   let messages: Array<{ role: "user" | "assistant"; content: unknown }> = first;
   const fixes: string[] = [];
+  // The first sentence, said while the rest is planned (lib/lesson/stream).
+  let early: string | null = null;
+  let earlyMs: number | undefined;
+  let firstTokenMs: number | undefined;
+  let usage: Record<string, unknown> | undefined;
+  const onPartial = opts.onEarly
+    ? (json: string) => {
+        if (early) return;
+        const text = earlySentence(withAuto, assessment, scanPartial(json));
+        if (!text) return;
+        early = text;
+        earlyMs = Date.now() - started;
+        opts.onEarly!(text);
+      }
+    : undefined;
+  const earlyNote = () => (early ? [`Your first speech item was already said aloud: "${early}". Keep it as the first item, unchanged, and fix the rest.`] : []);
   for (let attempt = 0; attempt < 2 && !chosen; attempt++) {
     let call: PlanCall;
     try {
-      call = await planner(ENGINE_SYSTEM, messages);
+      call = await planner(ENGINE_SYSTEM, messages, attempt === 0 ? onPartial : undefined);
     } catch (err) {
       issuesLog.push([`model call failed: ${(err as Error).message.slice(0, 160)}`]);
       break;
     }
     calls++;
     model = call.model;
+    if (attempt === 0) {
+      firstTokenMs = call.firstMs;
+      usage = call.usage;
+    }
     const parsed = parseTurnPlan(call.input);
     if (!parsed.ok) {
       issuesLog.push(parsed.issues);
-      messages = repairMessages(first, call, parsed.issues);
+      messages = repairMessages(first, call, [...parsed.issues, ...earlyNote()]);
       continue;
     }
-    const compiled = compileBoard(withAuto, parsed.plan.board, turnId);
-    const checked = validatePlan(withAuto, assessment, parsed.plan, parsed.verdict, compiled);
-    fixes.push(...checked.fixes);
+    const held = withholdOnBoard(withAuto, parsed.plan);
+    const compiled = compileBoard(withAuto, held.plan.board, turnId);
+    const checked = validatePlan(withAuto, assessment, held.plan, parsed.verdict, compiled);
+    fixes.push(...held.fixes, ...checked.fixes);
     if (!checked.issues.length) {
       chosen = { plan: checked.plan, compiled };
       break;
     }
     last = { plan: checked.plan, compiled, detail: checked.detail };
     issuesLog.push(checked.issues);
-    messages = repairMessages(first, call, checked.issues);
+    messages = repairMessages(first, call, [...checked.issues, ...earlyNote()]);
   }
   // The second try still had problems: keep what is right and cut the rest
   // (a sentence with false math, a leaked question), rather than say nothing.
@@ -137,10 +164,18 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
     }
   }
   const fallback = !chosen;
-  const plan = chosen?.plan ?? fallbackPlan(assessment);
+  let plan = chosen?.plan ?? fallbackPlan(assessment);
+  // What was said early leads the turn; the plan's own first item is that
+  // sentence (it was told to keep it), so it is not said a second time.
+  const saidEarly: string | null = early;
+  if (saidEarly) {
+    const head = plan.speech[0]?.text ?? "";
+    const rest = chosen && head && faithfulness(saidEarly, head) >= 0.6 ? plan.speech.slice(1) : plan.speech;
+    plan = { ...plan, speech: [{ id: "early", text: saidEarly, needs: [], early: true }, ...rest] };
+  }
   const compiled = chosen?.compiled ?? { ops: [], objects: [], issues: [], notes: [] };
   const ops = [...auto, ...compiled.ops];
   const objects = [...autoObjects.filter((o) => !compiled.objects.some((c) => c.sid === o.sid)), ...compiled.objects];
   const next = recordTurn(withAuto, turnId, plan, ops, objects, Date.now());
-  return { state: next, turnId, speech: plan.speech, ops, log: { model, ms: Date.now() - started, calls, issues: issuesLog, fixes, fallback, assessment, move: plan.move } };
+  return { state: next, turnId, speech: plan.speech, ops, log: { model, ms: Date.now() - started, calls, issues: issuesLog, fixes, fallback, assessment, move: plan.move, ...(firstTokenMs !== undefined ? { firstTokenMs } : {}), ...(earlyMs !== undefined ? { earlyMs } : {}), ...(usage ? { usage } : {}) } };
 }

@@ -80,7 +80,75 @@ test("a figure with an invented size is refused; the given sizes draw the triang
   });
   assert.match(r.log.issues[0].join(" "), /not one of the problem's givens/);
   const fig = r.state.board.find((b) => b.sid === "fig1")!;
-  assert.ok(fig.facts.includes("diagonal AC 13 cm"));
-  assert.ok(fig.facts.includes("triangle ABC area 30 cm²"));
+  assert.ok(fig.facts.includes("diagonal AC 13 cm, from bottom left to top right"));
+  assert.ok(fig.facts.some((f) => f.startsWith("triangle ABC area 30 cm²")));
   assert.deepEqual(r.speech[0].needs, ["fig1.diagonal"]);
+});
+
+test("a board line or a sentence that tells this turn's answer is withheld in code, not sent back", async () => {
+  const s = createLesson({ intake: "Solve 3x + 7 = 22" });
+  const plan = {
+    move: "model_step" as const,
+    speech: [{ id: "s1", text: "Take seven off both sides. That gives three x equals fifteen. What is the right side now?", needs: [] }],
+    board: [{ do: "work_step" as const, left: "-7", right: "-7", result: "3x = 15" }],
+    question: { text: "What is the right side now?", kind: "step" as const, expects: "3x = 15" },
+    givesAnswer: false,
+    close: false,
+  };
+  let calls = 0;
+  const r = await runTurn(s, { id: "u1", source: "typed", text: "can you show me the first step", at: 1 }, {
+    planner: async () => {
+      calls++;
+      return { input: { move: plan.move, speech: plan.speech.map((x) => ({ say: x.text, needs: [] })), board: [{ do: "work_step", left: "-7", right: "-7", result: "3x = 15" }], question: { ask: plan.question.text, kind: "step", expects: "3x = 15" }, gives_answer: false, close: false }, model: "fake", ms: 1, toolUseId: "x", reply: { role: "assistant", content: [] } };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.ok(!/fifteen/.test(r.speech.map((x) => x.text).join(" ")), r.speech.map((x) => x.text).join(" "));
+  assert.ok(/\?/.test(r.speech.map((x) => x.text).join(" ")));
+  const work = r.ops.filter((o) => o.type === "edit" || o.type === "draw").pop() as { spec: { lines: Array<{ text: string }> } };
+  assert.ok(work.spec.lines.some((l) => /3x\s*=\s*\?/.test(l.text)), JSON.stringify(work.spec.lines));
+});
+
+test("T01 with a model that never repairs: the code says the right answer and the true facts itself", async () => {
+  let s = createLesson({ intake: "A bike rental costs $3 to start plus $5 per hour. My budget is $23. What is the most hours I can rent it?" });
+  s = { ...s, problems: s.problems.map((p) => ({ ...p, solution: { answer: "4", work: "(23-3)/5" } })) };
+  const lazy = async () => ({ input: { move: "confirm", speech: [{ say: "Your method is good. Let's look at the cost again. What does one hour cost?" }], board: [] }, model: "fake", ms: 1, toolUseId: "x", reply: { role: "assistant" as const, content: [] } });
+  const r = await runTurn(s, { id: "u1", source: "typed", text: "I got 4 hours because 5 times 4 plus 3 is 24, which is under 23. Is my reasoning right?", at: 1 }, { planner: lazy });
+  const said = r.speech.map((x) => x.text).join(" ");
+  assert.equal(r.log.assessment.final?.verdict, "correct");
+  assert.match(said, /four, is right/);
+  assert.match(said, /five times four plus three is twenty-three/i);
+  assert.match(said, /twenty-four is more than twenty-three/i);
+  assert.ok(!r.log.fallback);
+});
+
+test("the first sentence goes out early and is not said twice", async () => {
+  const s = createLesson({ intake: "A bike rental costs $3 to start plus $5 per hour. My budget is $23. What is the most hours I can rent it?" });
+  const said: string[] = [];
+  const plan = { move: "repair", question: { ask: "What would five hours cost?", kind: "value", expects: "28", check: "5*5+3" }, solution: { answer: "4", work: "(23-3)/5" }, speech: [{ say: "Four hours is right." }, { say: "But five times four plus three is twenty-three, not twenty-four, and twenty-four is more than twenty-three." }, { say: "What would five hours cost?" }], board: [] };
+  const json = JSON.stringify(plan);
+  const r = await runTurn(s, { id: "u1", source: "typed", text: "I got 4 hours because 5 times 4 plus 3 is 24, which is under 23. Is my reasoning right?", at: 1 }, {
+    onEarly: (t) => said.push(t),
+    planner: async (_sys, _msgs, onPartial) => {
+      for (let k = 20; k <= json.length; k += 20) onPartial?.(json.slice(0, k));
+      return { input: plan, model: "fake", ms: 1, toolUseId: "x", reply: { role: "assistant", content: [] } };
+    },
+  });
+  assert.deepEqual(said, ["Four hours is right."]);
+  assert.equal(r.speech[0].early, true);
+  assert.equal(r.speech.filter((x) => /Four hours is right/.test(x.text)).length, 1);
+  assert.ok(r.speech.some((x) => /twenty-three, not twenty-four/.test(x.text)));
+});
+
+test("fractions on one whole and pictures of real things compile to the board's own tools", async () => {
+  const { compileBoard } = await import("./compile");
+  const s = createLesson({ intake: "1/2 + 1/3 = 2/5 because I add tops and bottoms." });
+  const c = compileBoard(s, [{ do: "fractions", fractions: "1/2, 1/3", common: 6 }, { do: "picture", what: "2 tens rods and 3 unit cubes", notice: "a ten is ten ones" }], "t1");
+  assert.deepEqual(c.issues, []);
+  const tool = c.ops.find((o) => o.type === "tool") as { name: string; args: Record<string, unknown> };
+  assert.deepEqual(tool.args, { fraction: "1/2", model: "bar", second_fraction: "1/3", common_denominator: 6 });
+  assert.ok(c.objects.find((o) => o.kind === "fraction")!.facts[0].includes("1/2 = 3/6"));
+  assert.ok(c.ops.some((o) => o.type === "illustrate" && o.what.includes("tens rods")));
+  // A common cut that does not fit both is refused.
+  assert.ok(compileBoard(s, [{ do: "fractions", fractions: "1/2, 1/3", common: 4 }], "t1").issues.length);
 });

@@ -35,6 +35,13 @@ export type ProblemRecord = {
   givens: Fact[];
   /** What is being found, in words. */
   unknown?: string;
+  /**
+   * The answer to the whole problem, private: given once by the planner with
+   * arithmetic that produces it, kept only when the code's own evaluation of
+   * that arithmetic agrees ("4" from "(23-3)/5"). A student's "I got 4" is
+   * then checked in code, not by the model's say-so.
+   */
+  solution?: { answer: string; work: string };
   source: SourceRef;
   status: "open" | "solved" | "set_aside";
 };
@@ -88,7 +95,7 @@ export type PictureKind = "plane" | "table" | "work" | "geometry";
 /** One thing on the board the lesson knows: its semantic id, the item it became, and its spec. */
 export type BoardObject = {
   sid: string;
-  kind: PictureKind | "heading" | "mark";
+  kind: PictureKind | "heading" | "mark" | "fraction" | "illustration";
   problemId: string | null;
   /** The board's item id once applied ("b4"). */
   itemId?: string;
@@ -105,7 +112,11 @@ export type BoardOp =
   | { opId: string; type: "heading"; title: string }
   | { opId: string; type: "draw"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string; reserveH?: number }
   | { opId: string; type: "edit"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string }
-  | { opId: string; type: "mark"; ref: string; how: "ring" | "swipe" | "underline" | "check" | "cross" | "point" };
+  | { opId: string; type: "mark"; ref: string; how: "ring" | "swipe" | "underline" | "check" | "cross" | "point" }
+  /** One of the board's own exact picture tools, drawn as asked (fraction models). */
+  | { opId: string; type: "tool"; sid: string; name: "draw_fraction"; args: Record<string, unknown>; label: string }
+  /** Real things drawn by the illustrator (lib/illustration): the page asks for the scene and draws it. */
+  | { opId: string; type: "illustrate"; sid: string; what: string; notice?: string; label: string };
 
 export type RenderedPicture = {
   svg: string;
@@ -139,6 +150,8 @@ export type SpeechSegment = {
   needs: string[];
   /** What to say instead if one of them could not be drawn. */
   fallback?: string;
+  /** Already said, while the rest of the turn was being planned (lib/lesson/stream). */
+  early?: boolean;
 };
 
 export type PlannedQuestion = {
@@ -158,6 +171,8 @@ export type TurnPlan = {
   question: PlannedQuestion | null;
   /** This turn states the answer to their problem (help, counted as such). */
   givesAnswer: boolean;
+  /** The current problem's answer and the arithmetic that gives it, when the lesson has none yet. */
+  solution?: { answer: string; work: string };
   close: boolean;
   why?: string;
 };
@@ -173,7 +188,9 @@ export type BoardIntent =
   | { do: "graph"; id?: string; points?: string; lines?: string; arrows?: string; view?: { xMin?: number; xMax?: number; yMin?: number; yMax?: number }; new?: boolean }
   | { do: "figure"; id?: string; shape: "right_triangle" | "rectangle" | "polygon"; base?: number | string; height?: number | string; unit?: string; in_rectangle?: boolean; shade_other?: boolean; vertices?: Array<[number, number]>; labels?: string[] }
   | { do: "example"; problem: string; steps: string; why?: string }
-  | { do: "mark"; ref: string; how: "ring" | "swipe" | "underline" | "check" | "cross" | "point" };
+  | { do: "mark"; ref: string; how: "ring" | "swipe" | "underline" | "check" | "cross" | "point" }
+  | { do: "fractions"; id?: string; fractions: string; common?: number; model?: "bar" | "circle" }
+  | { do: "picture"; id?: string; what: string; notice?: string };
 
 export type LessonState = {
   v: 1;

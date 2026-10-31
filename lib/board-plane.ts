@@ -384,6 +384,8 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     aliases[textKey(l.text)] = l.id;
   });
   // Arrows: the tutor's own marks on the graph (right 1, up 2), in sky, labelled by hand.
+  const arrowLabels: Rect[] = [];
+  const dotZones = spec.points.filter((q) => inView(spec, q.x, q.y)).map((q) => ({ x: X(q.x) - 17, y: Y(q.y) - 17, w: 34, h: 34 }));
   for (const a of spec.arrows) {
     const x1 = X(a.from[0]);
     const y1 = Y(a.from[1]);
@@ -402,16 +404,26 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
       // x-axis has its label nearer its head.
       let ly = Math.abs(dx) >= Math.abs(dy) ? Math.max(y1, y2) + 18 : (y1 + y2) / 2 + 5;
       if (Math.abs(dx) < Math.abs(dy) && Math.abs(ly - 5 - oy) < 16) ly = y1 + (y2 - y1) * 0.78 + 5;
-      inner += `<text x="${n1(lx)}" y="${n1(ly)}" font-family="${HAND}" font-size="15" font-weight="600" fill="${MARK}" ${HALO}>${esc(a.label)}</text>`;
-      box = { x: Math.min(box.x, lx), y: Math.min(box.y, ly - 14), w: Math.max(box.x + box.w, lx + lw) - Math.min(box.x, lx), h: Math.max(box.y + box.h, ly + 4) - Math.min(box.y, ly - 14) };
+      // Off any point and its ring: an upright arrow's label goes to the other
+      // side (Oct 31: "right 1, down 2" ran into "(2, −1)").
+      let lxx = lx;
+      const over = (x: number) => dotZones.some((z) => x < z.x + z.w && z.x < x + lw && ly - 14 < z.y + z.h && z.y < ly + 4);
+      if (over(lxx) && Math.abs(dx) < Math.abs(dy)) lxx = Math.min(x1, x2) - lw - 6;
+      if (over(lxx)) ly += 18;
+      const lx2 = lxx;
+      arrowLabels.push({ x: lx2, y: ly - 14, w: lw, h: 18 });
+      inner += `<text x="${n1(lx2)}" y="${n1(ly)}" font-family="${HAND}" font-size="15" font-weight="600" fill="${MARK}" ${HALO}>${esc(a.label)}</text>`;
+      box = { x: Math.min(box.x, lx2), y: Math.min(box.y, ly - 14), w: Math.max(box.x + box.w, lx2 + lw) - Math.min(box.x, lx2), h: Math.max(box.y + box.h, ly + 4) - Math.min(box.y, ly - 14) };
       aliases[textKey(a.label)] = a.id;
     }
     out.push(wrap(a.id, inner));
     parts[a.id] = box;
   }
   // Points last, over the lines, each with its coordinates.
-  const placedLabels: Rect[] = Object.entries(parts).filter(([k]) => /^L\d+$/.test(k)).map(([, r]) => r);
-  const dots: Rect[] = spec.points.filter((q) => inView(spec, q.x, q.y)).map((q) => ({ x: X(q.x) - 7, y: Y(q.y) - 7, w: 14, h: 14 }));
+  const placedLabels: Rect[] = [...Object.entries(parts).filter(([k]) => /^L\d+$/.test(k)).map(([, r]) => r), ...arrowLabels];
+  // Each dot with the room a ring round it takes, so no label sits under a ring
+  // (Oct 31 2026: the rings on (2, 0) and (3, 0) covered their labels).
+  const dots: Rect[] = spec.points.filter((q) => inView(spec, q.x, q.y)).map((q) => ({ x: X(q.x) - 17, y: Y(q.y) - 17, w: 34, h: 34 }));
   for (const p of spec.points) {
     if (!inView(spec, p.x, p.y) && !(p.x === spec.x[0] || p.y === spec.y[0])) continue;
     const px = X(p.x);
@@ -423,7 +435,7 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     // Up and left of a rising line, up and right otherwise; then the other
     // spots round the dot, the first that is inside the picture and clear of
     // every other label and dot (Oct 31 2026: (2, 0) and (3, 0) ran into each other).
-    const left = px - tw - 12, right = px + 12, above = py - 12, below = py + 22;
+    const left = px - tw - 19, right = px + 19, above = py - 15, below = py + 29;
     const tries: Array<[number, number]> = (s !== null && s > 0 ? [[left, above], [right, below], [right, above], [left, below]] : [[right, above], [left, below], [left, above], [right, below]]) as Array<[number, number]>;
     const fits = ([x, y]: [number, number]) => {
       const r = { x, y: y - 12, w: tw, h: 16 };
@@ -434,8 +446,8 @@ export function renderPlane(spec: PlaneSpec, fresh: Set<string> = new Set(), wid
     const [lx, ly] = tries.find(fits) ?? tries[0];
     placedLabels.push({ x: lx, y: ly - 12, w: tw, h: 16 });
     out.push(wrap(p.id, `<circle cx="${n1(px)}" cy="${n1(py)}" r="5" fill="${PEN}" stroke="${PEN}" stroke-width="1.5"/><text x="${n1(lx)}" y="${n1(ly)}" font-family="${FONT}" font-size="13" font-weight="500" fill="#3a3a42" ${HALO}>${esc(text)}</text>`));
-    // Room for a ring round the dot that stays off its label.
-    parts[p.id] = { x: px - 11, y: py - 11, w: 22, h: 22 };
+    // The dot itself: a ring round it stays inside the room kept free above.
+    parts[p.id] = { x: px - 8, y: py - 8, w: 16, h: 16 };
     parts[`${p.id}.label`] = { x: lx, y: ly - 12, w: tw, h: 16 };
     aliases[coordKey(p.x, p.y)] = p.id;
     if (p.name) aliases[p.name.toLowerCase()] = p.id;

@@ -25,6 +25,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { LiveTutorSession } from "@/lib/live-tutor";
 import type { LiveTutorCallbacks } from "@/lib/live-tutor";
 import { GeminiTutorSession } from "@/lib/gemini-tutor";
+import { EngineTutorSession } from "@/lib/engine-tutor";
 import { resolveLiveModel, resolveTutorProvider, type TutorClient } from "@/lib/tutor-provider";
 import { resolveAsyncTools, resolveLiveVad } from "@/lib/live-tool-behavior";
 import { asksToWait, QUIET_CHECKIN_EVENT, QUIET_HINT, quietStep } from "@/lib/quiet-watch";
@@ -194,6 +195,11 @@ function SessionDetailPage({ id }: { id: string }) {
   // of 5 with it (Sept 27 2026); it adds ~0.8-3 s before the tutor answers a typed
   // line or a spoken answer.
   const [planOn] = useState(() => searchParams?.get("plan") !== "0");
+  // The tutoring engine (Plan B, Oct 31 2026): the server plans every turn and
+  // the voice only says it. Typed only for now; `?engine=1` or the env var.
+  const [engineOn] = useState(() => searchParams?.get("engine") === "1" || (process.env.NEXT_PUBLIC_TUTOR_ENGINE === "1" && searchParams?.get("engine") !== "0"));
+  // Development: the planner model for this tab (?engineModel=claude-haiku-5-5).
+  const [engineModel] = useState(() => searchParams?.get("engineModel") ?? undefined);
   const coachTopicRef = useRef("");
   // How fast the tutor's voice plays. Only the Gemini client can change it.
   const [tutorSpeed, setTutorSpeed] = useTutorSpeed();
@@ -1137,7 +1143,9 @@ function SessionDetailPage({ id }: { id: string }) {
       },
     };
 
-    const live: TutorClient = provider === "gemini"
+    const live: TutorClient = engineOn
+      ? new EngineTutorSession(callbacks, { sessionId: id, model: liveModel, planner: engineModel })
+      : provider === "gemini"
       ? new GeminiTutorSession(callbacks, {
           model: liveModel,
           runtime: tutorRuntime,
@@ -1167,7 +1175,7 @@ function SessionDetailPage({ id }: { id: string }) {
       : new LiveTutorSession(callbacks, tutorRuntime);
     sessionRef.current = live;
     live.setSpeechRate?.(speechRateRef.current);
-    recordDebug("connection", "live_provider_selected", { provider: provider === "gemini" ? "gemini-live" : "gpt-live-1" });
+    recordDebug("connection", "live_provider_selected", { provider: engineOn ? "engine" : provider === "gemini" ? "gemini-live" : "gpt-live-1" });
 
     // Graphs are drawn by Desmos (a 4.3 MB script): fetch it while the session connects.
     preloadDesmos();
@@ -1198,7 +1206,7 @@ function SessionDetailPage({ id }: { id: string }) {
       pauseLiveSession();
       failStart(message, null);
     }
-  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordUpload, recordDebug, liveModel, asyncTools, liveVad, coachOn, planOn, tutorRuntime]);
+  }, [cleanupTimers, clearNewSessionUrlFlag, clearSubtitle, handleToolCall, handleToolCancelled, id, pauseLiveSession, persistSnapshot, prepareFiles, provider, recordUpload, recordDebug, liveModel, asyncTools, liveVad, coachOn, planOn, engineOn, engineModel, tutorRuntime]);
 
   useEffect(() => {
     speechRateRef.current = tutorSpeedRate(tutorSpeed);

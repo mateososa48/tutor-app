@@ -59,6 +59,10 @@ const FRAC_H = 62;
 const MOVE_H = 34;
 const REL_GAP = 0.32 * PX;
 
+const SUP: Record<string, string> = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻", "−": "⁻" };
+/** A handwritten note's text: its math made plain, powers raised ("x^2 - 5x" → "x² − 5x"). */
+export const noteText = (note: string) => plainMath(note).replace(/\^\{?([−-]?\d+)\}?/g, (_, d: string) => [...d].map((c) => SUP[c] ?? c).join(""));
+
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const n1 = (v: number) => Math.round(v * 10) / 10;
 
@@ -67,7 +71,9 @@ const n1 = (v: number) => Math.round(v * 10) / 10;
 type Run =
   | { kind: "text"; text: string; italic: boolean; sup?: boolean }
   | { kind: "op"; text: string }
-  | { kind: "frac"; top: Run[]; bottom: Run[] };
+  | { kind: "frac"; top: Run[]; bottom: Run[] }
+  /** Room around a word ("0 or x"), in ems; draws nothing. */
+  | { kind: "space"; em: number };
 
 const BINARY = new Set(["+", "−", "×", "÷", "±"]);
 
@@ -132,7 +138,11 @@ function runsOf(raw: string): Run[] {
       // A word of three or more letters ("cm", "sin") stays upright.
       const word = /^[a-zA-Z]+/.exec(rest)![0];
       if (word.length >= 2) {
+        // A word between pieces of math keeps its spaces ("x = 2 or x = 3", "12 cm"):
+        // SVG drops spaces in text, so the room is a run of its own.
+        if (out.length) out.push({ kind: "space", em: 0.3 });
         pushText(word, false);
+        out.push({ kind: "space", em: 0.3 });
         i += word.length;
         continue;
       }
@@ -143,6 +153,7 @@ function runsOf(raw: string): Run[] {
     pushText(ch, false);
     i++;
   }
+  while (out.length && out[out.length - 1].kind === "space") out.pop();
   return out;
 }
 
@@ -153,6 +164,7 @@ function runsWidth(runs: Run[], px: number): number {
   for (const r of runs) {
     if (r.kind === "text") w += [...r.text].reduce((a, ch) => a + charW(ch, r.italic), 0) * px * (r.sup ? 0.7 : 1);
     else if (r.kind === "op") w += 0.78 * px + 2 * REL_GAP * (px / PX) * (BINARY.has(r.text) ? 0.7 : 1);
+    else if (r.kind === "space") w += r.em * px;
     else w += Math.max(runsWidth(r.top, px * 0.72), runsWidth(r.bottom, px * 0.72)) + 0.24 * px;
   }
   return w;
@@ -178,6 +190,8 @@ function drawRuns(runs: Run[], x: number, y: number, px: number, fill: string): 
       cx += gap;
       out.push(`<text x="${n1(cx)}" y="${n1(y)}" font-family="${MATH_MAIN}" font-size="${px}" fill="${fill}">${esc(r.text)}</text>`);
       cx += 0.78 * px + gap;
+    } else if (r.kind === "space") {
+      cx += r.em * px;
     } else {
       const small = px * 0.72;
       const tw = runsWidth(r.top, small);
@@ -271,7 +285,7 @@ export function renderWork(spec: WorkSpec, fresh: Set<string> = new Set()): Rend
   const rightX = relX + 0.78 * PX + REL_GAP;
   const rightW = Math.max(...rows.map((r) => (r.rel ? r.rw : r.lw - leftW)), ...spec.moves.map((m) => textWidth(m.right, MOVE_PX) + 8), 20);
   const noteX = rightX + rightW + 26;
-  const noteW = Math.max(0, ...spec.moves.map((m) => (m.note ? textWidth(m.note, NOTE_PX) : 0)));
+  const noteW = Math.max(0, ...spec.moves.map((m) => (m.note ? textWidth(noteText(m.note), NOTE_PX) : 0)));
   const w = noteX + (noteW ? noteW + 8 : 0) + pad;
   const parts: Record<string, Rect> = {};
   const aliases: Record<string, string> = {};
@@ -306,13 +320,13 @@ export function renderWork(spec: WorkSpec, fresh: Set<string> = new Set()): Rend
       // Under each side, at its inner edge: the left move ends where the left side ends.
       mv += `<text x="${n1(relX - REL_GAP)}" y="${n1(my)}" text-anchor="end" font-family="${HAND}" font-size="${MOVE_PX}" font-weight="600" fill="${MARK}">${esc(m.left)}</text>`;
       mv += `<text x="${n1(rightX)}" y="${n1(my)}" font-family="${HAND}" font-size="${MOVE_PX}" font-weight="600" fill="${MARK}">${esc(m.right)}</text>`;
-      if (m.note) mv += `<text x="${n1(noteX)}" y="${n1(my)}" font-family="${HAND}" font-size="${NOTE_PX}" fill="${NOTE}">${esc(m.note)}</text>`;
+      if (m.note) mv += `<text x="${n1(noteX)}" y="${n1(my)}" font-family="${HAND}" font-size="${NOTE_PX}" fill="${NOTE}">${esc(noteText(m.note))}</text>`;
       svg.push(wrap(m.id, mv));
       const lw = textWidth(m.left, MOVE_PX);
       parts[m.id] = { x: relX - REL_GAP - lw, y, w: rightX + textWidth(m.right, MOVE_PX) - (relX - REL_GAP - lw), h: MOVE_H };
       parts[`${m.id}.left`] = { x: relX - REL_GAP - lw, y, w: lw, h: MOVE_H };
       parts[`${m.id}.right`] = { x: rightX, y, w: textWidth(m.right, MOVE_PX), h: MOVE_H };
-      if (m.note) parts[`${m.id}.note`] = { x: noteX, y, w: textWidth(m.note, NOTE_PX), h: MOVE_H };
+      if (m.note) parts[`${m.id}.note`] = { x: noteX, y, w: textWidth(noteText(m.note), NOTE_PX), h: MOVE_H };
       y += MOVE_H;
     }
   }

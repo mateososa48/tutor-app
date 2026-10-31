@@ -40,7 +40,33 @@ export type InputAssessment = {
   reasonGiven: boolean;
   /** Values they have said in this line (numbers and short equations), for "already answered". */
   values: string[];
+  /** Their answer to the whole problem ("I got 4 hours"), checked against its solution or its equation. */
+  final: { value: string; verdict: AnswerVerdict; against: string } | null;
 };
+
+const NUM = String.raw`-?\d+(?:\.\d+)?(?:\/\d+)?`;
+
+/** The value they give as the problem's answer ("I got 4 hours", "the answer is 12", "x = 5"), or null. */
+export function statedFinal(text: string, letters = ""): string | null {
+  const t = spokenToDigits(text.replace(/[−–]/g, "-"));
+  const said = t.split(/\s*[,;]?\s+(?:because|cause|'cause|cuz|coz|since|bc)\b/i)[0];
+  const lead = new RegExp(String.raw`\b(?:i (?:got|get|think (?:it'?s|it is)?|found|came up with)|(?:so )?the answer (?:is|was)|my answer (?:is|was)|answer:|(?:so )?it'?s|(?:so )?it is|is it)\s+(?:about |exactly )?(${NUM})`, "i").exec(said);
+  if (lead) return lead[1];
+  if (letters) {
+    const v = new RegExp(String.raw`\b[${letters}]\s*(?:=|is|equals)\s*(${NUM})\b`, "i").exec(said);
+    if (v) return v[1];
+  }
+  return null;
+}
+
+/** A solution the planner gave, kept only when its arithmetic gives its answer. */
+export function verifySolution(sol: { answer: string; work: string }): boolean {
+  const ans = /-?\d+(?:\.\d+)?(?:\/\d+)?/.exec(spokenToDigits(sol.answer).replace(/,/g, ""))?.[0];
+  if (!ans) return false;
+  const want = evaluate(ans);
+  const got = evaluate(sol.work.replace(/[×·]/g, "*").replace(/÷/g, "/").replace(/[−–]/g, "-"));
+  return want !== null && got !== null && Math.abs(want - got) < 1e-9;
+}
 
 /** The newest open question of the current problem (or of none). */
 export function openQuestion(state: LessonState): QuestionRecord | null {
@@ -127,7 +153,23 @@ export function assessInput(state: LessonState, input: StudentInput): InputAsses
   const digits = spokenToDigits(input.text);
   const answerLike = looksLikeAnswer(input.text) || /\d/.test(digits);
   const answer = q && answerLike && !signals.includes("stop") ? { text: input.text, ...checkResponse(q, input.text, blankText(state, q.fill)) } : null;
+  // Their answer to the whole problem, when this line is not an answer to the open question.
+  let final: InputAssessment["final"] = null;
+  const p = state.problems.find((x) => x.id === state.current);
+  if (p && (!answer || answer.verdict === "unknown")) {
+    const eq = p.math && /=/.test(p.math) && /[a-z]/i.test(p.math) ? p.math : null;
+    const letters = eq ? [...new Set(eq.match(/[a-z]/gi) ?? [])].join("") : "";
+    const value = statedFinal(input.text, letters);
+    if (value !== null && p.solution) {
+      const r = checkAnswer(p.solution.answer.replace(/[^\d./-]+/g, " ").trim().split(" ")[0] ?? p.solution.answer, value);
+      if (r.verdict !== "cannot_check") final = { value, verdict: r.verdict === "partial" ? "partial" : r.verdict, against: `${p.solution.answer} (${p.solution.work})` };
+    } else if (value !== null && eq) {
+      const r = checkAnswer(eq, value);
+      if (r.verdict !== "cannot_check") final = { value, verdict: r.verdict === "partial" ? "partial" : r.verdict, against: eq };
+    }
+  }
   return {
+    final,
     signals,
     claims,
     question: q,

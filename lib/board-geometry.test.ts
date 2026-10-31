@@ -10,8 +10,8 @@ test("the worksheet's triangle is drawn from its own dimensions, with the diagon
   assert.deepEqual(g.points.find((p) => p.id === "C"), { id: "C", x: 12, y: 5 });
   assert.equal(segmentLength(g, diag), 13);
   assert.equal(polygonArea(g, g.polygons[0]), 30);
-  assert.ok(geometryFacts(g).includes("diagonal AC 13 cm"));
-  assert.ok(geometryFacts(g).includes("triangle ABC area 30 cm²"));
+  assert.ok(geometryFacts(g).includes("diagonal AC 13 cm, from bottom left to top right"));
+  assert.ok(geometryFacts(g).includes("triangle ABC area 30 cm² (shaded sky)"));
   const out = renderGeometry(g);
   for (const id of ["diagonal", "triangle", "base", "height", "base.label", "A", "C"]) assert.ok(out.parts[id], id);
   // Drawn to scale: 12 across is 2.4 times 5 up.
