@@ -116,7 +116,7 @@ export type BoardOp =
   | { opId: string; type: "edit"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string }
   | { opId: string; type: "mark"; ref: string; how: "ring" | "swipe" | "underline" | "check" | "cross" | "point" }
   /** One of the board's own exact picture tools, drawn as asked (fraction models). */
-  | { opId: string; type: "tool"; sid: string; name: "draw_fraction"; args: Record<string, unknown>; label: string }
+  | { opId: string; type: "tool"; sid: string; name: "draw_fraction" | "draw_grid"; args: Record<string, unknown>; label: string }
   /** Real things drawn by the illustrator (lib/illustration): the page asks for the scene and draws it. */
   | { opId: string; type: "illustrate"; sid: string; what: string; notice?: string; label: string };
 
@@ -175,6 +175,8 @@ export type TurnPlan = {
   givesAnswer: boolean;
   /** The current problem's answer and the arithmetic that gives it, when the lesson has none yet. */
   solution?: { answer: string; work: string };
+  /** The problem this turn moves to ("P2"), when it is not the current one. */
+  problem?: string;
   close: boolean;
   why?: string;
 };
@@ -194,6 +196,7 @@ export type BoardIntent =
   | { do: "fractions"; id?: string; fractions: string; common?: number; model?: "bar" | "circle" }
   | { do: "blocks"; id?: string; rows: string }
   | { do: "groups"; id?: string; groups: string }
+  | { do: "grid"; id?: string; rows: number; columns: number; shaded: number; label?: string }
   | { do: "picture"; id?: string; what: string; notice?: string };
 
 export type LessonState = {

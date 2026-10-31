@@ -216,7 +216,9 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         break;
       }
       case "table": {
-        const next = parseTable(b.columns, b.rows, b.title);
+        // A title that is an id ("P1", "table1") is not a caption: the old one stays.
+        const title = b.title && !/^(?:p|table|fig|graph|pic|work)\d*$/i.test(b.title.trim()) ? b.title : (latest(b.id || "table1")?.spec as TableSpec | undefined)?.title;
+        const next = parseTable(b.columns, b.rows, title);
         if ("error" in next) {
           issues.push(`table: ${next.error}`);
           break;
@@ -364,6 +366,19 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         const r = renderBlocks(spec);
         put(picture(sid, "blocks", s.current, spec, r, describeBlocks(spec), prev?.kind === "blocks" ? prev : undefined));
         ops.push(prev?.kind === "blocks" ? { opId: opId(), type: "edit", sid, kind: "blocks", spec, rendered: r, label: "base-ten blocks" } : { opId: opId(), type: "draw", sid, kind: "blocks", spec, rendered: r, label: "base-ten blocks" });
+        break;
+      }
+      case "grid": {
+        if (b.rows < 1 || b.rows > 20 || b.columns < 1 || b.columns > 20 || b.shaded < 0 || b.shaded > b.rows * b.columns) {
+          issues.push(`grid: ${b.rows} by ${b.columns} with ${b.shaded} shaded does not fit (at most 20 by 20)`);
+          break;
+        }
+        const used = new Set([...objects, ...s.board].map((o) => o.sid));
+        let sid = b.id && !used.has(b.id) ? b.id : "grid1";
+        for (let k = 2; used.has(sid); k++) sid = `grid${k}`;
+        const words = `a ${b.rows} by ${b.columns} grid with ${b.shaded} of ${b.rows * b.columns} squares shaded${b.label ? `, captioned "${b.label}"` : ""}`;
+        put({ sid, kind: "fraction", problemId: s.current, parts: [], facts: [words], shown: b.label ? [b.label] : [], status: "pending" });
+        ops.push({ opId: opId(), type: "tool", sid, name: "draw_grid", args: { rows: b.rows, columns: b.columns, shaded: b.shaded, ...(b.label ? { label: b.label } : {}) }, label: words });
         break;
       }
       case "fractions": {

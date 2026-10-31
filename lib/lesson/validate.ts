@@ -237,6 +237,14 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     }
   }
 
+  // A new problem they are given goes on the board, not only into the air
+  // (Oct 31: a pancake problem and "0.4 or 0.39" were only spoken).
+  if (plan.question && (plan.move === "practice" || plan.move === "contrast")) {
+    const fresh = numbersOf(plan.question.text).filter((n) => !knownNumbers(state).has(n));
+    const written = compiled.objects.flatMap((o) => o.shown ?? o.facts).join(" ") + " " + compiled.ops.filter((o) => o.type === "heading").map((o) => (o as { title: string }).title).join(" ");
+    if (fresh.length >= 2 && !fresh.every((n) => numbersOf(written).includes(n))) add("board", `the new problem in your question (${fresh.join(", ")}) is only spoken: write it on the board (a work_line or a table) so they can see it.`);
+  }
+
   // A word problem needs its answer on record, so "I got 4" can be checked in code.
   const cur = state.problems.find((p) => p.id === state.current);
   const firstOnIt = state.evidence.filter((e) => e.problemId === state.current).length <= 1;

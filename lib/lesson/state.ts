@@ -96,8 +96,10 @@ export function commitInput(s: LessonState, input: StudentInput): { state: Lesso
       evidence: [...s.evidence, ev],
       questions,
       requests,
+      // Their answer was to another problem on the sheet: that is the current one now.
+      current: assessment.switchTo ?? s.current,
       // A right answer to the whole problem solves it.
-      problems: assessment.final?.verdict === "correct" ? s.problems.map((p) => (p.id === s.current ? { ...p, status: "solved" as const } : p)) : s.problems,
+      problems: assessment.final?.verdict === "correct" ? s.problems.map((p) => (p.id === (assessment.switchTo ?? s.current) ? { ...p, status: "solved" as const } : p)) : s.problems,
       closing: s.closing || assessment.signals.includes("stop"),
     },
     assessment,

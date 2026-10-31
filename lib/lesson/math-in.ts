@@ -6,6 +6,9 @@ import { spokenToDigits } from "../answer-check";
 
 /** The math in a line of text, when it has one: "x^2-5x+6=0", "3x + 7 = 22", "1/2+1/3". */
 export function mathIn(text: string): string | null {
+  // What follows "because" is their reasoning, not the problem ("I wrote 15
+  // because 12 + 3" made "12 + 3" the heading, Oct 31).
+  text = text.split(/\b(?:because|cause|'cause|cuz|coz|since|bc)\b/i)[0];
   const t = spokenToDigits(text).replace(/[−–]/g, "-").replace(/×/g, "*").replace(/÷/g, "/");
   // Pieces of math: words of two or more letters break them, single letters
   // (variables) stay (Oct 31: "3(x - 2) = 3x - 6" had been cut to "3(x - 2) = 3",

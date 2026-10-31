@@ -36,7 +36,10 @@ const TURN_PLAN_BASE = {
         items: {
           type: "object",
           properties: {
-            do: { type: "string", enum: ["work_step", "work_line", "work_fill", "table", "graph", "figure", "example", "mark", "fractions", "blocks", "groups", "picture"] },
+            do: { type: "string", enum: ["work_step", "work_line", "work_fill", "table", "graph", "figure", "example", "mark", "fractions", "blocks", "groups", "grid", "picture"] },
+            grid_rows: { type: "number", description: "grid: rows (10 for hundredths)." },
+            grid_columns: { type: "number", description: "grid: columns (10 for hundredths)." },
+            shaded: { type: "number", description: "grid: how many squares are shaded (35 of 100 for 0.35)." },
             groups: { type: "string", description: "groups: things in containers, left to right, \"bag: 3 red, 2 blue | after one red is drawn: 2 red, 2 blue\", \"plate 1: 4 cookies | plate 2: 4 cookies\"; \"cross 1 red\" crosses one out." },
             fractions: { type: "string", description: "fractions: one or two fractions on the same whole, \"1/2, 1/3\"." },
             common: { type: "number", description: "fractions: cut both into this many equal parts (6 for halves and thirds)." },
@@ -101,6 +104,7 @@ const TURN_PLAN_BASE = {
         required: ["ask", "kind"],
       },
       gives_answer: { type: "boolean", description: "True when this turn tells them the answer to their problem (counted as help)." },
+      problem: { type: "string", description: "Only when this turn moves to another problem from OTHER PROBLEMS: its id (\"P2\")." },
       solution: {
         type: "object",
         description: "Only when CURRENT PROBLEM shows no ANSWER yet: its final answer, private, and plain arithmetic that computes it, which the code evaluates (answer \"4\", work \"(23-3)/5\").",
@@ -126,7 +130,7 @@ export const TURN_PLAN_TOOL = {
   ...TURN_PLAN_BASE,
   input_schema: {
     ...TURN_PLAN_BASE.input_schema,
-    properties: { move: P.move, speech: P.speech, question: P.question, verdict: P.verdict, solution: P.solution, gives_answer: P.gives_answer, close: P.close, board: P.board, why: P.why },
+    properties: { move: P.move, problem: P.problem, speech: P.speech, question: P.question, verdict: P.verdict, solution: P.solution, gives_answer: P.gives_answer, close: P.close, board: P.board, why: P.why },
   },
 };
 
@@ -211,6 +215,10 @@ export function parseTurnPlan(raw: unknown): ParsedPlan {
         if (str(o.fractions)) board.push({ do: "fractions", ...(str(o.id) ? { id: str(o.id) } : {}), fractions: str(o.fractions), ...(typeof o.common === "number" ? { common: o.common } : {}), ...(o.model === "circle" ? { model: "circle" as const } : {}) });
         else issues.push("fractions needs fractions");
         break;
+      case "grid":
+        if (typeof o.grid_rows === "number" && typeof o.grid_columns === "number" && typeof o.shaded === "number") board.push({ do: "grid", ...(str(o.id) ? { id: str(o.id) } : {}), rows: o.grid_rows, columns: o.grid_columns, shaded: o.shaded, ...(str(o.title) ? { label: str(o.title) } : {}) });
+        else issues.push("grid needs grid_rows, grid_columns and shaded");
+        break;
       case "groups":
         if (str(o.groups)) board.push({ do: "groups", ...(str(o.id) ? { id: str(o.id) } : {}), groups: str(o.groups) });
         else issues.push("groups needs groups");
@@ -241,5 +249,5 @@ export function parseTurnPlan(raw: unknown): ParsedPlan {
   if (issues.length || !move) return { ok: false, issues };
   const sol = r.solution && typeof r.solution === "object" ? (r.solution as Record<string, unknown>) : null;
   const solution = sol && str(sol.answer) && str(sol.work) ? { answer: str(sol.answer), work: str(sol.work) } : undefined;
-  return { ok: true, plan: { move, speech, board, question, givesAnswer: r.gives_answer === true, close: r.close === true, ...(solution ? { solution } : {}), ...(str(r.why) ? { why: str(r.why) } : {}) }, verdict };
+  return { ok: true, plan: { move, speech, board, question, givesAnswer: r.gives_answer === true, close: r.close === true, ...(solution ? { solution } : {}), ...(/^P\d+$/.test(str(r.problem)) ? { problem: str(r.problem) } : {}), ...(str(r.why) ? { why: str(r.why) } : {}) }, verdict };
 }

@@ -39,10 +39,11 @@ export function fallbackPlan(a: InputAssessment): TurnPlan {
   const say: string[] = [];
   const falseOnes = a.claims.filter((c) => c.verdict === "verified_false");
   if (a.signals.includes("stop")) return { move: "close", speech: [{ id: "s1", text: "Okay, let's stop here. Nice work today.", needs: [] }], board: [], question: null, givesAnswer: false, close: true };
-  if (a.answer?.verdict === "correct") say.push("Your answer is right.");
+  if (a.answer?.verdict === "correct" || a.final?.verdict === "correct") say.push("Your answer is right.");
   else if (a.answer?.verdict === "incorrect") say.push("That one doesn't work yet.");
   for (const c of falseOnes.slice(0, 2)) say.push(`One step to fix: ${c.correct?.replace(/\*/g, " times ").replace(/\//g, " divided by ")}.`);
-  say.push(a.answer?.verdict === "incorrect" ? "Walk me through how you got it?" : "What would you like to look at next?");
+  // Respond to their line, never a generic "what next" after a question of theirs.
+  say.push(a.answer?.verdict === "incorrect" || a.final?.verdict === "incorrect" ? "Walk me through how you got it?" : a.signals.includes("question") ? "Good question. Tell me what you think so far, and we'll check it together?" : "Which part should we look at first?");
   return { move: "clarify", speech: [{ id: "s1", text: cleanSpeech(say.join(" ")), needs: [] }], board: [], question: null, givesAnswer: false, close: false };
 }
 
@@ -105,8 +106,10 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   const issuesLog: string[][] = [];
   let calls = 0;
   let model: string | undefined;
-  let chosen: { plan: TurnPlan; compiled: Compiled } | null = null;
-  let last: { plan: TurnPlan; compiled: Compiled; detail: Issue[] } | null = null;
+  let chosen: { plan: TurnPlan; compiled: Compiled; base: LessonState } | null = null;
+  let last: { plan: TurnPlan; compiled: Compiled; detail: Issue[]; base: LessonState } | null = null;
+  // A plan that moves to another problem on the sheet is compiled and checked on that problem.
+  const onProblem = (plan: TurnPlan): LessonState => (plan.problem && plan.problem !== withAuto.current && withAuto.problems.some((p) => p.id === plan.problem) ? { ...withAuto, current: plan.problem } : withAuto);
   let messages: Array<{ role: "user" | "assistant"; content: unknown }> = first;
   const fixes: string[] = [];
   // The first sentence, said while the rest is planned (lib/lesson/stream).
@@ -145,15 +148,16 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
       messages = repairMessages(first, call, [...parsed.issues, ...earlyNote()]);
       continue;
     }
-    const held = withholdOnBoard(withAuto, parsed.plan);
-    const compiled = compileBoard(withAuto, held.plan.board, turnId);
-    const checked = validatePlan(withAuto, assessment, held.plan, parsed.verdict, compiled);
+    const base = onProblem(parsed.plan);
+    const held = withholdOnBoard(base, parsed.plan);
+    const compiled = compileBoard(base, held.plan.board, turnId);
+    const checked = validatePlan(base, assessment, held.plan, parsed.verdict, compiled);
     fixes.push(...held.fixes, ...checked.fixes);
     if (!checked.issues.length) {
-      chosen = { plan: checked.plan, compiled };
+      chosen = { plan: checked.plan, compiled, base };
       break;
     }
-    last = { plan: checked.plan, compiled, detail: checked.detail };
+    last = { plan: checked.plan, compiled, detail: checked.detail, base };
     issuesLog.push(checked.issues);
     messages = repairMessages(first, call, [...checked.issues, ...earlyNote()]);
   }
@@ -162,7 +166,7 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   if (!chosen && last) {
     const kept = salvage(last.plan, last.detail);
     if (kept) {
-      chosen = { plan: kept, compiled: last.compiled };
+      chosen = { plan: kept, compiled: last.compiled, base: last.base };
       fixes.push(`salvaged after ${calls} tries: ${last.detail.map((d) => d.kind).join(", ")}`);
     }
   }
@@ -179,6 +183,6 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   const compiled = chosen?.compiled ?? { ops: [], objects: [], issues: [], notes: [] };
   const ops = [...auto, ...compiled.ops];
   const objects = [...autoObjects.filter((o) => !compiled.objects.some((c) => c.sid === o.sid)), ...compiled.objects];
-  const next = recordTurn(withAuto, turnId, plan, ops, objects, Date.now());
+  const next = recordTurn(chosen?.base ?? withAuto, turnId, plan, ops, objects, Date.now());
   return { state: next, turnId, speech: plan.speech, ops, log: { model, ms: Date.now() - started, calls, issues: issuesLog, fixes, fallback, assessment, move: plan.move, ...(firstTokenMs !== undefined ? { firstTokenMs } : {}), ...(earlyMs !== undefined ? { earlyMs } : {}), ...(usage ? { usage } : {}) } };
 }

@@ -43,7 +43,18 @@ export type InputAssessment = {
   values: string[];
   /** Their answer to the whole problem ("I got 4 hours"), checked against its solution or its equation. */
   final: { value: string; verdict: AnswerVerdict; against: string } | null;
+  /** Their answer fits another problem on the sheet: the lesson moves to it. */
+  switchTo?: string;
 };
+
+/** A value checked as the answer to one problem: its solution, its equation, or its arithmetic. */
+export function checkFinal(p: { math?: string; solution?: { answer: string; work: string } }, value: string): { value: string; verdict: AnswerVerdict; against: string } | null {
+  const pick = (r: ReturnType<typeof checkAnswer>, against: string) => (r.verdict === "cannot_check" ? null : { value, verdict: (r.verdict === "partial" ? "partial" : r.verdict) as AnswerVerdict, against });
+  if (p.solution) return pick(checkAnswer(p.solution.answer.replace(/[^\d./-]+/g, " ").trim().split(" ")[0] ?? p.solution.answer, value), `${p.solution.answer} (${p.solution.work})`);
+  if (p.math && /=/.test(p.math) && /[a-z]/i.test(p.math)) return pick(checkAnswer(p.math, value), p.math);
+  if (p.math && !/[a-z=<>]/i.test(p.math)) return pick(checkAnswer(p.math, value), p.math);
+  return null;
+}
 
 const NUM = String.raw`-?\d+(?:\.\d+)?(?:\/\d+)?`;
 
@@ -168,20 +179,30 @@ export function assessInput(state: LessonState, input: StudentInput): InputAsses
   const answer = q && answerLike && !signals.includes("stop") ? { text: input.text, ...checkResponse(q, input.text, blankText(state, q.fill)) } : null;
   // Their answer to the whole problem, when this line is not an answer to the open question.
   let final: InputAssessment["final"] = null;
+  let switchTo: string | undefined;
   const p = state.problems.find((x) => x.id === state.current);
-  if (p && (!answer || answer.verdict === "unknown")) {
-    const eq = p.math && /=/.test(p.math) && /[a-z]/i.test(p.math) ? p.math : null;
-    const letters = eq ? [...new Set(eq.match(/[a-z]/gi) ?? [])].join("") : "";
+  if (!answer || answer.verdict === "unknown") {
+    const letters = [...new Set(state.problems.flatMap((x) => (x.math && /=/.test(x.math) ? x.math.match(/[a-z]/gi) ?? [] : [])))].join("");
     const value = statedFinal(input.text, letters);
-    if (value !== null && p.solution) {
-      const r = checkAnswer(p.solution.answer.replace(/[^\d./-]+/g, " ").trim().split(" ")[0] ?? p.solution.answer, value);
-      if (r.verdict !== "cannot_check") final = { value, verdict: r.verdict === "partial" ? "partial" : r.verdict, against: `${p.solution.answer} (${p.solution.work})` };
-    } else if (value !== null && eq) {
-      const r = checkAnswer(eq, value);
-      if (r.verdict !== "cannot_check") final = { value, verdict: r.verdict === "partial" ? "partial" : r.verdict, against: eq };
+    if (value !== null) {
+      final = p ? checkFinal(p, value) : null;
+      // Right for another problem on the sheet, not this one: that is the one
+      // they are on (Oct 31: -11 for "-7 - 4" was marked wrong against question 3).
+      if (!final || final.verdict !== "correct") {
+        for (const other of state.problems) {
+          if (other.id === p?.id || other.status === "solved") continue;
+          const r = checkFinal(other, value);
+          if (r?.verdict === "correct") {
+            final = r;
+            switchTo = other.id;
+            break;
+          }
+        }
+      }
     }
   }
   return {
+    ...(switchTo ? { switchTo } : {}),
     final,
     signals,
     claims,
