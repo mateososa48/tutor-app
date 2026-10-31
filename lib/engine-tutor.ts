@@ -213,6 +213,17 @@ export class EngineTutorSession {
         return tokenUrl(token);
       },
       onSpeechStart: () => this.callbacks.onActivity("idle"),
+      tutorTalking: () => this.speaking,
+      // They are talking over the tutor: it stops at once (the line is planned once they finish).
+      onBargeIn: () => {
+        if (!this.speaking) return;
+        this.generation += 1;
+        this.player?.flush();
+        this.timeline = [];
+        this.enqueuedMs = 0;
+        this.showCaption("");
+        this.debug("ear", "barge_in", {});
+      },
       onUtterance: (text) => this.heard(text),
       onDebug: (kind, payload) => this.debug("ear", kind, payload),
       onClosed: (code, reason) => {
