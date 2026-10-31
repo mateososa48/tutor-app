@@ -7,6 +7,7 @@
 // onto plates, groups of objects.
 
 import { textWidth } from "./illustration/scene";
+import { panelName } from "./board-blocks";
 
 export type GroupItem = { color: string; count: number; crossed?: number };
 export type Group = { id: string; label?: string; shape: "bag" | "plate" | "box" | "loose"; items: GroupItem[] };
@@ -74,10 +75,10 @@ export function parseGroups(text: string): GroupsSpec | { error: string } {
 }
 
 export function describeGroups(spec: GroupsSpec): string[] {
-  return spec.groups.map((g) => {
+  return spec.groups.map((g, i) => {
     const items = g.items.map((x) => `${x.count} ${x.color}${x.count !== 1 && !COLORS[x.color] ? "s" : ""}${x.crossed ? ` (${x.crossed} crossed out)` : ""}`).join(", ");
     const left = g.items.reduce((a, x) => a + x.count - (x.crossed ?? 0), 0);
-    return `${g.id}${g.label ? ` "${g.label}"` : ""}: ${items}${g.items.some((x) => x.crossed) ? `; ${left} not crossed out (not written)` : ""}`;
+    return `${panelName(i, spec.groups.length)}, part ${g.id}${g.label ? `, "${g.label}"` : ""}: ${items}${g.items.some((x) => x.crossed) ? `; ${left} not crossed out (not written)` : ""}`;
   });
 }
 

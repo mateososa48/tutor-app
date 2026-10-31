@@ -300,7 +300,9 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   // 4e. A question the board already answers is no question (Oct 31: "how many
   // sixths is one half?" beside a bar labelled "= 3/6"; "how many tens?" over
   // blocks labelled "4 tens").
-  if (plan.question?.expects && !plan.givesAnswer && (plan.question.kind === "value" || plan.question.kind === "step")) {
+  // Any question with a private answer: "how many tens and ones now?" may be
+  // filed as open, and the blocks' labels still answer it (Oct 31, T11).
+  if (plan.question?.expects && !plan.givesAnswer) {
     const onBoard = [...state.board.filter((b) => !compiled.objects.some((o) => o.sid === b.sid)), ...compiled.objects].filter((b) => b.status !== "failed");
     // Only what can be read on it: a figure's computed area or a graph's view range is not shown.
     const known0 = knownNumbers(state, false);

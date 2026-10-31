@@ -62,14 +62,20 @@ export function parseBlocks(text: string): BlocksSpec | { error: string } {
   return { kind: "blocks", rows };
 }
 
+/** Where a panel sits, in words a tutor says (the states are side by side, not rows). */
+export function panelName(i: number, n: number): string {
+  const pos = n === 1 ? "" : i === 0 ? "left" : i === n - 1 ? "right" : n === 3 ? "middle" : `${i + 1} from the left`;
+  return `panel ${i + 1} of ${n}${pos ? ` (${pos})` : ""}`;
+}
+
 export function describeBlocks(spec: BlocksSpec): string[] {
-  return spec.rows.map((r) => {
+  return spec.rows.map((r, i) => {
     const parts = [`${r.tens} tens rods and ${r.ones} ones cubes`];
     if (r.newOnes) parts.push(`${r.newOnes} of the ones are new from breaking a ten (drawn in blue)`);
     if (r.crossOnes) parts.push(`${r.crossOnes} ones crossed out`);
     if (r.crossTens) parts.push(`${r.crossTens} tens crossed out`);
     const left = r.tens * 10 + r.ones - (r.crossOnes ?? 0) - 10 * (r.crossTens ?? 0);
-    return `row ${r.id}${r.label ? ` "${r.label}"` : ""}: ${parts.join(", ")}${r.crossOnes || r.crossTens ? ` (${left} left, not written)` : ""}`;
+    return `${panelName(i, spec.rows.length)}, part ${r.id}${r.label ? `, "${r.label}"` : ""}: ${parts.join(", ")}${r.crossOnes || r.crossTens ? ` (${left} left, not written)` : ""}`;
   });
 }
 
