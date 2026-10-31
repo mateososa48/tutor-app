@@ -163,6 +163,10 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   const code = a.answer?.verdict;
   if (code === "incorrect" && affirms && !denies) add("verdict", "the checker found their answer INCORRECT, but the speech calls it right.");
   if (code === "correct" && denies && !affirms) add("verdict", "the checker found their answer CORRECT, but the speech calls it wrong.");
+  // A true claim of theirs is never called wrong (Oct 31: "7225 - 1084 = 6141"
+  // got "close, but not quite").
+  const trueOnes = a.claims.filter((c) => c.verdict === "verified_true" && !c.attributed);
+  if (trueOnes.length && !a.claims.some((c) => c.verdict === "verified_false") && denies && !affirms) add("verdict", `their "${trueOnes[0].text}" is TRUE (checked); do not call it wrong. Say it is right, then the next step.`);
   // Their answer to the whole problem: right is said to be right, even when a reason under it is false.
   const fin = a.final?.verdict;
   if (fin === "incorrect" && affirms && !denies) add("verdict", `the checker found their answer ${a.final!.value} INCORRECT, but the speech calls it right.`);

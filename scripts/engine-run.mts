@@ -14,7 +14,10 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
-import { CASES as BENCH_CASES, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+import { CASES as MAIN_CASES, HELDOUT, NOVICES, PICTURES, REAL, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+
+// Every simulated student the bench has, by id.
+const BENCH_CASES: BenchCase[] = [...MAIN_CASES, ...NOVICES, ...HELDOUT, ...PICTURES, ...REAL];
 
 for (const l of fs.readFileSync(".env.local", "utf8").split("\n")) {
   const m = /^([A-Z_0-9]+)=(.*)$/.exec(l);
@@ -76,7 +79,10 @@ export type Case = { id: string; intake: string; file?: string; lines: string[];
 const STUDENT_MODEL = arg("student-model", "claude-haiku-5-5")!;
 const MAX_TURNS = Number(arg("turns", "8"));
 function studentCases(ids: string[]): Case[] {
-  return BENCH_CASES.filter((c) => ids.includes(c.id)).map((c) => ({ id: `S-${c.id}`, intake: c.topic, ...(c.worksheet ? { file: `bench/assets/${c.worksheet.file}` } : {}), lines: [], student: c }));
+  const found = BENCH_CASES.filter((c) => ids.includes(c.id));
+  const missing = ids.filter((id) => !found.some((c) => c.id === id));
+  if (missing.length) throw new Error(`no simulated student ${missing.join(", ")}; known: ${BENCH_CASES.map((c) => c.id).join(", ")}`);
+  return found.map((c) => ({ id: `S-${c.id}`, intake: c.topic, ...(c.worksheet ? { file: `bench/assets/${c.worksheet.file}` } : {}), lines: [], student: c }));
 }
 async function studentSays(c: BenchCase, history: Array<{ student: string; tutor: string }>, board: string, picture: string | null): Promise<string> {
   const key = process.env.ANTHROPIC_API_KEY;

@@ -4237,6 +4237,21 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       // It may have grown: what it covers now is what layout keeps clear.
       const b = editor.getShapePageBounds(shape.id);
       const held = placedRectsRef.current.get(item.id);
+      // Grown downward: what sits below it in its column moves down with it,
+      // so new lines never land on a table drawn under the working (Oct 31).
+      const oldBottom = held ? held.y + held.h : null;
+      if (b && oldBottom !== null && b.y + b.h > oldBottom + 1) {
+        const push = b.y + b.h - oldBottom + 16;
+        for (const other of itemsRef.current) {
+          if (other.id === item.id) continue;
+          const r = placedRectsRef.current.get(other.id);
+          if (!r || r.y < oldBottom - 2 || !(r.x < b.x + b.w && b.x < r.x + r.w)) continue;
+          const shapes = other.shapeIds.map((sid) => editor.getShape(sid as TLShapeId)).filter((sh): sh is NonNullable<typeof sh> => Boolean(sh) && !(sh!.meta as { archived?: unknown }).archived);
+          if (!shapes.length) continue;
+          editor.run(() => editor.updateShapes(shapes.map((sh) => ({ id: sh.id, type: sh.type, y: sh.y + push }))), { history: "ignore" });
+          placedRectsRef.current.set(other.id, { ...r, y: r.y + push });
+        }
+      }
       if (b) placedRectsRef.current.set(item.id, held ? { x: held.x, y: held.y, w: Math.max(held.w, b.x + b.w - held.x), h: Math.max(held.h, b.y + b.h - held.y) } : { x: b.x, y: b.y, w: b.w, h: b.h });
       notePage(editor, item);
       // Only what is new is written in, in its turn behind the writing queue.

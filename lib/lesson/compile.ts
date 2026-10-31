@@ -182,7 +182,8 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
       case "work_line": {
         const { spec, obj } = work();
         // "L3: both red = …" is the model's label for the line, not part of it.
-        const text = b.text.replace(/^\s*L\d+\s*[:.)]\s*/i, "");
+        // "L3:" is the model's label for the line, "1." the sheet's number: neither is part of it.
+        const text = b.text.replace(/^\s*L\d+\s*[:.)]\s*/i, "").replace(/^\s*(?:#|no\.?\s*)?\d{1,2}\s*[.)]\s+(?=[-−(\d a-z])/i, "");
         if (wordyLine(text)) {
           issues.push(`work_line "${text}": the working holds math, not sentences; say the words aloud and write only the math`);
           break;
@@ -376,7 +377,10 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         const used = new Set([...objects, ...s.board].map((o) => o.sid));
         let sid = b.id && !used.has(b.id) ? b.id : "grid1";
         for (let k = 2; used.has(sid); k++) sid = `grid${k}`;
-        const words = `a ${b.rows} by ${b.columns} grid with ${b.shaded} of ${b.rows * b.columns} squares shaded${b.label ? `, captioned "${b.label}"` : ""}`;
+        // How it is shaded, so the tutor says rows, not columns (Oct 31).
+        const full = Math.floor(b.shaded / b.columns);
+        const rest = b.shaded % b.columns;
+        const words = `a ${b.rows} by ${b.columns} grid with ${b.shaded} of ${b.rows * b.columns} squares shaded, row by row from the top: ${full} full row${full === 1 ? "" : "s"} of ${b.columns}${rest ? ` and ${rest} square${rest === 1 ? "" : "s"} of the next row` : ""}${b.label ? `, captioned "${b.label}"` : ""}`;
         put({ sid, kind: "fraction", problemId: s.current, parts: [], facts: [words], shown: b.label ? [b.label] : [], status: "pending" });
         ops.push({ opId: opId(), type: "tool", sid, name: "draw_grid", args: { rows: b.rows, columns: b.columns, shaded: b.shaded, ...(b.label ? { label: b.label } : {}) }, label: words });
         break;
