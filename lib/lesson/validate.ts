@@ -10,13 +10,14 @@
 // Small things are fixed in place (a praise opener, stray symbols in speech);
 // anything else goes back to the model as an issue, once.
 
-import { spokenToDigits } from "../answer-check";
+import { spokenExpression, spokenToDigits } from "../answer-check";
 import { assessClaims, evaluate, falseAssertions, fmtValue } from "../math-claims";
 
 const assessClaimsText = (text: string) => assessClaims(text).map((c) => c.text);
 import { checkResponse, checkSupport, verifySolution, type InputAssessment } from "./assess";
 import type { Compiled } from "./compile";
 import { resolveRef } from "./compile";
+import { offPage } from "./state";
 import type { LessonState, QuestionRecord, TurnPlan } from "./types";
 
 export type Verdict = { answer: string; is: "correct" | "incorrect" | "partial"; because: string[] } | null;
@@ -252,11 +253,47 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
     if (fresh.length >= 2 && !fresh.every((n) => numbersOf(written).includes(n))) add("board", `the new problem in your question (${fresh.join(", ")}) is only spoken: write it on the board (a work_line or a table) so they can see it.`);
   }
 
+  // Whatever the move is called: a sentence that hands them a new one ("try it
+  // on a new one: x squared plus five x plus four") has it written (Oct 31,
+  // two practice problems only spoken, both under move "confirm").
+  const visible = [...state.board.filter((b) => b.status !== "failed" && !offPage(state, b)), ...compiled.objects].flatMap((o) => o.shown ?? o.facts).join(" ") + " " + compiled.ops.filter((o) => o.type === "heading").map((o) => (o as { title: string }).title).join(" ");
+  for (const seg of speech) {
+    const m = /\b(?:a new one|another one|another|the next one|next one|one more|try (?:this|these)(?: one)?|new problem|practice problem)\b[^:.?!]*[:,]?\s*(.+)$/i.exec(seg.text);
+    if (!m) continue;
+    const posed = numbersOf(spokenExpression(m[1]).replace(/\^\d+/g, " "));
+    const missing = posed.filter((n) => !numbersOf(visible.replace(/\^\d+/g, " ")).includes(n));
+    if (posed.length >= 2 && missing.length) add("board", `the new problem ("${m[1].slice(0, 70)}") is only spoken: write it on the board (a work_line, or a table) so they can see it.`);
+  }
+
   // A word problem needs its answer on record, so "I got 4" can be checked in code.
   const cur = state.problems.find((p) => p.id === state.current);
   const firstOnIt = state.evidence.filter((e) => e.problemId === state.current).length <= 1;
   if (cur && firstOnIt && cur.status === "open" && !cur.solution && !(cur.math && /=/.test(cur.math) && /[a-z]/i.test(cur.math)) && /\d/.test(cur.statement) && (!plan.solution || !verifySolution(plan.solution))) {
     add("question", plan.solution ? `solution: "${plan.solution.work}" does not give ${plan.solution.answer}; give the answer and plain arithmetic that computes it.` : "give solution: this problem's final answer (private) and plain arithmetic that computes it (answer \"4\", work \"(23-3)/5\").");
+  }
+
+  // The same thing said twice in one turn sounds like a glitch (Oct 31: "Pick
+  // one problem… tell me the numbers" and then "Can you pick one problem…?").
+  // The one that asks stays.
+  {
+    const words = (t: string) => new Set(t.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w.length > 2));
+    const sents = speech.flatMap((seg, i) => (seg.text.match(/[^.?!]+[.?!]*\s*/g) ?? [seg.text]).map((t) => ({ i, t: t.trim() })));
+    const drop = new Set<string>();
+    for (let x = 0; x < sents.length; x++)
+      for (let y = x + 1; y < sents.length; y++) {
+        const A = words(sents[x].t);
+        const B = words(sents[y].t);
+        if (A.size < 4 || B.size < 4) continue;
+        const shared = [...A].filter((w) => B.has(w)).length;
+        if (shared / Math.min(A.size, B.size) < 0.7) continue;
+        // The first item may already have been said (the early sentence): the plan goes back instead.
+        if (sents[x].i === 0) add("speech", `you say the same thing twice ("${sents[x].t.slice(0, 50)}" and "${sents[y].t.slice(0, 50)}"): say it once; the first sentence is already said.`);
+        else drop.add(sents[y].t.includes("?") && !sents[x].t.includes("?") ? sents[x].t : sents[y].t);
+      }
+    if (drop.size) {
+      speech = speech.map((seg) => ({ ...seg, text: (seg.text.match(/[^.?!]+[.?!]*\s*/g) ?? [seg.text]).filter((t) => !drop.has(t.trim())).join("").trim() })).filter((seg) => seg.text);
+      fixes.push(`dropped ${drop.size} sentence${drop.size === 1 ? "" : "s"} said twice in the turn`);
+    }
   }
 
   // A turn is heard: past this many words it is a lecture (Oct 31: 90-127 words a turn on T05).
@@ -327,6 +364,13 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
         if (said.length >= 2 && missing.length) add("board", `the speech reads ${missing.join(", ")} off the table ("${sentence.slice(0, 80)}"), but the table does not show ${missing.length === 1 ? "it" : "them"}: add the row or column first, or say only what it shows.`);
       }
     }
+  }
+  // 4h. A grid is shaded row by row: "a whole column of ten" over it describes
+  // squares that are not there (Oct 31, decimals: said twice, judged blind).
+  const onBoardNow = [...state.board.filter((b) => b.status !== "failed"), ...compiled.objects];
+  if (onBoardNow.some((b) => b.facts.some((f) => /shaded, row by row/.test(f))) && !onBoardNow.some((b) => b.kind === "table")) {
+    const col = speech.find((x) => /\bcolumns?\b/i.test(x.text));
+    if (col) add("board", `the grid is shaded row by row from the top, but the speech says columns ("${col.text.slice(0, 70)}"): say rows.`);
   }
   // 4g. A ring goes on the point the sentence names (Oct 31: "the point is
   // three, five" with the ring on (2, 3)).

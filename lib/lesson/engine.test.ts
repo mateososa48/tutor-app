@@ -218,3 +218,26 @@ test("a turn that ends on a statement goes back for something to do", async () =
   assert.equal(r.log.calls, 2);
   assert.match(r.log.issues[0].join(" "), /nothing for them to do/);
 });
+
+// S-factor-novice (Oct 31): a new problem handed over under move "confirm", only spoken.
+test("a new problem said aloud must be written, whatever the move", async () => {
+  const s = createLesson({ intake: "factor x^2 + 7x + 12" });
+  const r = await runTurn(s, input("u1", "3 and 4"), {
+    planner: scripted(
+      { move: "confirm", speech: [{ say: "Three and four do both jobs." }, { say: "Now try a new one: x squared plus five x plus four. Which two numbers work?" }], board: [], question: { ask: "Which two numbers work?", kind: "open" } },
+      { move: "confirm", speech: [{ say: "Three and four do both jobs." }, { say: "Now try a new one: x squared plus five x plus four. Which two numbers work?" }], board: [{ do: "work_line", text: "x^2 + 5x + 4" }], question: { ask: "Which two numbers work?", kind: "open" } },
+    ),
+  });
+  assert.equal(r.log.calls, 2);
+  assert.match(r.log.issues[0].join(" "), /only spoken/);
+});
+
+test("a sentence said twice in a turn is said once, the asking one kept", async () => {
+  const s = createLesson({ intake: "help with my ratio homework" });
+  const r = await runTurn(s, input("u1", "ok"), {
+    planner: scripted({ move: "clarify", speech: [{ say: "Sure." }, { say: "Pick one problem and tell me the numbers in it." }, { say: "Can you pick one problem and tell me the numbers in it?" }], board: [], question: { ask: "Can you pick one problem and tell me the numbers in it?", kind: "open" } }),
+  });
+  const said = r.speech.map((x) => x.text).join(" ");
+  assert.equal((said.match(/pick one problem/gi) ?? []).length, 1);
+  assert.match(said, /\?/);
+});
