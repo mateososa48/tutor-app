@@ -509,7 +509,12 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
       const found = theirLines.find((l) => !hedge.test(l) && asValue(l) && !own.has(single));
       if (found) hit = found;
     }
-    if (hit && !/again|check|remind|still/i.test(plan.question.text)) add("reask", `they already answered "${plan.question.text.slice(0, 80)}" (${exp}): "${hit.slice(0, 100)}". Use their answer instead of asking for it.`);
+    // Asking for what they just said this line is a real re-ask and goes
+    // back; a match in an older line is likely a check or a new use of it, and
+    // the repair cost more than the defect (15 of 37 repairs in kids9), so it
+    // is advice. Asking them to verify is never a re-ask.
+    const latest = state.transcript.filter((t) => t.role === "student").at(-1)?.text ?? "";
+    if (hit && !/again|check|remind|still|match|verify|confirm|sure|test/i.test(plan.question.text)) add([latest, state.goal.text].some((l) => l && (l.includes(hit) || hit.includes(l.trim()))) ? "reask" : "advice", `they already answered "${plan.question.text.slice(0, 80)}" (${exp}): "${hit.slice(0, 100)}". Use their answer instead of asking for it.`);
   }
   // The blank a question fills must exist and be waiting; otherwise the question just has no blank.
   if (plan.question?.fill) {
