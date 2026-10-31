@@ -8,7 +8,7 @@ import type { BoardObject, BoardOp, BoardReceipt, Fact, LearnerEvidence, LessonS
 
 const TRANSCRIPT_MAX = 60;
 
-import { mathIn } from "./math-in";
+import { mathIn, posedProblem } from "./math-in";
 export { mathIn };
 
 export function newProblem(id: string, statement: string, source: ProblemRecord["source"], givens: Fact[] = []): ProblemRecord {
@@ -64,6 +64,13 @@ export function assistanceOn(s: LessonState, problemId: string | null): number {
  */
 export function commitInput(s: LessonState, input: StudentInput): { state: LessonState; assessment: InputAssessment } {
   if (input.source === "intake") input = { ...input, text: cleanIntake(input.text) || input.text };
+  // A problem they bring up when none is open becomes the current one.
+  const open = s.problems.find((p) => p.id === s.current);
+  const posed = !open || open.status === "solved" ? posedProblem(input.text) : null;
+  if (posed && input.source !== "intake") {
+    const id = `P${s.problems.length + 1}`;
+    s = { ...s, current: id, problems: [...s.problems, { ...newProblem(id, posed.statement, { kind: "utterance", id: input.id }), ...(posed.math ? { math: posed.math } : {}), ...(posed.solution ? { solution: posed.solution } : {}) }] };
+  }
   const assessment = assessInput(s, input);
   const transcript = [...s.transcript, { id: input.id, role: "student" as const, text: input.text, at: input.at }].slice(-TRANSCRIPT_MAX);
   const q = assessment.question;

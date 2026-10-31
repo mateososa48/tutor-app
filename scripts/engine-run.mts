@@ -14,6 +14,12 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
+import { CASES as BENCH_CASES, studentPrompt, studentSystem, type BenchCase } from "./bench-cases";
+
+for (const l of fs.readFileSync(".env.local", "utf8").split("\n")) {
+  const m = /^([A-Z_0-9]+)=(.*)$/.exec(l);
+  if (m && !process.env[m[1]]) process.env[m[1]] = m[2].replace(/^"|"$/g, "");
+}
 
 const arg = (name: string, fallback?: string) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -62,7 +68,33 @@ const FAKE_MIC = `(() => {
 })();`;
 const CHROME = process.env.CHROME_PATH ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 
-export type Case = { id: string; intake: string; file?: string; lines: string[] };
+export type Case = { id: string; intake: string; file?: string; lines: string[]; student?: BenchCase };
+
+// Simulated students (scripts/bench-cases.ts): Haiku 5.5 plays a kid from a
+// hidden brief, sees the conversation and a picture of the board, and answers
+// what the tutor actually asked (the scripted lines above never do).
+const STUDENT_MODEL = arg("student-model", "claude-haiku-5-5")!;
+const MAX_TURNS = Number(arg("turns", "8"));
+function studentCases(ids: string[]): Case[] {
+  return BENCH_CASES.filter((c) => ids.includes(c.id)).map((c) => ({ id: `S-${c.id}`, intake: c.topic, ...(c.worksheet ? { file: `bench/assets/${c.worksheet.file}` } : {}), lines: [], student: c }));
+}
+async function studentSays(c: BenchCase, history: Array<{ student: string; tutor: string }>, board: string, picture: string | null): Promise<string> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY is not set");
+  const transcript = history.map((t) => `You (${c.name}): ${t.student}\nTutor: ${t.tutor || "(said nothing)"}`).join("\n");
+  const content: unknown[] = [];
+  if (picture) content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: picture } });
+  content.push({ type: "text", text: studentPrompt(transcript, board, Boolean(picture)) });
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: STUDENT_MODEL, max_tokens: 200, output_config: { effort: "low" }, thinking: { type: "disabled" }, system: studentSystem(c), messages: [{ role: "user", content }] }),
+  });
+  if (!r.ok) throw new Error(`student ${r.status} ${(await r.text()).slice(0, 200)}`);
+  const j = (await r.json()) as { content?: Array<{ type: string; text?: string }> };
+  const raw = (j.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("");
+  return raw.replace(/^\s*(student|you|[a-z]+)\s*:\s*/i, "").replace(/^["“]|["”]$/g, "").replace(/\s+/g, " ").trim() || "ok";
+}
 export const CASES: Case[] = [
   {
     id: "T01",
@@ -194,7 +226,21 @@ async function runCase(browser: Browser, c: Case, dir: string) {
   try {
     waits.push(await settle(page, 1));
     summaries.push(await snap(page, dir, "t1"));
-    for (const [i, line] of c.lines.entries()) {
+    // A simulated student makes up its lines as it goes; a scripted case has them.
+    const history: Array<{ student: string; tutor: string }> = [];
+    const said = async () => ((await page.evaluate(() => (window as unknown as { __chalkEngine: { turns: Array<{ said: string[] }> } }).__chalkEngine.turns.at(-1)?.said ?? [])) as string[]).join(" ");
+    if (c.student) history.push({ student: c.intake, tutor: await said() });
+    const lines = c.student ? Array.from({ length: MAX_TURNS }, () => "") : c.lines;
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+      if (c.student) {
+        const summary = await page.evaluate(() => (window as unknown as { __chalkBoard?: { getBoardSummary?: (c?: boolean) => string } }).__chalkBoard?.getBoardSummary?.(true) ?? "");
+        const pic = fs.existsSync(path.join(dir, `t${i + 1}-board.jpg`)) ? fs.readFileSync(path.join(dir, `t${i + 1}-board.jpg`)).toString("base64") : null;
+        line = await studentSays(c.student, history, summary, pic);
+        c.lines.push(line);
+        const lastMove = await page.evaluate(() => (window as unknown as { __chalkEngine: { turns: Array<{ log?: { move?: string } }> } }).__chalkEngine.turns.at(-1)?.log?.move);
+        if (lastMove === "close") break;
+      }
       const before = await engineTurns(page);
       if (SPOKEN) {
         // Said into the microphone; the turn starts once the ear hears the end of it.
@@ -209,6 +255,7 @@ async function runCase(browser: Browser, c: Case, dir: string) {
       }
       waits.push(await settle(page, before + 1));
       summaries.push(await snap(page, dir, `t${i + 2}`));
+      if (c.student) history.push({ student: line, tutor: await said() });
     }
   } catch (err) {
     error = (err as Error).message;
@@ -283,7 +330,8 @@ async function runLive(page: Page, c: Case, dir: string, consoleErrors: string[]
 }
 
 const only = arg("cases")?.split(",");
-const cases = CASES.filter((c) => !only || only.includes(c.id));
+const studentIds = arg("students")?.split(",");
+const cases = studentIds ? studentCases(studentIds) : CASES.filter((c) => !only || only.includes(c.id));
 const root = path.join("bench/runs", `engine-${LABEL}`);
 fs.mkdirSync(root, { recursive: true });
 const browser = await puppeteer.launch({

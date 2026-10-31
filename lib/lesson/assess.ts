@@ -51,7 +51,7 @@ const NUM = String.raw`-?\d+(?:\.\d+)?(?:\/\d+)?`;
 export function statedFinal(text: string, letters = ""): string | null {
   const t = spokenToDigits(text.replace(/[−–]/g, "-"));
   const said = t.split(/\s*[,;]?\s+(?:because|cause|'cause|cuz|coz|since|bc)\b/i)[0];
-  const lead = new RegExp(String.raw`\b(?:i (?:got|get|think (?:it'?s|it is)?|found|came up with)|(?:so )?the answer (?:is|was)|my answer (?:is|was)|answer:|(?:so )?it'?s|(?:so )?it is|is it)\s+(?:about |exactly )?(${NUM})`, "i").exec(said);
+  const lead = new RegExp(String.raw`\b(?:i (?:got|get|put|wrote|picked|chose|said|think (?:it'?s|it is)?|found|came up with)|(?:so )?the answer (?:is|was)|my answer (?:is|was)|answer:|(?:so )?it'?s|(?:so )?it is|is it)\s+(?:about |exactly )?(${NUM})`, "i").exec(said);
   if (lead) return lead[1];
   if (letters) {
     const v = new RegExp(String.raw`\b[${letters}]\s*(?:=|is|equals)\s*(${NUM})\b`, "i").exec(said);

@@ -27,6 +27,28 @@ export function mathIn(text: string): string | null {
   return null;
 }
 
+/**
+ * A problem a student brings up mid-session, with its answer when the code can
+ * work it out: "which is bigger, 0.35 or 0.5" (Oct 31: the tutor told Maya
+ * "the correct answer there is zero point five" before she had thought).
+ */
+export function posedProblem(text: string): { statement: string; math?: string; solution?: { answer: string; work: string } } | null {
+  const t = spokenToDigits(text.replace(/[−–]/g, "-"));
+  const NUM = String.raw`-?\d+(?:\.\d+)?(?:\/\d+)?`;
+  const cmp = new RegExp(String.raw`\bwhich(?: one)? is (bigger|larger|greater|more|smaller|less|lower)\b[^\d-]*(${NUM})\s*(?:or|and|vs\.?|,)\s*(${NUM})`, "i").exec(t);
+  if (cmp) {
+    const [a, b] = [cmp[2], cmp[3]];
+    const va = Number(a.includes("/") ? Number(a.split("/")[0]) / Number(a.split("/")[1]) : a);
+    const vb = Number(b.includes("/") ? Number(b.split("/")[0]) / Number(b.split("/")[1]) : b);
+    const big = /bigger|larger|greater|more/i.test(cmp[1]);
+    const answer = (big ? va >= vb : va <= vb) ? a : b;
+    return { statement: `Which is ${cmp[1].toLowerCase()}, ${a} or ${b}?`, solution: { answer, work: answer } };
+  }
+  const math = mathIn(text);
+  if (math && /[?]|\b(?:solve|what is|find|work out|how (?:many|much))\b|^\s*(?:it was|the problem (?:is|was)|question)\b/i.test(text)) return { statement: text.trim().slice(0, 200), math };
+  return null;
+}
+
 /** The numbers in a line, in digits ("five sixths" is 5/6). */
 export function numbersOf(text: string): string[] {
   return (spokenToDigits(text.replace(/[−–]/g, "-")).match(/-?\d+(?:\.\d+)?(?:\/\d+)?/g) ?? []).map((n) => n.replace(/^-0$/, "0"));

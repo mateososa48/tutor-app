@@ -26,3 +26,13 @@ test("an expression equal to the answer, not yet worked out, is partly right", a
   assert.equal(checkResponse(q, "5/6").verdict, "correct");
   assert.equal(checkResponse(q, "2/5").verdict, "incorrect");
 });
+
+test("a problem brought up mid-session becomes the current one, with its answer worked out", async () => {
+  const { createLesson, commitInput } = await import("./state");
+  const s0 = createLesson({ intake: "decimals. my teacher marked my answer wrong and i dont know why" });
+  const { state, assessment } = commitInput(s0, { id: "u2", source: "typed", text: "it was which is bigger, 0.35 or 0.5. i put 0.35", at: 1 });
+  const p = state.problems.find((x) => x.id === state.current)!;
+  assert.equal(p.solution?.answer, "0.5");
+  assert.equal(assessment.final?.verdict, "incorrect");
+  assert.equal(statedFinal("i put 0.35"), "0.35");
+});
