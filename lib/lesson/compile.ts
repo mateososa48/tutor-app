@@ -497,6 +497,23 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
       }
     }
   }
+  // Pictures of the same kind sit side by side (blind reviews, Oct 31: the
+  // 0.5 grid landed low on the left away from 0.35, the 0.39 grid far right
+  // of 0.4). "sid:<id>" is resolved to the board item by the page.
+  const family = (kind: string) => (kind === "fraction" ? "fraction" : kind === "groups" || kind === "blocks" || kind === "illustration" ? kind : null);
+  let last: Record<string, string> = {};
+  for (const b of s.board) {
+    const f = family(b.kind);
+    if (f && b.status === "applied" && !offPage(s, b) && b.problemId === s.current) last[f] = b.sid;
+  }
+  for (const o of ops) {
+    if (o.type !== "draw" && o.type !== "tool" && o.type !== "illustrate") continue;
+    const kind = o.type === "tool" ? "fraction" : o.type === "illustrate" ? "illustration" : o.kind;
+    const f = family(kind);
+    if (!f) continue;
+    if (last[f] && last[f] !== o.sid) o.place = `beside sid:${last[f]}`;
+    last = { ...last, [f]: o.sid };
+  }
   return { ops, objects, issues, notes };
 }
 

@@ -116,13 +116,13 @@ export type BoardObject = {
 /** A compiled board operation, applied by the page as it is. */
 export type BoardOp =
   | { opId: string; type: "heading"; title: string }
-  | { opId: string; type: "draw"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string; reserveH?: number }
+  | { opId: string; type: "draw"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string; reserveH?: number; place?: string }
   | { opId: string; type: "edit"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string }
   | { opId: string; type: "mark"; ref: string; how: "ring" | "swipe" | "underline" | "check" | "cross" | "point" }
   /** One of the board's own exact picture tools, drawn as asked (fraction models). */
-  | { opId: string; type: "tool"; sid: string; name: "draw_fraction" | "draw_grid"; args: Record<string, unknown>; label: string }
+  | { opId: string; type: "tool"; sid: string; name: "draw_fraction" | "draw_grid"; args: Record<string, unknown>; label: string; place?: string }
   /** Real things drawn by the illustrator (lib/illustration): the page asks for the scene and draws it. */
-  | { opId: string; type: "illustrate"; sid: string; what: string; notice?: string; label: string };
+  | { opId: string; type: "illustrate"; sid: string; what: string; notice?: string; label: string; place?: string };
 
 export type RenderedPicture = {
   svg: string;

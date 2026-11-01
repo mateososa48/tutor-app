@@ -35,10 +35,16 @@ type ToolResult = { success: true; message?: string } | { success: false; error:
 
 /** The tool call an op becomes on the page's board. */
 export function opToCall(op: BoardOp, items: Map<string, string>): { name: string; args: Record<string, unknown> } | { skip: string } {
+  // "beside sid:grid1": beside the board item that picture became, when it is up.
+  const place = "place" in op && op.place ? (() => {
+    const m = /sid:(\S+)/.exec(op.place!);
+    const item = m ? items.get(m[1]) : undefined;
+    return item ? { place: op.place!.replace(/sid:\S+/, item) } : {};
+  })() : {};
   if (op.type === "heading") return { name: "start_new_problem", args: { title: op.title } };
-  if (op.type === "tool") return { name: op.name, args: op.args };
+  if (op.type === "tool") return { name: op.name, args: { ...op.args, ...place } };
   if (op.type === "illustrate") return { skip: "drawn by the illustrator" };
-  if (op.type === "draw") return { name: "draw_picture", args: { kind: op.kind, spec: op.spec, rendered: op.rendered, label: op.label, ...(op.reserveH ? { reserveH: op.reserveH } : {}) } };
+  if (op.type === "draw") return { name: "draw_picture", args: { kind: op.kind, spec: op.spec, rendered: op.rendered, label: op.label, ...(op.reserveH ? { reserveH: op.reserveH } : {}), ...place } };
   if (op.type === "edit") {
     const item = items.get(op.sid);
     if (!item) return { name: "draw_picture", args: { kind: op.kind, spec: op.spec, rendered: op.rendered, label: op.label } };
@@ -487,7 +493,9 @@ export class EngineTutorSession {
       });
       const j = (await r.json()) as { scene?: unknown; parts?: string[]; failures?: string[] };
       if (!j.scene) return { opId: op.opId, status: "failed", issue: `no picture (${(j.failures ?? []).join("; ").slice(0, 160)})`, at: Date.now() };
-      const result = (await this.callbacks.onToolCall("draw_illustration", { scene: j.scene }, `engine.${op.opId}`)) as ToolResult;
+      const near = op.place ? /sid:(\S+)/.exec(op.place) : null;
+      const nearItem = near ? this.items.get(near[1]) : undefined;
+      const result = (await this.callbacks.onToolCall("draw_illustration", { scene: j.scene, ...(nearItem ? { place: op.place!.replace(/sid:\S+/, nearItem) } : {}) }, `engine.${op.opId}`)) as ToolResult;
       if (!result.success) return { opId: op.opId, status: "failed", issue: result.error.slice(0, 200), at: Date.now() };
       const item = itemIn(result.message);
       if (item) this.items.set(op.sid, item);
