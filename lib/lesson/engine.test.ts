@@ -283,3 +283,15 @@ test("decimals are said digit by digit", () => {
   assert.equal(cleanSpeech("Which is bigger, zero point six or zero point sixty-three?"), "Which is bigger, zero point six or zero point six three?");
   assert.equal(cleanSpeech("It is zero point fifteen."), "It is zero point one five.");
 });
+
+// Every decimals review: "each column is one tenth" over a grid shaded row by row.
+test("over a grid shaded by rows, columns are said as rows", async () => {
+  let s = createLesson({ intake: "which is bigger, 0.35 or 0.5? i put 0.35" });
+  const g = { do: "grid", grid_rows: 10, grid_columns: 10, shaded: 50, title: "0.5" };
+  const r1 = await runTurn(s, input("u1", "ok"), { planner: scripted({ move: "explain", speech: [{ say: "Here is a grid." }, { say: "What do you see?" }], board: [g], question: { ask: "What do you see?", kind: "open" } }) });
+  s = applied(r1.state, r1);
+  const r2 = await runTurn(s, input("u2", "half is shaded"), { planner: scripted({ move: "explain", speech: [{ say: "Each column of ten squares is one tenth." }, { say: "How many columns are shaded?" }], board: [], question: { ask: "How many rows are shaded?", kind: "value", expects: "5" } }) });
+  const said = r2.speech.map((x) => x.text).join(" ");
+  assert.match(said, /Each row of ten squares/);
+  assert.doesNotMatch(said, /column/i);
+});

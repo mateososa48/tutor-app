@@ -402,8 +402,12 @@ export function validatePlan(state: LessonState, a: InputAssessment, plan: TurnP
   // squares that are not there (Oct 31, decimals: said twice, judged blind).
   const onBoardNow = [...state.board.filter((b) => b.status !== "failed"), ...compiled.objects];
   if (onBoardNow.some((b) => b.facts.some((f) => /shaded, row by row/.test(f))) && !onBoardNow.some((b) => b.kind === "table")) {
-    const col = speech.find((x) => /\bcolumns?\b/i.test(x.text));
-    if (col) add("advice", `the grid is shaded row by row from the top, but the speech says columns ("${col.text.slice(0, 70)}"): say rows.`);
+    // Said in every decimals session, and advice did not stop it: the words
+    // are made to match the picture instead.
+    if (speech.some((x) => /\bcolumns?\b/i.test(x.text))) {
+      speech = speech.map((x) => ({ ...x, text: x.text.replace(/\b(C|c)olumn(s?)\b/g, (_m, c: string, pl: string) => `${c === "C" ? "R" : "r"}ow${pl}`) }));
+      fixes.push("said rows for columns: the grid is shaded row by row");
+    }
   }
   // 4g. A ring goes on the point the sentence names (Oct 31: "the point is
   // three, five" with the ring on (2, 3)).

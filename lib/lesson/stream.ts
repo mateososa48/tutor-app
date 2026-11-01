@@ -119,7 +119,10 @@ export function earlySentence(state: LessonState, a: InputAssessment, partial: R
     return Boolean(hit && hit.obj.status === "applied" && (!hit.part || hit.obj.parts.some((p) => p.toLowerCase() === hit.part!.toLowerCase())));
   };
   if (!needs.every(upAlready)) return null;
-  const text = cleanSpeech(say);
+  let text = cleanSpeech(say);
+  // A grid shaded row by row is described in rows, as in the full turn (validate 4h).
+  const rowGrid = state.board.some((b) => b.status !== "failed" && b.facts.some((f) => /shaded, row by row/.test(f))) && !state.board.some((b) => b.kind === "table");
+  if (rowGrid) text = text.replace(/\b(C|c)olumn(s?)\b/g, (_m, c: string, pl: string) => `${c === "C" ? "R" : "r"}ow${pl}`);
   if (!text || text.split(/\s+/).length > 60) return null;
   if (falseAssertions(text).length) return null;
   const affirms = AFFIRMS.test(text);
