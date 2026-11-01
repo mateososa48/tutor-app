@@ -349,6 +349,13 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         let spec: WorkSpec = { kind: "work", title: "Example", lines: [], moves: [] };
         if (!steps.length || steps[0].replace(/\s+/g, "") !== b.problem.replace(/\s+/g, "")) steps.unshift(b.problem);
         let bad = "";
+        // One equation a step: "f(x) = x^2: f(3) = 9, f(x) = x - 4…" is a list of
+        // examples run together, and it rendered garbled (kids12).
+        const crowded = steps.find((line) => (line.match(/=/g) ?? []).length > 1 && /[:;,]/.test(line));
+        if (crowded) {
+          issues.push(`example step "${crowded.slice(0, 60)}": one equation a step, separated by |; several examples are several example blocks`);
+          break;
+        }
         steps.forEach((line, i) => {
           if (i > 0 && /=/.test(line) && /[a-z]/i.test(line)) {
             const ok = checkStep(steps[i - 1], line);

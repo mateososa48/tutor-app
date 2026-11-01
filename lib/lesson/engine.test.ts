@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runTurn } from "./engine";
+import { cleanSpeech } from "./validate";
 import { applyReceipts, boardForModel, createLesson, newProblem } from "./state";
 import type { LessonState } from "./types";
 
@@ -275,4 +276,10 @@ test("saying a problem is up on the board when nothing new is drawn goes back", 
   });
   assert.equal(r.log.calls, 2);
   assert.match(r.log.issues[0].join(" "), /nothing new is drawn/);
+});
+
+// kids13: "zero point sixty-three" said aloud reads the decimal as a whole number.
+test("decimals are said digit by digit", () => {
+  assert.equal(cleanSpeech("Which is bigger, zero point six or zero point sixty-three?"), "Which is bigger, zero point six or zero point six three?");
+  assert.equal(cleanSpeech("It is zero point fifteen."), "It is zero point one five.");
 });
