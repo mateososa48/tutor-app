@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db/client";
 import { sessionFrames, tutorSessions } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
+import { learnerSkillStates } from "@/lib/db/schema";
+import { reprojectSkills } from "@/lib/db/learning";
 import { auth } from "@/lib/auth";
 
 // GET /api/sessions?limit=20
@@ -70,4 +72,20 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({ id });
+}
+
+// DELETE /api/sessions — delete every session the student has (Privacy &
+// data). Events, pictures and checked answers cascade; the skills are then
+// recomputed, so deleted work stops counting as progress, exactly as a
+// single delete does.
+export async function DELETE() {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const skills = await db.select({ skillKey: learnerSkillStates.skillKey }).from(learnerSkillStates).where(eq(learnerSkillStates.userId, userId));
+  const deleted = await db.delete(tutorSessions).where(eq(tutorSessions.userId, userId)).returning({ id: tutorSessions.id });
+  await reprojectSkills(userId, skills.map((s) => s.skillKey));
+  return NextResponse.json({ ok: true, deleted: deleted.length });
 }

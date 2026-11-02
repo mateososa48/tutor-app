@@ -8,6 +8,7 @@ import { motion } from "motion/react";
 import { Select } from "@base-ui/react/select";
 import { Check, ChevronDown, Languages, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { readPrefs } from "@/lib/app-prefs";
 import { Textarea } from "@/components/ui/textarea";
 import { FooterWave } from "@/components/landing/FooterWave";
 import { FilesPanel } from "@/components/session/FilesPopover";
@@ -51,11 +52,14 @@ export function SessionIntakeDialog({
   /** Lessons to offer when the box is empty (lib/staged-lessons.ts, picked for the grade). */
   lessons?: readonly StagedLesson[];
 }) {
-  const [intake, setIntake] = useState<SessionIntake>({
+  // Length and language start where Settings and Your tutor set them on this device.
+  const [intake, setIntake] = useState<SessionIntake>(() => ({
     ...EMPTY_INTAKE,
+    minutes: readPrefs().sessionMinutes,
+    language: readPrefs().language,
     topic: initialTopic,
     ...(initialLessonKey ? { lessonKey: initialLessonKey } : {}),
-  });
+  }));
   const [open, setOpen] = useState(false);
   const empty = intake.topic.trim() === "";
 

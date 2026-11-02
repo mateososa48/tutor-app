@@ -26,7 +26,7 @@ const LEGACY_LEVELS = [
 
 export type LearningPrefKey = "hintVsAnswer" | "pace" | "examplesVsTheory" | "tone";
 export type PrefValue = -1 | 0 | 1;
-export type PrefOption = { value: PrefValue; phrase: string; detail: string };
+export type PrefOption = { value: PrefValue; short: string; phrase: string; detail: string };
 
 // Phrases say what profileLines tells the tutor. hintVsAnswer 1 is "wants
 // more direct explanations", never "give me the answer".
@@ -39,36 +39,36 @@ export const LEARNING_PREFS: readonly {
     key: "hintVsAnswer",
     label: "When you're stuck",
     options: [
-      { value: -1, phrase: "give me a hint first", detail: "A nudge to try before any explaining" },
-      { value: 0, phrase: "mix hints and explaining", detail: "A bit of both" },
-      { value: 1, phrase: "explain it to me", detail: "More explaining, still no answers handed over" },
+      { value: -1, short: "Hint first", phrase: "give me a hint first", detail: "A nudge to try before any explaining" },
+      { value: 0, short: "A mix", phrase: "mix hints and explaining", detail: "A bit of both" },
+      { value: 1, short: "Explain it", phrase: "explain it to me", detail: "More explaining, still no answers handed over" },
     ],
   },
   {
     key: "pace",
     label: "Pace",
     options: [
-      { value: -1, phrase: "slow and thorough", detail: "Small steps, with checks along the way" },
-      { value: 0, phrase: "at a steady pace", detail: "Somewhere in between" },
-      { value: 1, phrase: "briskly", detail: "Moves on once you've got it" },
+      { value: -1, short: "Slow", phrase: "slow and thorough", detail: "Small steps, with checks along the way" },
+      { value: 0, short: "Steady", phrase: "at a steady pace", detail: "Somewhere in between" },
+      { value: 1, short: "Brisk", phrase: "briskly", detail: "Moves on once you've got it" },
     ],
   },
   {
     key: "examplesVsTheory",
     label: "Explanations",
     options: [
-      { value: -1, phrase: "an example", detail: "Something concrete first, then the idea" },
-      { value: 0, phrase: "whatever fits", detail: "A bit of both" },
-      { value: 1, phrase: "the big idea", detail: "The rule first, then examples" },
+      { value: -1, short: "Example first", phrase: "an example", detail: "Something concrete first, then the idea" },
+      { value: 0, short: "Either", phrase: "whatever fits", detail: "A bit of both" },
+      { value: 1, short: "Idea first", phrase: "the big idea", detail: "The rule first, then examples" },
     ],
   },
   {
     key: "tone",
     label: "Tone",
     options: [
-      { value: -1, phrase: "formal", detail: "Polite and to the point" },
-      { value: 0, phrase: "friendly", detail: "Somewhere in between" },
-      { value: 1, phrase: "casual", detail: "Relaxed, like a friend" },
+      { value: -1, short: "Formal", phrase: "formal", detail: "Polite and to the point" },
+      { value: 0, short: "Friendly", phrase: "friendly", detail: "Somewhere in between" },
+      { value: 1, short: "Casual", phrase: "casual", detail: "Relaxed, like a friend" },
     ],
   },
 ];

@@ -89,7 +89,7 @@ export default function HomePage() {
   const firstName = auth?.user?.name?.split(" ")[0];
 
   return (
-    <AppShell defaultOpen>
+    <AppShell defaultOpen bar>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1080px] px-6 pt-12 pb-20 sm:px-10 lg:px-14 lg:pt-16">
           <header>
