@@ -27,6 +27,15 @@ test("an expression equal to the answer, not yet worked out, is partly right", a
   assert.equal(checkResponse(q, "2/5").verdict, "incorrect");
 });
 
+test("a line that also says the expected value is never called wrong on another reading", async () => {
+  const { checkResponse } = await import("./assess");
+  const q = { id: "q1", problemId: "P1", text: "What is two over four, simplified?", kind: "value" as const, expects: "1/2", status: "open" as const, askedTurn: "t7" };
+  assert.notEqual(checkResponse(q, "wait so 3 minus 1 is 2 and then 2 over 4 is... 1/2? so its 1 and 1/2?").verdict, "incorrect");
+  assert.equal(checkResponse(q, "1/2").verdict, "correct");
+  assert.equal(checkResponse(q, "1 and 1/2").verdict, "incorrect");
+  assert.equal(checkResponse(q, "2/3").verdict, "incorrect");
+});
+
 test("a problem brought up mid-session becomes the current one, with its answer worked out", async () => {
   const { createLesson, commitInput } = await import("./state");
   const s0 = createLesson({ intake: "decimals. my teacher marked my answer wrong and i dont know why" });

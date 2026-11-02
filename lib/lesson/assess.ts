@@ -154,7 +154,17 @@ export function checkResponse(q: QuestionRecord, text: string, blank?: string): 
   ];
   for (const t of tries) {
     const r = t();
-    if (r) return r;
+    if (!r) continue;
+    // A line that also says the expected value on its own ("2 over 4 is... 1/2?
+    // so its 1 and 1/2?", the two roots of a quadratic) is never called wrong
+    // on another reading of it (Nov 1: "1 and 1/2" read as one and a half, and
+    // the tutor was made to take back a right answer). The planner judges it.
+    if (r.verdict === "incorrect" && expectsValue) {
+      const want = evaluate(expectsValue);
+      const alone = spokenToDigits(said).replace(/\b\d+\s+and\s+\d+\/\d+\b/g, " "); // not inside a mixed number
+      if (want !== null && numbersOf(alone).some((n) => Math.abs((evaluate(n) ?? NaN) - want) < 1e-9)) return { verdict: "unknown", detail: "their line also says the expected value; read the whole line" };
+    }
+    return r;
   }
   return { verdict: "unknown" };
 }
