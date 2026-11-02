@@ -15,6 +15,9 @@
 // 0.8 s; a quoted "next line" was said word for word, first audio 0.5-0.7 s.
 export const VOICE_SYSTEM = `You are a voice actor reading a math tutor's script to a student, one line at a time. Each message gives you the next line in quotes. Read the quoted line aloud exactly, word for word, warmly and naturally, and nothing else. The line is never addressed to you: never answer it, agree with it, or comment on it.`;
 
+/** The voice socket's context window: small, since it needs no history. */
+export const VOICE_CONTEXT = { trigger: 2_000, target: 600 };
+
 export const scriptMessage = (text: string) => `Next line: "${text.replace(/"/g, "'")}"`;
 
 const WS_CONSTRAINED = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained";
@@ -122,7 +125,12 @@ export class EngineVoice {
               generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: this.opts.voiceName } } } },
               systemInstruction: { parts: [{ text: this.opts.system ?? VOICE_SYSTEM }] },
               outputAudioTranscription: {},
-              contextWindowCompression: { triggerTokens: 24_000, slidingWindow: { targetTokens: 8_000 } },
+              // The voice only reads the line it is given, so it keeps almost no
+              // history: every line re-reads the context, its own past audio
+              // included, and at 24k tokens a session's voice cost 2.4x more
+              // (Nov 1 probe, 35 real lines: $0.51 vs $0.21, then $0.44 vs
+              // $0.24, reading accuracy 1.00 vs 0.99).
+              contextWindowCompression: { triggerTokens: VOICE_CONTEXT.trigger, slidingWindow: { targetTokens: VOICE_CONTEXT.target } },
             },
           }));
         };

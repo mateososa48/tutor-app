@@ -12,3 +12,9 @@ test("number words and digits are the same words said", () => {
 test("a script is quoted, with its own quotes softened", () => {
   assert.equal(scriptMessage('Say "half".'), `Next line: "Say 'half'."`);
 });
+
+test("the voice socket keeps almost no history", async () => {
+  const { VOICE_CONTEXT } = await import("./engine-voice");
+  // Every line re-reads the context, past audio included (Nov 1: 2.4x the cost at 24k).
+  assert.ok(VOICE_CONTEXT.trigger <= 4_000 && VOICE_CONTEXT.target < VOICE_CONTEXT.trigger);
+});
