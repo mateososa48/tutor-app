@@ -139,7 +139,7 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
     const r = renderWork(spec, obj ? fresh : new Set());
     const o = picture(workSid(s.current), "work", s.current, spec, r, [describeWork(spec)], obj);
     put(o);
-    if (obj || ops.some((x) => x.type === "draw" && x.sid === o.sid)) ops.push({ opId: opId(), type: "edit", sid: o.sid, kind: "work", spec, rendered: r, label });
+    if (obj || ops.some((x) => x.type === "draw" && x.sid === o.sid)) ops.push({ opId: opId(), type: "edit", sid: o.sid, kind: "work", spec, rendered: r, label, fresh: [...fresh] });
     else ops.push({ opId: opId(), type: "draw", sid: o.sid, kind: "work", spec, rendered: r, label, reserveH: 160 });
   };
 
@@ -269,7 +269,7 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
           if (!m.changed) break;
           const r = renderTable(m.spec, m.fresh);
           put(picture(sid, "table", s.current, m.spec, r, [describeTable(m.spec)], prev));
-          ops.push({ opId: opId(), type: "edit", sid, kind: "table", spec: m.spec, rendered: r, label: `table ${describeTable(m.spec)}` });
+          ops.push({ opId: opId(), type: "edit", sid, kind: "table", spec: m.spec, rendered: r, label: `table ${describeTable(m.spec)}`, fresh: [...m.fresh] });
         } else {
           if (prev && prev.kind === "table") {
             issues.push(`table ${sid} already has columns ${(prev.spec as TableSpec).columns.join(" | ")}; give a new id for a different table`);
@@ -293,7 +293,7 @@ export function compileBoard(s: LessonState, intents: BoardIntent[], opPrefix: s
         if (old && built.fresh.size === 0 && !built.rescaled) break;
         const r = renderPlane(built.spec, old ? built.fresh : new Set());
         put(picture(sid, "plane", s.current, built.spec, r, [describePlane(built.spec)], old ? prev : undefined));
-        ops.push(old && prev ? { opId: opId(), type: "edit", sid, kind: "plane", spec: built.spec, rendered: r, label: `graph: ${describePlane(built.spec)}` } : { opId: opId(), type: "draw", sid, kind: "plane", spec: built.spec, rendered: r, label: `graph: ${describePlane(built.spec)}` });
+        ops.push(old && prev ? { opId: opId(), type: "edit", sid, kind: "plane", spec: built.spec, rendered: r, label: `graph: ${describePlane(built.spec)}`, fresh: [...built.fresh] } : { opId: opId(), type: "draw", sid, kind: "plane", spec: built.spec, rendered: r, label: `graph: ${describePlane(built.spec)}` });
         break;
       }
       case "figure": {
@@ -515,7 +515,7 @@ export function fillBlank(s: LessonState, fill: string, value: string, opPrefix:
     if ("error" in r) return { ops, objects, issues: [r.error], notes: [] };
     const rendered = renderWork(r.spec, r.fresh);
     objects.push(picture(hit.obj.sid, "work", hit.obj.problemId, r.spec, rendered, [describeWork(r.spec)], hit.obj));
-    ops.push({ opId: `${opPrefix}.f1`, type: "edit", sid: hit.obj.sid, kind: "work", spec: r.spec, rendered, label: "the working" });
+    ops.push({ opId: `${opPrefix}.f1`, type: "edit", sid: hit.obj.sid, kind: "work", spec: r.spec, rendered, label: "the working", fresh: [...r.fresh] });
     if (final) ops.push({ opId: `${opPrefix}.f2`, type: "mark", ref: `${hit.obj.sid}.${hit.part}`, how: "check" });
     return { ops, objects, issues: [], notes: [`filled ${hit.part} with "${value}"`] };
   }
@@ -530,8 +530,52 @@ export function fillBlank(s: LessonState, fill: string, value: string, opPrefix:
     const next: TableSpec = { ...spec, rows };
     const rendered = renderTable(next, new Set([hit.part]));
     objects.push(picture(hit.obj.sid, "table", hit.obj.problemId, next, rendered, [describeTable(next)], hit.obj));
-    ops.push({ opId: `${opPrefix}.f1`, type: "edit", sid: hit.obj.sid, kind: "table", spec: next, rendered, label: `table ${describeTable(next)}` });
+    ops.push({ opId: `${opPrefix}.f1`, type: "edit", sid: hit.obj.sid, kind: "table", spec: next, rendered, label: `table ${describeTable(next)}`, fresh: [hit.part] });
     return { ops, objects, issues: [], notes: [`filled ${hit.part} with "${value}"`] };
   }
   return { ops, objects, issues: [`${fill} is not a blank`], notes: [] };
+}
+
+/** A picture drawn again from its spec, the given parts written in (null for kinds with no such marking). */
+function rerender(kind: PictureKind, spec: unknown, fresh: string[]): RenderedPicture | null {
+  const f = new Set(fresh);
+  if (kind === "work") return renderWork(spec as WorkSpec, f);
+  if (kind === "table") return renderTable(spec as TableSpec, f);
+  if (kind === "plane") return renderPlane(spec as PlaneSpec, f);
+  return null;
+}
+
+/**
+ * One call per picture a turn. Two calls on one picture made the board write
+ * it twice: the new parts were written in, wiped, and written in again (Nov 2,
+ * "it shows up, gets deleted, then shows up again"): a draw then its edit is
+ * one draw of the last state; two edits are one edit with both changes.
+ */
+export function collapseOps(ops: BoardOp[]): BoardOp[] {
+  const out: BoardOp[] = [];
+  const at = new Map<string, number>();
+  for (const op of ops) {
+    // A heading turns the page: the same id after it is drawn fresh on the new one.
+    if (op.type === "heading") at.clear();
+    if (op.type !== "draw" && op.type !== "edit") {
+      out.push(op);
+      continue;
+    }
+    const i = at.get(op.sid);
+    const first = i === undefined ? null : out[i];
+    if (!first || (first.type !== "draw" && first.type !== "edit") || first.kind !== op.kind) {
+      at.set(op.sid, out.length);
+      out.push(op);
+      continue;
+    }
+    if (first.type === "draw") {
+      const whole = rerender(op.kind, op.spec, []) ?? { ...op.rendered, svg: op.rendered.svg.replace(/ data-fresh="1"/g, "") };
+      out[i!] = { ...first, spec: op.spec, label: op.label, rendered: whole };
+    } else {
+      const fresh = first.fresh && op.type === "edit" && op.fresh ? [...new Set([...first.fresh, ...op.fresh])] : undefined;
+      const rendered = fresh ? (rerender(op.kind, op.spec, fresh) ?? op.rendered) : op.rendered;
+      out[i!] = { ...first, spec: op.spec, label: op.label, rendered, ...(fresh ? { fresh } : {}) };
+    }
+  }
+  return out;
 }

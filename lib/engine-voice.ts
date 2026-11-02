@@ -28,7 +28,8 @@ export type VoiceOptions = {
   voiceName: string;
   /** The socket URL: from a token in the browser, from a key in Node. */
   url: () => Promise<string>;
-  onAudio: (base64Pcm24k: string) => void;
+  /** A line's audio, with the tag it was said with (the caller drops a stale line's tail). */
+  onAudio: (base64Pcm24k: string, tag?: number) => void;
   /** The server stopped the audio (never on purpose here, but kept honest). */
   onInterrupted?: () => void;
   onDebug?: (kind: string, payload: Record<string, unknown>) => void;
@@ -45,7 +46,7 @@ export function keyUrl(key: string) {
   return `${WS_KEY}?key=${encodeURIComponent(key)}`;
 }
 
-type Waiter = { text: string; heard: string; audioMs: number; droppedMs: number; firstAudioAt: number; lastAudioAt: number; sentAt: number; complete: boolean; resolve: (r: SaidResult) => void; timer: ReturnType<typeof setTimeout>; quiet: ReturnType<typeof setTimeout> | null };
+type Waiter = { text: string; tag?: number; heard: string; audioMs: number; droppedMs: number; firstAudioAt: number; lastAudioAt: number; sentAt: number; complete: boolean; resolve: (r: SaidResult) => void; timer: ReturnType<typeof setTimeout>; quiet: ReturnType<typeof setTimeout> | null };
 
 // 3.8 often sends turnComplete before its audio: a turn ends once it is
 // complete and no audio has come for this long.
@@ -189,7 +190,7 @@ export class EngineVoice {
       }
       w.audioMs += ms;
       if (w.complete) this.armQuiet(w);
-      this.opts.onAudio(data);
+      this.opts.onAudio(data, w.tag);
     }
     const tr = (sc.outputTranscription as { text?: string } | undefined)?.text;
     if (tr && w) w.heard += tr;
@@ -235,12 +236,12 @@ export class EngineVoice {
   }
 
   /** Say one approved segment; resolves when its audio has all arrived (not when it has played). */
-  say(text: string, timeoutMs = 20_000): Promise<SaidResult> {
+  say(text: string, timeoutMs = 20_000, tag?: number): Promise<SaidResult> {
     const run = async (): Promise<SaidResult> => {
       if (this.closed) return { ok: false, heard: "", audioMs: 0, firstAudioMs: -1, totalMs: 0, reason: "closed" };
       await this.connect();
       return new Promise<SaidResult>((resolve) => {
-        const w: Waiter = { text, heard: "", audioMs: 0, droppedMs: 0, firstAudioAt: 0, lastAudioAt: 0, sentAt: Date.now(), complete: false, resolve, quiet: null, timer: setTimeout(() => this.finish(this.current?.audioMs ? true : false, "timeout"), timeoutMs) };
+        const w: Waiter = { text, ...(tag !== undefined ? { tag } : {}), heard: "", audioMs: 0, droppedMs: 0, firstAudioAt: 0, lastAudioAt: 0, sentAt: Date.now(), complete: false, resolve, quiet: null, timer: setTimeout(() => this.finish(this.current?.audioMs ? true : false, "timeout"), timeoutMs) };
         this.current = w;
         this.ws!.send(JSON.stringify({ clientContent: { turns: [{ role: "user", parts: [{ text: (this.opts.message ?? scriptMessage)(text) }] }], turnComplete: true } }));
       });

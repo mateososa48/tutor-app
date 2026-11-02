@@ -117,7 +117,8 @@ export type BoardObject = {
 export type BoardOp =
   | { opId: string; type: "heading"; title: string }
   | { opId: string; type: "draw"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string; reserveH?: number }
-  | { opId: string; type: "edit"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string }
+  /** fresh: the parts this edit adds or changes (written in; the rest stays), so two edits in one turn can become one. */
+  | { opId: string; type: "edit"; sid: string; kind: PictureKind; spec: unknown; rendered: RenderedPicture; label: string; fresh?: string[] }
   | { opId: string; type: "mark"; ref: string; how: "ring" | "swipe" | "underline" | "check" | "cross" | "point" }
   /** One of the board's own exact picture tools, drawn as asked (fraction models). */
   | { opId: string; type: "tool"; sid: string; name: "draw_fraction" | "draw_grid"; args: Record<string, unknown>; label: string }

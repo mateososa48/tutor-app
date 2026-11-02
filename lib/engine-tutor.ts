@@ -12,6 +12,7 @@
 
 import { EngineVoice, faithfulness, tokenUrl } from "./engine-voice";
 import { EngineEar } from "./engine-ear";
+import { isBackchannel } from "./backchannel";
 import { AudioCapture, AudioPlayer, quietFrame } from "./audio";
 import { revealByFraction } from "./gemini-tutor";
 import { DEFAULT_LIVE_MODEL } from "./gemini-live";
@@ -101,7 +102,10 @@ export class EngineTutorSession {
   // Each committed line gets a generation; a newer line stops the older one's speech.
   private generation = 0;
   private busy: Promise<void> = Promise.resolve();
-  private waiting: string[] = [];
+  private waiting: Array<{ text: string; source: "intake" | "typed" | "spoken"; files: ReturnType<typeof sourceFiles> }> = [];
+  // Reactions typed while the tutor talks ("ok", "ah"): they wait for it to finish.
+  private held: string[] = [];
+  private lastSaid = "";
   // The last lines both ways, for the illustrator (it labels only numbers they have had).
   private recent: Array<{ who: "student" | "tutor"; text: string }> = [];
   private recentTutor: string[] = [];
@@ -117,7 +121,7 @@ export class EngineTutorSession {
 
   /** A turn is being planned, drawn or said, or its audio is still playing. */
   isBusy(): boolean {
-    return this.running > 0 || this.waiting.length > 0 || Boolean(this.player?.isPlaying());
+    return this.running > 0 || this.waiting.length > 0 || this.held.length > 0 || Boolean(this.player?.isPlaying());
   }
 
   get model(): string {
@@ -162,7 +166,9 @@ export class EngineTutorSession {
         if (!token) throw new Error("live-token empty");
         return tokenUrl(token);
       },
-      onAudio: (b64) => {
+      onAudio: (b64, tag) => {
+        // The tail of a line the student has moved past is never played.
+        if (tag !== undefined && tag !== this.generation) return;
         player.enqueue(b64);
         this.lastAudioAt = Date.now();
         const ms = (Math.floor((b64.length * 3) / 4) / 2 / 24000) * 1000;
@@ -288,8 +294,30 @@ export class EngineTutorSession {
 
   sendText(text: string): boolean {
     if (this.ended || !text.trim()) return false;
-    this.commit(text.trim(), "typed");
+    const line = text.trim();
+    // A reaction while the tutor is still talking does not cut it off: it is
+    // answered once the tutor finishes, unless the tutor ended on a question.
+    if (isBackchannel(line) && (this.running > 0 || this.player?.isPlaying())) {
+      this.held.push(line);
+      this.debug("text", "backchannel_held", { text: line });
+      // Only the audio is still playing: nothing else will release it.
+      if (this.running === 0) void this.releaseHeld(this.generation);
+      return true;
+    }
+    this.commit(line, "typed");
     return true;
+  }
+
+  /** Once the tutor has finished talking: a held reaction is answered, or dropped when the tutor's last words asked them something. */
+  private async releaseHeld(gen: number) {
+    while (gen === this.generation && !this.ended && this.player?.isPlaying()) await new Promise((ok) => setTimeout(ok, 200));
+    if (gen !== this.generation || this.ended || !this.held.length) return;
+    const held = this.held.splice(0);
+    if (/\?\s*$/.test(this.lastSaid)) {
+      this.debug("text", "backchannel_dropped", { text: held.join(" ") });
+      return;
+    }
+    this.commit(held.join(" "), "typed");
   }
 
   sendFiles(): boolean {
@@ -303,20 +331,26 @@ export class EngineTutorSession {
    */
   private commit(text: string, source: "intake" | "typed" | "spoken", files: ReturnType<typeof sourceFiles> = []) {
     this.generation += 1;
+    // A real line supersedes the reactions held before it.
+    this.held = [];
     this.player?.flush();
     this.timeline = [];
     this.enqueuedMs = 0;
     this.showCaption("");
-    this.waiting.push(text);
+    this.waiting.push({ text, source, files });
     this.recent = [...this.recent, { who: "student" as const, text }].slice(-8);
     this.callbacks.onActivity("thinking");
-    const gen = this.generation;
     this.busy = this.busy.then(async () => {
       if (!this.waiting.length || this.ended) return;
-      const line = this.waiting.splice(0).join(" ");
+      const batch = this.waiting.splice(0);
+      // The batch holds every line so far, so its reply speaks for the newest
+      // of them. Taking the first line's generation left it stale: on Nov 2
+      // "ok" then "lets do the last question" were planned together, the
+      // board was drawn, and not a word was said (twice in one session).
+      const gen = this.generation;
       this.running += 1;
       try {
-        await this.runTurn(line, source, files, gen);
+        await this.runTurn(batch.map((b) => b.text).join(" "), batch[0].source, batch.flatMap((b) => b.files), gen);
       } finally {
         this.running -= 1;
       }
@@ -474,6 +508,7 @@ export class EngineTutorSession {
     await fetch(`/api/sessions/${this.options.sessionId}/turns/receipts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ turnId: res.turnId, receipts }) })
       .catch((err) => this.debug("error", "receipts_failed", { message: (err as Error).message }));
     if (gen === this.generation && !this.ended) this.callbacks.onActivity("idle");
+    if (this.held.length) void this.releaseHeld(gen);
   }
 
   /** Real things: the illustrator writes the scene, the page draws it; the receipt names its parts. */
@@ -522,12 +557,13 @@ export class EngineTutorSession {
     this.timeline.push(seg);
     if (this.timeline.length > 8) this.timeline.shift();
     const at = Date.now();
-    const r = await this.voice.say(text);
+    const r = await this.voice.say(text, undefined, gen);
     seg.done = true;
     if (gen !== this.generation) return;
     if (!r.ok) this.debug("voice", "segment_not_said", { text: text.slice(0, 200), reason: r.reason });
     this.recent = [...this.recent, { who: "tutor" as const, text }].slice(-8);
     this.recentTutor = [...this.recentTutor, text].slice(-4);
+    this.lastSaid = text;
     // The approved text is the record: what the student was meant to hear.
     this.callbacks.onTranscript({ id: `engine_${at}`, role: "tutor", text, at });
   }

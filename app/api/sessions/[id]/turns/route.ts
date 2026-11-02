@@ -71,13 +71,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }
     }
     // With a worksheet, the problem is the one they named; with one problem, that one; else they pick.
-    const picked = problems.length ? namedProblem(text, problems) ?? (problems.length === 1 ? problems[0].id : null) : undefined;
+    const picked = problems.length ? namedProblem(text, problems, false, { current: null }) ?? (problems.length === 1 ? problems[0].id : null) : undefined;
     lesson = createLesson({ intake: text, grade: profile?.grade || undefined, ...(files.length ? { uploads: files.length } : {}), ...(problems.length ? { problems, current: picked ?? null } : {}) });
   }
 
   // A later line that names another problem on the sheet moves to it.
   if (stored && lesson.problems.length > 1) {
-    const named = namedProblem(text, lesson.problems, lesson.current === null);
+    const named = namedProblem(text, lesson.problems, lesson.current === null, { current: lesson.current });
     if (named && named !== lesson.current) lesson = { ...lesson, current: named, problems: lesson.problems.map((p) => (p.id === lesson.current && p.status === "open" ? { ...p, status: "set_aside" as const } : p.id === named ? { ...p, status: "open" as const } : p)) };
   }
 

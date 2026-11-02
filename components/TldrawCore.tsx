@@ -4228,13 +4228,22 @@ const TldrawCore = forwardRef<WhiteboardHandle, TldrawCoreProps>(function Tldraw
       })();
       const w = Math.round(out.w) + pad * 2;
       const h = Math.round(out.h) + pad * 2;
-      const fresh = out.svg.includes("data-fresh");
+      // Still being written (queued, or mid-stroke): the writing already under
+      // way takes the new version. A second write of the new parts wiped them
+      // and wrote them again (Nov 2: "it shows up, gets deleted, then shows up again").
+      const writing = [currentJobRef.current, ...revealQueueRef.current].some((j) => j?.kind === "reveal" && j.steps.some((st) => st.id === shape.id));
+      // A first write (a whole drawing) writes all of the new version; an edit's
+      // write keeps the new version's own new parts, so nothing already there is wiped.
+      const firstWrite = !String((shape.props as { svg?: string }).svg ?? "").includes("data-fresh");
+      const svg = writing && firstWrite ? out.svg.replace(/ data-fresh="1"/g, "") : out.svg;
+      const fresh = !writing && out.svg.includes("data-fresh");
       const reduce = instantRef.current || prefersReducedMotion();
+      const reveal = writing ? (shape.props as { reveal?: number }).reveal ?? 1 : fresh && !reduce ? 0 : 1;
       editor.run(() => {
         editor.updateShape({
           id: shape.id,
           type: "illustration",
-          props: { w, h, svg: out.svg, parts: JSON.stringify({ scale: 1, pad, rects: out.parts, aliases: out.aliases, paths: out.paths ?? {} }), scene: JSON.stringify(spec), reveal: fresh && !reduce ? 0 : 1 },
+          props: { w, h, svg, parts: JSON.stringify({ scale: 1, pad, rects: out.parts, aliases: out.aliases, paths: out.paths ?? {} }), scene: JSON.stringify(spec), reveal },
         } as unknown as Parameters<Editor["updateShape"]>[0]);
       }, { history: "ignore" });
       item.label = itemLabelFrom(label, item.tool.replaceAll("_", " "));

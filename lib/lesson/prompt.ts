@@ -6,6 +6,7 @@
 // the transcript is cut.
 
 import { boardForModel, currentProblem, alreadySaid } from "./state";
+import { namedProblem } from "./source";
 import type { InputAssessment } from "./assess";
 import type { LessonState, StudentInput, TeachingMove } from "./types";
 
@@ -15,6 +16,7 @@ How a good tutor decides:
 - Start from the student's newest line and their goal. Answer the question they actually asked. Use what they already said; never ask for it again (it is listed under ALREADY SAID).
 - The CHECKER section is true. Never contradict it. When their answer is right but a reason is false, say both: the answer is right, and the false step's true fact ("Four hours is right. But five times four plus three is twenty-three, not twenty-four, and twenty-four is more than twenty-three.").
 - Pick the move that fits:
+  - a problem just opened and they have said nothing about it yet: find out where they are first. One short question: how they would start, or which part is confusing. Do not explain or work a step yet.
   - no way in yet ("I don't know", "teach me", stuck twice): explain the idea in two or three plain sentences, show it on the board, model one step, then let them try the next one. A worked step on their own problem is allowed; set gives_answer if you state its answer.
   - a wrong method with a reason: ask where it came from only if you do not know; otherwise show once where it breaks (a quick counterexample, or the picture), then say the right idea in one sentence and return to their problem.
   - a slip: point at it (mark) and let them fix it.
@@ -62,8 +64,13 @@ Questions and verdicts:
 
 Answer only with the turn_plan tool: call it at once, with no text before it. Each speech item is {"say": "...", "needs": [...]}. Put your first sentence first: it is said as soon as it is written.`;
 
+/** Their newest line is the first on the current problem (the line that picked it, or the opening one). */
+function firstLineOn(state: LessonState): boolean {
+  return state.evidence.filter((e) => e.problemId === state.current).length <= 1 && !state.transcript.some((t) => t.role === "tutor" && state.questions.some((q) => q.problemId === state.current && q.askedTurn === t.id));
+}
+
 /** The moves that fit now, from the signals and the assessment: guidance, not a script. */
-export function allowedMoves(state: LessonState, a: InputAssessment): { moves: TeachingMove[]; note: string } {
+export function allowedMoves(state: LessonState, a: InputAssessment, text = ""): { moves: TeachingMove[]; note: string } {
   if (a.signals.includes("stop")) return { moves: ["close"], note: "They want to stop: close warmly, no question, no new task." };
   const solvedAlone = state.evidence.some((e) => e.problemId === state.current && e.answer?.verdict === "correct" && e.assistance < 3);
   if (a.signals.includes("done_understood") && (solvedAlone || a.answer?.verdict === "correct")) return { moves: ["recap", "close"], note: "They finished and say they understand: a one-sentence recap of what they showed, then an optional offer to stop or try one more. No new task." };
@@ -71,6 +78,13 @@ export function allowedMoves(state: LessonState, a: InputAssessment): { moves: T
   if (a.signals.includes("already_answered")) return { moves: ["explain", "model_step", "confirm", "repair"], note: "They say they already answered: use their answer; do not ask it again." };
   if (a.signals.includes("different_way")) return { moves: ["explain", "repair", "contrast"], note: "The last explanation did not work for them: use a different representation, not the same one reworded." };
   if (a.signals.includes("no_idea")) return { moves: ["explain", "model_step", "completion"], note: "No way in yet: teach it now, then a small step for them." };
+  // A problem that just opened, and nothing yet from them about how they would
+  // do it: find out where they are before teaching (Nov 2, Mateo: "it just
+  // dives into explaining… it should first figure out what exactly the
+  // student needs"; it had said the first step of 3x + 7 = 22 right after
+  // they picked it).
+  if (state.current && firstLineOn(state) && !a.answer && !a.final && !a.claims.length && !a.reasonGiven && !a.signals.some((k) => k !== "frustrated" && k !== "question") && !(a.signals.includes("question") && !namedProblem(text, state.problems, false, { current: state.current })))
+    return { moves: ["diagnose", "clarify"], note: "This problem just opened and they have said nothing yet about how they would do it. Find out where they are first: one short question (how they would start, or which part is confusing), the problem on the board. Do not explain it or work a step yet." };
   return { moves: ["clarify", "diagnose", "explain", "model_step", "completion", "hint", "contrast", "confirm", "practice", "self_explanation", "repair", "recap"], note: "" };
 }
 
@@ -91,7 +105,7 @@ function checkerLines(a: InputAssessment): string[] {
 /** The turn's context: the lesson's facts first, then the conversation, then the new line and what the code found in it. */
 export function turnContext(state: LessonState, input: StudentInput, a: InputAssessment, extra: string[] = []): string {
   const p = currentProblem(state);
-  const allowed = allowedMoves(state, a);
+  const allowed = allowedMoves(state, a, input.text);
   const open = state.questions.filter((q) => q.status === "open");
   const answered = state.questions.filter((q) => q.status === "answered").slice(-6);
   const lines: string[] = [];

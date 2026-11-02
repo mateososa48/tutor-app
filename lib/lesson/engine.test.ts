@@ -42,7 +42,10 @@ test("a step goes under the problem, a right answer fills its blank, and the fin
   let r = await runTurn(s, input("u1", "can you teach me"), {
     planner: scripted({ move: "explain", speech: [{ say: "Take seven from both sides to undo the plus seven.", needs: ["work.L1"] }, { say: "What does three x equal now?" }], board: [{ do: "work_step", left: "−7", right: "−7", note: "subtract 7", result: "3x = ?" }], question: { ask: "What does three x equal now?", kind: "step", expects: "3x = 15", fill: "work.L2" } }),
   });
-  assert.deepEqual(r.ops.map((o) => o.type), ["heading", "draw", "edit"]);
+  // One call for the working: its first line and the step are one drawing, written once.
+  assert.deepEqual(r.ops.map((o) => o.type), ["heading", "draw"]);
+  assert.match((r.ops[1] as { rendered: { svg: string } }).rendered.svg, /subtract 7/);
+  assert.doesNotMatch((r.ops[1] as { rendered: { svg: string } }).rendered.svg, /data-fresh/);
   s = applied(r.state, r);
   r = await runTurn(s, input("u2", "3x = 15"), {
     planner: scripted({ move: "confirm", speech: [{ say: "Divide both sides by three." }, { say: "What is x?" }], board: [{ do: "work_step", left: "÷3", right: "÷3", note: "divide by 3", result: "x = ?" }], question: { ask: "What is x?", kind: "value", expects: "5", check: "3x + 7 = 22", fill: "work.L3" } }),
@@ -294,4 +297,33 @@ test("over a grid shaded by rows, columns are said as rows", async () => {
   const said = r2.speech.map((x) => x.text).join(" ");
   assert.match(said, /Each row of ten squares/);
   assert.doesNotMatch(said, /column/i);
+});
+
+// Session 8i9xr1 (Nov 2): "lets do the last question" put problem 6's table and
+// graph under problem 1's heading; nothing opened its page.
+test("moving to another problem on the sheet opens its page first, set by the plan or named in the speech", async () => {
+  const sheet = [newProblem("P1", "1. Solve: 3x + 7 = 22", { kind: "worksheet", file: "File 1", question: "1" }), newProblem("P2", "2. Solve: 5(x - 2) = 30", { kind: "worksheet", file: "File 1", question: "2" }), newProblem("P6", "6. Graph: y = 2x - 1", { kind: "worksheet", file: "File 1", question: "6" })];
+  sheet[0].math = "3x + 7 = 22";
+  sheet[2].math = "y = 2x - 1";
+  let s = createLesson({ intake: "help with my sheet", problems: sheet, current: "P1" });
+  const r1 = await runTurn(s, input("u1", "1"), { planner: scripted({ move: "diagnose", speech: [{ say: "How would you start?" }], board: [], question: { ask: "How would you start?", kind: "open" } }) });
+  s = applied(r1.state, r1);
+  for (const plan of [{ problem: "P6" }, {}]) {
+    const r2 = await runTurn(s, input("u2", "ok"), { planner: scripted({ move: "practice", ...plan, speech: [{ say: "Okay, the last one, problem six." }, { say: "What is y when x is zero?" }], board: [{ do: "table", id: "table1", columns: "x | y", rows: "0 | ?; 1 | ?" }], question: { ask: "What is y when x is zero?", kind: "value", expects: "-1" } }) });
+    assert.equal(r2.state.current, "P6");
+    assert.deepEqual(r2.ops.map((o) => (o.type === "heading" ? `heading ${o.title}` : `${o.type} ${"sid" in o ? o.sid : ""}`)), ["heading Graph: y = 2x - 1", "draw table1"]);
+    assert.equal(r2.state.board.find((b) => b.sid === "table1")?.problemId, "P6");
+  }
+});
+
+test("two changes to one picture in a turn are one edit that writes in both", async () => {
+  let s = createLesson({ intake: "graph y = 2x - 1" });
+  const r1 = await runTurn(s, input("u1", "ok"), { planner: scripted({ move: "explain", speech: [{ say: "Here's a table." }, { say: "What is y when x is zero?" }], board: [{ do: "table", id: "t1", columns: "x | y", rows: "0 | ?; 1 | ?; 2 | ?" }], question: { ask: "What is y when x is zero?", kind: "value", expects: "-1", fill: "t1.r1c2" } }) });
+  s = applied(r1.state, r1);
+  const r2 = await runTurn(s, input("u2", "-1"), { planner: scripted({ move: "confirm", speech: [{ say: "Now x equals one." }, { say: "What is y?" }], board: [{ do: "table", id: "t1", columns: "x | y", rows: "0 | -1; 1 | ?; 2 | ?; 3 | ?" }], question: { ask: "What is y?", kind: "value", expects: "1" } }) });
+  const edits = r2.ops.filter((o) => o.type === "edit");
+  assert.equal(edits.length, 1, JSON.stringify(r2.ops.map((o) => o.type)));
+  const e = edits[0] as { fresh?: string[]; rendered: { svg: string } };
+  assert.ok(e.fresh?.includes("r1c2") && e.fresh.includes("r4c1"), JSON.stringify(e.fresh));
+  assert.equal(e.rendered.svg.split("data-fresh").length - 1 >= 2, true);
 });

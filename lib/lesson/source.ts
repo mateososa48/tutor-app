@@ -116,10 +116,23 @@ export async function extractSourceProblems(files: SourceFile[], signal?: AbortS
   }).filter((p) => p.statement.length > 3);
 }
 
-/** The problem the student named in their words ("question 1", "number 2", "the second one"), or null. */
-export function namedProblem(text: string, problems: ProblemRecord[], bare = false): string | null {
+/**
+ * The problem the student named in their words ("question 1", "number 2", "the
+ * second one"), or null. With `rel` (the student's own line, never the tutor's
+ * speech, where "like the last one" means something else) it also reads "the
+ * last question" and "the next one" (Nov 2: "lets do the last question" stayed
+ * on problem 1).
+ */
+export function namedProblem(text: string, problems: ProblemRecord[], bare = false, rel?: { current: string | null }): string | null {
   const t = text.toLowerCase();
   if (!problems.length) return null;
+  const sheet = problems.filter((p) => p.source.kind === "worksheet");
+  const relative = rel && sheet.length > 1 ? /(?:^\s*|\b(?:do|try|go(?: on)? to|move on to|start(?: with)?|work on|help(?: me)? with|skip to|on ?to|switch to|what about)\s+)(?:the\s+)?(last|final|next)\s+(?:one|question|problem|exercise)\b/.exec(t) : null;
+  if (relative) {
+    if (relative[1] !== "next") return sheet[sheet.length - 1].id;
+    const i = sheet.findIndex((p) => p.id === rel!.current);
+    return i >= 0 && i + 1 < sheet.length ? sheet[i + 1].id : null;
+  }
   const ord = !bare && !/\b(?:one|problem|question)\b/.test(t) ? -1 : ["first", "second", "third", "fourth", "fifth", "sixth"].findIndex((w) => new RegExp(`\\b${w}\\b`).test(t));
   // A bare "2" is a pick only while none is chosen; mid-problem it is an answer.
   const m = /\b(?:question|number|problem|no\.?|#)\s*(\d+[a-z]?)\b/.exec(t) ?? (bare ? /^\s*(\d+[a-z]?)\s*[.!]?\s*$/.exec(t) : null);

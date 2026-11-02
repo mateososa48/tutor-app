@@ -11,7 +11,9 @@
 // Exactly one engine owns checks, questions and lesson state for a session.
 
 import { blankText, checkFinal, type InputAssessment } from "./assess";
-import { compileBoard, fillBlank, type Compiled } from "./compile";
+import { collapseOps, compileBoard, fillBlank, type Compiled } from "./compile";
+import { namedProblem } from "./source";
+import { spokenToDigits } from "../answer-check";
 import { parseTurnPlan } from "./plan";
 import { ENGINE_SYSTEM, turnContext } from "./prompt";
 import { callPlanModel, ENGINE_MODELS, repairMessages, type PlanCall } from "./provider";
@@ -61,7 +63,10 @@ function openingOps(s: LessonState, prefix: string): Compiled & { adopt: string[
   const sentences = p.statement.split(/(?<=[.?!])\s+/);
   const first = sentences.length > 1 && `${sentences[0]} ${sentences[1]}`.length <= 110 ? `${sentences[0]} ${sentences[1]}` : sentences[0];
   // Its math when it has any ("1/2 + 1/3", never the student's wrong "= 2/5" after it).
-  const title = p.math ? p.math : first.length <= 110 ? first.replace(/[.]$/, "") : `${first.slice(0, 106).replace(/\s+\S*$/, "")}…`;
+  // What to do keeps its word when it is not plain solving ("Graph: y = 2x − 1",
+  // "Factor: x² + 7x + 12"): the math alone did not say the problem was a graph.
+  const verb = /^(?:\d+[a-z]?[.)]\s*)?([A-Za-z][A-Za-z ]{1,24}?):\s/.exec(p.statement)?.[1];
+  const title = p.math ? (verb && !/^solve$/i.test(verb) ? `${verb}: ${p.math}` : p.math) : first.length <= 110 ? first.replace(/[.]$/, "") : `${first.slice(0, 106).replace(/\s+\S*$/, "")}…`;
   const ops: BoardOp[] = adopt.length ? [] : [{ opId: `${prefix}.h`, type: "heading", title }];
   const objects: BoardObject[] = adopt.length ? [] : [{ sid: `heading:${p.id}`, kind: "heading", problemId: p.id, parts: [], facts: [title], status: "pending" }];
   // An equation to solve opens the working; a definition ("y = -2x + 3") does not.
@@ -114,8 +119,30 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
   let model: string | undefined;
   let chosen: { plan: TurnPlan; compiled: Compiled; base: LessonState; verdict?: Verdict; advice?: string[] } | null = null;
   let last: { plan: TurnPlan; compiled: Compiled; detail: Issue[]; base: LessonState } | null = null;
-  // A plan that moves to another problem on the sheet is compiled and checked on that problem.
-  const onProblem = (plan: TurnPlan): LessonState => (plan.problem && plan.problem !== withAuto.current && withAuto.problems.some((p) => p.id === plan.problem) ? { ...withAuto, current: plan.problem } : withAuto);
+  // A plan that moves to another problem on the sheet is compiled and checked
+  // on that problem, on its own page: its heading (and working) go up first.
+  // Before Nov 2 nothing opened it, so problem 6's table and graph sat under
+  // problem 1's heading, beside its finished working.
+  const opened = new Map<string, Compiled>();
+  const onProblem = (plan: TurnPlan): LessonState => {
+    if (!(plan.problem && plan.problem !== withAuto.current && withAuto.problems.some((p) => p.id === plan.problem))) return withAuto;
+    const moved: LessonState = { ...withAuto, current: plan.problem, problems: withAuto.problems.map((p) => (p.id === withAuto.current && p.status === "open" ? { ...p, status: "set_aside" as const } : p.id === plan.problem && p.status === "set_aside" ? { ...p, status: "open" as const } : p)) };
+    const page = openingOps(moved, `${turnId}.p`);
+    if (page.adopt.length) moved.board = moved.board.map((b) => (page.adopt.includes(b.sid) ? { ...b, problemId: moved.current } : b));
+    opened.set(plan.problem, page);
+    return { ...moved, board: [...moved.board, ...page.objects] };
+  };
+  // Talking about another problem on the sheet while drawing for it is moving
+  // to it, whether or not the plan said so (Nov 2: "go to the last one,
+  // problem six" with no problem set).
+  const sheet = withAuto.problems.filter((p) => p.source.kind === "worksheet");
+  const movesTo = (plan: TurnPlan): TurnPlan => {
+    if (plan.problem || sheet.length < 2 || !plan.board.some((b) => b.do !== "mark")) return plan;
+    const named = namedProblem(spokenToDigits(plan.speech.map((x) => x.text).join(" ")), sheet);
+    if (!named || named === withAuto.current || withAuto.problems.find((p) => p.id === named)?.status === "solved") return plan;
+    fixes.push(`moved to ${named}, named in the speech`);
+    return { ...plan, problem: named };
+  };
   let messages: Array<{ role: "user" | "assistant"; content: unknown }> = first;
   const fixes: string[] = [];
   // The first sentence, said while the rest is planned (lib/lesson/stream).
@@ -157,8 +184,9 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
       messages = repairMessages(first, call, [...parsed.issues, ...earlyNote()]);
       continue;
     }
-    const base = onProblem(parsed.plan);
-    const held = withholdOnBoard(base, parsed.plan);
+    const toPlan = movesTo(parsed.plan);
+    const base = onProblem(toPlan);
+    const held = withholdOnBoard(base, toPlan);
     const compiled = compileBoard(base, held.plan.board, turnId);
     const checked = validatePlan(base, assessment, held.plan, parsed.verdict, compiled);
     fixes.push(...held.fixes, ...checked.fixes);
@@ -190,8 +218,10 @@ export async function runTurn(prev: LessonState, input: StudentInput, opts: { pl
     plan = { ...plan, speech: [{ id: "early", text: saidEarly, needs: [], early: true }, ...rest] };
   }
   const compiled = chosen?.compiled ?? { ops: [], objects: [], issues: [], notes: [] };
-  const ops = [...auto, ...compiled.ops];
-  const objects = [...autoObjects.filter((o) => !compiled.objects.some((c) => c.sid === o.sid)), ...compiled.objects];
+  const openedNew = chosen?.plan.problem ? opened.get(chosen.plan.problem) : undefined;
+  const ops = collapseOps([...auto, ...(openedNew?.ops ?? []), ...compiled.ops]);
+  const firstObjects = [...autoObjects, ...(openedNew?.objects ?? [])];
+  const objects = [...firstObjects.filter((o) => !compiled.objects.some((c) => c.sid === o.sid)), ...compiled.objects];
   let next = recordTurn(chosen?.base ?? withAuto, turnId, plan, ops, objects, Date.now());
   next = { ...next, advice: chosen?.advice?.slice(0, 4) ?? [] };
   // Their answer to the problem itself, called right with checked arithmetic:
