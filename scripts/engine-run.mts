@@ -343,7 +343,10 @@ fs.mkdirSync(root, { recursive: true });
 const browser = await puppeteer.launch({
   executablePath: CHROME,
   headless: true,
-  args: ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+  args: ["--no-sandbox", "--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--autoplay-policy=no-user-gesture-required", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream",
+    // A fake audio output: with the lid closed the speakers are off and a real
+    // output's clock stops, so audio never finishes and no turn settles (Nov 1).
+    "--disable-audio-output"],
 });
 try {
   for (const c of cases) {
