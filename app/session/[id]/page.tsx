@@ -199,7 +199,7 @@ function SessionDetailPage({ id }: { id: string }) {
   // The tutoring engine (Plan B, Oct 31 2026): the server plans every turn and
   // the voice only says it. Typed only for now; `?engine=1` or the env var.
   const [engineOn] = useState(() => searchParams?.get("engine") === "1" || (process.env.NEXT_PUBLIC_TUTOR_ENGINE === "1" && searchParams?.get("engine") !== "0"));
-  // Development: the planner model for this tab (?engineModel=claude-haiku-5-5).
+  // Local and preview only: the planner model for this tab (?engineModel=haiku).
   const [engineModel] = useState(() => searchParams?.get("engineModel") ?? undefined);
   const coachTopicRef = useRef("");
   // How fast the tutor's voice plays. Only the Gemini client can change it.

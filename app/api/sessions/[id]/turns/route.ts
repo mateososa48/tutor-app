@@ -28,7 +28,9 @@ type Body = {
   model?: unknown;
 };
 
-// In development a session may pick its planner, to compare models on the same cases.
+// Outside production (local and preview deploys) a session may pick its planner,
+// to compare models on the same cases: /session?engine=1&engineModel=haiku.
+const MODEL_ALIASES: Record<string, string> = { haiku: "claude-haiku-5-5", sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" };
 const DEV_MODELS = new Set(["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-sonnet-5-5@low", "claude-haiku-5-5@medium", "claude-opus-5-5@low", "claude-opus-5-5+fast", "claude-opus-5-5@low+fast"]);
 
 const MAX_TEXT = 1200;
@@ -82,7 +84,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const input: StudentInput = { id: typeof body.inputId === "string" ? body.inputId.slice(0, 40) : `u${lesson.turns + 1}`, source, text, at: Date.now() };
-  const devModel = process.env.NODE_ENV !== "production" && typeof body.model === "string" && DEV_MODELS.has(body.model) ? body.model : null;
+  const asked = typeof body.model === "string" ? (MODEL_ALIASES[body.model] ?? body.model) : null;
+  const devModel = process.env.VERCEL_ENV !== "production" && asked && DEV_MODELS.has(asked) ? asked : null;
   const planner: Planner | undefined = devModel ? (system, messages, onPartial) => callPlanModel(devModel, system, messages, undefined, onPartial) : undefined;
   const turn = async (onEarly?: (text: string) => void): Promise<{ status: number; body: Record<string, unknown> }> => {
     const result = await runTurn(lesson, input, { turnId: `t${lesson.turns + 1}`, ...(planner ? { planner } : {}), ...(onEarly ? { onEarly } : {}) });
